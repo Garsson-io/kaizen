@@ -10,6 +10,14 @@
 
 source "$(dirname "$0")/test-helpers.sh"
 
+# Skip if notification channel is "none" — IPC tests require telegram config
+NOTIFY_CHANNEL=$(jq -r '.notifications.channel // "none"' "$REPO_ROOT/kaizen.config.json" 2>/dev/null)
+if [ "$NOTIFY_CHANNEL" = "none" ] || [ -z "$NOTIFY_CHANNEL" ]; then
+  echo "SKIP: notification channel is '$NOTIFY_CHANNEL' — IPC tests require telegram config"
+  echo "Results: 0 passed, 0 failed"
+  exit 0
+fi
+
 HOOK="$(dirname "$0")/../kaizen-reflect.sh"
 setup_test_env
 TEST_IPC_DIR=$(mktemp -d)

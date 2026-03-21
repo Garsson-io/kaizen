@@ -1,6 +1,6 @@
 #!/bin/bash
 # Tests for kaizen-check-practices.sh hook
-# Run: bash .claude/kaizen/hooks/tests/test-kaizen-check-practices.sh
+# Run: bash .claude/hooks/tests/test-kaizen-check-practices.sh
 #
 # INVARIANT: gh pr create shows advisory practices checklist on stderr.
 # INVARIANT: Non-PR commands are ignored (no output).
@@ -86,7 +86,7 @@ assert_contains "shows interaction test for shell" "interaction" "$STDERR"
 echo ""
 echo "=== Hook changes show isolation practices ==="
 
-setup_git_diff_mock ".claude/kaizen/hooks/kaizen-enforce-pr-review.sh"
+setup_git_diff_mock ".claude/hooks/kaizen-enforce-pr-review.sh"
 
 STDERR=$(run_hook_stderr "$HOOK" "gh pr create --title 'test' --body 'stuff'")
 assert_contains "shows Worktree isolation for hooks" "isolation" "$STDERR"
@@ -124,7 +124,7 @@ assert_eq "no deny JSON on stdout" "" "$OUTPUT"
 echo ""
 echo "=== Mixed changes show combined practices ==="
 
-setup_git_diff_mock "src/cases.ts\n.claude/kaizen/hooks/kaizen-check-wip.sh\ncontainer/Dockerfile"
+setup_git_diff_mock "src/cases.ts\n.claude/hooks/kaizen-check-wip.sh\ncontainer/Dockerfile"
 
 STDERR=$(run_hook_stderr "$HOOK" "gh pr create --title 'test' --body 'stuff'")
 assert_contains "shows TS practices" "Minimal surface" "$STDERR"

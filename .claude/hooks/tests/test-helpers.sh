@@ -5,6 +5,22 @@
 # Source shared libraries so test helpers can use pr_url_to_state_key()
 source "$(dirname "$0")/../lib/state-utils.sh" 2>/dev/null || true
 
+# Portable repo root — use git instead of fragile ../../../ counting
+# Technique: portable path resolution (works from any directory depth)
+REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)"
+
+# Skip-with-reason: skip a test file if a required file doesn't exist
+# Usage: require_file "$SCRIPT_PATH" "worktree-du.sh" || exit 0
+require_file() {
+  local path="$1"
+  local label="${2:-$1}"
+  if [ ! -f "$path" ]; then
+    echo "SKIP: $label not found at $path (not part of this repo)"
+    echo "Results: 0 passed, 0 failed"
+    exit 0
+  fi
+}
+
 PASS=0
 FAIL=0
 

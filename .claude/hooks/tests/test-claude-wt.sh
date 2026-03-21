@@ -12,9 +12,10 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-CLAUDE_WT="$REPO_ROOT/scripts/claude-wt.sh"
 source "$SCRIPT_DIR/test-helpers.sh"
+
+CLAUDE_WT="$REPO_ROOT/scripts/claude-wt.sh"
+require_file "$CLAUDE_WT" "claude-wt.sh"
 
 # Source claude-wt.sh in test mode (only loads functions, doesn't execute)
 CLAUDE_WT_TEST=1 source "$CLAUDE_WT"

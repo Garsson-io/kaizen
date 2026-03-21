@@ -5,7 +5,7 @@ source "$(dirname "$0")/test-helpers.sh"
 HOOK="$(cd "$(dirname "$0")/.." && pwd)/kaizen-enforce-case-exists.sh"
 
 # Resolve cli-kaizen (kaizen #209: single-line executable pattern)
-RESOLVE_SCRIPT="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/lib/resolve-cli-kaizen.sh"
+RESOLVE_SCRIPT="$REPO_ROOT/scripts/lib/resolve-cli-kaizen.sh"
 
 _test_cli_kaizen() {
   local main_root="$1"

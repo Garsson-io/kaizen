@@ -21,7 +21,7 @@ fi
 
 # Resolve practices file relative to this hook's location
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-PRACTICES_FILE="$HOOK_DIR/../practices.md"
+PRACTICES_FILE="$HOOK_DIR/../kaizen/practices.md"
 
 if [ ! -f "$PRACTICES_FILE" ]; then
   exit 0
@@ -51,7 +51,7 @@ fi
 if echo "$CHANGED_FILES" | grep -qE '\.(test|spec)\.(ts|js|tsx|jsx)$'; then
   HAS_TESTS=true
 fi
-if echo "$CHANGED_FILES" | grep -qE 'kaizen/hooks/'; then
+if echo "$CHANGED_FILES" | grep -qE '\.claude/hooks/|kaizen/hooks/'; then
   HAS_HOOKS=true
 fi
 if echo "$CHANGED_FILES" | grep -qE 'container/'; then
