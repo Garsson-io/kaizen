@@ -12,6 +12,18 @@ A process improvement methodology implemented as a Claude Code plugin. Kaizen pr
 
 ## Installation
 
+### As a Claude Code Plugin (recommended)
+
+In any Claude Code session:
+
+```
+/plugin add Garsson-io/kaizen
+```
+
+This installs kaizen as a managed plugin. All skills, hooks, and agents are automatically registered. Then run `/kaizen-setup` to configure your project.
+
+### As a Git Submodule (manual)
+
 ```bash
 # Clone into your project
 git submodule add https://github.com/Garsson-io/kaizen.git .kaizen
@@ -19,8 +31,8 @@ git submodule add https://github.com/Garsson-io/kaizen.git .kaizen
 # Install dependencies (for TypeScript hooks)
 cd .kaizen && npm install && cd ..
 
-# Run setup
-# In a Claude Code session, run: /kaizen-setup
+# Run setup — in a Claude Code session:
+/kaizen-setup
 ```
 
 The `/kaizen-setup` skill will:
@@ -31,6 +43,12 @@ The `/kaizen-setup` skill will:
 
 ## Updating
 
+### Plugin install
+```
+/plugin update kaizen
+```
+
+### Submodule install
 ```bash
 # In a Claude Code session, run: /kaizen-update
 # Or manually:
