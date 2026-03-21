@@ -15,15 +15,22 @@ A process improvement methodology implemented as a Claude Code plugin. Kaizen pr
 In any Claude Code session:
 
 ```
-/plugin add Garsson-io/kaizen
+/plugin marketplace add Garsson-io/kaizen
+/plugin install kaizen@kaizen
 ```
 
-This installs kaizen as a managed plugin. All skills, hooks, and agents are automatically registered. Then run `/kaizen-setup` to configure your project.
+This adds the kaizen marketplace and installs the plugin. All skills, hooks, and agents are automatically registered. Then run `/kaizen-setup` to configure your project.
+
+For local development, you can also load it directly:
+
+```bash
+claude --plugin-dir /path/to/kaizen
+```
 
 ## Updating
 
 ```
-/plugin update kaizen
+/reload-plugins
 ```
 
 ## Configuration

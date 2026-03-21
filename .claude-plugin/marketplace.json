@@ -1,0 +1,23 @@
+{
+  "name": "kaizen",
+  "owner": {
+    "name": "Garsson-io"
+  },
+  "metadata": {
+    "description": "Continuous improvement plugin for Claude Code",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "kaizen",
+      "description": "Enforcement hooks, reflection workflows, dev workflow skills, and recursive self-improvement",
+      "version": "1.0.0",
+      "source": "./",
+      "author": "Garsson-io",
+      "homepage": "https://github.com/Garsson-io/kaizen",
+      "repository": "https://github.com/Garsson-io/kaizen",
+      "license": "MIT",
+      "keywords": ["kaizen", "process-improvement", "hooks", "reflection", "dev-workflow"]
+    }
+  ]
+}
