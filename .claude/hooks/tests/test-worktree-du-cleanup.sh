@@ -16,10 +16,10 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 source "$SCRIPT_DIR/test-helpers.sh"
 
 WORKTREE_DU="$REPO_ROOT/scripts/worktree-du.sh"
+require_file "$WORKTREE_DU" "worktree-du.sh"
 
 # Create a temp directory for test worktrees
 TMPDIR_TEST=$(mktemp -d)
@@ -266,7 +266,7 @@ echo ""
 echo "=== Stop hook removes lock file ==="
 
 # Test that kaizen-check-cleanup-on-stop.sh removes lock file
-STOP_HOOK="$REPO_ROOT/.claude/kaizen/hooks/kaizen-check-cleanup-on-stop.sh"
+STOP_HOOK="$REPO_ROOT/.claude/hooks/kaizen-check-cleanup-on-stop.sh"
 STOP_WT="$TMPDIR_TEST/stop-test-wt"
 mkdir -p "$STOP_WT"
 echo '{"pid": 999999999}' > "$STOP_WT/.worktree-lock.json"

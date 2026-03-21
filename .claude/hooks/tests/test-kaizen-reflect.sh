@@ -132,9 +132,9 @@ assert_eq "failed pr create produces no output" "" "$OUTPUT"
 echo ""
 echo "=== kaizen-bg agent definition exists with correct config ==="
 
-# Agent definitions live at .claude/agents/, not .claude/kaizen/agents/
-# Navigate from .claude/kaizen/hooks/tests/ up to .claude/ then into agents/
-AGENT_FILE="$(dirname "$0")/../../../agents/kaizen-bg.md"
+# Agent definitions live at .claude/agents/
+# Navigate from .claude/hooks/tests/ up to .claude/ then into agents/
+AGENT_FILE="$(dirname "$0")/../../agents/kaizen-bg.md"
 
 if [ -f "$AGENT_FILE" ]; then
   echo "  PASS: kaizen-bg.md exists"

@@ -1,11 +1,17 @@
 #!/bin/bash
-# run-all-tests.sh — Run all hook tests (unit + integration + harness)
+# run-all-tests.sh — Run all hook tests (auto-discovered)
 #
 # Usage:
-#   bash .claude/kaizen/hooks/tests/run-all-tests.sh           # Run all
-#   bash .claude/kaizen/hooks/tests/run-all-tests.sh --unit     # Unit tests only
-#   bash .claude/kaizen/hooks/tests/run-all-tests.sh --harness  # Harness tests only
-#   bash .claude/kaizen/hooks/tests/run-all-tests.sh --quick    # Fast subset
+#   bash .claude/hooks/tests/run-all-tests.sh           # Run all
+#   bash .claude/hooks/tests/run-all-tests.sh --unit     # Unit tests only
+#   bash .claude/hooks/tests/run-all-tests.sh --harness  # Integration tests only
+#   bash .claude/hooks/tests/run-all-tests.sh --quick    # Fast subset (python only)
+#
+# Test files are auto-discovered by naming convention:
+#   test-integration-*.sh, test-*-e2e*.sh  → integration/harness tests
+#   test-*.sh (everything else)            → unit tests
+#
+# To exclude a test, add it to EXCLUDE_TESTS below with a comment explaining why.
 #
 # Exit 0 = all passed, 1 = failures
 
@@ -18,6 +24,30 @@ TOTAL_PASS=0
 TOTAL_FAIL=0
 TOTAL_TESTS=0
 FAILED_FILES=()
+
+# Tests to exclude from auto-discovery (with reasons)
+EXCLUDE_TESTS=(
+  # Shared library, not a test
+  test-helpers.sh
+)
+
+is_excluded() {
+  local name="$1"
+  for exc in "${EXCLUDE_TESTS[@]}"; do
+    [ "$name" = "$exc" ] && return 0
+  done
+  return 1
+}
+
+is_integration_test() {
+  local name="$1"
+  case "$name" in
+    test-integration-*|test-*-e2e*|test-hook-interaction-matrix*|test-schema-validation*|test-real-world-commands*|test-claude-wt*|test-worktree-context-integration*|test-review-enforcement-e2e*)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
 
 run_test_file() {
   local file="$1"
@@ -51,100 +81,26 @@ run_test_file() {
   fi
 }
 
-# Unit tests (existing)
-UNIT_TESTS=(
-  "$SCRIPT_DIR/test-parse-command.sh"
-  "$SCRIPT_DIR/test-state-utils.sh"
-  "$SCRIPT_DIR/test-allowlist.sh"
-  "$SCRIPT_DIR/test-kaizen-check-dirty-files.sh"
-  "$SCRIPT_DIR/test-kaizen-check-test-coverage.sh"
-  "$SCRIPT_DIR/test-kaizen-check-verification.sh"
-  "$SCRIPT_DIR/test-kaizen-enforce-case-worktree.sh"
-  "$SCRIPT_DIR/test-kaizen-enforce-case-exists.sh"
-  "$SCRIPT_DIR/test-kaizen-enforce-worktree-writes.sh"
-  "$SCRIPT_DIR/test-kaizen-enforce-pr-review.sh"
-  "$SCRIPT_DIR/test-kaizen-enforce-pr-review-stop.sh"
-  "$SCRIPT_DIR/test-kaizen-enforce-pr-review-tools.sh"
-  "$SCRIPT_DIR/test-kaizen-pr-review-loop.sh"
-  "$SCRIPT_DIR/test-kaizen-merge-notify.sh"
-  "$SCRIPT_DIR/test-kaizen-merge-gate.sh"
-  "$SCRIPT_DIR/test-send-notification.sh"
-  "$SCRIPT_DIR/test-kaizen-enforce-post-merge-stop.sh"
-  "$SCRIPT_DIR/test-kaizen-post-merge-clear.sh"
-  "$SCRIPT_DIR/test-kaizen-enforce-pr-reflect.sh"
-  "$SCRIPT_DIR/test-kaizen-pr-reflect-clear.sh"
-  "$SCRIPT_DIR/test-kaizen-reflect.sh"
-  "$SCRIPT_DIR/test-kaizen-warn-code-quality.sh"
-  "$SCRIPT_DIR/test-worktree-du-cleanup.sh"
-  "$SCRIPT_DIR/test-kaizen-check-practices.sh"
-  "$SCRIPT_DIR/test-resolve-main-checkout.sh"
-  "$SCRIPT_DIR/test-kaizen-verify-before-stop.sh"
-  "$SCRIPT_DIR/test-kaizen-check-cleanup-on-stop.sh"
-  "$SCRIPT_DIR/test-kaizen-check-wip.sh"
-  "$SCRIPT_DIR/test-waiver-quality.sh"
-  "$SCRIPT_DIR/test-kaizen-block-git-rebase.sh"
-  "$SCRIPT_DIR/test-kaizen-squash-merge-safety.sh"
-  "$SCRIPT_DIR/test-kaizen-capture-worktree-context.sh"
-  "$SCRIPT_DIR/test-kaizen-enforce-reflect-stop.sh"
-)
+# Auto-discover and classify tests
+UNIT_TESTS=()
+HARNESS_TESTS=()
+for f in "$SCRIPT_DIR"/test-*.sh; do
+  [ -f "$f" ] || continue
+  local_name=$(basename "$f")
+  is_excluded "$local_name" && continue
+  if is_integration_test "$local_name"; then
+    HARNESS_TESTS+=("$f")
+  else
+    UNIT_TESTS+=("$f")
+  fi
+done
 
-# Bash harness tests (integration + interaction tests)
-BASH_HARNESS_TESTS=(
-  "$SCRIPT_DIR/test-schema-validation.sh"
-  "$SCRIPT_DIR/test-real-world-commands.sh"
-  "$SCRIPT_DIR/test-integration-parallel-hooks.sh"
-  "$SCRIPT_DIR/test-review-enforcement-e2e.sh"
-  "$SCRIPT_DIR/test-hook-interaction-matrix.sh"
-  "$SCRIPT_DIR/test-integration-pr-lifecycle.sh"
-  "$SCRIPT_DIR/test-claude-wt.sh"
-  "$SCRIPT_DIR/test-worktree-context-integration.sh"
-  "$SCRIPT_DIR/test-integration-kaizen-lifecycle.sh"
-  "$SCRIPT_DIR/../../../../scripts/tests/test-resolve-cli-kaizen.sh"
-)
-
-# Python harness test (preferred — cleaner, faster, better assertions)
+# Python harness test
 PYTHON_TEST="$SCRIPT_DIR/test_hooks.py"
 
 echo "Hook Test Suite"
 echo "==============="
-
-# Category prevention: detect orphaned test files not registered in any test array.
-# This catches the exact bug that let test-kaizen-merge-gate.sh failures go unnoticed (kaizen #176).
-check_orphaned_tests() {
-  local orphaned=()
-  for f in "$SCRIPT_DIR"/test-*.sh; do
-    [ -f "$f" ] || continue
-    local base
-    base=$(basename "$f")
-    # Skip test-helpers.sh (shared library, not a test)
-    [ "$base" = "test-helpers.sh" ] && continue
-    local found=false
-    for t in "${UNIT_TESTS[@]}" "${BASH_HARNESS_TESTS[@]}"; do
-      if [ "$(basename "$t")" = "$base" ]; then
-        found=true
-        break
-      fi
-    done
-    if ! $found; then
-      orphaned+=("$base")
-    fi
-  done
-  if [ ${#orphaned[@]} -gt 0 ]; then
-    echo ""
-    echo "ORPHANED TEST FILES (not registered in run-all-tests.sh):"
-    for f in "${orphaned[@]}"; do
-      echo "  - $f"
-    done
-    echo ""
-    echo "Add these to UNIT_TESTS or BASH_HARNESS_TESTS array."
-    TOTAL_FAIL=$((TOTAL_FAIL + ${#orphaned[@]}))
-    FAILED_FILES+=("orphan-check")
-    return 1
-  fi
-  return 0
-}
-
-check_orphaned_tests
+echo "Discovered ${#UNIT_TESTS[@]} unit tests, ${#HARNESS_TESTS[@]} integration tests"
 
 run_python_tests() {
   echo ""
@@ -185,13 +141,13 @@ case "$MODE" in
   --unit)
     echo "Running unit tests only..."
     for t in "${UNIT_TESTS[@]}"; do
-      [ -f "$t" ] && run_test_file "$t"
+      run_test_file "$t"
     done
     ;;
   --harness)
     echo "Running harness tests only..."
-    for t in "${BASH_HARNESS_TESTS[@]}"; do
-      [ -f "$t" ] && run_test_file "$t"
+    for t in "${HARNESS_TESTS[@]}"; do
+      run_test_file "$t"
     done
     run_python_tests
     ;;
@@ -206,10 +162,10 @@ case "$MODE" in
   all|*)
     echo "Running all tests..."
     for t in "${UNIT_TESTS[@]}"; do
-      [ -f "$t" ] && run_test_file "$t"
+      run_test_file "$t"
     done
-    for t in "${BASH_HARNESS_TESTS[@]}"; do
-      [ -f "$t" ] && run_test_file "$t"
+    for t in "${HARNESS_TESTS[@]}"; do
+      run_test_file "$t"
     done
     run_python_tests
     ;;
