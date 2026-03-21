@@ -116,7 +116,28 @@ Add project-specific enforcement rules here.
 EOF
 ```
 
-### Step 6: Verify
+### Step 6: Inject CLAUDE.md section
+
+Read `.kaizen/.claude/kaizen/claude-md-fragment.md` and inject it into the host's `CLAUDE.md`.
+
+**If CLAUDE.md doesn't exist:** Create it with the fragment.
+**If CLAUDE.md exists but has no kaizen section:** Append the fragment before the last section.
+**If CLAUDE.md already has `<!-- BEGIN KAIZEN PLUGIN -->` ... `<!-- END KAIZEN PLUGIN -->`:** Replace the existing section with the updated fragment.
+
+```bash
+FRAGMENT=$(cat .kaizen/.claude/kaizen/claude-md-fragment.md)
+if grep -q "BEGIN KAIZEN PLUGIN" CLAUDE.md 2>/dev/null; then
+  # Replace existing section
+  sed -i '/<!-- BEGIN KAIZEN PLUGIN/,/<!-- END KAIZEN PLUGIN -->/d' CLAUDE.md
+  echo "$FRAGMENT" >> CLAUDE.md
+else
+  # Append
+  echo "" >> CLAUDE.md
+  echo "$FRAGMENT" >> CLAUDE.md
+fi
+```
+
+### Step 7: Verify
 
 ```bash
 # Check symlinks resolve
