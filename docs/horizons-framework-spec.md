@@ -39,7 +39,7 @@ A complete, enumerated set of maturity horizons with a self-extension mechanism,
 
 ### What's explicitly NOT in scope
 
-- Implementing improvements along any horizon (that's `/implement-spec`)
+- Implementing improvements along any horizon (that's `/kaizen-implement`)
 - Changing the enforcement framework (L1→L2→L3 stays as-is)
 - Rewriting existing horizon docs (Autonomous Kaizen, Incident-Driven Kaizen, Testability already well-structured)
 
@@ -85,7 +85,7 @@ Three levels of reflection about horizons. The tower is self-referential at the 
 **Level C — Review the horizon set** (periodic, every ~10 cases or monthly)
 - Read `docs/horizons/README.md`, read recent kaizen issues
 - Ask: "Are there clusters of issues that don't map to any horizon? Is any horizon stale? Should two horizons merge? Is there a gap?"
-- Trigger: could be a question in `/pick-work` every Nth invocation, or a dedicated `/review-horizons` skill
+- Trigger: could be a question in `/kaizen-pick` every Nth invocation, or a dedicated `/review-horizons` skill
 
 **Why there's no Level D:** Level C reviews Level B's output. Level B reviews Level A's coverage. Level C is self-referential — it can discover that IT needs updating. All three levels produce the same artifact type (horizon documents and kaizen issues). The recursion terminates naturally.
 
@@ -395,7 +395,7 @@ Existing formalized horizons are referenced, not repeated:
 
 ### Phase 3: Periodic review
 
-- Design Level C trigger (embed in `/pick-work` every Nth invocation, or dedicated skill)
+- Design Level C trigger (embed in `/kaizen-pick` every Nth invocation, or dedicated skill)
 - Implement review that reads horizon index, recent kaizen issues, checks for unclassified friction clusters
 
 ### Phase 4: Cross-horizon analytics (future)

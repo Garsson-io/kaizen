@@ -14,7 +14,7 @@ KAIZEN_CLI=$(jq -r '.host.caseCli // ""' kaizen.config.json)
 Use `$KAIZEN_REPO` in kaizen issue operations, `$HOST_REPO` in host project operations.
 If `$KAIZEN_CLI` is empty, the host has no case system — use plain `git worktree add` for workspace isolation.
 
-# /audit-issues — Periodic Issue Taxonomy Audit
+# /kaizen-audit-issues — Periodic Issue Taxonomy Audit
 
 **Role:** The auditor. Systematically checks the health of the kaizen issue backlog — label coverage, epic lifecycle, incident density, and horizon distribution. Produces a structured report with suggested fixes.
 

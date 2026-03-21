@@ -142,7 +142,7 @@ The kaizen system currently has zero recorded incidents across all issues, makin
    **Details:** [what happened, why it matters]"
    ```
 
-**Why this exists:** Without incident data, `/pick-work` and `/gap-analysis` operate on opinion rather than evidence. This bootstrap forces the system to start accumulating the data it needs for evidence-based prioritization. After 10 reflections, the habit and tooling should sustain naturally.
+**Why this exists:** Without incident data, `/kaizen-pick` and `/kaizen-gaps` operate on opinion rather than evidence. This bootstrap forces the system to start accumulating the data it needs for evidence-based prioritization. After 10 reflections, the habit and tooling should sustain naturally.
 
 **Tracking:** Add a counter to each reflection output: `INCIDENT_BOOTSTRAP: reflection N/10, incidents_filed=M`
 

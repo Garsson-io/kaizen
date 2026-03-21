@@ -119,7 +119,7 @@ The most valuable artifact for a horizon is not a solution but a **taxonomy**: a
 
 The test ladder is the prototype horizon: L0 (no tests) through L9 (property-based + mutation testing). We can't see past L4 clearly. That's fine. The taxonomy tells us where we are and which direction is "better." When we reach L4, L5-L6 will come into focus. The horizon extends as you approach it.
 
-**Horizons vs features:** A feature has phases and a definition of done. A horizon doesn't — you're always on it. Features can live *within* a horizon (e.g., "add mount-security tests" is a feature within the testing horizon). `/write-prd` should know which it's writing: a feature spec (scoped, ends), or a horizon spec (taxonomy, endless).
+**Horizons vs features:** A feature has phases and a definition of done. A horizon doesn't — you're always on it. Features can live *within* a horizon (e.g., "add mount-security tests" is a feature within the testing horizon). `/kaizen-prd` should know which it's writing: a feature spec (scoped, ends), or a horizon spec (taxonomy, endless).
 
 **How many horizons?** Not many. A horizon represents a fundamental dimension of quality you'll always care about. If you're accumulating dozens, you're probably tracking features, not horizons. A healthy system has a handful: testing, security, observability, developer ergonomics, autonomous operations. Each one gets a taxonomy, a "you are here" marker, and clarity on the next few steps.
 

@@ -4,7 +4,7 @@ Structured self-review for every PR before it can merge. The `pr-review-loop.sh`
 
 **When to use:**
 - Automatically triggered by `pr-review-loop.sh` after `gh pr create`
-- Can also be invoked manually: `/review-pr <pr-url>`
+- Can also be invoked manually: `/kaizen-review-pr <pr-url>`
 
 ## The Review Process
 

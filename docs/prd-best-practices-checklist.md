@@ -241,7 +241,7 @@ The hook uses file extensions and paths to determine which practices to show:
 
 ## 6. What This PRD is NOT
 
-- **Not an implementation plan** — implementation details come in `/implement-spec`
+- **Not an implementation plan** — implementation details come in `/kaizen-implement`
 - **Not a complete hook design** — the hook emerges from the practices, not vice versa
 - **Not a replacement for CLAUDE.md** — CLAUDE.md is policy; practices are prompts
 - **Not static** — the practices file grows as the system learns
@@ -264,4 +264,4 @@ The hook uses file extensions and paths to determine which practices to show:
 - Post-work integration with kaizen-reflect.sh (Phase 2)
 - Violation tracking / escalation counting (Phase 3)
 - Practice relevance scoring based on historical violations (Phase 4)
-- Integration with `/review-pr` skill (Phase 2)
+- Integration with `/kaizen-review-pr` skill (Phase 2)

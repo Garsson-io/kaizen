@@ -39,7 +39,7 @@ Without cost governance:
 
 ## L1→L2: Per-Case Budgets (next step)
 
-**Problem L2 solves:** A dev agent session running `/implement-spec` burns $15 when the budget was $5. Today: nobody notices until weekly review. L2: agent warned at $4, hard-stopped at $5.
+**Problem L2 solves:** A dev agent session running `/kaizen-implement` burns $15 when the budget was $5. Today: nobody notices until weekly review. L2: agent warned at $4, hard-stopped at $5.
 
 **Rough shape:** Budget field in case record. Agent prompt includes remaining budget. MCP tool enforces hard cap by refusing to spawn new sessions when budget exhausted.
 
@@ -47,7 +47,7 @@ Without cost governance:
 
 ## L3–L4: Visible but not designed
 
-**L3 (proportional gating):** Problem: a docs-only fix gets the same $5 budget as a complex refactor. Need: task classification that maps to budget tiers. Kaizen issues labeled `level-1` get $2, `level-3` get $10. Open question: who classifies — `/accept-case`, the agent itself, or automatic from labels?
+**L3 (proportional gating):** Problem: a docs-only fix gets the same $5 budget as a complex refactor. Need: task classification that maps to budget tiers. Kaizen issues labeled `level-1` get $2, `level-3` get $10. Open question: who classifies — `/kaizen-evaluate`, the agent itself, or automatic from labels?
 
 **L4 (optimization):** Problem: agent re-reads the same 500-line file 6 times in a session, burning tokens. Need: analytics that identify wasteful patterns and suggest caching or context management strategies.
 
