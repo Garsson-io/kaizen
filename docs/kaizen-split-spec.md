@@ -2,26 +2,26 @@
 
 ## 1. Problem Statement
 
-Kaizen (the continuous improvement system) is deeply embedded in NanoClaw (the agent harness). Every kaizen improvement — a new hook, a policy update, a skill refinement — must pass NanoClaw's full CI: `strict:true` TypeScript compilation, container e2e tests, agent harness integration tests. This "tax" slows kaizen's ability to improve itself.
+Kaizen (the continuous improvement system) is deeply embedded in Kaizen (the agent harness). Every kaizen improvement — a new hook, a policy update, a skill refinement — must pass Kaizen's full CI: `strict:true` TypeScript compilation, container e2e tests, agent harness integration tests. This "tax" slows kaizen's ability to improve itself.
 
 The systems are conceptually distinct:
-- **NanoClaw** is a container-based agent orchestration platform with channels, routing, and case management
+- **Kaizen** is a container-based agent orchestration platform with channels, routing, and case management
 - **Kaizen** is a process improvement methodology — philosophy, hooks, skills, and reflection workflows that can apply to *any* project
 
-Today kaizen can only improve one project (NanoClaw). But the methodology is general: any project where Claude Code agents do dev work would benefit from enforcement hooks, reflection workflows, issue taxonomy, and escalation levels.
+Today kaizen can only improve one project (Kaizen). But the methodology is general: any project where Claude Code agents do dev work would benefit from enforcement hooks, reflection workflows, issue taxonomy, and escalation levels.
 
 ### Concrete pain points
 
 1. **Testing tax:** Changing a shell hook requires passing TypeScript strict compilation and container tests that are irrelevant to the change.
-2. **Coupling:** Kaizen skills reference NanoClaw internals (case system, IPC, container runner). A kaizen skill fix can break NanoClaw and vice versa.
-3. **Single-project learning:** Patterns discovered while kaizening NanoClaw have no path to reach other projects. The compound interest loop is capped at one project.
-4. **File count:** ~150+ kaizen-related files in NanoClaw make the codebase harder to navigate for non-kaizen work.
+2. **Coupling:** Kaizen skills reference Kaizen internals (case system, IPC, container runner). A kaizen skill fix can break Kaizen and vice versa.
+3. **Single-project learning:** Patterns discovered while kaizening Kaizen have no path to reach other projects. The compound interest loop is capped at one project.
+4. **File count:** ~150+ kaizen-related files in Kaizen make the codebase harder to navigate for non-kaizen work.
 
 ### What happens today
 
-- All kaizen files (hooks, skills, agents, policies, docs) live in the NanoClaw repo
+- All kaizen files (hooks, skills, agents, policies, docs) live in the Kaizen repo
 - All kaizen issues live in `Garsson-io/kaizen` (a GitHub Issues-only repo)
-- Improvements to kaizen tooling and NanoClaw-specific improvements are mixed in the same issue backlog
+- Improvements to kaizen tooling and Kaizen-specific improvements are mixed in the same issue backlog
 - Skills like `/kaizen-pick`, `/kaizen-gaps`, `/kaizen-reflect` assume a single repo context
 
 ## 2. Desired End State
@@ -37,13 +37,13 @@ Kaizen is a standalone Claude Code plugin hosted at `Garsson-io/kaizen`. Any pro
 
 The host project provides a `kaizen.config.json` telling kaizen where to file issues, what the label taxonomy looks like, and what horizons/epics exist.
 
-NanoClaw becomes kaizen's first (and reference) host project.
+Kaizen becomes kaizen's first (and reference) host project.
 
 ### What's explicitly NOT in scope
 
-- Kaizen does NOT own case management. Cases are NanoClaw's work-item system. Kaizen uses whatever work-item system the host provides (or none — it can work with just GitHub Issues).
+- Kaizen does NOT own case management. Cases are Kaizen's work-item system. Kaizen uses whatever work-item system the host provides (or none — it can work with just GitHub Issues).
 - Kaizen does NOT own container orchestration, message routing, or channel management.
-- Kaizen does NOT require NanoClaw. It works on any project where Claude Code runs.
+- Kaizen does NOT require Kaizen. It works on any project where Claude Code runs.
 - Multi-host security (preventing host-specific information from leaking to the kaizen repo via generalized patterns) is acknowledged but deferred. Patterns are naturally sanitized. A review gate can be added later.
 
 ## 3. Three-Way Issue Routing
@@ -265,8 +265,8 @@ my-project/
 ```json
 {
   "host": {
-    "name": "nanoclaw",
-    "repo": "Garsson-io/nanoclaw",
+    "name": "kaizen",
+    "repo": "Garsson-io/kaizen",
     "description": "Agent orchestration harness"
   },
   "kaizen": {
@@ -295,7 +295,7 @@ Skills read this config at runtime to know where to query/file issues, what labe
 
 ### Policies: generic + local
 
-Kaizen provides `policies.md` with generic policies (recursive kaizen on fixes, co-commit tests, smoke tests ship with feature, etc.). The host project extends with `policies-local.md` for project-specific policies (NanoClaw's strict:true, container isolation, MCP enforcement, etc.).
+Kaizen provides `policies.md` with generic policies (recursive kaizen on fixes, co-commit tests, smoke tests ship with feature, etc.). The host project extends with `policies-local.md` for project-specific policies (Kaizen's strict:true, container isolation, MCP enforcement, etc.).
 
 At runtime, skills load both. The local file can override or extend generic policies.
 
@@ -317,18 +317,18 @@ At runtime, skills load both. The local file can override or extend generic poli
 
 | Component | What | Why It Doesn't Exist Yet |
 |-----------|------|-------------------------|
-| `kaizen.config.json` schema + reader | Config file that skills/hooks read for host context | Currently hardcoded to NanoClaw's repo/labels |
+| `kaizen.config.json` schema + reader | Config file that skills/hooks read for host context | Currently hardcoded to Kaizen's repo/labels |
 | `/kaizen-setup` skill | Interactive setup: creates config, merges hooks, scaffolds `policies-local.md` | Plugin installation is manual today |
 | `/kaizen-update` skill | Pull kaizen updates, re-run setup to merge new hook registrations | No update path exists yet |
 | Three-way issue routing in `/kaizen-reflect` | Classify impediments → meta-kaizen / host-kaizen / generalized pattern | Currently everything goes to one repo |
 | `send-notification.sh` abstraction | Channel-agnostic notification from hooks | Currently `send-telegram-ipc.sh` is Telegram-only |
-| Thin GitHub Issues client | Standalone issue query (list, view, create) for kaizen repo | Currently uses NanoClaw's `github-api.ts` |
-| `/kaizen-implement` worktree abstraction | Create worktree without requiring NanoClaw's case system | Currently calls `case_create` which is NanoClaw-specific |
-| `kaizen-bg` tool abstraction | Suggest improvements without requiring MCP `case_suggest_dev` | Currently assumes NanoClaw's case infrastructure |
-| NanoClaw migration | Extract files, rename CLI, create `policies-local.md`, update CLAUDE.md | First host project needs migration path |
-| Existing issue triage | Sort current `Garsson-io/kaizen` issues into meta-kaizen vs NanoClaw host-kaizen | Current backlog mixes both types |
-| Plugin CI | Tests for hooks, TypeScript hooks, config validation | Currently tested inside NanoClaw's CI |
-| Operational docs | Installation guide, host configuration reference, migration guide | Currently documented inline in NanoClaw |
+| Thin GitHub Issues client | Standalone issue query (list, view, create) for kaizen repo | Currently uses Kaizen's `github-api.ts` |
+| `/kaizen-implement` worktree abstraction | Create worktree without requiring Kaizen's case system | Currently calls `case_create` which is Kaizen-specific |
+| `kaizen-bg` tool abstraction | Suggest improvements without requiring MCP `case_suggest_dev` | Currently assumes Kaizen's case infrastructure |
+| Kaizen migration | Extract files, rename CLI, create `policies-local.md`, update CLAUDE.md | First host project needs migration path |
+| Existing issue triage | Sort current `Garsson-io/kaizen` issues into meta-kaizen vs Kaizen host-kaizen | Current backlog mixes both types |
+| Plugin CI | Tests for hooks, TypeScript hooks, config validation | Currently tested inside Kaizen's CI |
+| Operational docs | Installation guide, host configuration reference, migration guide | Currently documented inline in Kaizen |
 
 ## 8. What Moves vs What Stays
 
@@ -346,27 +346,27 @@ At runtime, skills load both. The local file can override or extend generic poli
 | CLI (issue queries) | `src/cli-kaizen.ts` (list, view commands only) | partial |
 | Hook design docs | `hooks/docs/*.md` | ~3 |
 
-### Stays in NanoClaw
+### Stays in Kaizen
 
 | Category | Files | Reason |
 |----------|-------|--------|
-| Case management | `src/cases.ts`, `src/case-backend*.ts`, `src/case-router.ts`, `src/case-auth.ts` | NanoClaw's work-item system |
-| IPC handlers | `src/ipc-cases.ts`, `src/ipc.ts` | NanoClaw IPC infrastructure |
-| Container runner | `src/container-runner.ts` | NanoClaw core |
+| Case management | `src/cases.ts`, `src/case-backend*.ts`, `src/case-router.ts`, `src/case-auth.ts` | Kaizen's work-item system |
+| IPC handlers | `src/ipc-cases.ts`, `src/ipc.ts` | Kaizen IPC infrastructure |
+| Container runner | `src/container-runner.ts` | Kaizen core |
 | CLI (case ops) | `src/cli-kaizen.ts` → rename to `src/cli-cases.ts` | Case commands are not kaizen |
-| GitHub API client | `src/github-api.ts` | Shared NanoClaw utility (kaizen gets its own thin client) |
-| NanoClaw-specific policies | Policies #12-19 | → `policies-local.md` in NanoClaw |
-| All channel/routing code | `src/channels/`, `src/router.ts` | NanoClaw core |
-| E2E / container tests | various | NanoClaw testing concern |
+| GitHub API client | `src/github-api.ts` | Shared Kaizen utility (kaizen gets its own thin client) |
+| Kaizen-specific policies | Policies #12-19 | → `policies-local.md` in Kaizen |
+| All channel/routing code | `src/channels/`, `src/router.ts` | Kaizen core |
+| E2E / container tests | various | Kaizen testing concern |
 
 ### Requires abstraction before moving
 
 | Item | Current State | Needed Change |
 |------|--------------|---------------|
 | `send-telegram-ipc.sh` | Hardcoded to Telegram IPC | Abstract to `send-notification.sh` — reads config from `kaizen.config.json` |
-| `/kaizen-implement` | References NanoClaw's case system for worktree creation | If host has cases, use them; otherwise `git worktree add` directly |
+| `/kaizen-implement` | References Kaizen's case system for worktree creation | If host has cases, use them; otherwise `git worktree add` directly |
 | `cli-kaizen.ts` | Mixed case ops + issue queries | Split: case ops → `cli-cases.ts` (stays), issue queries → kaizen's own CLI |
-| Hook path resolution | Some hooks resolve paths relative to NanoClaw | Use `resolve-project-root.sh` consistently |
+| Hook path resolution | Some hooks resolve paths relative to Kaizen | Use `resolve-project-root.sh` consistently |
 | `kaizen-bg.md` agent | References MCP `case_suggest_dev` | If host has case system, suggest dev case; otherwise file an issue |
 
 ## 9. Open Questions & Known Risks
@@ -377,7 +377,7 @@ At runtime, skills load both. The local file can override or extend generic poli
 |---|----------|---------|------|
 | 1 | **How does the plugin get installed?** | (a) Claude Code native plugin mechanism, (b) `gh repo clone` + `/kaizen-setup` skill, (c) git submodule | **(a)** if Claude Code supports it, otherwise **(b)** — clone repo, run `/kaizen-setup` which wires it into host |
 | 2 | **Should kaizen have `strict:true` TypeScript?** | (a) Yes for TS hooks (they're small), (b) No — the whole point is less tax | **(a)** for TypeScript hooks, shell hooks have their own test harness |
-| 3 | **How do worktrees work without NanoClaw's case system?** | (a) Kaizen provides minimal case tracking, (b) Plain git worktrees, (c) Optional case integration | **(b)** for v1 — `git worktree add` is sufficient. Cases are a NanoClaw luxury. |
+| 3 | **How do worktrees work without Kaizen's case system?** | (a) Kaizen provides minimal case tracking, (b) Plain git worktrees, (c) Optional case integration | **(b)** for v1 — `git worktree add` is sufficient. Cases are a Kaizen luxury. |
 | 4 | **How does kaizen's own development work?** | (a) Kaizen uses kaizen on itself (recursive), (b) Standard dev workflow | **(a)** — kaizen's `kaizen.config.json` points to itself. It eats its own dog food. |
 | 5 | **Should existing issues be triaged during migration or after?** | (a) Triage first, (b) Triage incrementally | **(b)** — triage as issues come up. Don't block migration on backlog cleanup. |
 | 6 | **How does the host project update kaizen?** | (a) `git pull`, (b) `/kaizen-update` skill, (c) Submodule update | **(b)** — a skill that pulls updates and re-runs setup for new hook registrations |
@@ -386,12 +386,12 @@ At runtime, skills load both. The local file can override or extend generic poli
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| **Skills assume NanoClaw internals** | Skills break on non-NanoClaw hosts | Audit each skill for NanoClaw-specific references before moving. Abstract or feature-gate. |
+| **Skills assume Kaizen internals** | Skills break on non-Kaizen hosts | Audit each skill for Kaizen-specific references before moving. Abstract or feature-gate. |
 | **Hook path resolution** | Hooks fail on other host project structures | Standardize on `resolve-project-root.sh`. Test on a second project. |
-| **Lost incident context** | NanoClaw-specific policies lose their "why" | Keep "Why" sections in policies. NanoClaw-specific policies stay in `policies-local.md` with incident history. |
+| **Lost incident context** | Kaizen-specific policies lose their "why" | Keep "Why" sections in policies. Kaizen-specific policies stay in `policies-local.md` with incident history. |
 | **Two repos to maintain** | More git ops, CI, coordination | Kaizen CI is lightweight (shell tests + minimal TS). That's the point. |
 | **Plugin installation drift** | Host's kaizen gets out of sync | `/kaizen-update` skill. Setup is idempotent. |
-| **Circular dependency during migration** | NanoClaw needs kaizen while it's being extracted | Phased: copy first, verify, then remove from NanoClaw. Both copies coexist temporarily. |
+| **Circular dependency during migration** | Kaizen needs kaizen while it's being extracted | Phased: copy first, verify, then remove from Kaizen. Both copies coexist temporarily. |
 
 ## 10. Implementation Sequencing
 
@@ -405,7 +405,7 @@ At runtime, skills load both. The local file can override or extend generic poli
 - Write `CLAUDE.md` for the kaizen repo itself
 - Write `README.md` with installation instructions
 
-**No NanoClaw changes yet. Can start immediately.**
+**No Kaizen changes yet. Can start immediately.**
 
 ### Phase 2: Rename and abstract
 
@@ -417,7 +417,7 @@ At runtime, skills load both. The local file can override or extend generic poli
 - Abstract `/kaizen-implement` worktree creation (plain git worktree if no case system)
 - Abstract `kaizen-bg` tool usage (file issue if no case system)
 
-**Can be done in NanoClaw first, then moved. Depends on Phase 1 for target repo.**
+**Can be done in Kaizen first, then moved. Depends on Phase 1 for target repo.**
 
 ### Phase 3: Move hooks and skills
 
@@ -440,14 +440,14 @@ At runtime, skills load both. The local file can override or extend generic poli
 
 **Depends on Phase 3 (skills must be in kaizen repo).**
 
-### Phase 5: NanoClaw migration
+### Phase 5: Kaizen migration
 
-- Install kaizen as a plugin in NanoClaw
-- Create NanoClaw's `kaizen.config.json`
-- Create `policies-local.md` with NanoClaw-specific policies (#12-19)
+- Install kaizen as a plugin in Kaizen
+- Create Kaizen's `kaizen.config.json`
+- Create `policies-local.md` with Kaizen-specific policies (#12-19)
 - Rename `src/cli-kaizen.ts` → `src/cli-cases.ts` (case commands only)
-- Remove kaizen files from NanoClaw repo
-- Update NanoClaw's `CLAUDE.md` to reference kaizen plugin
+- Remove kaizen files from Kaizen repo
+- Update Kaizen's `CLAUDE.md` to reference kaizen plugin
 - Verify all hooks/skills work via the plugin
 
 **Depends on Phase 3. Phase 4 can run in parallel.**
@@ -455,8 +455,8 @@ At runtime, skills load both. The local file can override or extend generic poli
 ### Phase 6: Backlog triage (incremental)
 
 - Review existing `Garsson-io/kaizen` issues
-- Tag each as meta-kaizen, NanoClaw host-kaizen, or generalized pattern
-- Move NanoClaw host-kaizen issues to `Garsson-io/nanoclaw` with `kaizen` label
+- Tag each as meta-kaizen, Kaizen host-kaizen, or generalized pattern
+- Move Kaizen host-kaizen issues to `Garsson-io/kaizen` with `kaizen` label
 
 **Runs incrementally after Phase 5.**
 
@@ -475,7 +475,7 @@ At runtime, skills load both. The local file can override or extend generic poli
 ```
 Phase 1 (scaffold) ─────────────────────────────────────┐
                                                          │
-Phase 2 (rename+abstract) ──→ Phase 3 (move) ──→ Phase 5 (migrate NanoClaw)
+Phase 2 (rename+abstract) ──→ Phase 3 (move) ──→ Phase 5 (migrate Kaizen)
                                              │                    │
                                              └──→ Phase 4 (routing)
                                                                   │

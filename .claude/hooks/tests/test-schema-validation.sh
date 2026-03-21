@@ -36,7 +36,7 @@ DENY_TESTS=(
 
 # Set up state for enforce-pr-review (must include BRANCH field for state-utils isolation)
 # BRANCH must match what the mock git returns for rev-parse --abbrev-ref HEAD ("main")
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/42\nROUND=1\nSTATUS=needs_review\nBRANCH=main\n' > "$STATE_DIR/Garsson-io_nanoclaw_42"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/42\nROUND=1\nSTATUS=needs_review\nBRANCH=main\n' > "$STATE_DIR/Garsson-io_kaizen_42"
 DENY_TESTS+=("$HOOKS_DIR/kaizen-enforce-pr-review.sh:npm test:blocked by review gate")
 
 # Mock gh to return OPEN for PR state checks (prevents auto-clear of state files)
@@ -63,7 +63,7 @@ if echo "$@" | grep -q "diff --name-only"; then
   exit 0
 fi
 if echo "$@" | grep -q "remote get-url"; then
-  echo "https://github.com/Garsson-io/nanoclaw.git"
+  echo "https://github.com/Garsson-io/kaizen.git"
   exit 0
 fi
 /usr/bin/git "$@" 2>/dev/null
@@ -153,7 +153,7 @@ if echo "$@" | grep -q "diff --name-only"; then
   exit 0
 fi
 if echo "$@" | grep -q "remote get-url"; then
-  echo "https://github.com/Garsson-io/nanoclaw.git"
+  echo "https://github.com/Garsson-io/kaizen.git"
   exit 0
 fi
 /usr/bin/git "$@" 2>/dev/null
@@ -200,7 +200,7 @@ echo "=== PostToolUse output format ==="
 
 POST_INPUT=$(build_post_tool_use_input "Bash" \
   '{"command":"gh pr create --title test --body test"}' \
-  "https://github.com/Garsson-io/nanoclaw/pull/70" "" "0")
+  "https://github.com/Garsson-io/kaizen/pull/70" "" "0")
 
 POST_HOOKS=(
   "$HOOKS_DIR/kaizen-pr-review-loop.sh"

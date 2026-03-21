@@ -16,7 +16,7 @@ STATE_DIR="${STATE_DIR:-/tmp/.pr-review-state}"
 MAX_STATE_AGE="${MAX_STATE_AGE:-7200}"  # 2 hours
 
 # Convert a PR URL to a safe state file key.
-# e.g. https://github.com/Garsson-io/nanoclaw/pull/33 → Garsson-io_nanoclaw_33
+# e.g. https://github.com/Garsson-io/kaizen/pull/33 → Garsson-io_kaizen_33
 #
 # DRY EXTRACTION (Kaizen #172): This sed pattern was duplicated in
 # pr-review-loop.sh, kaizen-reflect.sh, post-merge-clear.sh, and test-helpers.sh.

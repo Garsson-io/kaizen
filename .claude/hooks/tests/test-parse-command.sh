@@ -24,7 +24,7 @@ assert_eq "merge with PR number" \
 
 assert_eq "merge with PR number and flags" \
   "42" \
-  "$(extract_pr_number "gh pr merge 42 --repo Garsson-io/nanoclaw" "merge")"
+  "$(extract_pr_number "gh pr merge 42 --repo Garsson-io/kaizen" "merge")"
 
 assert_eq "merge without PR number" \
   "" \
@@ -32,7 +32,7 @@ assert_eq "merge without PR number" \
 
 assert_eq "merge without PR number but with flags" \
   "" \
-  "$(extract_pr_number "gh pr merge --squash --repo Garsson-io/nanoclaw" "merge")"
+  "$(extract_pr_number "gh pr merge --squash --repo Garsson-io/kaizen" "merge")"
 
 assert_eq "merge should not match repo numbers" \
   "" \
@@ -80,7 +80,7 @@ assert_ok "direct gh pr merge" \
   is_gh_pr_command "gh pr merge 42" "merge"
 
 assert_ok "merge matches create|merge" \
-  is_gh_pr_command "gh pr merge 42 --repo Garsson-io/nanoclaw" "create|merge"
+  is_gh_pr_command "gh pr merge 42 --repo Garsson-io/kaizen" "create|merge"
 
 # Chained/piped commands — should match
 assert_ok "gh pr create after &&" \
@@ -126,8 +126,8 @@ assert_eq "extracts --repo value" \
   "$(extract_repo_flag "gh pr merge 5 --repo Garsson-io/garsson-prints --merge")"
 
 assert_eq "extracts --repo without PR number" \
-  "Garsson-io/nanoclaw" \
-  "$(extract_repo_flag "gh pr merge --repo Garsson-io/nanoclaw")"
+  "Garsson-io/kaizen" \
+  "$(extract_repo_flag "gh pr merge --repo Garsson-io/kaizen")"
 
 assert_eq "no --repo returns empty" \
   "" \
@@ -140,9 +140,9 @@ assert_eq "extracts --repo from create" \
 echo ""
 echo "=== detect_gh_repo ==="
 
-# Test with the real repo (we're in a nanoclaw worktree)
+# Test with the real repo (we're in a kaizen worktree)
 REPO=$(detect_gh_repo)
-assert_eq "detects repo from origin" "Garsson-io/nanoclaw" "$REPO"
+assert_eq "detects repo from origin" "Garsson-io/kaizen" "$REPO"
 
 echo ""
 echo "=== get_pr_changed_files (with mocked gh/git) ==="
@@ -165,7 +165,7 @@ chmod +x "$MOCK_DIR/gh"
 cat > "$MOCK_DIR/git" << 'MOCK'
 #!/bin/bash
 if echo "$@" | grep -q "remote get-url"; then
-  echo "https://github.com/Garsson-io/nanoclaw.git"
+  echo "https://github.com/Garsson-io/kaizen.git"
   exit 0
 fi
 if echo "$@" | grep -q "diff --name-only"; then
@@ -216,23 +216,23 @@ echo "=== reconstruct_pr_url (kaizen #111) ==="
 
 # Fallback 1: URL in stdout
 assert_eq "URL from stdout" \
-  "https://github.com/Garsson-io/nanoclaw/pull/42" \
-  "$(reconstruct_pr_url "gh pr merge 42" "https://github.com/Garsson-io/nanoclaw/pull/42" "" "merge")"
+  "https://github.com/Garsson-io/kaizen/pull/42" \
+  "$(reconstruct_pr_url "gh pr merge 42" "https://github.com/Garsson-io/kaizen/pull/42" "" "merge")"
 
 # Fallback 2: URL in stderr
 assert_eq "URL from stderr" \
-  "https://github.com/Garsson-io/nanoclaw/pull/42" \
-  "$(reconstruct_pr_url "gh pr merge 42" "" "https://github.com/Garsson-io/nanoclaw/pull/42" "merge")"
+  "https://github.com/Garsson-io/kaizen/pull/42" \
+  "$(reconstruct_pr_url "gh pr merge 42" "" "https://github.com/Garsson-io/kaizen/pull/42" "merge")"
 
 # Fallback 3: URL in command args
 assert_eq "URL from command args" \
-  "https://github.com/Garsson-io/nanoclaw/pull/42" \
-  "$(reconstruct_pr_url "gh pr merge https://github.com/Garsson-io/nanoclaw/pull/42 --squash" "" "" "merge")"
+  "https://github.com/Garsson-io/kaizen/pull/42" \
+  "$(reconstruct_pr_url "gh pr merge https://github.com/Garsson-io/kaizen/pull/42 --squash" "" "" "merge")"
 
 # Fallback 4: --repo + bare PR number
 assert_eq "reconstruct from --repo + bare number" \
-  "https://github.com/Garsson-io/nanoclaw/pull/150" \
-  "$(reconstruct_pr_url "gh pr merge 150 --repo Garsson-io/nanoclaw --squash --delete-branch --auto" "" "" "merge")"
+  "https://github.com/Garsson-io/kaizen/pull/150" \
+  "$(reconstruct_pr_url "gh pr merge 150 --repo Garsson-io/kaizen --squash --delete-branch --auto" "" "" "merge")"
 
 # Fallback 4 with different repo
 assert_eq "reconstruct from --repo + bare number (garsson-prints)" \
@@ -241,7 +241,7 @@ assert_eq "reconstruct from --repo + bare number (garsson-prints)" \
 
 # Fallback 5: bare PR number + git remote detection
 assert_eq "reconstruct from bare number + git remote" \
-  "https://github.com/Garsson-io/nanoclaw/pull/99" \
+  "https://github.com/Garsson-io/kaizen/pull/99" \
   "$(reconstruct_pr_url "gh pr merge 99 --squash" "" "" "merge")"
 
 # Empty when no PR number and no URL anywhere
@@ -251,18 +251,18 @@ assert_eq "empty when no URL or number" \
 
 # Priority: stdout URL wins over --repo reconstruction
 assert_eq "stdout URL takes priority over reconstruction" \
-  "https://github.com/Garsson-io/nanoclaw/pull/42" \
-  "$(reconstruct_pr_url "gh pr merge 99 --repo Garsson-io/nanoclaw" "https://github.com/Garsson-io/nanoclaw/pull/42" "" "merge")"
+  "https://github.com/Garsson-io/kaizen/pull/42" \
+  "$(reconstruct_pr_url "gh pr merge 99 --repo Garsson-io/kaizen" "https://github.com/Garsson-io/kaizen/pull/42" "" "merge")"
 
 # Works with create subcommand
 assert_eq "reconstruct works for create" \
-  "https://github.com/Garsson-io/nanoclaw/pull/55" \
-  "$(reconstruct_pr_url "gh pr create" "https://github.com/Garsson-io/nanoclaw/pull/55" "" "create")"
+  "https://github.com/Garsson-io/kaizen/pull/55" \
+  "$(reconstruct_pr_url "gh pr create" "https://github.com/Garsson-io/kaizen/pull/55" "" "create")"
 
 # --auto flag doesn't interfere
 assert_eq "works with --auto flag" \
-  "https://github.com/Garsson-io/nanoclaw/pull/150" \
-  "$(reconstruct_pr_url "gh pr merge 150 --repo Garsson-io/nanoclaw --squash --delete-branch --auto" "" "" "merge")"
+  "https://github.com/Garsson-io/kaizen/pull/150" \
+  "$(reconstruct_pr_url "gh pr merge 150 --repo Garsson-io/kaizen --squash --delete-branch --auto" "" "" "merge")"
 
 print_results
 

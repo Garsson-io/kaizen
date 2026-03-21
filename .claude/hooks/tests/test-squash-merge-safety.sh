@@ -110,7 +110,7 @@ echo "=== Squash merge with missing file triggers WARNING ==="
 
 setup_squash_mocks "src/a.ts src/b.ts src/new-file.ts" "src/a.ts src/b.ts"
 
-OUTPUT=$(run_pretool_bash "gh pr merge 42 --squash --delete-branch --repo Garsson-io/nanoclaw")
+OUTPUT=$(run_pretool_bash "gh pr merge 42 --squash --delete-branch --repo Garsson-io/kaizen")
 if is_denied "$OUTPUT"; then
   echo "  PASS: missing file triggers deny"
   ((PASS++))

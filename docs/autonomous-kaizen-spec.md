@@ -99,7 +99,7 @@ Applied to every kaizen reflection:
 ### What's Out of Scope
 
 - **Autonomous code changes.** The system proposes improvements; humans approve and agents implement. No self-modifying code without human review.
-- **Cross-vertical learning.** This spec covers the NanoClaw harness. Vertical-specific kaizen is a separate concern.
+- **Cross-vertical learning.** This spec covers the Kaizen harness. Vertical-specific kaizen is a separate concern.
 - **Real-time monitoring / alerting.** This is about the development process, not production observability.
 
 ## 3. Lifecycle Touchpoints

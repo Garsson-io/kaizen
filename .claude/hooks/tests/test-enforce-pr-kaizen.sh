@@ -42,7 +42,7 @@ echo ""
 echo "=== Kaizen gate active: non-kaizen commands blocked ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Non-kaizen commands are denied when gate is active
 OUTPUT=$(run_pretool_hook "npm run build")
@@ -68,7 +68,7 @@ echo ""
 echo "=== Kaizen gate active: gh issue create allowed ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: gh issue create is allowed (it's the kaizen action)
 OUTPUT=$(run_pretool_hook "gh issue create --repo Garsson-io/kaizen --title 'test'")
@@ -78,7 +78,7 @@ echo ""
 echo "=== Kaizen gate active: KAIZEN_NO_ACTION allowed ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: KAIZEN_NO_ACTION declaration is allowed
 OUTPUT=$(run_pretool_hook 'echo "KAIZEN_NO_ACTION: straightforward fix" >/dev/null')
@@ -88,7 +88,7 @@ echo ""
 echo "=== Kaizen gate active: read-only commands allowed ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Read-only git commands are allowed during kaizen gate
 OUTPUT=$(run_pretool_hook "git status")
@@ -101,10 +101,10 @@ OUTPUT=$(run_pretool_hook "git log --oneline -5")
 assert_eq "git log allowed" "" "$OUTPUT"
 
 # INVARIANT: PR review commands are allowed
-OUTPUT=$(run_pretool_hook "gh pr view https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(run_pretool_hook "gh pr view https://github.com/Garsson-io/kaizen/pull/42")
 assert_eq "gh pr view allowed" "" "$OUTPUT"
 
-OUTPUT=$(run_pretool_hook "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(run_pretool_hook "gh pr diff https://github.com/Garsson-io/kaizen/pull/42")
 assert_eq "gh pr diff allowed" "" "$OUTPUT"
 
 # INVARIANT: Read-only filesystem commands are allowed
@@ -118,33 +118,33 @@ echo ""
 echo "=== Kaizen gate active: gh api allowed (CI monitoring) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: gh api calls are allowed during kaizen gate (needed for CI monitoring)
-OUTPUT=$(run_pretool_hook "gh api repos/Garsson-io/nanoclaw/commits/abc123/check-runs")
+OUTPUT=$(run_pretool_hook "gh api repos/Garsson-io/kaizen/commits/abc123/check-runs")
 assert_eq "gh api check-runs allowed" "" "$OUTPUT"
 
-OUTPUT=$(run_pretool_hook "gh api repos/Garsson-io/nanoclaw/check-runs/123/annotations")
+OUTPUT=$(run_pretool_hook "gh api repos/Garsson-io/kaizen/check-runs/123/annotations")
 assert_eq "gh api annotations allowed" "" "$OUTPUT"
 
 # Piped gh api should also work
-OUTPUT=$(run_pretool_hook "gh api repos/Garsson-io/nanoclaw/pulls/42 --jq '.state'")
+OUTPUT=$(run_pretool_hook "gh api repos/Garsson-io/kaizen/pulls/42 --jq '.state'")
 assert_eq "gh api with jq allowed" "" "$OUTPUT"
 
 echo ""
 echo "=== Kaizen gate active: gh run view/list/watch allowed (CI monitoring) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: gh run commands are allowed during kaizen gate (CI monitoring)
-OUTPUT=$(run_pretool_hook "gh run view 12345 --repo Garsson-io/nanoclaw")
+OUTPUT=$(run_pretool_hook "gh run view 12345 --repo Garsson-io/kaizen")
 assert_eq "gh run view allowed" "" "$OUTPUT"
 
-OUTPUT=$(run_pretool_hook "gh run list --repo Garsson-io/nanoclaw --limit 5")
+OUTPUT=$(run_pretool_hook "gh run list --repo Garsson-io/kaizen --limit 5")
 assert_eq "gh run list allowed" "" "$OUTPUT"
 
-OUTPUT=$(run_pretool_hook "gh run watch 12345 --repo Garsson-io/nanoclaw")
+OUTPUT=$(run_pretool_hook "gh run watch 12345 --repo Garsson-io/kaizen")
 assert_eq "gh run watch allowed" "" "$OUTPUT"
 
 # gh run delete should still be blocked (destructive)
@@ -162,7 +162,7 @@ echo "=== Cross-worktree isolation: only blocks own branch ==="
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42" "wt/other-branch"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42" "wt/other-branch"
 
 # INVARIANT: Kaizen gate from another branch does not block this branch
 OUTPUT=$(run_pretool_hook "npm run build")
@@ -172,9 +172,9 @@ echo ""
 echo "=== Stale state files are ignored ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 # Backdate the state file to make it stale (>2 hours)
-backdate_file "$STATE_DIR/pr-kaizen-Garsson-io_nanoclaw_42" 3
+backdate_file "$STATE_DIR/pr-kaizen-Garsson-io_kaizen_42" 3
 
 # INVARIANT: Stale state files do not block
 OUTPUT=$(run_pretool_hook "npm run build")
@@ -184,7 +184,7 @@ echo ""
 echo "=== Blocked message mentions PR URL ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 OUTPUT=$(run_pretool_hook "npm run build")
 assert_contains "blocked message mentions PR" "pull/42" "$OUTPUT"
@@ -194,17 +194,17 @@ echo ""
 echo "=== Kaizen gate active: gh pr checks allowed ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: gh pr checks is allowed (read-only CI monitoring)
-OUTPUT=$(run_pretool_hook "gh pr checks 42 --repo Garsson-io/nanoclaw")
+OUTPUT=$(run_pretool_hook "gh pr checks 42 --repo Garsson-io/kaizen")
 assert_eq "gh pr checks allowed" "" "$OUTPUT"
 
 echo ""
 echo "=== Kaizen gate active: KAIZEN_IMPEDIMENTS allowed ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: KAIZEN_IMPEDIMENTS declaration is allowed through
 OUTPUT=$(run_pretool_hook "echo 'KAIZEN_IMPEDIMENTS: []'")
@@ -219,7 +219,7 @@ echo ""
 echo "=== Kaizen gate active: gh issue comment allowed ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: gh issue comment is allowed (for adding incidents to existing issues)
 OUTPUT=$(run_pretool_hook "gh issue comment 125 --repo Garsson-io/kaizen --body 'Incident #2'")
@@ -229,7 +229,7 @@ echo ""
 echo "=== Kaizen gate active: gh issue list/search allowed (kaizen #150) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: gh issue list and search are allowed during kaizen gate
 # (needed to find existing issues before filing new ones or adding incidents)
@@ -253,7 +253,7 @@ echo ""
 echo "=== Kaizen gate active: KAIZEN_NO_ACTION [category] format allowed (kaizen #159) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: KAIZEN_NO_ACTION with bracket category format passes PreToolUse gate
 # Bug: old grep checked for 'KAIZEN_NO_ACTION:' which doesn't match 'KAIZEN_NO_ACTION [docs-only]:'
@@ -267,7 +267,7 @@ echo ""
 echo "=== Segment-splitting prevents false positives (kaizen #172) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Kaizen keywords buried inside non-kaizen commands (not at segment
 # start) should be blocked. Segment splitting prevents matching keywords that
@@ -312,12 +312,12 @@ echo ""
 echo "=== Kaizen gate active: gh pr merge --auto allowed (kaizen #323) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT (kaizen #323): gh pr merge --auto is a continuation of the PR
 # workflow and should NOT be blocked by the kaizen gate. The agent created
 # the PR — queuing auto-merge is the natural next step.
-OUTPUT=$(run_pretool_hook "gh pr merge 42 --repo Garsson-io/nanoclaw --squash --delete-branch --auto")
+OUTPUT=$(run_pretool_hook "gh pr merge 42 --repo Garsson-io/kaizen --squash --delete-branch --auto")
 assert_eq "gh pr merge --auto allowed during kaizen gate" "" "$OUTPUT"
 
 # Also allow direct merge (without --auto)
@@ -325,7 +325,7 @@ OUTPUT=$(run_pretool_hook "gh pr merge 42 --squash")
 assert_eq "gh pr merge --squash allowed during kaizen gate" "" "$OUTPUT"
 
 # Also allow merge with URL form
-OUTPUT=$(run_pretool_hook "gh pr merge https://github.com/Garsson-io/nanoclaw/pull/42 --squash --delete-branch --auto")
+OUTPUT=$(run_pretool_hook "gh pr merge https://github.com/Garsson-io/kaizen/pull/42 --squash --delete-branch --auto")
 assert_eq "gh pr merge with URL allowed during kaizen gate" "" "$OUTPUT"
 
 teardown

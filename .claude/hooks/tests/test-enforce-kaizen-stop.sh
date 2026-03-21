@@ -45,7 +45,7 @@ echo ""
 echo "=== Pending kaizen gate on current branch: stop blocked ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 OUTPUT=$(run_stop_hook)
 if is_blocked "$OUTPUT"; then
@@ -63,7 +63,7 @@ echo ""
 echo "=== Pending kaizen gate on different branch: stop NOT blocked ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42" "wt/other-branch"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42" "wt/other-branch"
 
 # INVARIANT: Stop hooks use branch-scoped lookup to prevent cross-worktree
 # contamination. A gate from another worktree should not block this one.
@@ -81,8 +81,8 @@ echo ""
 echo "=== Multiple pending kaizen gates: stop blocked with all PRs shown ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/10"
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/20"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/10"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/20"
 
 OUTPUT=$(run_stop_hook)
 if is_blocked "$OUTPUT"; then
@@ -99,9 +99,9 @@ echo ""
 echo "=== Stale kaizen gate: stop allowed ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 # Backdate the state file beyond MAX_STATE_AGE (2 hours)
-backdate_file "$STATE_DIR/pr-kaizen-Garsson-io_nanoclaw_42" 3
+backdate_file "$STATE_DIR/pr-kaizen-Garsson-io_kaizen_42" 3
 
 OUTPUT=$(run_stop_hook)
 if [ -z "$OUTPUT" ]; then
@@ -117,7 +117,7 @@ echo "=== Legacy state file without BRANCH: stop NOT blocked ==="
 
 setup
 # Legacy state files without BRANCH field should be ignored
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/99\nSTATUS=needs_pr_kaizen\n' \
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/99\nSTATUS=needs_pr_kaizen\n' \
   > "$STATE_DIR/pr-kaizen-legacy"
 
 OUTPUT=$(run_stop_hook)

@@ -34,11 +34,14 @@ if [ -z "$WORKTREES" ]; then
   WORKTREE_COUNT=0
 fi
 
+# Read config for repo name
+source "$(dirname "$0")/lib/read-config.sh"
+
 # Collect open PRs (fast, cached by gh)
 PR_COUNT=0
 PR_LIST=""
-if command -v gh &>/dev/null; then
-  PR_LIST=$(gh pr list --repo Garsson-io/nanoclaw --state open --json number,title,headBranch --template '{{range .}}#{{.number}} {{.title}} ({{.headBranch}}){{"\n"}}{{end}}' 2>/dev/null)
+if command -v gh &>/dev/null && [ -n "$HOST_REPO" ]; then
+  PR_LIST=$(gh pr list --repo "$HOST_REPO" --state open --json number,title,headBranch --template '{{range .}}#{{.number}} {{.title}} ({{.headBranch}}){{"\n"}}{{end}}' 2>/dev/null)
   if [ -n "$PR_LIST" ]; then
     PR_COUNT=$(echo "$PR_LIST" | grep -c . 2>/dev/null || echo 0)
   fi

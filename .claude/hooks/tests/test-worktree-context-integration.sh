@@ -51,9 +51,9 @@ assert_eq "step 1: issue_number present" "280" "$ISSUE_NUM"
 
 # Step 2: PR creation hook adds PR info
 PR_CREATE_INPUT=$(jq -n '{
-  "tool_input": {"command": "gh pr create --repo Garsson-io/nanoclaw --title \"fix: waiver quality enforcement\""},
+  "tool_input": {"command": "gh pr create --repo Garsson-io/kaizen --title \"fix: waiver quality enforcement\""},
   "tool_response": {
-    "stdout": "https://github.com/Garsson-io/nanoclaw/pull/238",
+    "stdout": "https://github.com/Garsson-io/kaizen/pull/238",
     "stderr": "",
     "exit_code": "0"
   }
@@ -74,7 +74,7 @@ fi
 PR_NUM=$(jq -r '.pr_number' "$CONTEXT_FILE")
 PR_URL=$(jq -r '.pr_url' "$CONTEXT_FILE")
 assert_eq "step 2: pr_number added" "238" "$PR_NUM"
-assert_eq "step 2: pr_url added" "https://github.com/Garsson-io/nanoclaw/pull/238" "$PR_URL"
+assert_eq "step 2: pr_url added" "https://github.com/Garsson-io/kaizen/pull/238" "$PR_URL"
 
 # All original fields must survive the merge
 CASE_ID2=$(jq -r '.case_id' "$CONTEXT_FILE")
@@ -123,7 +123,7 @@ assert ctx.get('issue_number') == 280, f'issue_number={ctx.get(\"issue_number\")
 assert ctx.get('pr_number') == 238, f'pr_number={ctx.get(\"pr_number\")}'
 assert ctx.get('case_name') == '260321-0149-k280-fix-waiver-quality'
 assert 'kaizen/issues/280' in ctx.get('issue_url', '')
-assert 'nanoclaw/pull/238' in ctx.get('pr_url', '')
+assert 'kaizen/pull/238' in ctx.get('pr_url', '')
 print('all assertions passed')
 " 2>&1)
 
@@ -147,7 +147,7 @@ echo "not json" > "$CONTEXT_FILE"
 
 PR_OVER_BAD=$(jq -n '{
   "tool_input": {"command": "gh pr create --title \"test\""},
-  "tool_response": {"stdout": "https://github.com/Garsson-io/nanoclaw/pull/1", "stderr": "", "exit_code": "0"}
+  "tool_response": {"stdout": "https://github.com/Garsson-io/kaizen/pull/1", "stderr": "", "exit_code": "0"}
 }')
 echo "$PR_OVER_BAD" | bash "$HOOK" 2>/dev/null
 
@@ -170,7 +170,7 @@ touch "$CONTEXT_FILE"
 
 PR_EMPTY=$(jq -n '{
   "tool_input": {"command": "gh pr create --title \"test\""},
-  "tool_response": {"stdout": "https://github.com/Garsson-io/nanoclaw/pull/2", "stderr": "", "exit_code": "0"}
+  "tool_response": {"stdout": "https://github.com/Garsson-io/kaizen/pull/2", "stderr": "", "exit_code": "0"}
 }')
 echo "$PR_EMPTY" | bash "$HOOK" 2>/dev/null
 

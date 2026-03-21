@@ -132,7 +132,7 @@ MOCK
   cat > "$MOCK_DIR/git" << MOCK
 #!/bin/bash
 if echo "\$@" | grep -q "remote get-url"; then
-  echo "https://github.com/Garsson-io/nanoclaw.git"
+  echo "https://github.com/Garsson-io/kaizen.git"
   exit 0
 fi
 if echo "\$@" | grep -q "diff --name-only"; then

@@ -1,4 +1,4 @@
-# Horizons — Maturity Dimensions for NanoClaw
+# Horizons — Maturity Dimensions for Kaizen
 
 *"Map the territory before you move through it."*
 

@@ -4,7 +4,7 @@
 
 ## Why dormant
 
-NanoClaw currently serves 1-2 verticals with a single operator. Scalability concerns (multi-tenant isolation, concurrent agent coordination, resource contention, distributed state) are real but premature to formalize. The relevant sub-concerns are currently covered by:
+Kaizen currently serves 1-2 verticals with a single operator. Scalability concerns (multi-tenant isolation, concurrent agent coordination, resource contention, distributed state) are real but premature to formalize. The relevant sub-concerns are currently covered by:
 
 - **State Integrity** — multi-agent consistency
 - **Resilience** — degradation under load

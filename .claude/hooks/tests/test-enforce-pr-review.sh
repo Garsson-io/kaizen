@@ -43,7 +43,7 @@ echo ""
 echo "=== Active review: non-review commands blocked ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 # INVARIANT: When STATUS=needs_review, non-review Bash commands are denied
 # SUT: kaizen-enforce-pr-review.sh deny logic
@@ -89,7 +89,7 @@ echo "=== Active review: review commands allowed ==="
 
 # INVARIANT: Review-related commands are always allowed, even during gate
 # SUT: kaizen-enforce-pr-review.sh allow list
-OUTPUT=$(run_gate "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(run_gate "gh pr diff https://github.com/Garsson-io/kaizen/pull/42")
 if [ -z "$OUTPUT" ]; then
   echo "  PASS: gh pr diff allowed during review"
   ((PASS++))
@@ -185,7 +185,7 @@ echo "=== Active review: gh api allowed (CI monitoring) ==="
 
 # INVARIANT: gh api calls are allowed during review gate (needed for CI monitoring)
 # SUT: kaizen-enforce-pr-review.sh is_review_command allowlist
-OUTPUT=$(run_gate "gh api repos/Garsson-io/nanoclaw/commits/abc123/check-runs")
+OUTPUT=$(run_gate "gh api repos/Garsson-io/kaizen/commits/abc123/check-runs")
 if [ -z "$OUTPUT" ]; then
   echo "  PASS: gh api check-runs allowed during review"
   ((PASS++))
@@ -194,7 +194,7 @@ else
   ((FAIL++))
 fi
 
-OUTPUT=$(run_gate "gh api repos/Garsson-io/nanoclaw/check-runs/123/annotations")
+OUTPUT=$(run_gate "gh api repos/Garsson-io/kaizen/check-runs/123/annotations")
 if [ -z "$OUTPUT" ]; then
   echo "  PASS: gh api annotations allowed during review"
   ((PASS++))
@@ -203,7 +203,7 @@ else
   ((FAIL++))
 fi
 
-OUTPUT=$(run_gate "gh api repos/Garsson-io/nanoclaw/pulls/42 --jq '.state'")
+OUTPUT=$(run_gate "gh api repos/Garsson-io/kaizen/pulls/42 --jq '.state'")
 if [ -z "$OUTPUT" ]; then
   echo "  PASS: gh api with jq allowed during review"
   ((PASS++))
@@ -217,7 +217,7 @@ echo "=== Active review: gh run view/list/watch allowed (CI monitoring) ==="
 
 # INVARIANT: gh run monitoring commands are allowed during review gate
 # SUT: kaizen-enforce-pr-review.sh is_review_command allowlist
-OUTPUT=$(run_gate "gh run view 12345 --repo Garsson-io/nanoclaw")
+OUTPUT=$(run_gate "gh run view 12345 --repo Garsson-io/kaizen")
 if [ -z "$OUTPUT" ]; then
   echo "  PASS: gh run view allowed during review"
   ((PASS++))
@@ -226,7 +226,7 @@ else
   ((FAIL++))
 fi
 
-OUTPUT=$(run_gate "gh run list --repo Garsson-io/nanoclaw --limit 5")
+OUTPUT=$(run_gate "gh run list --repo Garsson-io/kaizen --limit 5")
 if [ -z "$OUTPUT" ]; then
   echo "  PASS: gh run list allowed during review"
   ((PASS++))
@@ -235,7 +235,7 @@ else
   ((FAIL++))
 fi
 
-OUTPUT=$(run_gate "gh run watch 12345 --repo Garsson-io/nanoclaw")
+OUTPUT=$(run_gate "gh run watch 12345 --repo Garsson-io/kaizen")
 if [ -z "$OUTPUT" ]; then
   echo "  PASS: gh run watch allowed during review"
   ((PASS++))
@@ -329,7 +329,7 @@ echo ""
 echo "=== Passed review: gate opens ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "passed"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "passed"
 
 # INVARIANT: When STATUS=passed, all commands are allowed
 # SUT: kaizen-enforce-pr-review.sh with passed state
@@ -355,7 +355,7 @@ echo ""
 echo "=== Escalated review: gate opens ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "4" "escalated"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "4" "escalated"
 
 # INVARIANT: When STATUS=escalated, all commands are allowed
 # SUT: kaizen-enforce-pr-review.sh with escalated state
@@ -372,14 +372,14 @@ echo ""
 echo "=== Deny message includes PR URL and round ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/99" "3" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/99" "3" "needs_review"
 
 # INVARIANT: Deny message includes actionable information (PR URL, round number)
 # SUT: kaizen-enforce-pr-review.sh deny reason text
 OUTPUT=$(run_gate "npm test")
 REASON=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
 
-assert_contains "deny reason includes PR URL" "nanoclaw/pull/99" "$REASON"
+assert_contains "deny reason includes PR URL" "kaizen/pull/99" "$REASON"
 assert_contains "deny reason includes round number" "round 3" "$REASON"
 assert_contains "deny reason includes gh pr diff instruction" "gh pr diff" "$REASON"
 
@@ -403,7 +403,7 @@ echo "=== Multiple state files: only needs_review on current branch triggers gat
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/40" "2" "passed" "$CURRENT_BRANCH"
+create_state "https://github.com/Garsson-io/kaizen/pull/40" "2" "passed" "$CURRENT_BRANCH"
 create_state "https://github.com/Garsson-io/garsson-prints/pull/5" "1" "needs_review" "$CURRENT_BRANCH"
 
 # INVARIANT: Gate activates if a state file on the current branch has needs_review
@@ -424,7 +424,7 @@ echo ""
 echo "=== Cross-worktree isolation: other branch's review does not block ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/54" "1" "needs_review" "wt/other-worktree-branch"
+create_state "https://github.com/Garsson-io/kaizen/pull/54" "1" "needs_review" "wt/other-worktree-branch"
 
 # INVARIANT: A needs_review state from a different branch does NOT block the current branch
 # SUT: kaizen-enforce-pr-review.sh branch filtering
@@ -441,8 +441,8 @@ fi
 # safely attributed to any worktree, so blocking on them causes cross-worktree contamination.
 # SUT: kaizen-enforce-pr-review.sh via shared state-utils.sh is_state_for_current_worktree
 setup
-local_file="$STATE_DIR/Garsson-io_nanoclaw_99"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/99\nROUND=1\nSTATUS=needs_review\n' > "$local_file"
+local_file="$STATE_DIR/Garsson-io_kaizen_99"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/99\nROUND=1\nSTATUS=needs_review\n' > "$local_file"
 
 OUTPUT=$(run_gate "npm test")
 if [ -z "$OUTPUT" ]; then
@@ -457,12 +457,12 @@ echo ""
 echo "=== Stale state files are ignored ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/50" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/50" "1" "needs_review"
 
 # INVARIANT: State files older than MAX_STATE_AGE are treated as stale and ignored
 # SUT: kaizen-enforce-pr-review.sh staleness check
 # Backdate the state file to 3 hours ago (10800 seconds)
-STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_50"
+STATE_FILE="$STATE_DIR/Garsson-io_kaizen_50"
 backdate_file "$STATE_FILE" 3
 
 OUTPUT=$(MAX_STATE_AGE=7200 run_gate "npm test")
@@ -477,7 +477,7 @@ fi
 # INVARIANT: Fresh state files (within MAX_STATE_AGE) still block
 # SUT: kaizen-enforce-pr-review.sh with fresh state
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/51" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/51" "1" "needs_review"
 # File was just created — should be fresh
 OUTPUT=$(MAX_STATE_AGE=7200 run_gate "npm test")
 if is_denied "$OUTPUT"; then
@@ -492,7 +492,7 @@ echo ""
 echo "=== Piped review commands allowed ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 # INVARIANT: gh pr diff piped to other commands is still allowed
 # SUT: kaizen-enforce-pr-review.sh command parsing with pipes

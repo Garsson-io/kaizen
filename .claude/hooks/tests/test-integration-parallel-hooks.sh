@@ -67,7 +67,7 @@ echo "=== Parallel PreToolUse: PR review gate + dirty files ==="
 
 # Setup: active review state (must include BRANCH for worktree isolation)
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/42\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/Garsson-io_nanoclaw_42"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/42\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/Garsson-io_kaizen_42"
 
 # Setup: dirty files
 setup_git_status_mock " M src/dirty.ts"
@@ -148,7 +148,7 @@ echo "=== Parallel PostToolUse: both hooks fire on gh pr create ==="
 # After a successful gh pr create, both pr-review-loop and kaizen-reflect should fire.
 POST_INPUT=$(build_post_tool_use_input "Bash" \
   '{"command":"gh pr create --title test --body test"}' \
-  "https://github.com/Garsson-io/nanoclaw/pull/99" "" "0")
+  "https://github.com/Garsson-io/kaizen/pull/99" "" "0")
 
 POST_HOOKS=(
   "$HOOKS_DIR/kaizen-pr-review-loop.sh"

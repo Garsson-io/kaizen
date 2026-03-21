@@ -98,7 +98,7 @@ echo "--- 1a: KAIZEN_NO_ACTION bracketed format consistency (#159) ---"
 # This was the exact bug in #159: gate allowed KAIZEN_NO_ACTION: but clear expected [category]:
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # The bracketed format that kaizen-pr-reflect-clear.sh validates
 BRACKETED_CMD="echo 'KAIZEN_NO_ACTION [docs-only]: updated README'"
@@ -114,7 +114,7 @@ echo "--- 1b: All KAIZEN_NO_ACTION categories pass gate AND clear it ---"
 
 for category in docs-only formatting typo config-only test-only trivial-refactor; do
   setup
-  create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+  create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
   CMD="echo 'KAIZEN_NO_ACTION [$category]: test reason'"
   STDOUT_TEXT="KAIZEN_NO_ACTION [$category]: test reason"
@@ -132,7 +132,7 @@ echo ""
 echo "--- 1c: KAIZEN_IMPEDIMENTS format consistency ---"
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # Empty array with reason — must pass gate AND clear it
 IMPEDIMENTS_CMD="echo 'KAIZEN_IMPEDIMENTS: [] straightforward fix'"
@@ -146,7 +146,7 @@ echo ""
 echo "--- 1d: Full impediments JSON — gate pass + clear ---"
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # Structured impediments — the full format
 FULL_CMD='echo '\''KAIZEN_IMPEDIMENTS:'\'' && cat <<'\''IMPEDIMENTS'\''
@@ -165,7 +165,7 @@ echo ""
 echo "--- 1e: gh issue list/search allowed during kaizen gate (#150) ---"
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # These are needed for searching duplicates before filing new issues
 OUTPUT=$(run_pretool_bash "$ENFORCE_PR_KAIZEN" "gh issue list --repo Garsson-io/kaizen --limit 20")
@@ -191,7 +191,7 @@ echo ""
 echo "--- 1f: Full lifecycle — gate → reflection → clear → unblocked ---"
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # Step 1: Verify gate is blocking
 OUTPUT=$(run_pretool_bash "$ENFORCE_PR_KAIZEN" "npm run build")
@@ -231,7 +231,7 @@ echo ""
 echo "--- 2a: Agent(kaizen-bg) allowed during PR review (#151) ---"
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 # kaizen-bg background agent should be allowed
 OUTPUT=$(run_pretool_tool "$ENFORCE_PR_REVIEW_TOOLS" "Agent" '{"subagent_type":"kaizen-bg","run_in_background":true,"prompt":"reflect on impediments","description":"kaizen reflection"}')
@@ -255,15 +255,15 @@ echo ""
 echo "--- 2b: Bash review commands allowed by enforce-pr-review ---"
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 # All review commands should pass through enforce-pr-review
 for cmd in \
-  "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/42" \
-  "gh pr view https://github.com/Garsson-io/nanoclaw/pull/42" \
-  "gh pr comment https://github.com/Garsson-io/nanoclaw/pull/42 --body 'LGTM'" \
-  "gh api repos/Garsson-io/nanoclaw/pulls/42" \
-  "gh run view 12345 --repo Garsson-io/nanoclaw" \
+  "gh pr diff https://github.com/Garsson-io/kaizen/pull/42" \
+  "gh pr view https://github.com/Garsson-io/kaizen/pull/42" \
+  "gh pr comment https://github.com/Garsson-io/kaizen/pull/42 --body 'LGTM'" \
+  "gh api repos/Garsson-io/kaizen/pulls/42" \
+  "gh run view 12345 --repo Garsson-io/kaizen" \
   "git diff HEAD~1" \
   "git log --oneline -5" \
   "git status" \
@@ -293,7 +293,7 @@ echo ""
 echo "--- 2c: Review gate + tools gate consistency ---"
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 # When review is active, Edit/Write should be blocked by tools gate
 for tool in Edit Write; do
@@ -309,7 +309,7 @@ done
 
 # When review is passed, both gates should allow
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "passed"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "passed"
 
 OUTPUT=$(run_pretool_bash "$ENFORCE_PR_REVIEW" "npm run build")
 assert_eq "bash allowed after review passed" "" "$OUTPUT"
@@ -329,11 +329,11 @@ echo ""
 echo "--- 3a: Both review and kaizen gates active ---"
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # Review commands should still pass through review gate
-OUTPUT=$(run_pretool_bash "$ENFORCE_PR_REVIEW" "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(run_pretool_bash "$ENFORCE_PR_REVIEW" "gh pr diff https://github.com/Garsson-io/kaizen/pull/42")
 assert_eq "dual gates: gh pr diff passes review gate" "" "$OUTPUT"
 
 # Kaizen commands should still pass through kaizen gate
@@ -363,8 +363,8 @@ echo ""
 echo "--- 3b: Clearing one gate doesn't affect the other ---"
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # Clear kaizen gate
 CLEAR_CMD="echo 'KAIZEN_IMPEDIMENTS: [] no issues'"
@@ -397,7 +397,7 @@ echo "--- 4a: State on different branch — gate still blocks (correct) ---"
 
 setup
 # State created on a different branch
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/50" "wt/other-worktree"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/50" "wt/other-worktree"
 
 # PreToolUse gate uses branch-scoped lookup — should NOT find cross-branch state
 # (enforcement hooks must be branch-scoped to prevent cross-worktree contamination)
@@ -409,7 +409,7 @@ echo "--- 4b: Cross-branch KAIZEN_IMPEDIMENTS declaration clears gate (#239) ---
 
 setup
 # State was created on branch wt/other but we are on current branch
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/50" "wt/other-worktree"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/50" "wt/other-worktree"
 
 # PostToolUse (pr-kaizen-clear) uses cross-branch lookup — should find and clear
 CLEAR_CMD="echo 'KAIZEN_IMPEDIMENTS: [] no process issues'"
@@ -425,7 +425,7 @@ echo ""
 echo "--- 4c: Cross-branch KAIZEN_NO_ACTION declaration clears gate (#239) ---"
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/51" "wt/another-wt"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/51" "wt/another-wt"
 
 NO_ACTION_CMD="echo 'KAIZEN_NO_ACTION [docs-only]: README update'"
 OUTPUT=$(run_posttool_bash "$PR_KAIZEN_CLEAR" "$NO_ACTION_CMD" "KAIZEN_NO_ACTION [docs-only]: README update")
@@ -436,7 +436,7 @@ echo "--- 4d: Full cross-worktree lifecycle ---"
 
 setup
 # Step 1: State created on different branch (simulates PR created in worktree A)
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/52" "wt/worktree-a"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/52" "wt/worktree-a"
 
 # Step 2: Clear from current branch using empty array (simulates reflection in worktree B)
 CLEAR_CMD="echo 'KAIZEN_IMPEDIMENTS: [] cross-worktree lifecycle test'"
@@ -460,7 +460,7 @@ echo "--- 4e: kaizen-done marker prevents duplicate gate (#288) ---"
 
 setup
 # Step 1: Create and clear gate for PR #70
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/70"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/70"
 CLEAR_CMD="echo 'KAIZEN_IMPEDIMENTS: [] test done marker'"
 CLEAR_STDOUT="KAIZEN_IMPEDIMENTS: [] test done marker"
 run_posttool_bash "$PR_KAIZEN_CLEAR" "$CLEAR_CMD" "$CLEAR_STDOUT" > /dev/null
@@ -474,7 +474,7 @@ assert_eq "kaizen-done marker created for #70" "1" "$DONE_FILES"
 MERGE_INPUT=$(jq -n '{
   "tool_input": {"command": "gh pr merge 70 --squash"},
   "tool_response": {
-    "stdout": "Merged https://github.com/Garsson-io/nanoclaw/pull/70",
+    "stdout": "Merged https://github.com/Garsson-io/kaizen/pull/70",
     "stderr": "",
     "exit_code": "0"
   }
@@ -523,7 +523,7 @@ exit 0
 MOCK_GH
 chmod +x "$AUTOCLOSE_MOCK_DIR/gh"
 
-OUTPUT=$(PATH="$AUTOCLOSE_MOCK_DIR:$PATH" auto_close_kaizen_issues "https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(PATH="$AUTOCLOSE_MOCK_DIR:$PATH" auto_close_kaizen_issues "https://github.com/Garsson-io/kaizen/pull/42")
 assert_contains "auto-close: closed referenced kaizen issue" "Auto-closed" "$OUTPUT"
 
 echo ""
@@ -541,7 +541,7 @@ exit 0
 MOCK_GH2
 chmod +x "$AUTOCLOSE_MOCK_DIR/gh"
 
-OUTPUT=$(PATH="$AUTOCLOSE_MOCK_DIR:$PATH" auto_close_kaizen_issues "https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(PATH="$AUTOCLOSE_MOCK_DIR:$PATH" auto_close_kaizen_issues "https://github.com/Garsson-io/kaizen/pull/42")
 assert_eq "auto-close: no output for non-merged PR" "" "$OUTPUT"
 
 echo ""

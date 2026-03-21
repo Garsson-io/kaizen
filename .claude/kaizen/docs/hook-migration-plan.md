@@ -2,7 +2,7 @@
 
 ## Problem
 
-NanoClaw's development policies (worktree isolation, test coverage, PR review, verification) are currently enforced exclusively through Claude Code hooks. This creates three problems:
+Kaizen's development policies (worktree isolation, test coverage, PR review, verification) are currently enforced exclusively through Claude Code hooks. This creates three problems:
 
 1. **Not portable** — policies don't apply to Codex, humans, or other agents
 2. **Fragile parsing** — hooks regex-match Bash command strings; `bash -c "gh pr create"` or piped commands bypass them

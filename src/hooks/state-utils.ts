@@ -28,7 +28,7 @@ export interface StateFile {
 
 /**
  * Convert a PR URL to a safe state file key.
- * e.g. https://github.com/Garsson-io/nanoclaw/pull/33 → Garsson-io_nanoclaw_33
+ * e.g. https://github.com/Garsson-io/kaizen/pull/33 → Garsson-io_kaizen_33
  */
 export function prUrlToStateKey(url: string): string {
   return url

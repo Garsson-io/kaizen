@@ -42,10 +42,10 @@ run_bash_hook() {
 echo "=== /kaizen skill clears needs_post_merge state ==="
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # Verify state exists
-if [ -f "$STATE_DIR/post-merge-Garsson-io_nanoclaw_42" ]; then
+if [ -f "$STATE_DIR/post-merge-Garsson-io_kaizen_42" ]; then
   echo "  (setup) post-merge state file exists"
 else
   echo "  FAIL: setup - state file not created"
@@ -55,7 +55,7 @@ fi
 # INVARIANT: Invoking /kaizen clears the needs_post_merge state
 # SUT: kaizen-post-merge-clear.sh Skill trigger
 OUTPUT=$(run_skill_hook "kaizen")
-if [ ! -f "$STATE_DIR/post-merge-Garsson-io_nanoclaw_42" ]; then
+if [ ! -f "$STATE_DIR/post-merge-Garsson-io_kaizen_42" ]; then
   echo "  PASS: /kaizen cleared post-merge state"
   ((PASS++))
 else
@@ -69,12 +69,12 @@ echo ""
 echo "=== Other skills do NOT clear post-merge state ==="
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Non-kaizen skills do not clear post-merge state
 # SUT: kaizen-post-merge-clear.sh skill name check
 OUTPUT=$(run_skill_hook "review-pr")
-if [ -f "$STATE_DIR/post-merge-Garsson-io_nanoclaw_42" ]; then
+if [ -f "$STATE_DIR/post-merge-Garsson-io_kaizen_42" ]; then
   echo "  PASS: /review-pr did not clear post-merge state"
   ((PASS++))
 else
@@ -103,12 +103,12 @@ echo ""
 echo "=== gh pr view confirming MERGED promotes awaiting_merge ==="
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42" "awaiting_merge"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42" "awaiting_merge"
 
 # INVARIANT: When agent confirms merge via gh pr view showing MERGED,
 # awaiting_merge is promoted to needs_post_merge
 # SUT: kaizen-post-merge-clear.sh Bash trigger for merge confirmation
-OUTPUT=$(run_bash_hook "gh pr view https://github.com/Garsson-io/nanoclaw/pull/42 --json state --jq .state" "MERGED")
+OUTPUT=$(run_bash_hook "gh pr view https://github.com/Garsson-io/kaizen/pull/42 --json state --jq .state" "MERGED")
 
 # awaiting_merge should be cleared
 AWAITING_COUNT=$(ls "$STATE_DIR"/ 2>/dev/null | grep -c "post-merge" || echo 0)
@@ -133,11 +133,11 @@ echo ""
 echo "=== gh pr view with non-MERGED state does not promote ==="
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42" "awaiting_merge"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42" "awaiting_merge"
 
 # INVARIANT: gh pr view showing OPEN does not promote awaiting_merge
 # SUT: kaizen-post-merge-clear.sh MERGED detection
-OUTPUT=$(run_bash_hook "gh pr view https://github.com/Garsson-io/nanoclaw/pull/42 --json state --jq .state" "OPEN")
+OUTPUT=$(run_bash_hook "gh pr view https://github.com/Garsson-io/kaizen/pull/42 --json state --jq .state" "OPEN")
 CURRENT_STATUS=$(grep -h 'STATUS=' "$STATE_DIR"/post-merge-* 2>/dev/null | head -1 | cut -d= -f2-)
 if [ "$CURRENT_STATUS" = "awaiting_merge" ]; then
   echo "  PASS: OPEN state does not promote awaiting_merge"
@@ -151,7 +151,7 @@ echo ""
 echo "=== Failed Bash commands are ignored ==="
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42" "awaiting_merge"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42" "awaiting_merge"
 
 # INVARIANT: Failed commands do not trigger state changes
 # SUT: kaizen-post-merge-clear.sh exit code check
@@ -170,14 +170,14 @@ echo "=== Cross-worktree isolation: /kaizen only clears own branch state ==="
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42" "needs_post_merge" "wt/other-branch"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/43" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42" "needs_post_merge" "wt/other-branch"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/43" "needs_post_merge" "$CURRENT_BRANCH"
 
 # INVARIANT: /kaizen only clears state for the current branch
 # SUT: kaizen-post-merge-clear.sh worktree isolation via clear_state_with_status
 OUTPUT=$(run_skill_hook "kaizen")
 # PR 42 (other branch) should still exist
-if [ -f "$STATE_DIR/post-merge-Garsson-io_nanoclaw_42" ]; then
+if [ -f "$STATE_DIR/post-merge-Garsson-io_kaizen_42" ]; then
   echo "  PASS: other branch's state preserved"
   ((PASS++))
 else
@@ -185,7 +185,7 @@ else
   ((FAIL++))
 fi
 # PR 43 (our branch) should be cleared
-if [ ! -f "$STATE_DIR/post-merge-Garsson-io_nanoclaw_43" ]; then
+if [ ! -f "$STATE_DIR/post-merge-Garsson-io_kaizen_43" ]; then
   echo "  PASS: own branch's state cleared"
   ((PASS++))
 else
@@ -200,10 +200,10 @@ echo "=== MERGED detection specificity (kaizen #172) ==="
 # occurrences of the word "MERGED" in other text.
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42" "awaiting_merge"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42" "awaiting_merge"
 
 # False positive: text contains "MERGED" as a substring
-OUTPUT=$(run_bash_hook "gh pr view https://github.com/Garsson-io/nanoclaw/pull/42 --json body" "This PR was NOT MERGED yet, it needs review")
+OUTPUT=$(run_bash_hook "gh pr view https://github.com/Garsson-io/kaizen/pull/42 --json body" "This PR was NOT MERGED yet, it needs review")
 CURRENT_STATUS=$(grep -h 'STATUS=' "$STATE_DIR"/post-merge-* 2>/dev/null | head -1 | cut -d= -f2-)
 if [ "$CURRENT_STATUS" = "awaiting_merge" ]; then
   echo "  PASS: text containing 'NOT MERGED yet' does not promote"
@@ -214,10 +214,10 @@ else
 fi
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42" "awaiting_merge"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42" "awaiting_merge"
 
 # True positive: raw jq output "MERGED" on its own line
-OUTPUT=$(run_bash_hook "gh pr view https://github.com/Garsson-io/nanoclaw/pull/42 --json state --jq .state" "MERGED")
+OUTPUT=$(run_bash_hook "gh pr view https://github.com/Garsson-io/kaizen/pull/42 --json state --jq .state" "MERGED")
 CURRENT_STATUS=$(grep -h 'STATUS=' "$STATE_DIR"/post-merge-* 2>/dev/null | head -1 | cut -d= -f2-)
 if [ "$CURRENT_STATUS" = "needs_post_merge" ]; then
   echo "  PASS: standalone 'MERGED' promotes correctly"
@@ -228,10 +228,10 @@ else
 fi
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42" "awaiting_merge"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42" "awaiting_merge"
 
 # True positive: JSON format with state field
-OUTPUT=$(run_bash_hook "gh pr view https://github.com/Garsson-io/nanoclaw/pull/42 --json state" '{"state":"MERGED"}')
+OUTPUT=$(run_bash_hook "gh pr view https://github.com/Garsson-io/kaizen/pull/42 --json state" '{"state":"MERGED"}')
 CURRENT_STATUS=$(grep -h 'STATUS=' "$STATE_DIR"/post-merge-* 2>/dev/null | head -1 | cut -d= -f2-)
 if [ "$CURRENT_STATUS" = "needs_post_merge" ]; then
   echo "  PASS: JSON state:MERGED promotes correctly"
@@ -249,9 +249,9 @@ echo "=== /kaizen clears ALL stacked post-merge states (kaizen #279) ==="
 
 reset_state
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/200" "needs_post_merge" "$CURRENT_BRANCH"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/201" "needs_post_merge" "$CURRENT_BRANCH"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/202" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/200" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/201" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/202" "needs_post_merge" "$CURRENT_BRANCH"
 
 OUTPUT=$(echo '{"tool_name":"Skill","tool_input":{"skill":"kaizen"},"tool_response":{}}' | bash "$HOOK" 2>/dev/null)
 assert_contains "output mentions all pending PRs cleared" "all pending PRs" "$OUTPUT"

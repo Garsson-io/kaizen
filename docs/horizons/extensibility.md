@@ -4,13 +4,13 @@
 
 ## Problem
 
-Adding a new vertical, channel, or skill to NanoClaw requires understanding the harness internals. The channel registry self-registers at startup. Skills are modular. Vertical config contracts exist. But none of this is documented as a coherent "how to extend NanoClaw" experience. Each extension point was built for a specific need and happens to be reusable.
+Adding a new vertical, channel, or skill to Kaizen requires understanding the harness internals. The channel registry self-registers at startup. Skills are modular. Vertical config contracts exist. But none of this is documented as a coherent "how to extend Kaizen" experience. Each extension point was built for a specific need and happens to be reusable.
 
 Without extensibility:
 - **New verticals require Aviad** — non-developer operators can't add their own domain
 - **Skill contributions are ad-hoc** — `/contribute-skill` exists but the integration testing story is manual
 - **Breaking changes are invisible** — `contract.json` validates MCP surface but vertical compatibility isn't checked
-- **The platform thesis is unproven** — "NanoClaw is a harness" is an aspiration until someone other than Aviad extends it
+- **The platform thesis is unproven** — "Kaizen is a harness" is an aspiration until someone other than Aviad extends it
 
 ## Taxonomy
 
@@ -37,7 +37,7 @@ Without extensibility:
 | Vertical config contracts | L2 | `config/` in vertical repos, mounted at `/workspace/extra/{name}/config/` |
 | `/contribute-skill` | L1 | `.claude/skills/contribute-skill/` |
 | `contract.json` | L2 | MCP surface validation in CI |
-| `nanoclaw-compat.example.json` | L1 | Compatibility declaration template |
+| `kaizen-compat.example.json` | L1 | Compatibility declaration template |
 
 ## L2→L3: Validated Integration (next step)
 
@@ -49,9 +49,9 @@ Without extensibility:
 
 ## L4–L5: Visible but not designed
 
-**L4 (guided authoring):** Problem: adding a vertical requires reading CLAUDE.md, understanding mount conventions, writing config files from scratch, testing manually. Need: `nanoclaw create-vertical` that scaffolds directory structure, config templates, test harness, and docs. `/contribute-skill` already exists but is a guide, not a tool.
+**L4 (guided authoring):** Problem: adding a vertical requires reading CLAUDE.md, understanding mount conventions, writing config files from scratch, testing manually. Need: `kaizen create-vertical` that scaffolds directory structure, config templates, test harness, and docs. `/contribute-skill` already exists but is a guide, not a tool.
 
-**L5 (ecosystem):** Problem: skills and channels are currently managed as git branches merged into forks. Need: skills as installable packages with version constraints. "This skill requires NanoClaw ≥2.1 and conflicts with skill X." The `nanoclaw-compat.json` pattern is the seed of this.
+**L5 (ecosystem):** Problem: skills and channels are currently managed as git branches merged into forks. Need: skills as installable packages with version constraints. "This skill requires Kaizen ≥2.1 and conflicts with skill X." The `kaizen-compat.json` pattern is the seed of this.
 
 ## L6: Horizon
 

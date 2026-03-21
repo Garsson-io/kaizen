@@ -135,21 +135,21 @@ function prMergeInput(prUrl: string, options: string = '--squash'): object {
 describe('pr-review-loop: PR create', () => {
   it('outputs review prompt and creates state file', () => {
     const output = runHook(
-      prCreateInput('https://github.com/Garsson-io/nanoclaw/pull/42'),
+      prCreateInput('https://github.com/Garsson-io/kaizen/pull/42'),
     );
     expect(output).toContain('MANDATORY SELF-REVIEW');
-    expect(output).toContain('nanoclaw/pull/42');
+    expect(output).toContain('kaizen/pull/42');
     expect(output).toContain('ROUND 1/4');
 
-    const state = readState('Garsson-io_nanoclaw_42');
-    expect(state.PR_URL).toBe('https://github.com/Garsson-io/nanoclaw/pull/42');
+    const state = readState('Garsson-io_kaizen_42');
+    expect(state.PR_URL).toBe('https://github.com/Garsson-io/kaizen/pull/42');
     expect(state.ROUND).toBe('1');
     expect(state.STATUS).toBe('needs_review');
   });
 
   it('records LAST_REVIEWED_SHA (kaizen #117)', () => {
-    runHook(prCreateInput('https://github.com/Garsson-io/nanoclaw/pull/200'));
-    const state = readState('Garsson-io_nanoclaw_200');
+    runHook(prCreateInput('https://github.com/Garsson-io/kaizen/pull/200'));
+    const state = readState('Garsson-io_kaizen_200');
     expect(state.LAST_REVIEWED_SHA).toBeTruthy();
   });
 
@@ -171,13 +171,13 @@ describe('pr-review-loop: two repos', () => {
     runHook(
       prCreateInput('https://github.com/Garsson-io/garsson-prints/pull/2'),
     );
-    runHook(prCreateInput('https://github.com/Garsson-io/nanoclaw/pull/40'));
+    runHook(prCreateInput('https://github.com/Garsson-io/kaizen/pull/40'));
 
     expect(
       fs.existsSync(path.join(testStateDir, 'Garsson-io_garsson-prints_2')),
     ).toBe(true);
     expect(
-      fs.existsSync(path.join(testStateDir, 'Garsson-io_nanoclaw_40')),
+      fs.existsSync(path.join(testStateDir, 'Garsson-io_kaizen_40')),
     ).toBe(true);
   });
 });
@@ -192,8 +192,8 @@ describe('pr-review-loop: git push', () => {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       encoding: 'utf-8',
     }).trim();
-    createState('Garsson-io_nanoclaw_80', {
-      PR_URL: 'https://github.com/Garsson-io/nanoclaw/pull/80',
+    createState('Garsson-io_kaizen_80', {
+      PR_URL: 'https://github.com/Garsson-io/kaizen/pull/80',
       ROUND: '1',
       STATUS: 'passed',
       BRANCH: branch,
@@ -202,7 +202,7 @@ describe('pr-review-loop: git push', () => {
     const output = runHook(gitPushInput());
     expect(output).toContain('ROUND');
 
-    const state = readState('Garsson-io_nanoclaw_80');
+    const state = readState('Garsson-io_kaizen_80');
     expect(state.STATUS).toBe('needs_review');
     expect(state.ROUND).toBe('2');
   });
@@ -210,8 +210,8 @@ describe('pr-review-loop: git push', () => {
 
 describe('pr-review-loop: cross-worktree isolation', () => {
   it('ignores state from different branch', () => {
-    createState('Garsson-io_nanoclaw_71', {
-      PR_URL: 'https://github.com/Garsson-io/nanoclaw/pull/71',
+    createState('Garsson-io_kaizen_71', {
+      PR_URL: 'https://github.com/Garsson-io/kaizen/pull/71',
       ROUND: '1',
       STATUS: 'needs_review',
       BRANCH: 'wt/other-worktree-branch',
@@ -221,16 +221,16 @@ describe('pr-review-loop: cross-worktree isolation', () => {
     expect(output).toBe('');
 
     // Verify other branch's state was NOT modified
-    const state = readState('Garsson-io_nanoclaw_71');
+    const state = readState('Garsson-io_kaizen_71');
     expect(state.STATUS).toBe('needs_review');
     expect(state.ROUND).toBe('1');
   });
 
   it('ignores legacy state without BRANCH field', () => {
-    const f = path.join(testStateDir, 'Garsson-io_nanoclaw_50');
+    const f = path.join(testStateDir, 'Garsson-io_kaizen_50');
     fs.writeFileSync(
       f,
-      'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/50\nROUND=1\nSTATUS=needs_review\n',
+      'PR_URL=https://github.com/Garsson-io/kaizen/pull/50\nROUND=1\nSTATUS=needs_review\n',
     );
 
     const output = runHook(gitPushInput());
@@ -241,10 +241,10 @@ describe('pr-review-loop: cross-worktree isolation', () => {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       encoding: 'utf-8',
     }).trim();
-    const f = path.join(testStateDir, 'Garsson-io_nanoclaw_90');
+    const f = path.join(testStateDir, 'Garsson-io_kaizen_90');
     fs.writeFileSync(
       f,
-      `PR_URL=https://github.com/Garsson-io/nanoclaw/pull/90\nROUND=1\nSTATUS=needs_review\nBRANCH=${branch}\n`,
+      `PR_URL=https://github.com/Garsson-io/kaizen/pull/90\nROUND=1\nSTATUS=needs_review\nBRANCH=${branch}\n`,
     );
     // Backdate the file 3 hours
     const pastTime = new Date(Date.now() - 3 * 60 * 60 * 1000);
@@ -260,21 +260,21 @@ describe('pr-review-loop: gh pr diff', () => {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       encoding: 'utf-8',
     }).trim();
-    createState('Garsson-io_nanoclaw_55', {
-      PR_URL: 'https://github.com/Garsson-io/nanoclaw/pull/55',
+    createState('Garsson-io_kaizen_55', {
+      PR_URL: 'https://github.com/Garsson-io/kaizen/pull/55',
       ROUND: '2',
       STATUS: 'needs_review',
       BRANCH: branch,
     });
 
     const output = runHook(
-      prDiffInput('https://github.com/Garsson-io/nanoclaw/pull/55'),
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/55'),
     );
     expect(output).toContain('REVIEW ROUND 2/4');
     expect(output).toContain('/review-pr');
     expect(output).toContain('REVIEW PASSED');
 
-    const state = readState('Garsson-io_nanoclaw_55');
+    const state = readState('Garsson-io_kaizen_55');
     expect(state.STATUS).toBe('passed');
     expect(state.ROUND).toBe('2');
   });
@@ -283,16 +283,16 @@ describe('pr-review-loop: gh pr diff', () => {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       encoding: 'utf-8',
     }).trim();
-    createState('Garsson-io_nanoclaw_201', {
-      PR_URL: 'https://github.com/Garsson-io/nanoclaw/pull/201',
+    createState('Garsson-io_kaizen_201', {
+      PR_URL: 'https://github.com/Garsson-io/kaizen/pull/201',
       ROUND: '1',
       STATUS: 'needs_review',
       BRANCH: branch,
     });
 
-    runHook(prDiffInput('https://github.com/Garsson-io/nanoclaw/pull/201'));
+    runHook(prDiffInput('https://github.com/Garsson-io/kaizen/pull/201'));
 
-    const state = readState('Garsson-io_nanoclaw_201');
+    const state = readState('Garsson-io_kaizen_201');
     expect(state.LAST_REVIEWED_SHA).toBeTruthy();
   });
 
@@ -300,15 +300,15 @@ describe('pr-review-loop: gh pr diff', () => {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       encoding: 'utf-8',
     }).trim();
-    createState('Garsson-io_nanoclaw_56', {
-      PR_URL: 'https://github.com/Garsson-io/nanoclaw/pull/56',
+    createState('Garsson-io_kaizen_56', {
+      PR_URL: 'https://github.com/Garsson-io/kaizen/pull/56',
       ROUND: '2',
       STATUS: 'passed',
       BRANCH: branch,
     });
 
     const output = runHook(
-      prDiffInput('https://github.com/Garsson-io/nanoclaw/pull/56'),
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/56'),
     );
     expect(output).toBe('');
   });
@@ -317,7 +317,7 @@ describe('pr-review-loop: gh pr diff', () => {
 describe('pr-review-loop: gh pr merge', () => {
   it('outputs post-merge checklist with all items', () => {
     const output = runHook(
-      prMergeInput('https://github.com/Garsson-io/nanoclaw/pull/42'),
+      prMergeInput('https://github.com/Garsson-io/kaizen/pull/42'),
     );
     expect(output).toContain('Kaizen reflection');
     expect(output).toContain('Update linked issue');
@@ -327,37 +327,37 @@ describe('pr-review-loop: gh pr merge', () => {
   });
 
   it('creates post-merge state file', () => {
-    runHook(prMergeInput('https://github.com/Garsson-io/nanoclaw/pull/42'));
-    const state = readState('post-merge-Garsson-io_nanoclaw_42');
+    runHook(prMergeInput('https://github.com/Garsson-io/kaizen/pull/42'));
+    const state = readState('post-merge-Garsson-io_kaizen_42');
     expect(state.STATUS).toBe('needs_post_merge');
-    expect(state.PR_URL).toBe('https://github.com/Garsson-io/nanoclaw/pull/42');
+    expect(state.PR_URL).toBe('https://github.com/Garsson-io/kaizen/pull/42');
   });
 
   it('cleans up review state file on merge', () => {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       encoding: 'utf-8',
     }).trim();
-    createState('Garsson-io_nanoclaw_42', {
-      PR_URL: 'https://github.com/Garsson-io/nanoclaw/pull/42',
+    createState('Garsson-io_kaizen_42', {
+      PR_URL: 'https://github.com/Garsson-io/kaizen/pull/42',
       ROUND: '2',
       STATUS: 'needs_review',
       BRANCH: branch,
     });
 
-    runHook(prMergeInput('https://github.com/Garsson-io/nanoclaw/pull/42'));
+    runHook(prMergeInput('https://github.com/Garsson-io/kaizen/pull/42'));
     expect(
-      fs.existsSync(path.join(testStateDir, 'Garsson-io_nanoclaw_42')),
+      fs.existsSync(path.join(testStateDir, 'Garsson-io_kaizen_42')),
     ).toBe(false);
   });
 
   it('creates awaiting_merge state for --auto flag', () => {
     runHook(
       prMergeInput(
-        'https://github.com/Garsson-io/nanoclaw/pull/42',
+        'https://github.com/Garsson-io/kaizen/pull/42',
         '--squash --auto',
       ),
     );
-    const state = readState('post-merge-Garsson-io_nanoclaw_42');
+    const state = readState('post-merge-Garsson-io_kaizen_42');
     expect(state.STATUS).toBe('awaiting_merge');
   });
 
@@ -375,8 +375,8 @@ describe('pr-review-loop: escalation', () => {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       encoding: 'utf-8',
     }).trim();
-    createState('Garsson-io_nanoclaw_60', {
-      PR_URL: 'https://github.com/Garsson-io/nanoclaw/pull/60',
+    createState('Garsson-io_kaizen_60', {
+      PR_URL: 'https://github.com/Garsson-io/kaizen/pull/60',
       ROUND: '4',
       STATUS: 'passed',
       BRANCH: branch,
@@ -386,7 +386,7 @@ describe('pr-review-loop: escalation', () => {
     expect(output).toContain('REVIEW ROUND 4/4');
     expect(output).toContain('escalate');
 
-    const state = readState('Garsson-io_nanoclaw_60');
+    const state = readState('Garsson-io_kaizen_60');
     expect(state.STATUS).toBe('escalated');
     expect(state.ROUND).toBe('4');
   });
@@ -395,8 +395,8 @@ describe('pr-review-loop: escalation', () => {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       encoding: 'utf-8',
     }).trim();
-    createState('Garsson-io_nanoclaw_60', {
-      PR_URL: 'https://github.com/Garsson-io/nanoclaw/pull/60',
+    createState('Garsson-io_kaizen_60', {
+      PR_URL: 'https://github.com/Garsson-io/kaizen/pull/60',
       ROUND: '4',
       STATUS: 'escalated',
       BRANCH: branch,

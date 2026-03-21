@@ -1,6 +1,6 @@
 # Autonomous Guardrailed Dev Workflow
 
-How NanoClaw dev agents work autonomously with quality enforcement at every step. The agent completes the full cycle — worktree, code, test, PR, review, merge, sync — without human intervention. Hooks enforce quality gates that the agent cannot bypass.
+How Kaizen dev agents work autonomously with quality enforcement at every step. The agent completes the full cycle — worktree, code, test, PR, review, merge, sync — without human intervention. Hooks enforce quality gates that the agent cannot bypass.
 
 ## The Full Dev Cycle
 
@@ -60,8 +60,8 @@ Every arrow is enforced by hooks. The agent cannot skip steps — hooks block to
 
 Branch protection has `strict: true` status checks. Auto-merge is enabled. The agent handles the full merge loop:
 
-1. **Queue**: `gh pr merge <url> --repo Garsson-io/nanoclaw --squash --delete-branch --auto`
-2. **Wait**: `gh pr checks <url> --repo Garsson-io/nanoclaw --watch` or `gh run watch <id>`
+1. **Queue**: `gh pr merge <url> --repo Garsson-io/kaizen --squash --delete-branch --auto`
+2. **Wait**: `gh pr checks <url> --repo Garsson-io/kaizen --watch` or `gh run watch <id>`
 3. **Verify**: `gh pr view <url> --json state --jq .state` → expect `MERGED`
 4. **Sync**: `MAIN_CHECKOUT="$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"; git -C "$MAIN_CHECKOUT" fetch origin main && git -C "$MAIN_CHECKOUT" merge origin/main --no-edit`
 

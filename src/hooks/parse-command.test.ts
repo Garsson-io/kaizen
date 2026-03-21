@@ -97,7 +97,7 @@ describe('extractPrNumber', () => {
 
   it('extracts PR number from merge with URL', () => {
     expect(
-      extractPrNumber('gh pr merge 123 --repo Garsson-io/nanoclaw', 'merge'),
+      extractPrNumber('gh pr merge 123 --repo Garsson-io/kaizen', 'merge'),
     ).toBe('123');
   });
 
@@ -109,8 +109,8 @@ describe('extractPrNumber', () => {
 describe('extractRepoFlag', () => {
   it('extracts --repo flag', () => {
     expect(
-      extractRepoFlag('gh pr create --repo Garsson-io/nanoclaw --title test'),
-    ).toBe('Garsson-io/nanoclaw');
+      extractRepoFlag('gh pr create --repo Garsson-io/kaizen --title test'),
+    ).toBe('Garsson-io/kaizen');
   });
 
   it('returns undefined when no --repo flag', () => {
@@ -122,9 +122,9 @@ describe('extractPrUrl', () => {
   it('extracts GitHub PR URL from text', () => {
     expect(
       extractPrUrl(
-        'Created PR: https://github.com/Garsson-io/nanoclaw/pull/42',
+        'Created PR: https://github.com/Garsson-io/kaizen/pull/42',
       ),
-    ).toBe('https://github.com/Garsson-io/nanoclaw/pull/42');
+    ).toBe('https://github.com/Garsson-io/kaizen/pull/42');
   });
 
   it('returns undefined for text without PR URL', () => {
@@ -150,14 +150,14 @@ describe('extractGitCPath', () => {
 
 describe('detectGhRepo', () => {
   it('detects repo from HTTPS URL', () => {
-    expect(detectGhRepo('https://github.com/Garsson-io/nanoclaw.git')).toBe(
-      'Garsson-io/nanoclaw',
+    expect(detectGhRepo('https://github.com/Garsson-io/kaizen.git')).toBe(
+      'Garsson-io/kaizen',
     );
   });
 
   it('detects repo from SSH URL', () => {
-    expect(detectGhRepo('git@github.com:Garsson-io/nanoclaw.git')).toBe(
-      'Garsson-io/nanoclaw',
+    expect(detectGhRepo('git@github.com:Garsson-io/kaizen.git')).toBe(
+      'Garsson-io/kaizen',
     );
   });
 
@@ -173,7 +173,7 @@ describe('getPrChangedFiles', () => {
       return '';
     };
     const files = getPrChangedFiles(
-      'gh pr merge 42 --repo Garsson-io/nanoclaw',
+      'gh pr merge 42 --repo Garsson-io/kaizen',
       true,
       executor,
     );
@@ -209,11 +209,11 @@ describe('reconstructPrUrl', () => {
     expect(
       reconstructPrUrl(
         'gh pr create',
-        'https://github.com/Garsson-io/nanoclaw/pull/42',
+        'https://github.com/Garsson-io/kaizen/pull/42',
         '',
         'create',
       ),
-    ).toBe('https://github.com/Garsson-io/nanoclaw/pull/42');
+    ).toBe('https://github.com/Garsson-io/kaizen/pull/42');
   });
 
   it('falls back to stderr', () => {
@@ -221,32 +221,32 @@ describe('reconstructPrUrl', () => {
       reconstructPrUrl(
         'gh pr create',
         '',
-        'https://github.com/Garsson-io/nanoclaw/pull/42',
+        'https://github.com/Garsson-io/kaizen/pull/42',
         'create',
       ),
-    ).toBe('https://github.com/Garsson-io/nanoclaw/pull/42');
+    ).toBe('https://github.com/Garsson-io/kaizen/pull/42');
   });
 
   it('falls back to command args', () => {
     expect(
       reconstructPrUrl(
-        'gh pr merge https://github.com/Garsson-io/nanoclaw/pull/42 --squash',
+        'gh pr merge https://github.com/Garsson-io/kaizen/pull/42 --squash',
         '✓ Merged',
         '',
         'merge',
       ),
-    ).toBe('https://github.com/Garsson-io/nanoclaw/pull/42');
+    ).toBe('https://github.com/Garsson-io/kaizen/pull/42');
   });
 
   it('reconstructs from --repo + PR number', () => {
     expect(
       reconstructPrUrl(
-        'gh pr merge 42 --repo Garsson-io/nanoclaw --squash',
+        'gh pr merge 42 --repo Garsson-io/kaizen --squash',
         '✓ Merged',
         '',
         'merge',
       ),
-    ).toBe('https://github.com/Garsson-io/nanoclaw/pull/42');
+    ).toBe('https://github.com/Garsson-io/kaizen/pull/42');
   });
 
   it('reconstructs from PR number + git remote', () => {
@@ -256,9 +256,9 @@ describe('reconstructPrUrl', () => {
         '✓ Merged',
         '',
         'merge',
-        'Garsson-io/nanoclaw',
+        'Garsson-io/kaizen',
       ),
-    ).toBe('https://github.com/Garsson-io/nanoclaw/pull/42');
+    ).toBe('https://github.com/Garsson-io/kaizen/pull/42');
   });
 
   it('returns undefined when no URL can be reconstructed', () => {

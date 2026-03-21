@@ -37,7 +37,7 @@ setup_default_gh_mock "$INTEG_MOCK_DIR"
 
 HOOK_ENV_VARS=$(printf 'STATE_DIR=%s\nPATH=%s\n' "$STATE_DIR" "$INTEG_MOCK_DIR:$PATH")
 
-PR_URL="https://github.com/Garsson-io/nanoclaw/pull/99"
+PR_URL="https://github.com/Garsson-io/kaizen/pull/99"
 
 # Hook runners using the harness
 run_pre_kaizen() {
@@ -227,8 +227,8 @@ echo "=== Phase 7: Multiple PRs — partial clearing ==="
 
 reset
 
-PR_URL_A="https://github.com/Garsson-io/nanoclaw/pull/10"
-PR_URL_B="https://github.com/Garsson-io/nanoclaw/pull/20"
+PR_URL_A="https://github.com/Garsson-io/kaizen/pull/10"
+PR_URL_B="https://github.com/Garsson-io/kaizen/pull/20"
 
 # Create gates for both PRs
 run_post_reflect "gh pr create --title 'A'" "$PR_URL_A"

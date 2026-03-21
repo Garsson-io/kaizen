@@ -19,7 +19,7 @@ echo "=== is_state_for_current_worktree: same branch, fresh file ==="
 
 setup
 STATE_FILE="$STATE_DIR/test_same_branch"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/1\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_FILE"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/1\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_FILE"
 
 # INVARIANT: A fresh state file on the current branch passes the filter
 # SUT: is_state_for_current_worktree
@@ -36,7 +36,7 @@ echo "=== is_state_for_current_worktree: different branch ==="
 
 setup
 STATE_FILE="$STATE_DIR/test_diff_branch"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/2\nROUND=1\nSTATUS=needs_review\nBRANCH=wt/other-worktree\n' > "$STATE_FILE"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/2\nROUND=1\nSTATUS=needs_review\nBRANCH=wt/other-worktree\n' > "$STATE_FILE"
 
 # INVARIANT: A state file from a different branch is rejected
 # SUT: is_state_for_current_worktree branch filtering
@@ -53,7 +53,7 @@ echo "=== is_state_for_current_worktree: no BRANCH field (legacy) ==="
 
 setup
 STATE_FILE="$STATE_DIR/test_no_branch"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/3\nROUND=1\nSTATUS=needs_review\n' > "$STATE_FILE"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/3\nROUND=1\nSTATUS=needs_review\n' > "$STATE_FILE"
 
 # INVARIANT: Legacy state files without BRANCH are rejected (can't be attributed)
 # SUT: is_state_for_current_worktree legacy handling
@@ -70,7 +70,7 @@ echo "=== is_state_for_current_worktree: stale file ==="
 
 setup
 STATE_FILE="$STATE_DIR/test_stale"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/4\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_FILE"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/4\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_FILE"
 backdate_file "$STATE_FILE" 3
 
 # INVARIANT: Stale files (>MAX_STATE_AGE) are rejected even if same branch
@@ -128,8 +128,8 @@ echo ""
 echo "=== find_needs_review_state: returns first needs_review ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/10\nROUND=2\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_passed"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/11\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_needs"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/10\nROUND=2\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_passed"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/11\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_needs"
 
 # INVARIANT: find_needs_review_state returns the PR with needs_review, not passed
 # SUT: find_needs_review_state
@@ -142,14 +142,14 @@ else
   ((FAIL++))
 fi
 
-assert_contains "returns correct PR URL" "nanoclaw/pull/11" "$REVIEW_INFO"
+assert_contains "returns correct PR URL" "kaizen/pull/11" "$REVIEW_INFO"
 assert_contains "returns round" "1" "$REVIEW_INFO"
 
 echo ""
 echo "=== find_needs_review_state: returns failure when none pending ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/10\nROUND=2\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_passed"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/10\nROUND=2\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_passed"
 
 # INVARIANT: find_needs_review_state returns 1 when no needs_review exists
 # SUT: find_needs_review_state with only passed state
@@ -166,7 +166,7 @@ echo ""
 echo "=== find_needs_review_state: ignores other branch ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/20\nROUND=1\nSTATUS=needs_review\nBRANCH=wt/other\n' > "$STATE_DIR/f_other"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/20\nROUND=1\nSTATUS=needs_review\nBRANCH=wt/other\n' > "$STATE_DIR/f_other"
 
 # INVARIANT: find_needs_review_state skips other branches
 # SUT: find_needs_review_state with cross-worktree state
@@ -197,7 +197,7 @@ exit 0
 MOCK
 chmod +x "$FIXA_MOCK_DIR/gh"
 
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/99\nROUND=3\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_merged"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/99\nROUND=3\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_merged"
 
 # INVARIANT: find_needs_review_state auto-clears state for merged PRs
 # SUT: find_needs_review_state with gh returning MERGED
@@ -230,7 +230,7 @@ exit 0
 MOCK
 chmod +x "$FIXA_MOCK_DIR/gh"
 
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/50\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_closed"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/50\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_closed"
 
 # INVARIANT: CLOSED PRs are also auto-cleared
 REVIEW_INFO=$(PATH="$FIXA_MOCK_DIR:$PATH" find_needs_review_state)
@@ -248,7 +248,7 @@ echo "=== find_needs_review_state: keeps OPEN PR state ==="
 setup
 # Default mock already returns OPEN
 
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/60\nROUND=2\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_open"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/60\nROUND=2\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_open"
 
 # INVARIANT: OPEN PRs are NOT cleared — review gate stays active
 REVIEW_INFO=$(find_needs_review_state)
@@ -259,7 +259,7 @@ else
   echo "  FAIL: OPEN PR state was incorrectly cleared"
   ((FAIL++))
 fi
-assert_contains "returns correct PR URL for open PR" "nanoclaw/pull/60" "$REVIEW_INFO"
+assert_contains "returns correct PR URL for open PR" "kaizen/pull/60" "$REVIEW_INFO"
 
 echo ""
 echo "=== find_needs_review_state: clears merged, returns next open PR ==="
@@ -276,8 +276,8 @@ exit 0
 MOCK
 chmod +x "$FIXA_MOCK_DIR/gh"
 
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/70\nROUND=3\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_merged2"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/71\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_open2"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/70\nROUND=3\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_merged2"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/71\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_open2"
 
 # INVARIANT: Merged PRs are skipped, next open PR is returned
 REVIEW_INFO=$(PATH="$FIXA_MOCK_DIR:$PATH" find_needs_review_state)
@@ -288,7 +288,7 @@ else
   echo "  FAIL: no PR found after merged one (should have found open PR)"
   ((FAIL++))
 fi
-assert_contains "returns open PR, not merged one" "nanoclaw/pull/71" "$REVIEW_INFO"
+assert_contains "returns open PR, not merged one" "kaizen/pull/71" "$REVIEW_INFO"
 
 if [ ! -f "$STATE_DIR/f_merged2" ]; then
   echo "  PASS: merged PR state file was cleaned up"
@@ -308,7 +308,7 @@ exit 1
 MOCK
 chmod +x "$FIXA_MOCK_DIR/gh"
 
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/80\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_gh_fail"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/80\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_gh_fail"
 
 # INVARIANT: If gh fails (network error, etc), treat PR as still open (don't clear)
 REVIEW_INFO=$(PATH="$FIXA_MOCK_DIR:$PATH" find_needs_review_state)
@@ -326,7 +326,7 @@ echo ""
 echo "=== find_state_with_status: finds matching status ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/90\nSTATUS=needs_post_merge\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/post-merge-test"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/90\nSTATUS=needs_post_merge\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/post-merge-test"
 
 # INVARIANT: find_state_with_status returns the first file with the given status
 # SUT: find_state_with_status general-purpose lookup
@@ -338,13 +338,13 @@ else
   echo "  FAIL: find_state_with_status did not find needs_post_merge"
   ((FAIL++))
 fi
-assert_contains "returns correct PR URL" "nanoclaw/pull/90" "$STATE_INFO"
+assert_contains "returns correct PR URL" "kaizen/pull/90" "$STATE_INFO"
 
 echo ""
 echo "=== find_state_with_status: ignores non-matching status ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/91\nSTATUS=awaiting_merge\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/post-merge-test2"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/91\nSTATUS=awaiting_merge\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/post-merge-test2"
 
 # INVARIANT: find_state_with_status returns failure when no matching status exists
 STATE_INFO=$(find_state_with_status "needs_post_merge")
@@ -360,7 +360,7 @@ echo ""
 echo "=== find_state_with_status: respects cross-worktree isolation ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/92\nSTATUS=needs_post_merge\nBRANCH=wt/other-branch\n' > "$STATE_DIR/post-merge-other"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/92\nSTATUS=needs_post_merge\nBRANCH=wt/other-branch\n' > "$STATE_DIR/post-merge-other"
 
 # INVARIANT: find_state_with_status ignores state from other branches
 STATE_INFO=$(find_state_with_status "needs_post_merge")
@@ -376,7 +376,7 @@ echo ""
 echo "=== clear_state_with_status: removes matching state file ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/93\nSTATUS=needs_post_merge\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/post-merge-clear-test"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/93\nSTATUS=needs_post_merge\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/post-merge-clear-test"
 
 # INVARIANT: clear_state_with_status removes the first matching file
 clear_state_with_status "needs_post_merge"
@@ -407,8 +407,8 @@ echo ""
 echo "=== clear_state_with_status: only clears own branch ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/94\nSTATUS=needs_post_merge\nBRANCH=wt/other-branch\n' > "$STATE_DIR/post-merge-other2"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/95\nSTATUS=needs_post_merge\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/post-merge-own"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/94\nSTATUS=needs_post_merge\nBRANCH=wt/other-branch\n' > "$STATE_DIR/post-merge-other2"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/95\nSTATUS=needs_post_merge\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/post-merge-own"
 
 # INVARIANT: clear_state_with_status only removes state for the current branch
 clear_state_with_status "needs_post_merge"
@@ -457,7 +457,7 @@ echo ""
 echo "=== find_state_with_status_any_branch: finds state on other branch ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/100\nSTATUS=needs_pr_kaizen\nBRANCH=wt/other-worktree\n' > "$STATE_DIR/pr-kaizen-cross1"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/100\nSTATUS=needs_pr_kaizen\nBRANCH=wt/other-worktree\n' > "$STATE_DIR/pr-kaizen-cross1"
 
 # INVARIANT: find_state_with_status_any_branch finds state regardless of branch
 # This is the core fix for kaizen #239
@@ -469,13 +469,13 @@ else
   echo "  FAIL: find_state_with_status_any_branch missed cross-branch state"
   ((FAIL++))
 fi
-assert_contains "returns correct PR URL from other branch" "nanoclaw/pull/100" "$STATE_INFO"
+assert_contains "returns correct PR URL from other branch" "kaizen/pull/100" "$STATE_INFO"
 
 echo ""
 echo "=== find_state_with_status_any_branch: still rejects stale ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/101\nSTATUS=needs_pr_kaizen\nBRANCH=wt/other\n' > "$STATE_DIR/pr-kaizen-stale1"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/101\nSTATUS=needs_pr_kaizen\nBRANCH=wt/other\n' > "$STATE_DIR/pr-kaizen-stale1"
 backdate_file "$STATE_DIR/pr-kaizen-stale1" 3
 
 # INVARIANT: Even cross-branch lookup rejects stale files
@@ -492,7 +492,7 @@ echo ""
 echo "=== clear_state_with_status_any_branch: clears state on other branch ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/102\nSTATUS=needs_pr_kaizen\nBRANCH=wt/other-worktree\n' > "$STATE_DIR/pr-kaizen-cross2"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/102\nSTATUS=needs_pr_kaizen\nBRANCH=wt/other-worktree\n' > "$STATE_DIR/pr-kaizen-cross2"
 
 # INVARIANT: clear_state_with_status_any_branch removes state regardless of branch
 clear_state_with_status_any_branch "needs_pr_kaizen"
@@ -508,8 +508,8 @@ echo ""
 echo "=== clear_state_with_status_any_branch: preserves non-matching status ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/103\nSTATUS=needs_review\nBRANCH=wt/other\n' > "$STATE_DIR/review-keep"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/104\nSTATUS=needs_pr_kaizen\nBRANCH=wt/other\n' > "$STATE_DIR/kaizen-clear"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/103\nSTATUS=needs_review\nBRANCH=wt/other\n' > "$STATE_DIR/review-keep"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/104\nSTATUS=needs_pr_kaizen\nBRANCH=wt/other\n' > "$STATE_DIR/kaizen-clear"
 
 # INVARIANT: Only the matching status is cleared, other state preserved
 clear_state_with_status_any_branch "needs_pr_kaizen"
@@ -525,7 +525,7 @@ echo ""
 echo "=== Contrast: branch-scoped vs cross-branch lookup ==="
 
 setup
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/105\nSTATUS=needs_pr_kaizen\nBRANCH=wt/different\n' > "$STATE_DIR/pr-kaizen-contrast"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/105\nSTATUS=needs_pr_kaizen\nBRANCH=wt/different\n' > "$STATE_DIR/pr-kaizen-contrast"
 
 # INVARIANT: find_state_with_status MISSES cross-branch state (by design)
 STATE_INFO=$(find_state_with_status "needs_pr_kaizen")
@@ -557,9 +557,9 @@ echo "=== find_all_states_with_status: finds all matching (kaizen #279) ==="
 
 reset_state
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/10" "needs_post_merge" "$CURRENT_BRANCH"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/11" "needs_post_merge" "$CURRENT_BRANCH"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/12" "awaiting_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/10" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/11" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/12" "awaiting_merge" "$CURRENT_BRANCH"
 
 ALL=$(find_all_states_with_status "needs_post_merge")
 COUNT=$(echo "$ALL" | wc -l | tr -d ' ')
@@ -579,8 +579,8 @@ echo ""
 echo "=== find_all_states_with_status: respects cross-worktree isolation ==="
 
 reset_state
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/20" "needs_post_merge" "$CURRENT_BRANCH"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/21" "needs_post_merge" "other-branch"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/20" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/21" "needs_post_merge" "other-branch"
 
 ALL=$(find_all_states_with_status "needs_post_merge")
 COUNT=$(echo "$ALL" | wc -l | tr -d ' ')
@@ -591,9 +591,9 @@ echo ""
 echo "=== clear_all_states_with_status: clears all matching (kaizen #279) ==="
 
 reset_state
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/30" "needs_post_merge" "$CURRENT_BRANCH"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/31" "needs_post_merge" "$CURRENT_BRANCH"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/32" "awaiting_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/30" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/31" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/32" "awaiting_merge" "$CURRENT_BRANCH"
 
 clear_all_states_with_status "needs_post_merge"
 REMAINING=$(find_all_states_with_status "needs_post_merge" 2>/dev/null)
@@ -607,12 +607,12 @@ echo ""
 echo "=== clear_all_states_with_status: only clears own branch ==="
 
 reset_state
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/40" "needs_post_merge" "$CURRENT_BRANCH"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/41" "needs_post_merge" "other-branch"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/40" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/41" "needs_post_merge" "other-branch"
 
 clear_all_states_with_status "needs_post_merge"
 # The other branch's state should still exist (as a file, even though find won't return it)
-OTHER_FILE="$STATE_DIR/post-merge-Garsson-io_nanoclaw_41"
+OTHER_FILE="$STATE_DIR/post-merge-Garsson-io_kaizen_41"
 if [ -f "$OTHER_FILE" ]; then
   echo "  PASS: other branch's state preserved"
   ((PASS++))
@@ -628,9 +628,9 @@ reset_state
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 # Create two state files with different timestamps
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/50\nSTATUS=needs_pr_kaizen\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/pr-kaizen-Garsson-io_nanoclaw_50"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/50\nSTATUS=needs_pr_kaizen\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/pr-kaizen-Garsson-io_kaizen_50"
 sleep 1
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/51\nSTATUS=needs_pr_kaizen\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/pr-kaizen-Garsson-io_nanoclaw_51"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/51\nSTATUS=needs_pr_kaizen\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/pr-kaizen-Garsson-io_kaizen_51"
 
 # INVARIANT: find_newest returns the most recently modified state file
 STATE_INFO=$(find_newest_state_with_status_any_branch "needs_pr_kaizen")
@@ -648,7 +648,7 @@ echo ""
 echo "=== find_newest_state_with_status_any_branch: works with single match ==="
 
 reset_state
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/60\nSTATUS=needs_pr_kaizen\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/pr-kaizen-single"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/60\nSTATUS=needs_pr_kaizen\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/pr-kaizen-single"
 
 STATE_INFO=$(find_newest_state_with_status_any_branch "needs_pr_kaizen")
 if [ $? -eq 0 ]; then
@@ -677,9 +677,9 @@ echo ""
 echo "=== find_newest_state_with_status_any_branch: crosses branches ==="
 
 reset_state
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/70\nSTATUS=needs_pr_kaizen\nBRANCH=wt/other-branch\n' > "$STATE_DIR/pr-kaizen-cross"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/70\nSTATUS=needs_pr_kaizen\nBRANCH=wt/other-branch\n' > "$STATE_DIR/pr-kaizen-cross"
 sleep 1
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/71\nSTATUS=needs_pr_kaizen\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/pr-kaizen-current"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/71\nSTATUS=needs_pr_kaizen\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/pr-kaizen-current"
 
 STATE_INFO=$(find_newest_state_with_status_any_branch "needs_pr_kaizen")
 assert_contains "find_newest crosses branches, returns newest" "pull/71" "$STATE_INFO"

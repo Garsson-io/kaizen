@@ -5,7 +5,7 @@ description: Worktree disk usage analysis and safe cleanup. Shows worktrees, bra
 
 # /du — Worktree Disk Usage & Cleanup
 
-Analyze and clean up NanoClaw worktrees, branches, Docker images, and stale cases. Two modes: analysis (default) and cleanup.
+Analyze and clean up Kaizen worktrees, branches, Docker images, and stale cases. Two modes: analysis (default) and cleanup.
 
 ## Safety Invariant
 

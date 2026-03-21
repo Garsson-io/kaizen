@@ -43,8 +43,8 @@ afterEach(() => {
 describe('prUrlToStateKey', () => {
   it('converts PR URL to safe key', () => {
     expect(
-      prUrlToStateKey('https://github.com/Garsson-io/nanoclaw/pull/33'),
-    ).toBe('Garsson-io_nanoclaw_33');
+      prUrlToStateKey('https://github.com/Garsson-io/kaizen/pull/33'),
+    ).toBe('Garsson-io_kaizen_33');
   });
 
   it('handles repos with dots', () => {
@@ -142,7 +142,7 @@ describe('listStateFilesAnyBranch', () => {
 });
 
 describe('markReflectionDone / isReflectionDone', () => {
-  const prUrl = 'https://github.com/Garsson-io/nanoclaw/pull/42';
+  const prUrl = 'https://github.com/Garsson-io/kaizen/pull/42';
 
   it('marks and checks reflection done', () => {
     expect(isReflectionDone(prUrl, TEST_STATE_DIR)).toBe(false);

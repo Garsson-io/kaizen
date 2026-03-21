@@ -44,7 +44,7 @@ echo ""
 echo "=== Active review (needs_review): stop blocked ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 # INVARIANT: When STATUS=needs_review, Claude cannot stop
 # SUT: kaizen-enforce-pr-review-stop.sh block logic
@@ -60,7 +60,7 @@ fi
 
 # INVARIANT: Block reason includes PR URL and round number
 REASON=$(echo "$OUTPUT" | jq -r '.reason // empty')
-assert_contains "block reason includes PR URL" "nanoclaw/pull/42" "$REASON"
+assert_contains "block reason includes PR URL" "kaizen/pull/42" "$REASON"
 assert_contains "block reason includes round" "round 1" "$REASON"
 assert_contains "block reason includes gh pr diff instruction" "gh pr diff" "$REASON"
 
@@ -68,7 +68,7 @@ echo ""
 echo "=== Passed review: stop allowed ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "passed"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "passed"
 
 # INVARIANT: When STATUS=passed, Claude can stop
 # SUT: kaizen-enforce-pr-review-stop.sh with passed state
@@ -86,7 +86,7 @@ echo ""
 echo "=== Escalated review: stop allowed ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "4" "escalated"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "4" "escalated"
 
 # INVARIANT: When STATUS=escalated, Claude can stop
 # SUT: kaizen-enforce-pr-review-stop.sh with escalated state
@@ -104,7 +104,7 @@ echo ""
 echo "=== Stop hook active (retry): still blocks if needs_review ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 # INVARIANT: Even when stop_hook_active=true (retry), if review is still
 # needed, the hook must still block. This is safe because Claude is forced
@@ -125,7 +125,7 @@ echo "=== Cross-worktree isolation: other branch's review does not block stop ==
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/55" "1" "needs_review" "wt/other-worktree-branch"
+create_state "https://github.com/Garsson-io/kaizen/pull/55" "1" "needs_review" "wt/other-worktree-branch"
 
 # INVARIANT: A needs_review state from a different branch does NOT block stop
 # SUT: kaizen-enforce-pr-review-stop.sh branch filtering via state-utils.sh
@@ -143,8 +143,8 @@ echo ""
 echo "=== Legacy state files (no BRANCH) do not block stop ==="
 
 setup
-local_file="$STATE_DIR/Garsson-io_nanoclaw_99"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/99\nROUND=1\nSTATUS=needs_review\n' > "$local_file"
+local_file="$STATE_DIR/Garsson-io_kaizen_99"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/99\nROUND=1\nSTATUS=needs_review\n' > "$local_file"
 
 # INVARIANT: Legacy state files without BRANCH field are skipped
 # SUT: kaizen-enforce-pr-review-stop.sh via state-utils.sh
@@ -162,8 +162,8 @@ echo ""
 echo "=== Stale state files do not block stop ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/60" "1" "needs_review"
-STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_60"
+create_state "https://github.com/Garsson-io/kaizen/pull/60" "1" "needs_review"
+STATE_FILE="$STATE_DIR/Garsson-io_kaizen_60"
 backdate_file "$STATE_FILE" 3
 
 # INVARIANT: State files older than MAX_STATE_AGE are treated as stale
@@ -182,7 +182,7 @@ echo ""
 echo "=== Multiple PRs: blocks if ANY on current branch needs review ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/70" "2" "passed"
+create_state "https://github.com/Garsson-io/kaizen/pull/70" "2" "passed"
 create_state "https://github.com/Garsson-io/garsson-prints/pull/5" "1" "needs_review"
 
 # INVARIANT: If any PR on current branch has needs_review, stop is blocked
@@ -204,7 +204,7 @@ echo ""
 echo "=== JSON output is valid ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "2" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "2" "needs_review"
 
 # INVARIANT: Hook output is valid JSON with required fields
 # SUT: kaizen-enforce-pr-review-stop.sh JSON output format
