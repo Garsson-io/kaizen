@@ -20,6 +20,14 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `.claude/hooks/tests/` | Hook test infrastructure |
 | `src/hooks/` | TypeScript hooks |
 | `.claude/settings-fragment.json` | Hook registrations for host projects |
+| `docs/hooks-design.md` | Hooks patterns, anti-patterns, regex traps, gate design, testing conventions |
+| `docs/hook-test-dry-spec.md` | DRY refactoring spec for hook test infrastructure |
+| `docs/test-ladder-spec.md` | Test maturity levels and testing methodology |
+| `docs/worktree-first-tooling-spec.md` | Worktree-safe tooling patterns |
+| `docs/kaizen-cases-unification-spec.md` | Kaizen issue + case system unification |
+| `docs/kaizen-ipc-architecture.md` | IPC architecture for kaizen-cases |
+| `docs/case-create-auto-adopt-worktree-spec.md` | Worktree adoption for case system |
+| `docs/test-side-effects-and-kaizen-escalation-spec.md` | Test side-effects and L1→L2 escalation patterns |
 
 ## Skills
 
