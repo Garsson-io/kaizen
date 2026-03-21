@@ -42,7 +42,7 @@ chmod 700 "$STATE_DIR" 2>/dev/null
 
 # State file is keyed by PR URL (set after trigger detection).
 # Using branch name fails when PRs target other repos (e.g., garsson-prints)
-# because git rev-parse resolves the nanoclaw CWD, not the target repo.
+# because git rev-parse resolves the kaizen CWD, not the target repo.
 STATE_FILE=""
 
 # Determine which trigger fired

@@ -16,7 +16,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-const HOOKS_DIR = path.resolve(__dirname, '../../.claude/kaizen/hooks');
+const HOOKS_DIR = path.resolve(__dirname, '../../.claude/hooks');
 
 let tmpDir: string;
 let testPrNum: string;

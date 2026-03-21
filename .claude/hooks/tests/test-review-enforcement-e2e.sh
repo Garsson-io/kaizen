@@ -62,7 +62,7 @@ echo "  This is the exact scenario that was broken before the fix."
 setup
 
 # Step 1: gh pr create fires PostToolUse
-OUTPUT=$(sim_post_tool_use "gh pr create --title 'test'" "https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(sim_post_tool_use "gh pr create --title 'test'" "https://github.com/Garsson-io/kaizen/pull/42")
 assert_contains "S1.1: PostToolUse outputs review prompt" "MANDATORY SELF-REVIEW" "$OUTPUT"
 
 # Step 2: Claude tries to stop — Stop hook blocks
@@ -96,7 +96,7 @@ else
 fi
 
 # Step 5: Claude runs gh pr diff (allowed) — triggers PostToolUse → sets passed
-OUTPUT=$(sim_pre_tool_use_bash "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(sim_pre_tool_use_bash "gh pr diff https://github.com/Garsson-io/kaizen/pull/42")
 if [ -z "$OUTPUT" ]; then
   echo "  PASS: S1.5a: gh pr diff allowed through PreToolUse gate"
   ((PASS++))
@@ -105,7 +105,7 @@ else
   ((FAIL++))
 fi
 
-OUTPUT=$(sim_post_tool_use "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/42" "(diff output)")
+OUTPUT=$(sim_post_tool_use "gh pr diff https://github.com/Garsson-io/kaizen/pull/42" "(diff output)")
 assert_contains "S1.5b: PostToolUse outputs review checklist" "REVIEW ROUND" "$OUTPUT"
 
 # Step 6: Now Claude can stop — state is passed
@@ -166,7 +166,7 @@ else
 fi
 
 # Step 11: Review again
-sim_post_tool_use "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/42" "(diff output)" >/dev/null
+sim_post_tool_use "gh pr diff https://github.com/Garsson-io/kaizen/pull/42" "(diff output)" >/dev/null
 
 # Step 12: Stop allowed again
 OUTPUT=$(sim_stop "false")
@@ -184,7 +184,7 @@ echo "=== SCENARIO 3: Merge cleans up state ==="
 setup
 
 # Create review state
-sim_post_tool_use "gh pr create --title 'test'" "https://github.com/Garsson-io/nanoclaw/pull/50" >/dev/null
+sim_post_tool_use "gh pr create --title 'test'" "https://github.com/Garsson-io/kaizen/pull/50" >/dev/null
 
 # Verify blocked
 OUTPUT=$(sim_stop "false")
@@ -197,7 +197,7 @@ else
 fi
 
 # Merge cleans up
-sim_post_tool_use "gh pr merge 50 --squash" "Merged https://github.com/Garsson-io/nanoclaw/pull/50" >/dev/null
+sim_post_tool_use "gh pr merge 50 --squash" "Merged https://github.com/Garsson-io/kaizen/pull/50" >/dev/null
 
 # Stop now allowed (state file deleted)
 OUTPUT=$(sim_stop "false")
@@ -243,8 +243,8 @@ setup
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 # Another worktree's PR state
-OTHER_STATE="$STATE_DIR/Garsson-io_nanoclaw_77"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/77\nROUND=1\nSTATUS=needs_review\nBRANCH=wt/other-worktree\n' > "$OTHER_STATE"
+OTHER_STATE="$STATE_DIR/Garsson-io_kaizen_77"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/77\nROUND=1\nSTATUS=needs_review\nBRANCH=wt/other-worktree\n' > "$OTHER_STATE"
 
 # Our worktree should not be affected
 OUTPUT=$(sim_stop "false")
@@ -281,8 +281,8 @@ setup
 
 # Simulate state as if PostToolUse had fired (create state manually)
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_88"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/88\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_FILE"
+STATE_FILE="$STATE_DIR/Garsson-io_kaizen_88"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/88\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_FILE"
 
 # All three enforcement layers should block independently
 OUTPUT=$(sim_stop "false")
@@ -315,7 +315,7 @@ else
 fi
 
 # But review commands pass through
-OUTPUT=$(sim_pre_tool_use_bash "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/88")
+OUTPUT=$(sim_pre_tool_use_bash "gh pr diff https://github.com/Garsson-io/kaizen/pull/88")
 if [ -z "$OUTPUT" ]; then
   echo "  PASS: S6.4: Review command passes through"
   ((PASS++))

@@ -1,0 +1,22 @@
+2026-03-21T20:14:26.013Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=straightforward bug fix
+2026-03-21T20:14:38.240Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=updated README
+2026-03-21T20:14:39.845Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=updated README
+2026-03-21T20:14:41.393Z | branch=fix/complete-nanoclaw-migration | category=test-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=added tests
+2026-03-21T20:14:43.006Z | branch=fix/complete-nanoclaw-migration | category=trivial-refactor | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=rename
+2026-03-21T20:14:49.488Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/99 | reason=updated README
+2026-03-21T20:14:50.018Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/99 | reason=simple fix
+2026-03-21T20:15:25.329Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=straightforward bug fix
+2026-03-21T20:15:37.675Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=updated README
+2026-03-21T20:15:39.339Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=updated README
+2026-03-21T20:15:40.903Z | branch=fix/complete-nanoclaw-migration | category=test-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=added tests
+2026-03-21T20:15:42.554Z | branch=fix/complete-nanoclaw-migration | category=trivial-refactor | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=rename
+2026-03-21T20:15:48.677Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/99 | reason=updated README
+2026-03-21T20:15:49.176Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/99 | reason=simple fix
+2026-03-21T20:18:54.631Z | branch=fix/complete-nanoclaw-migration | category=test-only | pr=https://github.com/Garsson-io/smoke-test/pull/142718 | reason=smoke test
+2026-03-21T20:18:59.408Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=straightforward bug fix
+2026-03-21T20:19:10.869Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=updated README
+2026-03-21T20:19:12.366Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=updated README
+2026-03-21T20:19:13.835Z | branch=fix/complete-nanoclaw-migration | category=test-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=added tests
+2026-03-21T20:19:15.439Z | branch=fix/complete-nanoclaw-migration | category=trivial-refactor | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=rename
+2026-03-21T20:19:21.052Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/99 | reason=updated README
+2026-03-21T20:19:21.546Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/99 | reason=simple fix

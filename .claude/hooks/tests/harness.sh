@@ -516,18 +516,18 @@ REAL_PR_CREATE_CMD='gh pr create --title "fix: address review findings" --body "
 EOF
 )"'
 
-REAL_PR_CREATE_OUTPUT='https://github.com/Garsson-io/nanoclaw/pull/47'
+REAL_PR_CREATE_OUTPUT='https://github.com/Garsson-io/kaizen/pull/47'
 
 REAL_GIT_PUSH_CMD='git push -u origin wt/260315-1430-fix-auth'
-REAL_GIT_PUSH_OUTPUT='To github.com:Garsson-io/nanoclaw.git
+REAL_GIT_PUSH_OUTPUT='To github.com:Garsson-io/kaizen.git
    abc1234..def5678  wt/260315-1430-fix-auth -> wt/260315-1430-fix-auth
 branch '\''wt/260315-1430-fix-auth'\'' set up to track '\''origin/wt/260315-1430-fix-auth'\''.'
 
-REAL_PR_MERGE_CMD='gh pr merge 47 --repo Garsson-io/nanoclaw --squash --delete-branch'
+REAL_PR_MERGE_CMD='gh pr merge 47 --repo Garsson-io/kaizen --squash --delete-branch'
 REAL_PR_MERGE_OUTPUT='✓ Squashed and merged pull request #47 (fix: address review findings)
 ✓ Deleted branch wt/260315-1430-fix-auth and switched to branch main'
 
-REAL_PR_DIFF_CMD='gh pr diff 47 --repo Garsson-io/nanoclaw'
+REAL_PR_DIFF_CMD='gh pr diff 47 --repo Garsson-io/kaizen'
 
 REAL_HEREDOC_CMD='cat > /tmp/test.json << '\''EOF'\''
 {"type": "message", "chatJid": "tg:-5128317012", "text": "test"}

@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const HOOKS_LIB_DIR = join(__dirname, '../../.claude/kaizen/hooks/lib');
+const HOOKS_LIB_DIR = join(__dirname, '../../.claude/hooks/lib');
 const HOOKS_TS_DIR = __dirname;
 
 // Functions intentionally present in only one version.

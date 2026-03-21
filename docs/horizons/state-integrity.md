@@ -4,7 +4,7 @@
 
 ## Problem
 
-NanoClaw has multiple state stores: SQLite (local cache), GitHub Issues (CRM source of truth), git branches/worktrees, IPC filesystem, container mounts. When multiple agents operate concurrently, consistency becomes a real problem. Agent A reads case status, starts work, Agent B modifies the case, and Agent A's work is now based on stale reality.
+Kaizen has multiple state stores: SQLite (local cache), GitHub Issues (CRM source of truth), git branches/worktrees, IPC filesystem, container mounts. When multiple agents operate concurrently, consistency becomes a real problem. Agent A reads case status, starts work, Agent B modifies the case, and Agent A's work is now based on stale reality.
 
 Without state integrity:
 - **Stale reads cause wrong output** — agent acts on outdated case status, issue labels, or file content

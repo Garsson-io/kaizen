@@ -43,8 +43,8 @@ function makeInput(overrides: {
 const defaultOpts = {
   stateDir: TEST_STATE_DIR,
   branch: 'feat-test',
-  repoFromGit: 'Garsson-io/nanoclaw',
-  mainCheckout: '/home/user/projects/nanoclaw',
+  repoFromGit: 'Garsson-io/kaizen',
+  mainCheckout: '/home/user/projects/kaizen',
   changedFiles: 'src/hooks/kaizen-reflect.ts',
   sendNotification: vi.fn(),
 };
@@ -54,7 +54,7 @@ describe('processHookInput', () => {
     it('creates state file and returns reflection output', () => {
       const input = makeInput({
         command: 'gh pr create --title "test" --body "test"',
-        stdout: 'https://github.com/Garsson-io/nanoclaw/pull/42',
+        stdout: 'https://github.com/Garsson-io/kaizen/pull/42',
       });
 
       const output = processHookInput(input, defaultOpts);
@@ -76,7 +76,7 @@ describe('processHookInput', () => {
     it('includes KAIZEN_IMPEDIMENTS format', () => {
       const input = makeInput({
         command: 'gh pr create --title "test"',
-        stdout: 'https://github.com/Garsson-io/nanoclaw/pull/42',
+        stdout: 'https://github.com/Garsson-io/kaizen/pull/42',
       });
 
       const output = processHookInput(input, defaultOpts);
@@ -86,7 +86,7 @@ describe('processHookInput', () => {
     it('includes Agent tool instructions', () => {
       const input = makeInput({
         command: 'gh pr create --title "test"',
-        stdout: 'https://github.com/Garsson-io/nanoclaw/pull/42',
+        stdout: 'https://github.com/Garsson-io/kaizen/pull/42',
       });
 
       const output = processHookInput(input, defaultOpts);
@@ -100,7 +100,7 @@ describe('processHookInput', () => {
       const sendNotification = vi.fn();
       const input = makeInput({
         command:
-          'gh pr merge https://github.com/Garsson-io/nanoclaw/pull/42 --squash --delete-branch --auto',
+          'gh pr merge https://github.com/Garsson-io/kaizen/pull/42 --squash --delete-branch --auto',
         stdout: '✓ Pull request merged',
       });
 
@@ -120,7 +120,7 @@ describe('processHookInput', () => {
       const sendNotification = vi.fn();
       const input = makeInput({
         command:
-          'gh pr merge https://github.com/Garsson-io/nanoclaw/pull/42 --squash',
+          'gh pr merge https://github.com/Garsson-io/kaizen/pull/42 --squash',
         stdout: '✓ Pull request merged',
       });
 
@@ -183,7 +183,7 @@ describe('processHookInput', () => {
 
   describe('duplicate reflection prevention', () => {
     it('skips reflection when already done for this PR', async () => {
-      const prUrl = 'https://github.com/Garsson-io/nanoclaw/pull/42';
+      const prUrl = 'https://github.com/Garsson-io/kaizen/pull/42';
       const input = makeInput({
         command: 'gh pr create --title "test"',
         stdout: prUrl,

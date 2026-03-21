@@ -109,7 +109,7 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 1. **Per-run Telegram notification.** After each successful run (PR created), send a brief message to the admin channel:
    ```
    [overnight-dent] Run #3 complete
-   PR: github.com/Garsson-io/nanoclaw/pull/234
+   PR: github.com/Garsson-io/kaizen/pull/234
    Case: k267-hook-gate-format | $2.14 | 4m23s
    ```
 

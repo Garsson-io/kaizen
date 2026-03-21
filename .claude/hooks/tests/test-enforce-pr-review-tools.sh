@@ -48,7 +48,7 @@ echo ""
 echo "=== Active review: write/spawn tools blocked ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 # INVARIANT: When STATUS=needs_review, Edit/Write/Agent are denied
 # SUT: kaizen-enforce-pr-review-tools.sh deny logic
@@ -68,7 +68,7 @@ echo ""
 echo "=== Deny message includes tool name and PR info ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/99" "3" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/99" "3" "needs_review"
 
 # INVARIANT: Deny message includes actionable information
 # SUT: kaizen-enforce-pr-review-tools.sh deny reason text
@@ -76,7 +76,7 @@ OUTPUT=$(run_tool_gate "Edit")
 REASON=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
 
 assert_contains "deny reason includes tool name" "Edit" "$REASON"
-assert_contains "deny reason includes PR URL" "nanoclaw/pull/99" "$REASON"
+assert_contains "deny reason includes PR URL" "kaizen/pull/99" "$REASON"
 assert_contains "deny reason includes round" "round 3" "$REASON"
 assert_contains "deny reason includes gh pr diff" "gh pr diff" "$REASON"
 
@@ -84,7 +84,7 @@ echo ""
 echo "=== Passed review: tools allowed ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "passed"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "passed"
 
 # INVARIANT: When STATUS=passed, all tools are allowed
 # SUT: kaizen-enforce-pr-review-tools.sh with passed state
@@ -103,7 +103,7 @@ echo ""
 echo "=== Escalated review: tools allowed ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "4" "escalated"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "4" "escalated"
 
 # INVARIANT: When STATUS=escalated, all tools are allowed
 # SUT: kaizen-enforce-pr-review-tools.sh with escalated state
@@ -122,7 +122,7 @@ echo "=== Cross-worktree isolation: other branch's review does not block ==="
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/55" "1" "needs_review" "wt/other-worktree-branch"
+create_state "https://github.com/Garsson-io/kaizen/pull/55" "1" "needs_review" "wt/other-worktree-branch"
 
 # INVARIANT: A needs_review state from another branch does NOT block tools
 # SUT: kaizen-enforce-pr-review-tools.sh branch filtering
@@ -141,7 +141,7 @@ echo "=== Empty tool name: allowed through ==="
 # INVARIANT: Empty/missing tool names are not blocked
 # SUT: kaizen-enforce-pr-review-tools.sh edge case handling
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 OUTPUT=$(echo '{"tool_name":""}' | PATH="$TOOLS_MOCK_DIR:$PATH" STATE_DIR="$STATE_DIR" bash "$HOOK" 2>/dev/null)
 if [ -z "$OUTPUT" ]; then
@@ -156,8 +156,8 @@ echo ""
 echo "=== Legacy state files (no BRANCH) do not block ==="
 
 setup
-local_file="$STATE_DIR/Garsson-io_nanoclaw_99"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/99\nROUND=1\nSTATUS=needs_review\n' > "$local_file"
+local_file="$STATE_DIR/Garsson-io_kaizen_99"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/99\nROUND=1\nSTATUS=needs_review\n' > "$local_file"
 
 # INVARIANT: Legacy state files are skipped
 # SUT: kaizen-enforce-pr-review-tools.sh via state-utils.sh
@@ -174,8 +174,8 @@ echo ""
 echo "=== Stale state files do not block ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/60" "1" "needs_review"
-STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_60"
+create_state "https://github.com/Garsson-io/kaizen/pull/60" "1" "needs_review"
+STATE_FILE="$STATE_DIR/Garsson-io_kaizen_60"
 backdate_file "$STATE_FILE" 3
 
 # INVARIANT: Stale state files do not block tools
@@ -193,7 +193,7 @@ echo ""
 echo "=== Active review: Agent with kaizen-bg subagent allowed (kaizen #151) ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 # INVARIANT: Agent tool with kaizen-bg subagent_type is allowed during review
 # (kaizen-bg runs background reflection and should not be blocked by review gate)

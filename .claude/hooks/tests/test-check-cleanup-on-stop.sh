@@ -65,7 +65,7 @@ case "$*" in
     exit 0
     ;;
   *"rev-parse --show-toplevel"*)
-    echo "/home/user/projects/nanoclaw"
+    echo "/home/user/projects/kaizen"
     exit 0
     ;;
   *"rev-parse --git-common-dir"*)

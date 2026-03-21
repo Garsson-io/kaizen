@@ -43,7 +43,7 @@ echo ""
 echo "=== Active post-merge (needs_post_merge): stop blocked ==="
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: When STATUS=needs_post_merge, Claude cannot stop
 # SUT: kaizen-enforce-post-merge-stop.sh block logic
@@ -59,14 +59,14 @@ fi
 
 # INVARIANT: Block reason includes PR URL and /kaizen instruction
 REASON=$(echo "$OUTPUT" | jq -r '.reason // empty')
-assert_contains "block reason includes PR URL" "nanoclaw/pull/42" "$REASON"
+assert_contains "block reason includes PR URL" "kaizen/pull/42" "$REASON"
 assert_contains "block reason mentions /kaizen" "kaizen" "$REASON"
 
 echo ""
 echo "=== Awaiting merge (--auto): stop allowed ==="
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42" "awaiting_merge"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42" "awaiting_merge"
 
 # INVARIANT: awaiting_merge state does NOT block stop — merge hasn't happened yet
 # SUT: kaizen-enforce-post-merge-stop.sh only blocks on needs_post_merge, not awaiting_merge
@@ -84,7 +84,7 @@ echo ""
 echo "=== Cross-worktree isolation: other branch's post-merge does not block ==="
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/55" "needs_post_merge" "wt/other-worktree-branch"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/55" "needs_post_merge" "wt/other-worktree-branch"
 
 # INVARIANT: A needs_post_merge state from a different branch does NOT block stop
 # SUT: kaizen-enforce-post-merge-stop.sh branch filtering via state-utils.sh
@@ -102,8 +102,8 @@ echo ""
 echo "=== Stale state files do not block stop ==="
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/60"
-STATE_FILE="$STATE_DIR/post-merge-Garsson-io_nanoclaw_60"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/60"
+STATE_FILE="$STATE_DIR/post-merge-Garsson-io_kaizen_60"
 backdate_file "$STATE_FILE" 3
 
 # INVARIANT: State files older than MAX_STATE_AGE are treated as stale
@@ -122,7 +122,7 @@ echo ""
 echo "=== PR review state (needs_review) does not trigger post-merge block ==="
 
 setup
-create_state "https://github.com/Garsson-io/nanoclaw/pull/42" "1" "needs_review"
+create_state "https://github.com/Garsson-io/kaizen/pull/42" "1" "needs_review"
 
 # INVARIANT: PR review state files are irrelevant to post-merge enforcement
 # SUT: kaizen-enforce-post-merge-stop.sh only looks for needs_post_merge status
@@ -140,7 +140,7 @@ echo ""
 echo "=== JSON output is valid ==="
 
 setup
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Hook output is valid JSON with required fields
 # SUT: kaizen-enforce-post-merge-stop.sh JSON output format
@@ -165,9 +165,9 @@ echo "=== Stacked PRs: multiple post-merge states shown (kaizen #279) ==="
 
 reset_state
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/100" "needs_post_merge" "$CURRENT_BRANCH"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/101" "needs_post_merge" "$CURRENT_BRANCH"
-create_post_merge_state "https://github.com/Garsson-io/nanoclaw/pull/102" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/100" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/101" "needs_post_merge" "$CURRENT_BRANCH"
+create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/102" "needs_post_merge" "$CURRENT_BRANCH"
 
 OUTPUT=$(echo '{}' | bash "$HOOK" 2>/dev/null)
 assert_contains "stacked PRs: block includes count" "3 PRs" "$OUTPUT"

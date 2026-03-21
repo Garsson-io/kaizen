@@ -66,7 +66,7 @@ if echo "$@" | grep -q "rev-parse --abbrev-ref"; then
   exit 0
 fi
 if echo "$@" | grep -q "remote get-url"; then
-  echo "https://github.com/Garsson-io/nanoclaw.git"
+  echo "https://github.com/Garsson-io/kaizen.git"
   exit 0
 fi
 if echo "$@" | grep -q "diff --name-only"; then
@@ -87,9 +87,9 @@ reset_ipc_dir
 setup_gh_mock "Add container router"
 
 MERGE_INPUT=$(jq -n '{
-  "tool_input": {"command": "gh pr merge 42 --repo Garsson-io/nanoclaw --squash"},
+  "tool_input": {"command": "gh pr merge 42 --repo Garsson-io/kaizen --squash"},
   "tool_response": {
-    "stdout": "Merged https://github.com/Garsson-io/nanoclaw/pull/42",
+    "stdout": "Merged https://github.com/Garsson-io/kaizen/pull/42",
     "stderr": "",
     "exit_code": "0"
   }
@@ -108,7 +108,7 @@ if [ ${#IPC_FILES[@]} -eq 1 ]; then
   assert_eq "type is message" "message" "$TYPE"
   assert_eq "chatJid is Garsson group" "tg:-5128317012" "$CHAT_JID"
   assert_contains "text contains PR title" "Add container router" "$TEXT"
-  assert_contains "text contains PR URL" "nanoclaw/pull/42" "$TEXT"
+  assert_contains "text contains PR URL" "kaizen/pull/42" "$TEXT"
   assert_contains "text contains branch" "feature/test-branch" "$TEXT"
   assert_contains "text contains deploy reminder" "post-merge procedure" "$TEXT"
 fi
@@ -119,7 +119,7 @@ echo "=== Failed merge produces no notification ==="
 reset_ipc_dir
 
 ERROR_INPUT=$(jq -n '{
-  "tool_input": {"command": "gh pr merge 42 --repo Garsson-io/nanoclaw --squash"},
+  "tool_input": {"command": "gh pr merge 42 --repo Garsson-io/kaizen --squash"},
   "tool_response": {
     "stdout": "",
     "stderr": "GraphQL: Pull request is not mergeable",
@@ -165,7 +165,7 @@ setup_gh_mock_failing
 MERGE_INPUT_NOFETCH=$(jq -n '{
   "tool_input": {"command": "gh pr merge 10 --squash"},
   "tool_response": {
-    "stdout": "Merged https://github.com/Garsson-io/nanoclaw/pull/10",
+    "stdout": "Merged https://github.com/Garsson-io/kaizen/pull/10",
     "stderr": "",
     "exit_code": "0"
   }
@@ -179,7 +179,7 @@ assert_eq "IPC file created even when gh pr view fails" "1" "${#IPC_FILES[@]}"
 if [ ${#IPC_FILES[@]} -eq 1 ]; then
   TEXT=$(jq -r '.text' "${IPC_FILES[0]}" 2>/dev/null)
   assert_contains "fallback title is 'unknown'" "unknown" "$TEXT"
-  assert_contains "URL still present" "nanoclaw/pull/10" "$TEXT"
+  assert_contains "URL still present" "kaizen/pull/10" "$TEXT"
 fi
 
 echo ""
@@ -191,7 +191,7 @@ setup_gh_mock "New feature"
 CREATE_INPUT=$(jq -n '{
   "tool_input": {"command": "gh pr create --title \"test\""},
   "tool_response": {
-    "stdout": "https://github.com/Garsson-io/nanoclaw/pull/99",
+    "stdout": "https://github.com/Garsson-io/kaizen/pull/99",
     "stderr": "",
     "exit_code": "0"
   }
@@ -211,7 +211,7 @@ setup_gh_mock 'Title with "quotes" and $(cmd) injection'
 INJECT_INPUT=$(jq -n '{
   "tool_input": {"command": "gh pr merge 50 --squash"},
   "tool_response": {
-    "stdout": "Merged https://github.com/Garsson-io/nanoclaw/pull/50",
+    "stdout": "Merged https://github.com/Garsson-io/kaizen/pull/50",
     "stderr": "",
     "exit_code": "0"
   }

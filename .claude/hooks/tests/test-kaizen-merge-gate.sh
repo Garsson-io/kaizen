@@ -55,7 +55,7 @@ if echo "$@" | grep -q "rev-parse --abbrev-ref"; then
   exit 0
 fi
 if echo "$@" | grep -q "remote get-url"; then
-  echo "https://github.com/Garsson-io/nanoclaw.git"
+  echo "https://github.com/Garsson-io/kaizen.git"
   exit 0
 fi
 if echo "$@" | grep -q "diff --name-only"; then
@@ -84,9 +84,9 @@ setup
 setup_gh_mock "Fix auth bug"
 
 MERGE_INPUT=$(jq -n '{
-  "tool_input": {"command": "gh pr merge 42 --repo Garsson-io/nanoclaw --squash"},
+  "tool_input": {"command": "gh pr merge 42 --repo Garsson-io/kaizen --squash"},
   "tool_response": {
-    "stdout": "Merged https://github.com/Garsson-io/nanoclaw/pull/42",
+    "stdout": "Merged https://github.com/Garsson-io/kaizen/pull/42",
     "stderr": "",
     "exit_code": "0"
   }
@@ -104,7 +104,7 @@ fi
 
 # Verify state file contents
 CONTENT=$(get_kaizen_state_content)
-assert_contains "state has correct PR URL" "nanoclaw/pull/42" "$CONTENT"
+assert_contains "state has correct PR URL" "kaizen/pull/42" "$CONTENT"
 assert_contains "state has needs_pr_kaizen status" "needs_pr_kaizen" "$CONTENT"
 assert_contains "state has branch field" "BRANCH=" "$CONTENT"
 
@@ -114,7 +114,7 @@ echo "=== Failed merge does NOT create kaizen gate state ==="
 setup
 
 ERROR_INPUT=$(jq -n '{
-  "tool_input": {"command": "gh pr merge 42 --repo Garsson-io/nanoclaw --squash"},
+  "tool_input": {"command": "gh pr merge 42 --repo Garsson-io/kaizen --squash"},
   "tool_response": {
     "stdout": "",
     "stderr": "GraphQL: Pull request is not mergeable",
@@ -141,7 +141,7 @@ setup_gh_mock "New feature"
 CREATE_INPUT=$(jq -n '{
   "tool_input": {"command": "gh pr create --title \"test\""},
   "tool_response": {
-    "stdout": "https://github.com/Garsson-io/nanoclaw/pull/99",
+    "stdout": "https://github.com/Garsson-io/kaizen/pull/99",
     "stderr": "",
     "exit_code": "0"
   }
@@ -166,7 +166,7 @@ setup_gh_mock "Some PR"
 MERGE_INPUT2=$(jq -n '{
   "tool_input": {"command": "gh pr merge 55 --squash"},
   "tool_response": {
-    "stdout": "Merged https://github.com/Garsson-io/nanoclaw/pull/55",
+    "stdout": "Merged https://github.com/Garsson-io/kaizen/pull/55",
     "stderr": "",
     "exit_code": "0"
   }
@@ -190,7 +190,7 @@ setup_gh_mock "Test PR"
 MERGE_INPUT3=$(jq -n '{
   "tool_input": {"command": "gh pr merge 60 --squash"},
   "tool_response": {
-    "stdout": "Merged https://github.com/Garsson-io/nanoclaw/pull/60",
+    "stdout": "Merged https://github.com/Garsson-io/kaizen/pull/60",
     "stderr": "",
     "exit_code": "0"
   }
@@ -254,7 +254,7 @@ setup_gh_mock "Fix auth bug"
 CREATE_INPUT_288=$(jq -n '{
   "tool_input": {"command": "gh pr create --title \"test\""},
   "tool_response": {
-    "stdout": "https://github.com/Garsson-io/nanoclaw/pull/77",
+    "stdout": "https://github.com/Garsson-io/kaizen/pull/77",
     "stderr": "",
     "exit_code": "0"
   }
@@ -295,7 +295,7 @@ fi
 MERGE_288=$(jq -n '{
   "tool_input": {"command": "gh pr merge 77 --squash"},
   "tool_response": {
-    "stdout": "Merged https://github.com/Garsson-io/nanoclaw/pull/77",
+    "stdout": "Merged https://github.com/Garsson-io/kaizen/pull/77",
     "stderr": "",
     "exit_code": "0"
   }
@@ -318,7 +318,7 @@ echo "=== Merge of different PR still creates gate (regression check) ==="
 MERGE_NEW=$(jq -n '{
   "tool_input": {"command": "gh pr merge 88 --squash"},
   "tool_response": {
-    "stdout": "Merged https://github.com/Garsson-io/nanoclaw/pull/88",
+    "stdout": "Merged https://github.com/Garsson-io/kaizen/pull/88",
     "stderr": "",
     "exit_code": "0"
   }

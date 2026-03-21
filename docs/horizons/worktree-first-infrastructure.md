@@ -4,7 +4,7 @@
 
 ## Problem
 
-NanoClaw mandates worktree-first development but the tooling was built assuming main checkout. Every new CLI tool, path resolver, or file-creating utility faces the same class of bug: it works from main, breaks from worktrees. The hooks layer solved this with `state-utils.sh`. The TypeScript tooling layer hasn't.
+Kaizen mandates worktree-first development but the tooling was built assuming main checkout. Every new CLI tool, path resolver, or file-creating utility faces the same class of bug: it works from main, breaks from worktrees. The hooks layer solved this with `state-utils.sh`. The TypeScript tooling layer hasn't.
 
 ## Taxonomy
 

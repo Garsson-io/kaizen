@@ -56,7 +56,7 @@ echo "=== gh pr create: state file is written ==="
 
 setup
 
-run_pr_create "https://github.com/Garsson-io/nanoclaw/pull/42" > /dev/null
+run_pr_create "https://github.com/Garsson-io/kaizen/pull/42" > /dev/null
 
 if has_kaizen_state; then
   echo "  PASS: state file created after gh pr create"
@@ -71,7 +71,7 @@ echo "=== gh pr create: output includes kaizen-bg subagent instruction ==="
 
 setup
 
-OUTPUT=$(run_pr_create "https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(run_pr_create "https://github.com/Garsson-io/kaizen/pull/42")
 
 # INVARIANT: Output instructs the agent to launch kaizen-bg subagent
 assert_contains "mentions kaizen-bg" "kaizen-bg" "$OUTPUT"
@@ -85,7 +85,7 @@ echo "=== gh pr create: output includes structured impediment format ==="
 
 setup
 
-OUTPUT=$(run_pr_create "https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(run_pr_create "https://github.com/Garsson-io/kaizen/pull/42")
 
 # INVARIANT: Output still includes the KAIZEN_IMPEDIMENTS format for gate clearing
 assert_contains "mentions KAIZEN_IMPEDIMENTS" "KAIZEN_IMPEDIMENTS" "$OUTPUT"
@@ -95,7 +95,7 @@ echo "=== gh pr merge: output includes kaizen-bg subagent instruction ==="
 
 setup
 
-OUTPUT=$(run_pr_merge "https://github.com/Garsson-io/nanoclaw/pull/42")
+OUTPUT=$(run_pr_merge "https://github.com/Garsson-io/kaizen/pull/42")
 
 # INVARIANT: Post-merge also instructs kaizen-bg subagent launch
 assert_contains "merge: mentions kaizen-bg" "kaizen-bg" "$OUTPUT"

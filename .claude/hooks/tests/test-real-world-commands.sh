@@ -41,7 +41,7 @@ if echo "$@" | grep -q "diff --name-only"; then
   exit 0
 fi
 if echo "$@" | grep -q "remote get-url"; then
-  echo "https://github.com/Garsson-io/nanoclaw.git"
+  echo "https://github.com/Garsson-io/kaizen.git"
   exit 0
 fi
 /usr/bin/git "$@"
@@ -182,13 +182,13 @@ echo "=== gh pr create output in stderr (some gh versions) ==="
 POST_INPUT=$(build_post_tool_use_input "Bash" \
   '{"command":"gh pr create --title test --body test"}' \
   "" \
-  "https://github.com/Garsson-io/nanoclaw/pull/88" \
+  "https://github.com/Garsson-io/kaizen/pull/88" \
   "0")
 
 run_single_hook "$PR_LOOP" "$POST_INPUT" 10 "STATE_DIR=$STATE_DIR"
 assert_contains "PR URL from stderr triggers review" "MANDATORY SELF-REVIEW" "$HOOK_STDOUT"
 
-STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_88"
+STATE_FILE="$STATE_DIR/Garsson-io_kaizen_88"
 if [ -f "$STATE_FILE" ]; then
   echo "  PASS: state file created from stderr URL"
   ((PASS++))

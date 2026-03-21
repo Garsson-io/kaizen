@@ -50,8 +50,8 @@ beforeEach(() => {
     encoding: 'utf-8',
   }).trim();
   fs.writeFileSync(
-    path.join(testStateDir, 'pr-kaizen-Garsson-io_nanoclaw_42'),
-    `PR_URL=https://github.com/Garsson-io/nanoclaw/pull/42\nSTATUS=needs_pr_kaizen\nBRANCH=${branch}\n`,
+    path.join(testStateDir, 'pr-kaizen-Garsson-io_kaizen_42'),
+    `PR_URL=https://github.com/Garsson-io/kaizen/pull/42\nSTATUS=needs_pr_kaizen\nBRANCH=${branch}\n`,
   );
 });
 
@@ -104,7 +104,7 @@ function noActionInput(category: string, reason: string): object {
 
 function gateExists(): boolean {
   return fs.existsSync(
-    path.join(testStateDir, 'pr-kaizen-Garsson-io_nanoclaw_42'),
+    path.join(testStateDir, 'pr-kaizen-Garsson-io_kaizen_42'),
   );
 }
 
@@ -356,8 +356,8 @@ describe('pr-kaizen-clear: KAIZEN_NO_ACTION', () => {
       encoding: 'utf-8',
     }).trim();
     fs.writeFileSync(
-      path.join(testStateDir, 'pr-kaizen-Garsson-io_nanoclaw_42'),
-      `PR_URL=https://github.com/Garsson-io/nanoclaw/pull/42\nSTATUS=needs_pr_kaizen\nBRANCH=${branch}\n`,
+      path.join(testStateDir, 'pr-kaizen-Garsson-io_kaizen_42'),
+      `PR_URL=https://github.com/Garsson-io/kaizen/pull/42\nSTATUS=needs_pr_kaizen\nBRANCH=${branch}\n`,
     );
     const output = runHook(noActionInput('test-only', 'added tests'));
     expect(output).toContain('PR kaizen gate cleared');
@@ -368,8 +368,8 @@ describe('pr-kaizen-clear: KAIZEN_NO_ACTION', () => {
       encoding: 'utf-8',
     }).trim();
     fs.writeFileSync(
-      path.join(testStateDir, 'pr-kaizen-Garsson-io_nanoclaw_42'),
-      `PR_URL=https://github.com/Garsson-io/nanoclaw/pull/42\nSTATUS=needs_pr_kaizen\nBRANCH=${branch}\n`,
+      path.join(testStateDir, 'pr-kaizen-Garsson-io_kaizen_42'),
+      `PR_URL=https://github.com/Garsson-io/kaizen/pull/42\nSTATUS=needs_pr_kaizen\nBRANCH=${branch}\n`,
     );
     const output = runHook(noActionInput('trivial-refactor', 'rename'));
     expect(output).toContain('PR kaizen gate cleared');
@@ -401,7 +401,7 @@ describe('pr-kaizen-clear: KAIZEN_NO_ACTION', () => {
 describe('pr-kaizen-clear: edge cases', () => {
   it('exits silently when no gate is active', () => {
     // Remove the gate
-    fs.unlinkSync(path.join(testStateDir, 'pr-kaizen-Garsson-io_nanoclaw_42'));
+    fs.unlinkSync(path.join(testStateDir, 'pr-kaizen-Garsson-io_kaizen_42'));
 
     const output = runHook(
       impedimentsInput(
@@ -514,8 +514,8 @@ describe('processHookInput: reflection persistence (kaizen #388)', () => {
       encoding: 'utf-8',
     }).trim();
     fs.writeFileSync(
-      path.join(unitStateDir, 'pr-kaizen-Garsson-io_nanoclaw_99'),
-      `PR_URL=https://github.com/Garsson-io/nanoclaw/pull/99\nSTATUS=needs_pr_kaizen\nBRANCH=${branch}\n`,
+      path.join(unitStateDir, 'pr-kaizen-Garsson-io_kaizen_99'),
+      `PR_URL=https://github.com/Garsson-io/kaizen/pull/99\nSTATUS=needs_pr_kaizen\nBRANCH=${branch}\n`,
     );
   });
 
@@ -544,7 +544,7 @@ describe('processHookInput: reflection persistence (kaizen #388)', () => {
     expect(result).toContain('PR kaizen gate cleared');
     expect(postComment).toHaveBeenCalledOnce();
     expect(postComment.mock.calls[0][0]).toBe(
-      'https://github.com/Garsson-io/nanoclaw/pull/99',
+      'https://github.com/Garsson-io/kaizen/pull/99',
     );
     const comment = postComment.mock.calls[0][1];
     expect(comment).toContain('## Kaizen Reflection');

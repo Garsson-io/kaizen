@@ -9,7 +9,7 @@
 
 ## 1. Problem Statement
 
-NanoClaw's kaizen system has sophisticated enforcement (Level 2 hooks) for binary rules — "don't edit main checkout", "don't stop during review". But **soft engineering practices** that require judgment fall through the cracks. DRY, evidence-based communication, interaction testing — these are known, documented, and repeatedly violated because nothing prompts for them at work boundaries.
+Kaizen's kaizen system has sophisticated enforcement (Level 2 hooks) for binary rules — "don't edit main checkout", "don't stop during review". But **soft engineering practices** that require judgment fall through the cracks. DRY, evidence-based communication, interaction testing — these are known, documented, and repeatedly violated because nothing prompts for them at work boundaries.
 
 The gap: hooks enforce hard rules. Practices are soft — they need judgment about relevance. A hook can't decide "is DRY relevant to this change?" but it CAN prompt the agent to decide.
 
@@ -31,7 +31,7 @@ The gap: hooks enforce hard rules. Practices are soft — they need judgment abo
 
 **Source: SOLID Principles, The Pragmatic Programmer, Google Engineering Practices**
 
-| #    | Practice                        | Description                                                                                                                     | Relevance to NanoClaw                                                                               |
+| #    | Practice                        | Description                                                                                                                     | Relevance to Kaizen                                                                               |
 | ---- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | CQ-1 | **DRY — Don't Repeat Yourself** | Extract duplicated logic into shared abstractions. Every piece of knowledge should have a single, authoritative representation. | HIGH — kaizen #209 showed 4 copy-paste resolver wrappers. Shell scripts + TS code both susceptible. |
 | CQ-2 | **Single Responsibility**       | Each module/function does one thing. Changes for one reason only.                                                               | MEDIUM — hooks are generally well-scoped, but some (pr-review-loop.sh at 24.7K) do a lot.           |
@@ -44,7 +44,7 @@ The gap: hooks enforce hard rules. Practices are soft — they need judgment abo
 
 **Source: Kent Beck (XP/TDD), Google Testing Blog, Release It!**
 
-| #   | Practice                          | Description                                                                                                                        | Relevance to NanoClaw                                                                                                                            |
+| #   | Practice                          | Description                                                                                                                        | Relevance to Kaizen                                                                                                                            |
 | --- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | T-1 | **Test the Interaction Surface**  | Test how components interact, not just individually. Integration/interaction tests catch boundary mismatches.                      | HIGH — kaizen #163 cluster: hook format mismatches between gate and clear hooks. 27 unit test files but interaction tests are newer and sparser. |
 | T-2 | **Test the Deployed Artifact**    | Verify the actual runtime artifact, not just source presence. "The file exists in the repo" != "the agent receives it at runtime". | HIGH — kaizen #157: source present but compiled output or container mount wrong.                                                                 |
@@ -56,7 +56,7 @@ The gap: hooks enforce hard rules. Practices are soft — they need judgment abo
 
 **Source: Google Engineering Practices (Code Review), Pragmatic Programmer**
 
-| #    | Practice                        | Description                                                                                                          | Relevance to NanoClaw                                                                                       |
+| #    | Practice                        | Description                                                                                                          | Relevance to Kaizen                                                                                       |
 | ---- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | CM-1 | **Display URLs**                | Surface all links (PRs, issues, CI runs) in response text. Traceability requires clickable references.               | HIGH — kaizen #206: agents omit URLs when filing issues or creating PRs. Costs human time to find the link. |
 | CM-2 | **Evidence Over Summaries**     | Paste actual data, logs, error messages — not descriptions of them. "The test failed" vs pasting the failure output. | HIGH — kaizen #205: decorative kaizen reflections with no real data.                                        |
@@ -67,7 +67,7 @@ The gap: hooks enforce hard rules. Practices are soft — they need judgment abo
 
 **Source: 12-Factor App, SOLID, Release It!**
 
-| #    | Practice                      | Description                                                                                                     | Relevance to NanoClaw                                                  |
+| #    | Practice                      | Description                                                                                                     | Relevance to Kaizen                                                  |
 | ---- | ----------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | AD-1 | **Dependency Declaration**    | Every import/require has a corresponding package.json entry. Never assume global availability.                  | MEDIUM — CLAUDE.md policy #9. Occasionally violated.                   |
 | AD-2 | **Harness vs Vertical**       | Domain code goes in the vertical repo, infrastructure in the harness. Ask before writing.                       | MEDIUM — CLAUDE.md policy #4. Requires judgment — good checklist item. |
@@ -78,7 +78,7 @@ The gap: hooks enforce hard rules. Practices are soft — they need judgment abo
 
 **Source: Release It!, SRE Handbook, DevOps**
 
-| #    | Practice                  | Description                                                                            | Relevance to NanoClaw                                                                   |
+| #    | Practice                  | Description                                                                            | Relevance to Kaizen                                                                   |
 | ---- | ------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | OP-1 | **Build Before Restart**  | Never restart with an untested build. Build while running, verify, then swap.          | MEDIUM — documented in post-merge policy. Prompted by deploy workflow, not PR creation. |
 | OP-2 | **Fail Loud, Not Silent** | When something goes wrong, make noise. Silent failures compound into invisible bugs.   | HIGH — same as CQ-4. Container scripts silently swallowing errors is a recurring theme. |
@@ -86,9 +86,9 @@ The gap: hooks enforce hard rules. Practices are soft — they need judgment abo
 
 ### 2.6 Agent-Specific Practices
 
-**Source: NanoClaw's own kaizen history, emerging agent engineering practices**
+**Source: Kaizen's own kaizen history, emerging agent engineering practices**
 
-| #    | Practice                      | Description                                                                                                           | Relevance to NanoClaw                                                             |
+| #    | Practice                      | Description                                                                                                           | Relevance to Kaizen                                                             |
 | ---- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | AG-1 | **Worktree Isolation**        | Agent work is isolated. Your worktree, your state, your problem. Never read/write across worktree boundaries.         | HIGH — kaizen #172: cross-worktree contamination. Now enforced by state-utils.sh. |
 | AG-2 | **Case-First Development**    | All dev work starts with a case. Cases provide identity, isolation, and traceability.                                 | HIGH — enforced by enforce-case-exists.sh.                                        |
@@ -98,7 +98,7 @@ The gap: hooks enforce hard rules. Practices are soft — they need judgment abo
 
 ---
 
-## 3. Assessment: Where NanoClaw Stands
+## 3. Assessment: Where Kaizen Stands
 
 ### Green — We do this well, with enforcement (L2+)
 

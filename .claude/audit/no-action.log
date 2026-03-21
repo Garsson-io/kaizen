@@ -1,0 +1,34 @@
+2026-03-21T20:20:48Z | branch=wt/260319-k108-merge-gate | category=test-only | pr=https://github.com/Garsson-io/kaizen/pull/60 | reason=merge gate test
+2026-03-21T20:20:48Z | branch=wt/260319-k108-merge-gate | category=test-only | pr=https://github.com/Garsson-io/kaizen/pull/77 | reason=reflection done test
+2026-03-21T20:21:00Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=updated README
+2026-03-21T20:21:00Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=test reason
+2026-03-21T20:21:01Z | branch=fix/complete-nanoclaw-migration | category=formatting | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=test reason
+2026-03-21T20:21:01Z | branch=fix/complete-nanoclaw-migration | category=typo | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=test reason
+2026-03-21T20:21:01Z | branch=fix/complete-nanoclaw-migration | category=config-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=test reason
+2026-03-21T20:21:01Z | branch=fix/complete-nanoclaw-migration | category=test-only | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=test reason
+2026-03-21T20:21:02Z | branch=fix/complete-nanoclaw-migration | category=trivial-refactor | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=test reason
+2026-03-21T20:21:02Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=straightforward fix
+2026-03-21T20:21:03Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=no process issues
+2026-03-21T20:21:05Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=no issues
+2026-03-21T20:21:06Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/50 | reason=no process issues
+2026-03-21T20:21:06Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/51 | reason=README update
+2026-03-21T20:21:06Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/52 | reason=cross-worktree lifecycle test
+2026-03-21T20:21:06Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/70 | reason=test done marker
+2026-03-21T20:21:14Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/99 | reason=documentation update
+2026-03-21T20:21:43Z | branch=wt/260319-k108-merge-gate | category=test-only | pr=https://github.com/Garsson-io/nanoclaw/pull/60 | reason=merge gate test
+2026-03-21T20:21:43Z | branch=wt/260319-k108-merge-gate | category=test-only | pr=https://github.com/Garsson-io/nanoclaw/pull/77 | reason=reflection done test
+2026-03-21T20:21:54Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/nanoclaw/pull/42 | reason=updated README
+2026-03-21T20:21:54Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/nanoclaw/pull/42 | reason=test reason
+2026-03-21T20:21:54Z | branch=fix/complete-nanoclaw-migration | category=formatting | pr=https://github.com/Garsson-io/nanoclaw/pull/42 | reason=test reason
+2026-03-21T20:21:55Z | branch=fix/complete-nanoclaw-migration | category=typo | pr=https://github.com/Garsson-io/nanoclaw/pull/42 | reason=test reason
+2026-03-21T20:21:55Z | branch=fix/complete-nanoclaw-migration | category=config-only | pr=https://github.com/Garsson-io/nanoclaw/pull/42 | reason=test reason
+2026-03-21T20:21:55Z | branch=fix/complete-nanoclaw-migration | category=test-only | pr=https://github.com/Garsson-io/nanoclaw/pull/42 | reason=test reason
+2026-03-21T20:21:55Z | branch=fix/complete-nanoclaw-migration | category=trivial-refactor | pr=https://github.com/Garsson-io/nanoclaw/pull/42 | reason=test reason
+2026-03-21T20:21:55Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/nanoclaw/pull/42 | reason=straightforward fix
+2026-03-21T20:21:56Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/nanoclaw/pull/42 | reason=no process issues
+2026-03-21T20:21:59Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/nanoclaw/pull/42 | reason=no issues
+2026-03-21T20:21:59Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/nanoclaw/pull/50 | reason=no process issues
+2026-03-21T20:21:59Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/nanoclaw/pull/51 | reason=README update
+2026-03-21T20:21:59Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/nanoclaw/pull/52 | reason=cross-worktree lifecycle test
+2026-03-21T20:21:59Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/nanoclaw/pull/70 | reason=test done marker
+2026-03-21T20:22:06Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/nanoclaw/pull/99 | reason=documentation update

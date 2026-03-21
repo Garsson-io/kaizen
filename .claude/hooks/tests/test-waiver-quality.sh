@@ -46,7 +46,7 @@ has_pr_kaizen_state() {
   [ "$count" -gt 0 ]
 }
 
-PR_URL="https://github.com/Garsson-io/nanoclaw/pull/42"
+PR_URL="https://github.com/Garsson-io/kaizen/pull/42"
 
 # ============================================================
 # "waived" disposition is REJECTED for all types (kaizen #198)

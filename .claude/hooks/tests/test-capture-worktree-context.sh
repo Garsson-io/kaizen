@@ -13,9 +13,9 @@ echo "=== Basic: gh pr create writes context file ==="
 setup
 
 PR_CREATE_INPUT=$(jq -n '{
-  "tool_input": {"command": "gh pr create --repo Garsson-io/nanoclaw --title \"fix: worktree context\""},
+  "tool_input": {"command": "gh pr create --repo Garsson-io/kaizen --title \"fix: worktree context\""},
   "tool_response": {
-    "stdout": "https://github.com/Garsson-io/nanoclaw/pull/42",
+    "stdout": "https://github.com/Garsson-io/kaizen/pull/42",
     "stderr": "",
     "exit_code": "0"
   }
@@ -31,7 +31,7 @@ if [ -f ".worktree-context.json" ]; then
   PR_URL=$(jq -r '.pr_url' .worktree-context.json)
 
   assert_eq "pr_number is 42" "42" "$PR_NUM"
-  assert_eq "pr_url is correct" "https://github.com/Garsson-io/nanoclaw/pull/42" "$PR_URL"
+  assert_eq "pr_url is correct" "https://github.com/Garsson-io/kaizen/pull/42" "$PR_URL"
 else
   echo "  FAIL: context file not created"
   ((FAIL++))
@@ -97,9 +97,9 @@ cat > .worktree-context.json << 'EXISTING'
 EXISTING
 
 PR_CREATE_MERGE=$(jq -n '{
-  "tool_input": {"command": "gh pr create --repo Garsson-io/nanoclaw --title \"fix: waiver quality\""},
+  "tool_input": {"command": "gh pr create --repo Garsson-io/kaizen --title \"fix: waiver quality\""},
   "tool_response": {
-    "stdout": "https://github.com/Garsson-io/nanoclaw/pull/99",
+    "stdout": "https://github.com/Garsson-io/kaizen/pull/99",
     "stderr": "",
     "exit_code": "0"
   }
@@ -111,7 +111,7 @@ if [ -f ".worktree-context.json" ]; then
   PR_NUM=$(jq -r '.pr_number' .worktree-context.json)
   PR_URL=$(jq -r '.pr_url' .worktree-context.json)
   assert_eq "pr_number merged correctly" "99" "$PR_NUM"
-  assert_eq "pr_url merged correctly" "https://github.com/Garsson-io/nanoclaw/pull/99" "$PR_URL"
+  assert_eq "pr_url merged correctly" "https://github.com/Garsson-io/kaizen/pull/99" "$PR_URL"
 
   # Verify original issue info preserved
   ISSUE_NUM=$(jq -r '.issue_number' .worktree-context.json)
@@ -140,7 +140,7 @@ PR_STDERR=$(jq -n '{
   "tool_input": {"command": "gh pr create --title \"test\""},
   "tool_response": {
     "stdout": "Creating pull request...",
-    "stderr": "https://github.com/Garsson-io/nanoclaw/pull/55",
+    "stderr": "https://github.com/Garsson-io/kaizen/pull/55",
     "exit_code": "0"
   }
 }')
@@ -163,9 +163,9 @@ setup
 
 # gh pr create with --repo flag but URL only appears as reconstructed
 PR_REPO_FLAG=$(jq -n '{
-  "tool_input": {"command": "gh pr create --repo Garsson-io/nanoclaw --title \"test\""},
+  "tool_input": {"command": "gh pr create --repo Garsson-io/kaizen --title \"test\""},
   "tool_response": {
-    "stdout": "https://github.com/Garsson-io/nanoclaw/pull/77",
+    "stdout": "https://github.com/Garsson-io/kaizen/pull/77",
     "stderr": "",
     "exit_code": "0"
   }
@@ -174,7 +174,7 @@ echo "$PR_REPO_FLAG" | bash "$HOOK" 2>/dev/null
 
 if [ -f ".worktree-context.json" ]; then
   PR_URL=$(jq -r '.pr_url' .worktree-context.json)
-  assert_eq "PR URL from repo flag" "https://github.com/Garsson-io/nanoclaw/pull/77" "$PR_URL"
+  assert_eq "PR URL from repo flag" "https://github.com/Garsson-io/kaizen/pull/77" "$PR_URL"
 else
   echo "  FAIL: context file not created with --repo flag"
   ((FAIL++))
@@ -206,14 +206,14 @@ setup
 # First PR
 FIRST_PR=$(jq -n '{
   "tool_input": {"command": "gh pr create --title \"first\""},
-  "tool_response": {"stdout": "https://github.com/Garsson-io/nanoclaw/pull/10", "stderr": "", "exit_code": "0"}
+  "tool_response": {"stdout": "https://github.com/Garsson-io/kaizen/pull/10", "stderr": "", "exit_code": "0"}
 }')
 echo "$FIRST_PR" | bash "$HOOK" 2>/dev/null
 
 # Second PR (overwrite — agent may close and reopen PR)
 SECOND_PR=$(jq -n '{
   "tool_input": {"command": "gh pr create --title \"second\""},
-  "tool_response": {"stdout": "https://github.com/Garsson-io/nanoclaw/pull/11", "stderr": "", "exit_code": "0"}
+  "tool_response": {"stdout": "https://github.com/Garsson-io/kaizen/pull/11", "stderr": "", "exit_code": "0"}
 }')
 echo "$SECOND_PR" | bash "$HOOK" 2>/dev/null
 

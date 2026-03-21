@@ -345,7 +345,7 @@ Options:
 Lean: Open. Files in a repo give git history and diffs. Issues give labels, search, and cross-referencing. A dedicated repo avoids polluting the operational kaizen backlog with raw data. Need to prototype and see what investigations actually need.
 
 **Q3: How does the agent write to the kaizen store during a session?**
-The agent works in a worktree of `nanoclaw`. Writing to a different repo requires either: (a) cloning/pulling kaizen repo into a temp dir, (b) using GitHub API to create files/issues, or (c) an IPC mechanism where the host writes on behalf of the agent.
+The agent works in a worktree of `kaizen`. Writing to a different repo requires either: (a) cloning/pulling kaizen repo into a temp dir, (b) using GitHub API to create files/issues, or (c) an IPC mechanism where the host writes on behalf of the agent.
 Lean: GitHub API via `gh api` — simple, no local clone needed, works from any worktree. Also works for issue creation.
 
 ### Process and quality

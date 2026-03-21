@@ -34,7 +34,7 @@ The experiment aims to measure this systematically by analyzing real KAIZEN_IMPE
 
 **Pattern:** Probe-and-observe — no control group, just measurement of existing data.
 
-**Procedure:** Scrape the last 20 merged PRs in Garsson-io/nanoclaw for:
+**Procedure:** Scrape the last 20 merged PRs in Garsson-io/kaizen for:
 1. Persisted reflection comments (posted by pr-kaizen-clear hook since PR #276)
 2. KAIZEN_IMPEDIMENTS mentions in PR bodies
 3. KAIZEN_NO_ACTION or "no impediments" declarations

@@ -50,7 +50,7 @@ has_pr_kaizen_state() {
 echo "=== Valid KAIZEN_IMPEDIMENTS with filed disposition clears gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: A valid structured impediment declaration clears the gate
 OUTPUT=$(run_posttool_bash \
@@ -74,7 +74,7 @@ echo ""
 echo "=== Empty array with reason clears gate (kaizen #140) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Empty array with reason is valid — genuinely no impediments
 OUTPUT=$(run_posttool_bash \
@@ -94,7 +94,7 @@ echo ""
 echo "=== Empty array WITHOUT reason does NOT clear gate (kaizen #140) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Empty array without reason is rejected — forces justification
 OUTPUT=$(run_posttool_bash \
@@ -114,7 +114,7 @@ echo ""
 echo "=== Multiple impediments with mixed dispositions clears gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: All valid dispositions are accepted
 MULTI_JSON='[
@@ -143,7 +143,7 @@ echo ""
 echo "=== Invalid JSON does NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Malformed JSON is rejected
 OUTPUT=$(run_posttool_bash \
@@ -163,7 +163,7 @@ echo ""
 echo "=== Missing impediment field does NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Entries without "impediment" field are rejected
 OUTPUT=$(run_posttool_bash \
@@ -184,7 +184,7 @@ echo ""
 echo "=== Missing disposition field does NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Entries without "disposition" field are rejected
 OUTPUT=$(run_posttool_bash \
@@ -205,7 +205,7 @@ echo ""
 echo "=== Invalid disposition value does NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Only filed|incident|fixed-in-pr are valid dispositions for impediments
 OUTPUT=$(run_posttool_bash \
@@ -226,7 +226,7 @@ echo ""
 echo "=== filed without ref does NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: disposition "filed" requires a "ref" field
 OUTPUT=$(run_posttool_bash \
@@ -247,7 +247,7 @@ echo ""
 echo "=== incident without ref does NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: disposition "incident" requires a "ref" field
 OUTPUT=$(run_posttool_bash \
@@ -268,7 +268,7 @@ echo ""
 echo "=== waived disposition is REJECTED (kaizen #198) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: disposition "waived" is no longer accepted (kaizen #198)
 OUTPUT=$(run_posttool_bash \
@@ -290,7 +290,7 @@ echo ""
 echo "=== fixed-in-pr needs no extra fields ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: fixed-in-pr only requires impediment + disposition
 OUTPUT=$(run_posttool_bash \
@@ -310,7 +310,7 @@ echo ""
 echo "=== KAIZEN_NO_ACTION with valid category clears gate (kaizen #140) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: KAIZEN_NO_ACTION with valid category and reason clears gate
 OUTPUT=$(run_posttool_bash \
@@ -330,7 +330,7 @@ echo ""
 echo "=== KAIZEN_NO_ACTION without category does NOT clear gate (kaizen #140) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Legacy format (no category) is no longer accepted
 OUTPUT=$(run_posttool_bash \
@@ -350,7 +350,7 @@ echo ""
 echo "=== KAIZEN_NO_ACTION with invalid category does NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Only valid categories are accepted
 OUTPUT=$(run_posttool_bash \
@@ -370,7 +370,7 @@ echo ""
 echo "=== KAIZEN_NO_ACTION with category but no reason does NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: A reason must be provided even with valid category
 OUTPUT=$(run_posttool_bash \
@@ -391,7 +391,7 @@ echo "=== All valid KAIZEN_NO_ACTION categories accepted ==="
 
 for category in docs-only formatting typo config-only test-only trivial-refactor; do
   setup
-  create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+  create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
   OUTPUT=$(run_posttool_bash \
     "echo \"KAIZEN_NO_ACTION [$category]: test reason\"" \
@@ -410,7 +410,7 @@ echo ""
 echo "=== Audit log is written for no-action declarations ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # The hook resolves audit log relative to its own location
 # HOOK is set at top of file: "$(dirname "$0")/../kaizen-pr-reflect-clear.sh"
@@ -454,7 +454,7 @@ echo ""
 echo "=== gh issue create alone does NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: gh issue create is allowed (by enforce-pr-kaizen) but does not
 # clear the gate — agent must submit KAIZEN_IMPEDIMENTS afterward
@@ -474,7 +474,7 @@ echo ""
 echo "=== Failed command does NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Failed commands never clear the gate
 OUTPUT=$(run_posttool_bash \
@@ -494,7 +494,7 @@ echo ""
 echo "=== Unrelated commands do NOT clear gate ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Non-kaizen commands do not affect the gate
 OUTPUT=$(run_posttool_bash "npm run build" "build complete")
@@ -530,7 +530,7 @@ echo ""
 echo "=== Non-Bash tool calls are ignored ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Non-Bash tool calls don't affect state
 INPUT_EDIT=$(jq -n '{
@@ -551,7 +551,7 @@ echo ""
 echo "=== Cross-worktree clearing: KAIZEN_IMPEDIMENTS clears any branch (kaizen #239) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42" "wt/other-branch"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42" "wt/other-branch"
 
 # INVARIANT (kaizen #239): pr-kaizen-clear uses cross-branch lookup so the
 # agent can submit KAIZEN_IMPEDIMENTS from a different worktree than where
@@ -562,7 +562,7 @@ OUTPUT=$(run_posttool_bash \
   "KAIZEN_IMPEDIMENTS: [] cross-worktree test")
 
 # PR 42 (other branch) should be cleared — this is the fix for #239
-if [ ! -f "$STATE_DIR/pr-kaizen-Garsson-io_nanoclaw_42" ]; then
+if [ ! -f "$STATE_DIR/pr-kaizen-Garsson-io_kaizen_42" ]; then
   echo "  PASS: cross-branch kaizen state cleared by active declaration"
   ((PASS++))
 else
@@ -576,7 +576,7 @@ echo ""
 echo "=== 'finding' field accepted as alias for 'impediment' (kaizen #162) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: "finding" is accepted as an alias for "impediment" to support
 # the expanded schema from kaizen #162 (meta-reflection actionability)
@@ -599,7 +599,7 @@ echo ""
 echo "=== All-waived reflections are REJECTED (kaizen #198) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: "waived" is no longer accepted — all entries are rejected
 ALL_WAIVED_JSON='[
@@ -627,7 +627,7 @@ echo ""
 echo "=== Mixed filed+waived: BLOCKED because waived is invalid (#198) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 MIXED_JSON='[
   {"impediment": "slow CI", "disposition": "filed", "ref": "#200"},
@@ -653,7 +653,7 @@ echo ""
 echo "=== Meta-finding with no-action rejected (#213) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: type "meta" with disposition "no-action" is rejected
 META_NO_ACTION_JSON='[
@@ -679,7 +679,7 @@ echo ""
 echo "=== Meta-finding with no-action rejected using 'finding' field (#213 + #162) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Meta-findings with "finding" alias also get disposition validation
 OUTPUT=$(run_posttool_bash \
@@ -702,7 +702,7 @@ echo ""
 echo "=== Meta-finding with waived is REJECTED (kaizen #198) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: type "meta" with "waived" is rejected (kaizen #198)
 META_WAIVED_JSON='[
@@ -728,7 +728,7 @@ echo ""
 echo "=== Meta-finding with filed+ref accepted (#213) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: type "meta" with "filed" + ref is valid
 META_FILED_JSON='[
@@ -753,7 +753,7 @@ echo ""
 echo "=== Meta-finding with filed+ref using 'finding' alias (#213 + #162) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Meta-findings with "finding" alias and filed+ref are valid
 OUTPUT=$(run_posttool_bash \
@@ -775,7 +775,7 @@ echo ""
 echo "=== Meta-finding with fixed-in-pr accepted (#231) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: type "meta" with "fixed-in-pr" is valid (improvement made in this PR)
 META_FIXED_JSON='[
@@ -800,7 +800,7 @@ echo ""
 echo "=== Meta-finding with incident rejected (#231) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: type "meta" with "incident" is rejected (doesn't make semantic sense)
 META_INCIDENT_JSON='[
@@ -826,7 +826,7 @@ echo ""
 echo "=== Positive finding with no-action+reason accepted (#213) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: type "positive" with "no-action" + reason is valid
 POSITIVE_JSON='[
@@ -851,7 +851,7 @@ echo ""
 echo "=== Positive finding with no-action without reason rejected ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: no-action still requires a reason field
 POSITIVE_NO_REASON_JSON='[
@@ -877,7 +877,7 @@ echo ""
 echo "=== Entry without type field: backward compat (treated as impediment) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Entries without type field work as before (no-action rejected)
 NO_TYPE_JSON='[
@@ -902,7 +902,7 @@ echo ""
 echo "=== Entry without type field rejects no-action (backward compat) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: no-action without explicit type is still rejected
 NO_TYPE_NO_ACTION_JSON='[
@@ -928,7 +928,7 @@ echo ""
 echo "=== Single waived impediment is REJECTED (kaizen #198) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 SINGLE_WAIVED_JSON='[
   {"impediment": "minor issue", "disposition": "waived", "reason": "one-time occurrence, already resolved in this PR"}
@@ -953,7 +953,7 @@ echo ""
 echo "=== All no-action positive findings get advisory (#205) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 ALL_POSITIVE_JSON='[
   {"impediment": "TDD worked", "type": "positive", "disposition": "no-action", "reason": "established"},
@@ -979,7 +979,7 @@ echo ""
 echo "=== Mixed types with meta + impediment + positive validates correctly (#162) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: A declaration with both impediments and meta-findings validates
 # each type according to its rules, and accepts "finding" alias
@@ -1011,7 +1011,7 @@ echo ""
 echo "=== STDOUT without prefix: raw JSON array in stdout (kaizen #313) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT (kaizen #313): When STDOUT contains just the JSON array without
 # the KAIZEN_IMPEDIMENTS: prefix, the hook should still extract and validate it.
@@ -1035,7 +1035,7 @@ echo ""
 echo "=== STDOUT without prefix: multiline JSON array (kaizen #313) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: Multiline JSON without prefix also works
 OUTPUT=$(run_posttool_bash \
@@ -1063,7 +1063,7 @@ echo ""
 echo "=== Empty STDOUT: JSON extracted from COMMAND heredoc body (kaizen #313) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
 # INVARIANT: When STDOUT is empty but COMMAND contains heredoc with JSON,
 # extraction from the full COMMAND (not stripped CMD_LINE) should work
@@ -1093,10 +1093,10 @@ setup
 # is responding to.
 
 # Create state for PR #42 (older — created first)
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/42" "main"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42" "main"
 sleep 1
 # Create state for PR #43 (newer — the one the agent is responding to)
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/43" "main"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/43" "main"
 
 # Submit KAIZEN_IMPEDIMENTS — should clear the newest gate (PR #43)
 OUTPUT=$(run_posttool_bash \
@@ -1107,8 +1107,8 @@ OUTPUT=$(run_posttool_bash \
 assert_contains "multi-PR: gate cleared message shown" "gate cleared" "$OUTPUT"
 
 # Check which state files remain — PR #42 should still exist, PR #43 should be cleared
-PR42_KEY=$(pr_url_to_state_key "https://github.com/Garsson-io/nanoclaw/pull/42")
-PR43_KEY=$(pr_url_to_state_key "https://github.com/Garsson-io/nanoclaw/pull/43")
+PR42_KEY=$(pr_url_to_state_key "https://github.com/Garsson-io/kaizen/pull/42")
+PR43_KEY=$(pr_url_to_state_key "https://github.com/Garsson-io/kaizen/pull/43")
 
 if [ -f "$STATE_DIR/pr-kaizen-$PR42_KEY" ]; then
   echo "  PASS: multi-PR: older PR #42 gate still exists"
@@ -1146,7 +1146,7 @@ echo ""
 echo "=== Multi-PR: clearing newest gate when only one exists works (kaizen #327) ==="
 
 setup
-create_pr_kaizen_state "https://github.com/Garsson-io/nanoclaw/pull/99" "main"
+create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/99" "main"
 
 OUTPUT=$(run_posttool_bash \
   "echo 'KAIZEN_IMPEDIMENTS: [] simple change'" \
@@ -1154,7 +1154,7 @@ OUTPUT=$(run_posttool_bash \
 
 assert_contains "single-gate: cleared message shown" "gate cleared" "$OUTPUT"
 
-PR99_KEY=$(pr_url_to_state_key "https://github.com/Garsson-io/nanoclaw/pull/99")
+PR99_KEY=$(pr_url_to_state_key "https://github.com/Garsson-io/kaizen/pull/99")
 if [ ! -f "$STATE_DIR/pr-kaizen-$PR99_KEY" ]; then
   echo "  PASS: single-gate: PR #99 gate was cleared"
   ((PASS++))

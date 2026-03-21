@@ -11,7 +11,7 @@ source "$(dirname "$0")/../lib/allowlist.sh"
 
 echo "=== is_readonly_monitoring_command: gh api allowed ==="
 
-assert_ok "gh api repos check" is_readonly_monitoring_command "gh api repos/Garsson-io/nanoclaw/pulls/42"
+assert_ok "gh api repos check" is_readonly_monitoring_command "gh api repos/Garsson-io/kaizen/pulls/42"
 assert_ok "gh api with --jq" is_readonly_monitoring_command "gh api repos/foo/bar --jq '.state'"
 assert_ok "piped gh api" is_readonly_monitoring_command "something | gh api repos/foo/bar"
 
@@ -100,8 +100,8 @@ echo "=== pr_url_to_state_key: URL conversion ==="
 
 source "$(dirname "$0")/../lib/state-utils.sh"
 
-RESULT=$(pr_url_to_state_key "https://github.com/Garsson-io/nanoclaw/pull/42")
-assert_eq "standard PR URL" "Garsson-io_nanoclaw_42" "$RESULT"
+RESULT=$(pr_url_to_state_key "https://github.com/Garsson-io/kaizen/pull/42")
+assert_eq "standard PR URL" "Garsson-io_kaizen_42" "$RESULT"
 
 RESULT=$(pr_url_to_state_key "https://github.com/org/repo-name/pull/123")
 assert_eq "hyphenated repo" "org_repo-name_123" "$RESULT"

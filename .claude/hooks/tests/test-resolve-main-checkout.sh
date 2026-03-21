@@ -33,7 +33,7 @@ assert_eq "matches git worktree list" "$EXPECTED" "$MAIN_CHECKOUT"
 # Test 7: No hardcoded paths remain in hook scripts
 echo ""
 echo "--- Checking for hardcoded paths in hooks ---"
-HARDCODED=$(grep -r '/home/aviadr1/projects/nanoclaw' "$HOOK_DIR" --include='*.sh' \
+HARDCODED=$(grep -r '/home/aviadr1/projects/kaizen' "$HOOK_DIR" --include='*.sh' \
   | grep -v 'resolve-main-checkout.sh' \
   | grep -v '/tests/' \
   | grep -v '# .*Never hardcode' || true)

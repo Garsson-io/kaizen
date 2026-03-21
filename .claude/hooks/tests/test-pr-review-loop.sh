@@ -23,12 +23,12 @@ source_with_state_dir() {
   echo "$STATE_DIR/$(echo "$url" | sed 's|https://github\.com/||;s|/pull/|_|;s|/|_|g')"
 }
 
-NANOCLAW_STATE=$(source_with_state_dir "$STATE_DIR" "https://github.com/Garsson-io/nanoclaw/pull/33")
+KAIZEN_STATE=$(source_with_state_dir "$STATE_DIR" "https://github.com/Garsson-io/kaizen/pull/33")
 PRINTS_STATE=$(source_with_state_dir "$STATE_DIR" "https://github.com/Garsson-io/garsson-prints/pull/2")
 
-assert_contains "nanoclaw PR state file includes repo name" "Garsson-io_nanoclaw_33" "$NANOCLAW_STATE"
+assert_contains "kaizen PR state file includes repo name" "Garsson-io_kaizen_33" "$KAIZEN_STATE"
 assert_contains "prints PR state file includes repo name" "Garsson-io_garsson-prints_2" "$PRINTS_STATE"
-assert_not_contains "nanoclaw state != prints state" "$PRINTS_STATE" "$NANOCLAW_STATE"
+assert_not_contains "kaizen state != prints state" "$PRINTS_STATE" "$KAIZEN_STATE"
 
 echo ""
 echo "=== Full hook integration: PR create ==="
@@ -70,22 +70,22 @@ fi
 echo ""
 echo "=== Two PRs from different repos don't conflict ==="
 
-# Create another PR for nanoclaw
-PR_CREATE_NANOCLAW=$(jq -n '{
-  "tool_input": {"command": "gh pr create --repo Garsson-io/nanoclaw --title \"test2\""},
+# Create another PR for kaizen
+PR_CREATE_KAIZEN=$(jq -n '{
+  "tool_input": {"command": "gh pr create --repo Garsson-io/kaizen --title \"test2\""},
   "tool_response": {
-    "stdout": "https://github.com/Garsson-io/nanoclaw/pull/40",
+    "stdout": "https://github.com/Garsson-io/kaizen/pull/40",
     "stderr": "",
     "exit_code": "0"
   }
 }')
 
-echo "$PR_CREATE_NANOCLAW" | STATE_DIR="$STATE_DIR" bash "$HOOK" 2>/dev/null
+echo "$PR_CREATE_KAIZEN" | STATE_DIR="$STATE_DIR" bash "$HOOK" 2>/dev/null
 
 PRINTS_FILE="$STATE_DIR/Garsson-io_garsson-prints_2"
-NANOCLAW_FILE="$STATE_DIR/Garsson-io_nanoclaw_40"
+KAIZEN_FILE="$STATE_DIR/Garsson-io_kaizen_40"
 
-if [ -f "$PRINTS_FILE" ] && [ -f "$NANOCLAW_FILE" ]; then
+if [ -f "$PRINTS_FILE" ] && [ -f "$KAIZEN_FILE" ]; then
   echo "  PASS: both state files exist independently"
   ((PASS++))
 else
@@ -97,7 +97,7 @@ fi
 echo ""
 echo "=== Push finds most recent active state on CURRENT branch ==="
 
-# Both PRs above (garsson-prints/2 and nanoclaw/40) were created from this branch.
+# Both PRs above (garsson-prints/2 and kaizen/40) were created from this branch.
 # Simulate git push (no PR URL in output)
 PUSH_INPUT=$(jq -n '{
   "tool_input": {"command": "git push"},
@@ -206,8 +206,8 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 # Create a state file for a DIFFERENT branch's PR (simulating another worktree's work)
 OTHER_BRANCH="wt/other-worktree-branch"
-OTHER_STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_71"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/71\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$OTHER_BRANCH" > "$OTHER_STATE_FILE"
+OTHER_STATE_FILE="$STATE_DIR/Garsson-io_kaizen_71"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/71\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$OTHER_BRANCH" > "$OTHER_STATE_FILE"
 
 # Push from current worktree — should NOT touch the other branch's state
 PUSH_OUTPUT=$(echo "$PUSH_INPUT" | STATE_DIR="$STATE_DIR" bash "$HOOK" 2>/dev/null)
@@ -237,8 +237,8 @@ teardown
 setup
 
 # Create a state file for the CURRENT branch's PR
-SAME_STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_80"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/80\nROUND=1\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$SAME_STATE_FILE"
+SAME_STATE_FILE="$STATE_DIR/Garsson-io_kaizen_80"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/80\nROUND=1\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$SAME_STATE_FILE"
 
 PUSH_OUTPUT=$(echo "$PUSH_INPUT" | STATE_DIR="$STATE_DIR" bash "$HOOK" 2>/dev/null)
 assert_contains "push updates same branch's state" "ROUND" "$PUSH_OUTPUT"
@@ -257,8 +257,8 @@ echo "=== Cross-worktree isolation: legacy state files (no BRANCH) are skipped =
 teardown
 setup
 
-LEGACY_STATE="$STATE_DIR/Garsson-io_nanoclaw_50"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/50\nROUND=1\nSTATUS=needs_review\n' > "$LEGACY_STATE"
+LEGACY_STATE="$STATE_DIR/Garsson-io_kaizen_50"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/50\nROUND=1\nSTATUS=needs_review\n' > "$LEGACY_STATE"
 
 PUSH_OUTPUT=$(echo "$PUSH_INPUT" | STATE_DIR="$STATE_DIR" bash "$HOOK" 2>/dev/null)
 if [ -z "$PUSH_OUTPUT" ]; then
@@ -277,8 +277,8 @@ echo "=== Cross-worktree isolation: stale state files are skipped ==="
 teardown
 setup
 
-STALE_STATE="$STATE_DIR/Garsson-io_nanoclaw_90"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/90\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STALE_STATE"
+STALE_STATE="$STATE_DIR/Garsson-io_kaizen_90"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/90\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STALE_STATE"
 # Backdate to 3 hours ago
 backdate_file "$STALE_STATE" 3
 
@@ -305,8 +305,8 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 MAIN_HEAD=$(git rev-parse origin/main 2>/dev/null || echo "abc123")
 
 # Create state file for current branch (passed review, now syncing with main)
-SAME_STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_100"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/100\nROUND=2\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$SAME_STATE_FILE"
+SAME_STATE_FILE="$STATE_DIR/Garsson-io_kaizen_100"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/100\nROUND=2\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$SAME_STATE_FILE"
 
 # Create a mock git that simulates a merge commit from origin/main
 MOCK_DIR=$(mktemp -d)
@@ -363,8 +363,8 @@ echo "=== Regular push (non-merge) DOES increment review round ==="
 teardown
 setup
 
-SAME_STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_101"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/101\nROUND=1\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$SAME_STATE_FILE"
+SAME_STATE_FILE="$STATE_DIR/Garsson-io_kaizen_101"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/101\nROUND=1\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$SAME_STATE_FILE"
 
 # Mock git that simulates a regular (non-merge) commit
 cat > "$MOCK_DIR/git" << MOCK
@@ -399,8 +399,8 @@ echo "=== Merge from non-main branch DOES increment review round ==="
 teardown
 setup
 
-SAME_STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_102"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/102\nROUND=1\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$SAME_STATE_FILE"
+SAME_STATE_FILE="$STATE_DIR/Garsson-io_kaizen_102"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/102\nROUND=1\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$SAME_STATE_FILE"
 
 # Mock git with merge commit from a non-main branch
 cat > "$MOCK_DIR/git" << MOCK
@@ -440,11 +440,11 @@ setup
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 # Create state file simulating an active review (round 2, needs_review)
-DIFF_STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_55"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/55\nROUND=2\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$DIFF_STATE_FILE"
+DIFF_STATE_FILE="$STATE_DIR/Garsson-io_kaizen_55"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/55\nROUND=2\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$DIFF_STATE_FILE"
 
 DIFF_INPUT=$(jq -n '{
-  "tool_input": {"command": "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/55"},
+  "tool_input": {"command": "gh pr diff https://github.com/Garsson-io/kaizen/pull/55"},
   "tool_response": {
     "stdout": "diff --git a/src/foo.ts b/src/foo.ts\n...",
     "stderr": "",
@@ -472,11 +472,11 @@ echo "=== gh pr diff with already-passed state exits silently ==="
 teardown
 setup
 
-PASSED_STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_56"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/56\nROUND=2\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$PASSED_STATE_FILE"
+PASSED_STATE_FILE="$STATE_DIR/Garsson-io_kaizen_56"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/56\nROUND=2\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$PASSED_STATE_FILE"
 
 DIFF_PASSED_INPUT=$(jq -n '{
-  "tool_input": {"command": "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/56"},
+  "tool_input": {"command": "gh pr diff https://github.com/Garsson-io/kaizen/pull/56"},
   "tool_response": {
     "stdout": "diff output...",
     "stderr": "",
@@ -507,8 +507,8 @@ setup
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
 # Create state at round 4 (MAX_ROUNDS), status=passed (agent just reviewed)
-ESC_STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_60"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/60\nROUND=4\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$ESC_STATE_FILE"
+ESC_STATE_FILE="$STATE_DIR/Garsson-io_kaizen_60"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/60\nROUND=4\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$ESC_STATE_FILE"
 
 ESC_PUSH_INPUT=$(jq -n '{
   "tool_input": {"command": "git push"},
@@ -579,7 +579,7 @@ CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "abc123")
 PR_CREATE_SHA_INPUT=$(jq -n '{
   "tool_input": {"command": "gh pr create --title \"test SHA tracking\""},
   "tool_response": {
-    "stdout": "https://github.com/Garsson-io/nanoclaw/pull/200",
+    "stdout": "https://github.com/Garsson-io/kaizen/pull/200",
     "stderr": "",
     "exit_code": "0"
   }
@@ -587,7 +587,7 @@ PR_CREATE_SHA_INPUT=$(jq -n '{
 
 echo "$PR_CREATE_SHA_INPUT" | STATE_DIR="$STATE_DIR" bash "$HOOK" 2>/dev/null >/dev/null
 
-SHA_STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_200"
+SHA_STATE_FILE="$STATE_DIR/Garsson-io_kaizen_200"
 if [ -f "$SHA_STATE_FILE" ]; then
   STORED_SHA=$(grep '^LAST_REVIEWED_SHA=' "$SHA_STATE_FILE" | cut -d= -f2-)
   if [ -n "$STORED_SHA" ]; then
@@ -613,11 +613,11 @@ setup
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
-DIFF_SHA_STATE="$STATE_DIR/Garsson-io_nanoclaw_201"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/201\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$DIFF_SHA_STATE"
+DIFF_SHA_STATE="$STATE_DIR/Garsson-io_kaizen_201"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/201\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$DIFF_SHA_STATE"
 
 DIFF_SHA_INPUT=$(jq -n '{
-  "tool_input": {"command": "gh pr diff https://github.com/Garsson-io/nanoclaw/pull/201"},
+  "tool_input": {"command": "gh pr diff https://github.com/Garsson-io/kaizen/pull/201"},
   "tool_response": {
     "stdout": "diff...",
     "stderr": "",
@@ -649,8 +649,8 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "abc123")
 
 # Create state with a LAST_REVIEWED_SHA that matches HEAD~1 (small diff)
-SMALL_STATE="$STATE_DIR/Garsson-io_nanoclaw_210"
-printf 'PR_URL=https://github.com/Garsson-io/nanoclaw/pull/210\nROUND=1\nSTATUS=passed\nBRANCH=%s\nLAST_REVIEWED_SHA=%s\n' \
+SMALL_STATE="$STATE_DIR/Garsson-io_kaizen_210"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/210\nROUND=1\nSTATUS=passed\nBRANCH=%s\nLAST_REVIEWED_SHA=%s\n' \
   "$CURRENT_BRANCH" "$CURRENT_SHA" > "$SMALL_STATE"
 
 # Mock git to simulate a small diff (5 lines changed)

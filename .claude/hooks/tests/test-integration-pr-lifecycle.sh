@@ -64,12 +64,12 @@ echo "=== Phase 2: gh pr create → gate activates ==="
 # PostToolUse: kaizen-pr-review-loop.sh creates state
 run_post_hook \
   "gh pr create --title 'test PR' --body 'test body'" \
-  "https://github.com/Garsson-io/nanoclaw/pull/55" \
+  "https://github.com/Garsson-io/kaizen/pull/55" \
   "" "0"
 assert_contains "pr-review-loop outputs review prompt" "MANDATORY SELF-REVIEW" "$HOOK_STDOUT"
 
 # Verify state file exists
-STATE_FILE="$STATE_DIR/Garsson-io_nanoclaw_55"
+STATE_FILE="$STATE_DIR/Garsson-io_kaizen_55"
 if [ -f "$STATE_FILE" ]; then
   echo "  PASS: state file created"
   ((PASS++))
@@ -163,7 +163,7 @@ echo "=== Phase 6: gh pr merge → cleanup ==="
 
 run_post_hook \
   "gh pr merge 55 --squash" \
-  "✓ Merged https://github.com/Garsson-io/nanoclaw/pull/55" \
+  "✓ Merged https://github.com/Garsson-io/kaizen/pull/55" \
   "" "0"
 
 if [ ! -f "$STATE_FILE" ]; then
@@ -196,15 +196,15 @@ echo "=== Phase 8: Multi-repo isolation ==="
 
 # Create PR for repo A
 run_post_hook \
-  "gh pr create --repo Garsson-io/nanoclaw --title 'A'" \
-  "https://github.com/Garsson-io/nanoclaw/pull/60" "" "0"
+  "gh pr create --repo Garsson-io/kaizen --title 'A'" \
+  "https://github.com/Garsson-io/kaizen/pull/60" "" "0"
 
 # Create PR for repo B
 run_post_hook \
   "gh pr create --repo Garsson-io/garsson-prints --title 'B'" \
   "https://github.com/Garsson-io/garsson-prints/pull/10" "" "0"
 
-STATE_A="$STATE_DIR/Garsson-io_nanoclaw_60"
+STATE_A="$STATE_DIR/Garsson-io_kaizen_60"
 STATE_B="$STATE_DIR/Garsson-io_garsson-prints_10"
 
 if [ -f "$STATE_A" ] && [ -f "$STATE_B" ]; then
@@ -220,7 +220,7 @@ fi
 # Merge A shouldn't affect B
 run_post_hook \
   "gh pr merge 60 --squash" \
-  "✓ Merged https://github.com/Garsson-io/nanoclaw/pull/60" "" "0"
+  "✓ Merged https://github.com/Garsson-io/kaizen/pull/60" "" "0"
 
 if [ ! -f "$STATE_A" ] && [ -f "$STATE_B" ]; then
   echo "  PASS: merging A cleans only A, B untouched"

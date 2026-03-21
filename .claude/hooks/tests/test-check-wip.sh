@@ -15,7 +15,7 @@ trap 'rm -rf "$MOCK_DIR"' EXIT
 # Helper: create mock git
 setup_git_mock() {
   local git_common_dir="$1"
-  local toplevel="${2:-/home/user/projects/nanoclaw}"
+  local toplevel="${2:-/home/user/projects/kaizen}"
   local branch="${3:-main}"
   local worktree_list="${4:-}"
   local unmerged_branches="${5:-}"
@@ -117,7 +117,7 @@ echo "=== Worktree context: exits silently ==="
 
 # INVARIANT: Hook only runs in main checkout; exits 0 immediately in worktrees
 # SUT: kaizen-check-wip.sh main checkout guard (GIT_COMMON_DIR != ".git")
-setup_git_mock ".git/worktrees/test-wt" "/home/user/projects/nanoclaw/.claude/worktrees/test"
+setup_git_mock ".git/worktrees/test-wt" "/home/user/projects/kaizen/.claude/worktrees/test"
 OUTPUT=$(run_hook)
 EXIT_CODE=$?
 assert_eq "exit code 0 in worktree" "0" "$EXIT_CODE"
@@ -128,7 +128,7 @@ echo "=== Main checkout, no WIP: shows warning only ==="
 
 # INVARIANT: In main checkout with no WIP, shows worktree warning but no WIP summary
 # SUT: kaizen-check-wip.sh main checkout with clean state
-setup_git_mock ".git" "/home/user/projects/nanoclaw" "main" "" ""
+setup_git_mock ".git" "/home/user/projects/kaizen" "main" "" ""
 setup_gh_mock ""
 setup_cli_kaizen_mock "[]"
 OUTPUT=$(run_hook)
@@ -143,7 +143,7 @@ echo "=== Main checkout with open PRs: lists them ==="
 
 # INVARIANT: Open PRs are surfaced in the WIP summary
 # SUT: kaizen-check-wip.sh PR detection via gh pr list
-setup_git_mock ".git" "/home/user/projects/nanoclaw" "main" "" ""
+setup_git_mock ".git" "/home/user/projects/kaizen" "main" "" ""
 setup_gh_mock "#42 Fix auth bug (fix/auth-bug)
 #43 Add feature (feat/new-feature)"
 setup_cli_kaizen_mock "[]"
@@ -159,7 +159,7 @@ echo "=== Main checkout with unmerged branches: lists them ==="
 
 # INVARIANT: Unmerged branches are surfaced in the WIP summary
 # SUT: kaizen-check-wip.sh unmerged branch detection
-setup_git_mock ".git" "/home/user/projects/nanoclaw" "main" "" "  fix/old-branch
+setup_git_mock ".git" "/home/user/projects/kaizen" "main" "" "  fix/old-branch
   feat/wip-feature"
 setup_gh_mock ""
 setup_cli_kaizen_mock "[]"
@@ -174,11 +174,11 @@ echo "=== Main checkout with worktrees: lists them ==="
 
 # INVARIANT: Non-main worktrees are surfaced in the WIP summary
 # SUT: kaizen-check-wip.sh worktree detection
-WORKTREE_LIST="worktree /home/user/projects/nanoclaw/.claude/worktrees/test-wt
+WORKTREE_LIST="worktree /home/user/projects/kaizen/.claude/worktrees/test-wt
 HEAD def5678
 branch refs/heads/fix/some-branch
 "
-setup_git_mock ".git" "/home/user/projects/nanoclaw" "main" "$WORKTREE_LIST" ""
+setup_git_mock ".git" "/home/user/projects/kaizen" "main" "$WORKTREE_LIST" ""
 setup_gh_mock ""
 setup_cli_kaizen_mock "[]"
 OUTPUT=$(run_hook)
@@ -191,7 +191,7 @@ echo "=== Never blocks: always exits 0 ==="
 
 # INVARIANT: This hook is advisory — never blocks the session
 # SUT: kaizen-check-wip.sh exit code across all scenarios
-setup_git_mock ".git" "/home/user/projects/nanoclaw" "main" "" "  branch1
+setup_git_mock ".git" "/home/user/projects/kaizen" "main" "" "  branch1
   branch2
   branch3"
 setup_gh_mock "#1 PR one (b1)
@@ -206,7 +206,7 @@ echo "=== gh not available: skips PR listing gracefully ==="
 
 # INVARIANT: If gh CLI is not available, PR section is skipped
 # SUT: kaizen-check-wip.sh graceful degradation
-setup_git_mock ".git" "/home/user/projects/nanoclaw" "main" "" "  some-branch"
+setup_git_mock ".git" "/home/user/projects/kaizen" "main" "" "  some-branch"
 # Remove gh mock so command -v gh fails
 rm -f "$MOCK_DIR/gh"
 setup_cli_kaizen_mock "[]"
