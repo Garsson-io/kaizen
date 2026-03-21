@@ -156,13 +156,13 @@ print_checklist() {
 
   cat <<CHECKLIST
 
-Use the /review-pr skill for the full checklist. Run \`/review-pr $pr_url\` now.
+Use the /kaizen-review-pr skill for the full checklist. Run \`/kaizen-review-pr $pr_url\` now.
 
 The skill covers: requirements verification, clarity, testability, code quality,
 purpose/impact, security, documentation & system docs updates, and kaizen.
 
 PROCESS:
-1. Run \`/review-pr $pr_url\` — it will load the full checklist
+1. Run \`/kaizen-review-pr $pr_url\` — it will load the full checklist
 2. Walk through EVERY section
 3. If issues found: fix, commit, push, log what you fixed
 4. Re-review from step 1 (next round)

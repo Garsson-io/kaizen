@@ -24,7 +24,7 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 | **L2** | Tagged & tracked | Each run gets a unique tag. PRs, issues, and cases created are extracted and logged. Batch creates a summary issue. | Output parsing, `--output-format json`, GitHub issue per batch |
 | **L3** | Governed | Cost caps (per-run and total), consecutive failure detection, tight-loop prevention, graceful shutdown on signals. | Budget tracking, exit code analysis, cooldown escalation, SIGTERM handler |
 | **L4** | Reporting | Admin gets a structured report after each run and a batch summary. Telegram notification with PRs shipped, issues filed, money spent. | IPC messaging to admin channel, structured summaries |
-| **L5** | Strategic | Ultrathink before the batch: assess backlog, choose high-value guidance. Gap analysis every N runs. Adaptive work selection. | Pre-batch planning phase, `/gap-analysis` integration, guidance evolution |
+| **L5** | Strategic | Ultrathink before the batch: assess backlog, choose high-value guidance. Gap analysis every N runs. Adaptive work selection. | Pre-batch planning phase, `/kaizen-gaps` integration, guidance evolution |
 | **L6** | Self-steering | System measures what previous batches accomplished (PRs merged, issues closed, rework rate) and adjusts strategy autonomously. | Outcome tracking, feedback loop, strategy refinement |
 | **L7** | Fleet | Multiple parallel batch streams, each working an orthogonal domain. Coordination to prevent merge conflicts. | Multi-process orchestration, WIP deconfliction, domain partitioning |
 
@@ -41,7 +41,7 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 | `overnight-dent-run.ts` | L3 (runner) | `scripts/overnight-dent-run.ts` |
 | `claude-wt.sh` | Foundation | `scripts/claude-wt.sh` |
 | `/make-a-dent` skill | Foundation | `.claude/skills/make-a-dent/SKILL.md` |
-| `/gap-analysis` skill | Foundation (L5 prereq) | `.claude/skills/gap-analysis/SKILL.md` |
+| `/kaizen-gaps` skill | Foundation (L5 prereq) | `.claude/skills/kaizen-gaps/SKILL.md` |
 | `--max-budget-usd` flag | L1 cost cap | Claude CLI |
 | `--output-format stream-json` | L3 enabler | Claude CLI |
 | IPC messaging | L4 enabler | `docs/ipc-messaging.md` |
@@ -141,11 +141,11 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 1. **Pre-batch ultrathink.** Before the first run, spawn a planning session (Opus, high effort) that:
    - Reads the kaizen backlog
    - Checks WIP (active cases, open PRs)
-   - Runs `/gap-analysis` (or reads a recent one)
+   - Runs `/kaizen-gaps` (or reads a recent one)
    - Produces a ranked list of domains and specific issues to target
    - The human's guidance becomes a *constraint* ("focus on hooks") not a *command*
 
-2. **Gap analysis every N runs.** Every 5th run (configurable), instead of `/make-a-dent`, run `/gap-analysis` to reassess:
+2. **Gap analysis every N runs.** Every 5th run (configurable), instead of `/make-a-dent`, run `/kaizen-gaps` to reassess:
    - What domains still have high-value open work?
    - What did the previous runs accomplish? Did they shift the gap landscape?
    - Should the guidance evolve? (e.g., "hooks are clean now, shift to testing infra")

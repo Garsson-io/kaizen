@@ -24,7 +24,7 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
 # Trigger 1: Skill tool invoked with /kaizen
 if [ "$TOOL_NAME" = "Skill" ]; then
   SKILL_NAME=$(echo "$INPUT" | jq -r '.tool_input.skill // empty')
-  if [ "$SKILL_NAME" = "kaizen" ]; then
+  if [ "$SKILL_NAME" = "kaizen-reflect" ] || [ "$SKILL_NAME" = "kaizen" ]; then
     # Clear ALL pending post-merge states at once (kaizen #279).
     # One /kaizen invocation covers all PRs merged in this session.
     if clear_all_states_with_status "needs_post_merge"; then

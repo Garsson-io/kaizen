@@ -27,7 +27,7 @@ With telemetry + persistent reflections + investigations:
 - Session telemetry would show: hook block → same file → same root cause → twice
 - Both reflections would be in `Garsson-io/kaizen` repo, searchable
 - An investigation (triggered by recurrence) would connect them and demand escalation
-- The investigation output would be a `/write-prd` spec → tracked issue → fix
+- The investigation output would be a `/kaizen-prd` spec → tracked issue → fix
 
 ### Who experiences this
 
@@ -56,7 +56,7 @@ Layer 2: REFLECTIONS (observations)
 Layer 3: INVESTIGATIONS (analysis)
   On-demand or pattern-triggered, an agent reads accumulated
   reflections + session data, finds patterns, and produces
-  actionable specs via /write-prd → tracked issues.
+  actionable specs via /kaizen-prd → tracked issues.
   Investigations are recursive: they read past investigations.
          │
          ▼
@@ -68,7 +68,7 @@ Layer 3: INVESTIGATIONS (analysis)
 - After every session, structured telemetry is persisted. An investigation agent can ask "show me all sessions where hook X blocked a push" or "what tool calls failed most often this week."
 - Reflections are written to `Garsson-io/kaizen` as JSON files, not as PR comments. They capture the observation without distracting from the work.
 - Investigations are first-class artifacts — saved, searchable, recursive. An investigation can reference past investigations and ask "did we actually fix what we said we'd fix?"
-- The flow from observation to action is: reflection → investigation → `/write-prd` → issue → implementation. Each step has a clear artifact.
+- The flow from observation to action is: reflection → investigation → `/kaizen-prd` → issue → implementation. Each step has a clear artifact.
 
 ### Out of scope
 
@@ -171,7 +171,7 @@ Layer 3: INVESTIGATIONS (analysis)
    - Past investigation recommended X — was X implemented? Did it work?
 
 3. PRODUCE — output is one of:
-   a. /write-prd spec → GitHub issue → tracked improvement
+   a. /kaizen-prd spec → GitHub issue → tracked improvement
    b. Direct fix (if small enough)
    c. "No action needed" with reasoning (still saved)
 
@@ -263,10 +263,10 @@ Garsson-io/kaizen/
 4. Agent reads past investigations/ on related topics
 5. Agent produces investigation report:
    - Patterns found
-   - Actions: /write-prd for significant findings, direct fixes for small ones
+   - Actions: /kaizen-prd for significant findings, direct fixes for small ones
    - Meta: did past investigations' recommendations get implemented?
 6. Investigation saved to investigations/
-7. If actionable: /write-prd → issue created in Garsson-io/kaizen
+7. If actionable: /kaizen-prd → issue created in Garsson-io/kaizen
 ```
 
 ### 4c. Recursive self-improvement
@@ -307,7 +307,7 @@ PR #112 describes WHAT the system should do. This spec describes WHERE the data 
 |------------|---------------|--------|
 | Hook-triggered reflections | `check-dirty-files.sh`, `kaizen-reflect.sh` | Working — but output is ephemeral text |
 | Kaizen issue tracking | `Garsson-io/kaizen` GitHub Issues | Working |
-| `/write-prd` skill | Creates specs from investigation findings | Working |
+| `/kaizen-prd` skill | Creates specs from investigation findings | Working |
 | Feedback memories | `~/.claude/` memory files | Working — L1, local only |
 
 ### Needs Building
@@ -398,7 +398,7 @@ Phase 1: Reflection persistence
   Hooks save reflections to Garsson-io/kaizen instead of PR comments.
 
 Phase 2: Investigation capability
-  [/kaizen investigate skill] → [investigation schema] → [/write-prd integration]
+  [/kaizen investigate skill] → [investigation schema] → [/kaizen-prd integration]
   Agents can analyze accumulated reflections and produce actionable specs.
 
 Phase 3: Session telemetry

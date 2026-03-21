@@ -454,7 +454,7 @@ DIFF_INPUT=$(jq -n '{
 
 DIFF_OUTPUT=$(echo "$DIFF_INPUT" | STATE_DIR="$STATE_DIR" bash "$HOOK" 2>/dev/null)
 assert_contains "diff output includes review round" "REVIEW ROUND 2/4" "$DIFF_OUTPUT"
-assert_contains "diff output includes checklist" "/review-pr" "$DIFF_OUTPUT"
+assert_contains "diff output includes checklist" "/kaizen-review-pr" "$DIFF_OUTPUT"
 assert_contains "diff output includes REVIEW PASSED" "REVIEW PASSED" "$DIFF_OUTPUT"
 
 # Verify state transitioned to passed

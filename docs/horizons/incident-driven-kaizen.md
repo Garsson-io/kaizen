@@ -4,10 +4,10 @@
 
 ## Problem
 
-The kaizen system says "has incidents > theoretical" in `/pick-work` scoring, but has no data structure to measure this. 98% of open kaizen issues have zero comments. When an agent encounters friction matching an existing issue, there's no enforcement or habit to record it. Incidents evaporate — the same issue gets re-discovered, re-discussed, and sometimes re-filed as a duplicate.
+The kaizen system says "has incidents > theoretical" in `/kaizen-pick` scoring, but has no data structure to measure this. 98% of open kaizen issues have zero comments. When an agent encounters friction matching an existing issue, there's no enforcement or habit to record it. Incidents evaporate — the same issue gets re-discovered, re-discussed, and sometimes re-filed as a duplicate.
 
 Without incident data:
-- **Prioritization is opinion-based.** `/pick-work` can't distinguish "mentioned once as theoretical" from "happened 5 times this week."
+- **Prioritization is opinion-based.** `/kaizen-pick` can't distinguish "mentioned once as theoretical" from "happened 5 times this week."
 - **Level escalation is reactive.** An L1 instruction stays L1 until a human notices it failed repeatedly. No signal triggers escalation.
 - **Duplicate issues accumulate.** Agents file new issues for friction that already has a tracking issue, because finding the existing issue is harder than filing a new one.
 - **Evidence doesn't compound.** Each agent session starts fresh. Friction encountered in session A doesn't inform session B's priorities.
@@ -20,7 +20,7 @@ Without incident data:
 | **L1** | Manual recording | Agent adds incident comments when it notices a match | Reflection prompt asks "does this match an existing issue?" | **Current target** |
 | **L2** | Prompted recording | Reflection gate checks whether agent searched for existing issues before filing new ones | Hook validates search-before-file | Next step |
 | **L3** | Structured incidents | Incident comments follow a schema; `incident-count:N` label auto-maintained | Hook + label automation on `gh issue comment` | Visible from here |
-| **L4** | Incident-driven scoring | `/pick-work` reads incident count/recency as a first-class scoring signal | `cli-kaizen` exposes incident metadata; pick-work uses it | Visible from here |
+| **L4** | Incident-driven scoring | `/kaizen-pick` reads incident count/recency as a first-class scoring signal | `cli-kaizen` exposes incident metadata; pick-work uses it | Visible from here |
 | **L5** | Mid-work detection | Agent detects "this friction matches kaizen #N" during work (not just at reflection checkpoints) and records it without breaking flow | Lightweight MCP tool or background agent | Horizon |
 | **L6** | Escalation triggers | Incident thresholds auto-escalate issue level (e.g., 3 incidents at L1 → auto-propose L2) | Mechanistic rule engine | Horizon |
 
@@ -39,7 +39,7 @@ Without incident data:
   **Impact:** [time wasted | blocked | wrong output | human notified]
   **Details:** What happened, what the agent was doing, how it was resolved
   ```
-- Update `/accept-case` awareness: when gathering evidence, count incident comments on the issue
+- Update `/kaizen-evaluate` awareness: when gathering evidence, count incident comments on the issue
 
 **Why L1 is enough to start:** We need data before we can design the enforcement. The first few weeks of manual incident recording will reveal: how often do agents actually match to existing issues? What's the false-positive rate? Do incidents cluster around a few issues or spread evenly? This data informs L2 design.
 
@@ -63,7 +63,7 @@ Without incident data:
 - Open question: Who maintains the label — a CI action on issue comment? A hook? The agent itself?
 
 **L4 (scoring integration):**
-- Problem: `/pick-work` says "has incidents > theoretical" but can't measure it.
+- Problem: `/kaizen-pick` says "has incidents > theoretical" but can't measure it.
 - Need: `cli-kaizen list` exposes incident count. Scoring uses it as a numeric signal.
 - Open question: How to weight incident recency? 3 incidents last week vs 3 incidents last quarter should score differently.
 

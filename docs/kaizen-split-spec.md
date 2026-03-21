@@ -93,15 +93,15 @@ All kaizen skills and hooks are prefixed with `kaizen-` for clear identification
 | Old Name | New Name | Purpose |
 |----------|----------|---------|
 | `/kaizen` | `/kaizen-reflect` | Post-work reflection — classify impediments, file issues |
-| `/pick-work` | `/kaizen-pick` | Intelligently select next issue from backlog |
-| `/gap-analysis` | `/kaizen-gaps` | Strategic analysis — tooling gaps, horizon concentration |
-| `/accept-case` | `/kaizen-evaluate` | Scope gate — evaluate issue before implementation |
-| `/implement-spec` | `/kaizen-implement` | Spec-to-code executor — worktree, build, ship |
+| `/kaizen-pick` | `/kaizen-pick` | Intelligently select next issue from backlog |
+| `/kaizen-gaps` | `/kaizen-gaps` | Strategic analysis — tooling gaps, horizon concentration |
+| `/kaizen-evaluate` | `/kaizen-evaluate` | Scope gate — evaluate issue before implementation |
+| `/kaizen-implement` | `/kaizen-implement` | Spec-to-code executor — worktree, build, ship |
 | `/make-a-dent` | `/kaizen-deep-dive` | Autonomous root-cause fix across a category |
-| `/audit-issues` | `/kaizen-audit-issues` | Taxonomy audit — label coverage, epic health, incidents |
-| `/write-prd` | `/kaizen-prd` | Problem mapping — iterative discovery to spec |
-| `/plan-work` | `/kaizen-plan` | Break large work into sequenced PRs |
-| `/review-pr` | `/kaizen-review-pr` | Self-review checklist after PR creation |
+| `/kaizen-audit-issues` | `/kaizen-audit-issues` | Taxonomy audit — label coverage, epic health, incidents |
+| `/kaizen-prd` | `/kaizen-prd` | Problem mapping — iterative discovery to spec |
+| `/kaizen-plan` | `/kaizen-plan` | Break large work into sequenced PRs |
+| `/kaizen-review-pr` | `/kaizen-review-pr` | Self-review checklist after PR creation |
 | `/zen` | `/kaizen-zen` | Print the Zen of Kaizen philosophy |
 | `/wip` | `/kaizen-wip` | Show in-progress work (worktrees, PRs, branches, cases) |
 | `/du` | `/kaizen-cleanup` | Disk usage analysis and safe worktree cleanup |

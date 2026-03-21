@@ -77,7 +77,7 @@ These are registered in `.claude/settings.json` and fire on Claude Code tool-use
 |------|---------|
 | `policies.md` | Kaizen enforcement policies (#11-17) — recursive kaizen, hooks, MCP, security, isolation, testing, language boundaries |
 | `verification.md` | Verification discipline — path tracing, invariant statements, runtime artifact verification, smoke tests |
-| `workflow.md` | Dev work skill chain — trigger→skill routing for `/pick-work` → `/accept-case` → `/implement-spec` → `/kaizen` |
+| `workflow.md` | Dev work skill chain — trigger→skill routing for `/kaizen-pick` → `/kaizen-evaluate` → `/kaizen-implement` → `/kaizen` |
 | `practices.md` | Engineering practices checklist — consulted before shipping (advisory) |
 | `zen.md` | The Zen of Kaizen — philosophical principles |
 | `horizon.md` | Horizon tracking dimensions |

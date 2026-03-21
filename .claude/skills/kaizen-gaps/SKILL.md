@@ -273,9 +273,9 @@ This skill should be run periodically (every 2-4 weeks or after a burst of incid
 ```
 /kaizen-gaps  (strategic: where should we invest?)
     ↓
-  Low-hanging fruit → file kaizen issues → /kaizen-pick → /kaizen-evaluate → /implement-spec
-  Feature PRDs → /kaizen-prd → /kaizen-plan → /implement-spec
-  Meta PRDs → /kaizen-prd (horizon mode) → /kaizen-plan → /implement-spec
+  Low-hanging fruit → file kaizen issues → /kaizen-pick → /kaizen-evaluate → /kaizen-implement
+  Feature PRDs → /kaizen-prd → /kaizen-plan → /kaizen-implement
+  Meta PRDs → /kaizen-prd (horizon mode) → /kaizen-plan → /kaizen-implement
     ↓
 /kaizen  (reflect on the work, close the loop)
 ```

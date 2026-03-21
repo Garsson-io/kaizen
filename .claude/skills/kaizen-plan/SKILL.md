@@ -1,6 +1,6 @@
 ---
 name: kaizen-plan
-description: Break a large initiative into independent, sequenced PRs — one PR, one issue. Produces a dependency graph, risk assessment, and GitHub sub-issues. Use after /write-prd. Triggers on "plan work", "break into PRs", "implementation plan", "split into issues", "plan PRs", "sequence work", "one PR one issue".
+description: Break a large initiative into independent, sequenced PRs — one PR, one issue. Produces a dependency graph, risk assessment, and GitHub sub-issues. Use after /kaizen-prd. Triggers on "plan work", "break into PRs", "implementation plan", "split into issues", "plan PRs", "sequence work", "one PR one issue".
 ---
 
 # Plan Work — Break Large Initiatives into PRs

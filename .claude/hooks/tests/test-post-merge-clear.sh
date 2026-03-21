@@ -54,7 +54,7 @@ fi
 
 # INVARIANT: Invoking /kaizen clears the needs_post_merge state
 # SUT: kaizen-post-merge-clear.sh Skill trigger
-OUTPUT=$(run_skill_hook "kaizen")
+OUTPUT=$(run_skill_hook "kaizen-reflect")
 if [ ! -f "$STATE_DIR/post-merge-Garsson-io_kaizen_42" ]; then
   echo "  PASS: /kaizen cleared post-merge state"
   ((PASS++))
@@ -75,10 +75,10 @@ create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/42"
 # SUT: kaizen-post-merge-clear.sh skill name check
 OUTPUT=$(run_skill_hook "review-pr")
 if [ -f "$STATE_DIR/post-merge-Garsson-io_kaizen_42" ]; then
-  echo "  PASS: /review-pr did not clear post-merge state"
+  echo "  PASS: /kaizen-review-pr did not clear post-merge state"
   ((PASS++))
 else
-  echo "  FAIL: /review-pr incorrectly cleared post-merge state"
+  echo "  FAIL: /kaizen-review-pr incorrectly cleared post-merge state"
   ((FAIL++))
 fi
 
@@ -89,7 +89,7 @@ setup
 
 # INVARIANT: /kaizen without pending state produces no output
 # SUT: kaizen-post-merge-clear.sh with empty state
-OUTPUT=$(run_skill_hook "kaizen")
+OUTPUT=$(run_skill_hook "kaizen-reflect")
 if [ -z "$OUTPUT" ]; then
   echo "  PASS: /kaizen with no pending state is silent"
   ((PASS++))
@@ -175,7 +175,7 @@ create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/43" "needs_po
 
 # INVARIANT: /kaizen only clears state for the current branch
 # SUT: kaizen-post-merge-clear.sh worktree isolation via clear_state_with_status
-OUTPUT=$(run_skill_hook "kaizen")
+OUTPUT=$(run_skill_hook "kaizen-reflect")
 # PR 42 (other branch) should still exist
 if [ -f "$STATE_DIR/post-merge-Garsson-io_kaizen_42" ]; then
   echo "  PASS: other branch's state preserved"
@@ -253,7 +253,7 @@ create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/200" "needs_p
 create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/201" "needs_post_merge" "$CURRENT_BRANCH"
 create_post_merge_state "https://github.com/Garsson-io/kaizen/pull/202" "needs_post_merge" "$CURRENT_BRANCH"
 
-OUTPUT=$(echo '{"tool_name":"Skill","tool_input":{"skill":"kaizen"},"tool_response":{}}' | bash "$HOOK" 2>/dev/null)
+OUTPUT=$(echo '{"tool_name":"Skill","tool_input":{"skill":"kaizen-reflect"},"tool_response":{}}' | bash "$HOOK" 2>/dev/null)
 assert_contains "output mentions all pending PRs cleared" "all pending PRs" "$OUTPUT"
 
 # Verify all states are cleared

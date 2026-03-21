@@ -17,14 +17,14 @@ Every issue MUST have at minimum three labels:
 | **Status** | Auto-synced | `status:active`, `status:done`, `status:has-pr`, `status:backlog`, `status:blocked`, `status:suggested` | Lifecycle state (managed by case backend) |
 | **Structure** | When applicable | `epic`, `prd` | Multi-phase initiatives or specs |
 | **Case type** | Auto-synced | `type:dev`, `type:work` | Set by case backend |
-| **Priority** | When applicable | `priority:critical`, `priority:high` | Urgency signal for `/pick-work` and `/make-a-dent` |
+| **Priority** | When applicable | `priority:critical`, `priority:high` | Urgency signal for `/kaizen-pick` and `/make-a-dent` |
 
 **Priority labels** — Use when urgency matters beyond the standard level/area scoring:
-- `priority:critical` — Blocks humans, blocks multiple PRs, or 3+ incidents. `/pick-work` surfaces these first.
+- `priority:critical` — Blocks humans, blocks multiple PRs, or 3+ incidents. `/kaizen-pick` surfaces these first.
 - `priority:high` — Has 1-2 incidents, unblocks downstream work, or fixes human-visible problems.
 - Issues without a priority label default to normal priority. No `priority:medium` or `priority:low` label needed.
 
-**Filing rule:** If you create an issue without `kaizen` + level + area, you're making it invisible to `/pick-work` and `/gap-analysis`.
+**Filing rule:** If you create an issue without `kaizen` + level + area, you're making it invisible to `/kaizen-pick` and `/kaizen-gaps`.
 
 ## Issue Title Convention
 
@@ -114,7 +114,7 @@ When an agent encounters friction that matches an existing open issue, it MUST r
 
 ### Why incidents matter
 
-- **Prioritization:** `/pick-work` can weight issues by incident count and recency
+- **Prioritization:** `/kaizen-pick` can weight issues by incident count and recency
 - **Level escalation:** 3+ incidents at L1 is a signal to escalate to L2
 - **Duplicate prevention:** Adding to an existing issue is more valuable than filing a new one
 - **Pattern detection:** Incident clusters reveal root cause categories
