@@ -11,8 +11,8 @@
   "license": "MIT",
   "keywords": ["kaizen", "process-improvement", "hooks", "reflection", "dev-workflow"],
 
-  "skills": "./.claude/skills/",
-  "agents": "./.claude/agents/",
+  "skills": "../.claude/skills/",
+  "agents": "../.claude/agents/",
 
   "hooks": {
     "SessionStart": [
