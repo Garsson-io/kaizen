@@ -1,0 +1,21 @@
+{
+  "name": "@garsson-io/kaizen",
+  "version": "0.1.0",
+  "description": "Kaizen — continuous improvement plugin for Claude Code",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:hooks": "bash .claude/hooks/tests/run-all-tests.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.0"
+  },
+  "dependencies": {
+    "yaml": "^2.8.3"
+  }
+}

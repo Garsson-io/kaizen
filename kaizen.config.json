@@ -1,0 +1,21 @@
+{
+  "host": {
+    "name": "kaizen",
+    "repo": "Garsson-io/kaizen",
+    "description": "Kaizen continuous improvement system"
+  },
+  "kaizen": {
+    "repo": "Garsson-io/kaizen",
+    "issueLabel": "meta-kaizen"
+  },
+  "taxonomy": {
+    "levels": ["level-1", "level-2", "level-3"],
+    "areas": ["hooks", "skills", "cli", "docs", "ci"],
+    "areaPrefix": "area/",
+    "epicPrefix": "epic/",
+    "horizonPrefix": "horizon/"
+  },
+  "notifications": {
+    "channel": "none"
+  }
+}

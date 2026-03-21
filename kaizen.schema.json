@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Kaizen Configuration",
+  "description": "Configuration for the kaizen continuous improvement plugin",
+  "type": "object",
+  "required": ["host", "kaizen"],
+  "properties": {
+    "host": {
+      "type": "object",
+      "description": "Host project configuration",
+      "required": ["name", "repo"],
+      "properties": {
+        "name": { "type": "string", "description": "Short name for the host project" },
+        "repo": { "type": "string", "description": "GitHub org/repo for the host project" },
+        "description": { "type": "string", "description": "Brief description of the host project" },
+        "caseCli": { "type": "string", "description": "Command to invoke the case CLI (e.g., 'npx tsx src/cli-cases.ts'). If absent, kaizen uses plain git worktrees." }
+      }
+    },
+    "kaizen": {
+      "type": "object",
+      "description": "Kaizen issue tracking configuration",
+      "required": ["repo"],
+      "properties": {
+        "repo": { "type": "string", "description": "GitHub org/repo where kaizen issues are filed" },
+        "issueLabel": { "type": "string", "default": "kaizen", "description": "Label applied to kaizen issues in the host repo" }
+      }
+    },
+    "taxonomy": {
+      "type": "object",
+      "description": "Issue taxonomy configuration",
+      "properties": {
+        "levels": { "type": "array", "items": { "type": "string" }, "default": ["level-1", "level-2", "level-3"] },
+        "areas": { "type": "array", "items": { "type": "string" } },
+        "areaPrefix": { "type": "string", "default": "area/" },
+        "epicPrefix": { "type": "string", "default": "epic/" },
+        "horizonPrefix": { "type": "string", "default": "horizon/" },
+        "horizons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "policies": {
+      "type": "object",
+      "properties": {
+        "localFile": { "type": "string", "description": "Path to host-specific policies file", "default": ".claude/kaizen/policies-local.md" }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "properties": {
+        "channel": { "type": "string", "enum": ["telegram", "slack", "none"], "default": "none" },
+        "config": { "type": "object", "description": "Channel-specific configuration" }
+      }
+    }
+  }
+}
