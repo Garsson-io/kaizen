@@ -12,7 +12,7 @@
   "keywords": ["kaizen", "process-improvement", "hooks", "reflection", "dev-workflow"],
 
   "skills": "./.claude/skills/",
-  "agents": "./.claude/agents/",
+  "agents": ["./.claude/agents/kaizen-bg.md"],
 
   "hooks": {
     "SessionStart": [
