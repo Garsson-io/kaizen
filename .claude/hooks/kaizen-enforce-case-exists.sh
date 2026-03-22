@@ -26,6 +26,8 @@ if [ -z "$FILE_PATH" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Detect worktree: git-dir differs from git-common-dir
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
 GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)

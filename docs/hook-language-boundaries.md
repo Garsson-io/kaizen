@@ -98,28 +98,27 @@ TypeScript wins: already the primary language, established test framework, ~200m
 - [x] This document (`docs/hook-language-boundaries.md`)
 - [x] CLAUDE.md policy section
 
-### Phase 3: Migrate highest-value targets (IN PROGRESS — kaizen #320)
+### Phase 3: Migrate highest-value targets (DONE — kaizen #320)
 
 Priority order based on complexity, incident history, and test burden:
 
-1. **`pr-review-loop.sh` (452 lines)** — **MIGRATED** → `src/hooks/pr-review-loop.ts` + 115 vitest tests
-2. **`pr-kaizen-clear.sh` (290 lines)** — **MIGRATED** → `src/hooks/pr-kaizen-clear.ts` + typed JSON validation
-3. **`kaizen-reflect.sh` (197 lines)** — **MIGRATED** → `src/hooks/kaizen-reflect.ts` + Telegram IPC
+1. **`pr-review-loop.sh` (452 lines)** — **MIGRATED** → `src/hooks/pr-review-loop.ts` + vitest tests. Old bash deleted.
+2. **`pr-kaizen-clear.sh` (290 lines)** — **MIGRATED** → `src/hooks/pr-kaizen-clear.ts` + typed JSON validation. Old bash deleted.
+3. **`kaizen-reflect.sh` (197 lines)** — **MIGRATED** → `src/hooks/kaizen-reflect.ts` + Telegram IPC. Old bash deleted.
 4. **`worktree-du.sh` (~300 lines)** — Not yet migrated. Lower priority because bugs were fixed.
 
 Shared infrastructure created:
-- `src/hooks/hook-utils.ts` — Stdin JSON parsing, git helpers, shell execution
+- `src/hooks/hook-io.ts` — Stdin JSON parsing, git helpers, shell execution
 - `src/hooks/parse-command.ts` — Command parsing (port of lib/parse-command.sh)
 - `src/hooks/state-utils.ts` — State file management with atomic writes (port of lib/state-utils.sh)
-- `src/hooks/telegram-ipc.ts` — Telegram notification via IPC files
 
 Migration approach per script:
 
 - Create TypeScript module in `src/hooks/`
 - Port logic with proper types and error handling
 - Add vitest tests (replacing hand-rolled bash tests)
-- Thin bash wrapper calls `npx tsx` for Claude Code hook interface compatibility
-- Old bash scripts deactivated with migration comments (kept for reference)
+- Thin bash wrapper (`-ts.sh`) calls `npx tsx` — registered in `plugin.json`
+- Old bash scripts deleted after migration is wired up
 
 ### Phase 4: Evaluate escalation to L2
 

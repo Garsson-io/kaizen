@@ -42,6 +42,8 @@ EOF
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Trigger 2: Bash — detect gh pr view showing MERGED state (handles --auto timing, kaizen #93)
 if [ "$TOOL_NAME" = "Bash" ]; then
   COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')

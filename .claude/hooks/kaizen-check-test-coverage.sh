@@ -18,6 +18,8 @@ if ! is_gh_pr_command "$CMD_LINE" "create|merge"; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 IS_MERGE=false
 if is_gh_pr_command "$CMD_LINE" "merge"; then
   IS_MERGE=true

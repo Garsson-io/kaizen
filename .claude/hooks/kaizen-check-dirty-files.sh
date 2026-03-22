@@ -35,6 +35,8 @@ else
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 
 # Fix cross-worktree false positive (kaizen #232):
 # When the command uses `git -C <path> push`, check status in the target path,

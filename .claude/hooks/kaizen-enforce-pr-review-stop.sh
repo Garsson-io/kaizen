@@ -33,6 +33,8 @@ if [ $? -ne 0 ] || [ -z "$REVIEW_INFO" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 PR_URL=$(echo "$REVIEW_INFO" | cut -d'|' -f1)
 ROUND=$(echo "$REVIEW_INFO" | cut -d'|' -f2)
 
