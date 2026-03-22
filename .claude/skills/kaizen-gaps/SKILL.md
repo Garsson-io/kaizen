@@ -151,6 +151,64 @@ Accept-case heavyweight for specs  |     4/10    | Open — needs attention
 
 If a pattern appears in 3+ of the last 10 PRs, it should be flagged as a **systemic friction** that warrants its own kaizen issue if not already filed.
 
+### Phase 2.7: Failure Mode Analysis (kaizen #441 — autoresearch methodology)
+
+Classify closed issues and recent PRs by the **failure mode taxonomy** (FM1-FM7). This is the autoresearch approach from #334: form a hypothesis about what breaks, test whether we can detect it, measure detection rate.
+
+**The taxonomy** (from epic #441):
+
+| FM | Name | Signal in issues/PRs |
+|----|------|---------------------|
+| FM1 | DRY Violation | Issue mentions "copy-paste", "duplicate", "extract helper"; PR has jscpd warnings |
+| FM2 | Multi-PR Fix Cycle | 3+ PRs for same feature/case within hours; "fix:" titles referencing same area |
+| FM3 | Reflection Gaming | Issue mentions "waived", "no-action", "gate"; reflection quality is low |
+| FM4 | Scope Cut Testability | Issue mentions "deferred tests", "E2E later", "scope creep"; source without tests |
+| FM5 | Env Assumption | Issue mentions "CWD", "worktree", "CI fails", "hardcoded path" |
+| FM6 | Stale Reference | Issue mentions "old name", "renamed", "migration"; 24+ stale references found |
+| FM7 | Squash Data Loss | Issue mentions "squash", "dropped files", "missing from merge" |
+
+**Step 1: Classify recent closed issues**
+
+```bash
+# Recent closed issues
+gh issue list --repo "$KAIZEN_REPO" --state closed --limit 30 \
+  --json number,title,labels,body,closedAt
+```
+
+For each closed issue, assign FM tags based on title/body keywords. Report:
+
+```
+FM  | Issues           | Recent trend | Detection exists?
+----|------------------|-------------|------------------
+FM1 | #430, #365, #209 | stable      | Yes (jscpd hook + src/analysis/diff-checks.ts)
+FM2 | #400             | decreasing  | Yes (src/analysis/pr-pattern-checks.ts)
+FM3 | #388, #280, #258 | stable      | Yes (src/analysis/reflection-checks.ts)
+FM5 | #232, #219       | decreasing  | Yes (src/analysis/diff-checks.ts)
+FM6 | #413             | decreasing  | Yes (src/analysis/diff-checks.ts)
+```
+
+**Step 2: Run synthetic scenarios** (if detectors are available)
+
+The `src/analysis/` module provides deterministic detectors. Run the synthetic test suite to measure current detection effectiveness:
+
+```bash
+npx vitest run src/analysis/ --reporter=verbose 2>&1 | tail -20
+```
+
+Report the detection rate per FM and any failed scenarios. A failed scenario means a known-bad pattern isn't being caught — high-priority improvement target.
+
+**Step 3: Classify recent merged PRs by failure mode**
+
+```bash
+# Recent merged PRs
+gh pr list --repo "$HOST_REPO" --state merged --limit 20 \
+  --json number,title,mergedAt,additions,deletions,changedFiles
+```
+
+For each PR, check: did it introduce or fix a failure mode? Was it itself a multi-PR fix cycle member? This produces the "live validation" layer — do detectors catch real incidents, not just synthetic ones?
+
+**Output:** Add an FM concentration table to the Phase 5 report. High-concentration FMs with low detection rates are priority targets for new detectors or detector improvements.
+
 ### Phase 3: Analyze Concentration
 
 For each existing horizon, count:
