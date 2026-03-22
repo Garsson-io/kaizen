@@ -476,6 +476,79 @@ export function checkStopSignal(text: string, result: RunResult): void {
 
 export interface StreamContext {
   resultReceivedAt?: number;
+  lastPhase?: string;
+  lastActivity?: string;
+}
+
+// In-flight progress update interval (10 minutes)
+const IN_FLIGHT_UPDATE_INTERVAL_MS = 10 * 60 * 1000;
+
+/**
+ * Build the in-flight progress comment body for the GitHub progress issue.
+ * Posted periodically during a run so observers can see batch health.
+ */
+export function buildInFlightComment(
+  runNum: number,
+  runStart: number,
+  result: RunResult,
+  ctx: StreamContext,
+): string {
+  const elapsedSec = Math.floor((Date.now() - runStart) / 1000);
+  const mins = Math.floor(elapsedSec / 60);
+  const secs = elapsedSec % 60;
+
+  const status = ctx.resultReceivedAt
+    ? 'waiting for process exit'
+    : 'working';
+
+  const lines = [
+    `### Run #${runNum} — in progress (${mins}m ${secs}s elapsed)`,
+    '',
+    `| Metric | Value |`,
+    `|--------|-------|`,
+    `| **Tool calls** | ${result.toolCalls} |`,
+    `| **Cost so far** | $${result.cost.toFixed(2)} |`,
+    `| **Status** | ${status} |`,
+  ];
+
+  if (ctx.lastActivity) {
+    lines.push(`| **Last activity** | ${ctx.lastActivity} |`);
+  }
+  if (ctx.lastPhase) {
+    lines.push(`| **Last phase** | ${ctx.lastPhase} |`);
+  }
+  if (result.prs.length > 0) {
+    lines.push(`| **PRs so far** | ${result.prs.join(', ')} |`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Post an in-flight progress comment to the GitHub progress issue.
+ * Non-fatal: swallows errors to avoid disrupting the run.
+ */
+export function postInFlightUpdate(
+  progressIssue: string,
+  kaizenRepo: string,
+  runNum: number,
+  runStart: number,
+  result: RunResult,
+  ctx: StreamContext,
+): boolean {
+  if (!progressIssue || !kaizenRepo) return false;
+  const m = progressIssue.match(/issues\/(\d+)/);
+  if (!m) return false;
+
+  const comment = buildInFlightComment(runNum, runStart, result, ctx);
+  const out = ghExec(
+    `gh issue comment ${m[1]} --repo ${kaizenRepo} --body ${JSON.stringify(comment)}`,
+  );
+  if (out) {
+    console.log(`  [in-flight] posted progress update for run #${runNum}`);
+    return true;
+  }
+  return false;
 }
 
 export function processStreamMessage(
@@ -500,15 +573,16 @@ export function processStreamMessage(
         for (const block of msg.message.content) {
           if (block.type === 'tool_use') {
             result.toolCalls++;
-            console.log(
-              `  [${elapsed}]  ${formatToolUse(block.name, block.input)}`,
-            );
+            const toolDesc = formatToolUse(block.name, block.input);
+            console.log(`  [${elapsed}]  ${toolDesc}`);
+            if (ctx) ctx.lastActivity = toolDesc;
           }
           if (block.type === 'text' && block.text) {
             extractArtifacts(block.text, result);
             checkStopSignal(block.text, result);
             for (const marker of parsePhaseMarkers(block.text)) {
               console.log(`  [${elapsed}]  ${formatPhaseMarker(marker)}`);
+              if (ctx) ctx.lastPhase = formatPhaseMarker(marker);
             }
           }
         }
@@ -955,6 +1029,21 @@ async function runClaude(
       }
     }, 60_000);
 
+    // In-flight progress updates to GitHub issue (#356)
+    const progressIssue = ensureBatchProgressIssue(state, stateFile);
+    const inFlightInterval = progressIssue
+      ? setInterval(() => {
+          postInFlightUpdate(
+            progressIssue,
+            state.kaizen_repo,
+            runNum,
+            runStart,
+            result,
+            ctx,
+          );
+        }, IN_FLIGHT_UPDATE_INTERVAL_MS)
+      : undefined;
+
     // Global wall-time timeout (#354)
     const wallTimer = setTimeout(() => {
       if (!processExited) {
@@ -1023,14 +1112,14 @@ async function runClaude(
 
     child.on('close', (code) => {
       processExited = true;
-      cleanup(heartbeatInterval, livenessInterval, wallTimer, postResultTimer);
+      cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       const duration = Math.floor((Date.now() - runStart) / 1000);
       resolve({ exitCode: code ?? 1, duration, result });
     });
 
     child.on('error', (err) => {
       processExited = true;
-      cleanup(heartbeatInterval, livenessInterval, wallTimer, postResultTimer);
+      cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
       resolve({ exitCode: 1, duration, result });

@@ -13,6 +13,7 @@ import {
   processStreamMessage,
   truncateAtWord,
   cleanGuidanceForTitle,
+  buildInFlightComment,
   type BatchState,
   type RunResult,
   type PhaseMarker,
@@ -1149,5 +1150,110 @@ describe('e2e: full workflow through stream pipeline', () => {
   it('handles phase with no fields gracefully', () => {
     const capture = runStream([msg.phase('REFLECT')]);
     expectPhase(capture, 'REFLECT');
+  });
+});
+
+describe('buildInFlightComment', () => {
+  it('includes run number, tool calls, cost, and working status', () => {
+    const runStart = Date.now() - 600_000; // 10 min ago
+    const result = makeRunResult({ toolCalls: 42, cost: 2.50 });
+    const ctx: StreamContext = {};
+
+    const comment = buildInFlightComment(3, runStart, result, ctx);
+
+    expect(comment).toContain('Run #3');
+    expect(comment).toContain('in progress');
+    expect(comment).toContain('42');
+    expect(comment).toContain('$2.50');
+    expect(comment).toContain('working');
+    expect(comment).not.toContain('waiting for process exit');
+  });
+
+  it('shows waiting-for-exit status when result has been received', () => {
+    const runStart = Date.now() - 900_000;
+    const result = makeRunResult({ toolCalls: 80, cost: 4.00 });
+    const ctx: StreamContext = { resultReceivedAt: Date.now() - 60_000 };
+
+    const comment = buildInFlightComment(5, runStart, result, ctx);
+
+    expect(comment).toContain('waiting for process exit');
+    expect(comment).not.toMatch(/\| \*\*Status\*\* \| working/);
+  });
+
+  it('includes last activity and last phase when available', () => {
+    const runStart = Date.now() - 300_000;
+    const result = makeRunResult({ toolCalls: 20, cost: 1.00 });
+    const ctx: StreamContext = {
+      lastActivity: 'Edit src/hooks/state-utils.ts',
+      lastPhase: '[IMPLEMENT] case:260323-1200-k472',
+    };
+
+    const comment = buildInFlightComment(2, runStart, result, ctx);
+
+    expect(comment).toContain('Edit src/hooks/state-utils.ts');
+    expect(comment).toContain('[IMPLEMENT] case:260323-1200-k472');
+  });
+
+  it('includes PRs so far when available', () => {
+    const runStart = Date.now() - 600_000;
+    const result = makeRunResult({
+      toolCalls: 50,
+      cost: 3.00,
+      prs: ['https://github.com/Garsson-io/kaizen/pull/500'],
+    });
+    const ctx: StreamContext = {};
+
+    const comment = buildInFlightComment(4, runStart, result, ctx);
+
+    expect(comment).toContain('PRs so far');
+    expect(comment).toContain('pull/500');
+  });
+
+  it('omits optional fields when not present', () => {
+    const runStart = Date.now() - 120_000;
+    const result = makeRunResult({ toolCalls: 5, cost: 0.25 });
+    const ctx: StreamContext = {};
+
+    const comment = buildInFlightComment(1, runStart, result, ctx);
+
+    expect(comment).not.toContain('Last activity');
+    expect(comment).not.toContain('Last phase');
+    expect(comment).not.toContain('PRs so far');
+  });
+});
+
+describe('processStreamMessage populates context', () => {
+  it('sets lastActivity on tool_use messages', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const msg = {
+      type: 'assistant',
+      message: {
+        content: [{
+          type: 'tool_use',
+          name: 'Edit',
+          input: { file_path: 'src/foo.ts' },
+        }],
+      },
+    };
+    processStreamMessage(msg, result, Date.now(), ctx);
+    expect(ctx.lastActivity).toBe('Edit src/foo.ts');
+  });
+
+  it('sets lastPhase on phase marker text', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const msg = {
+      type: 'assistant',
+      message: {
+        content: [{
+          type: 'text',
+          text: 'AUTO_DENT_PHASE: PICK | issue=#472 | title=improve hook test DRY',
+        }],
+      },
+    };
+    processStreamMessage(msg, result, Date.now(), ctx);
+    expect(ctx.lastPhase).toContain('[PICK]');
+    expect(ctx.lastPhase).toContain('#472');
   });
 });
