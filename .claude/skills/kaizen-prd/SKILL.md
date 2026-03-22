@@ -453,6 +453,26 @@ After the spec is merged and reviewed:
 
 See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
 
+### Knowledge Flow Checklist — MANDATORY before finalizing (kaizen #381)
+
+A PRD that doesn't flow into the repo is decoration. Before marking the PRD complete, answer:
+
+1. **What artifacts does this PRD propose changing?** Check all that apply:
+   - [ ] Skills (`SKILL.md` prompt changes, new skill creation)
+   - [ ] Hooks (new enforcement, hook modifications)
+   - [ ] Docs (`docs/*.md`, operational documentation)
+   - [ ] CLAUDE.md (policy sections, key files table)
+   - [ ] Policies (`policies.md`, `review-criteria.md`)
+   - [ ] Philosophy (`zen.md`, `horizon.md`)
+
+2. **For each checked item:** Either apply the change in this PR, or file a sub-issue with the specific change described (not "update skills" but "add hypothesis-formation step to `/kaizen-evaluate` Phase 3.5").
+
+3. **Process insights test:** Does this PRD contain methodology or process insights (not just feature specs)? Examples: "always form hypotheses before fixing," "use progressive detail," "escalate L1->L2 on recurrence." If yes, these insights must land in the skill/doc/hook that future agents will read — not just in the issue body. File sub-issues or apply directly.
+
+**Why this matters:** Epic #334 (autoresearch) contained detailed methodology across 5 sub-issues. None of it was applied to skill files. Agents starting fresh never saw any of it — they read the skills as-is and repeated the same mistakes. Knowledge in GitHub issues is ephemeral; knowledge in skills/docs/hooks is durable.
+
+**Anti-pattern: "The implementor will handle it."** They won't — implementation focuses on code, not on updating skill prompts. If the PRD proposes a skill change, the sub-issue should exist before the PRD is finalized. The `/kaizen-implement` skill has a methodology cross-check (Phase 4b) as a safety net, but the primary responsibility is here.
+
 ### Recursive Kaizen
 
 These skills are the improvement system. The improvement system should improve itself. After using `/kaizen-prd`, reflect: did the spec help implementation or constrain it? Was the progressive detail at the right granularity? Did the problem taxonomy age well? Capture these observations in kaizen reflections — they're the raw material for improving how we write specs. See `/kaizen-implement` for the fuller picture.
