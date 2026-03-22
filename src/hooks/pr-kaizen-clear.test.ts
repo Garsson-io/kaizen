@@ -19,6 +19,8 @@
  * [x] KAIZEN_NO_ACTION with invalid category is rejected
  * [x] KAIZEN_NO_ACTION without reason is rejected
  * [x] Waiver blocklist enforcement (kaizen #280)
+ * [x] Generic no-action reason blocklist (kaizen #446)
+ * [x] Quality tier in reflection comment (kaizen #446)
  * [x] Meta-finding waiver without impact_minutes rejected
  * [x] Meta-finding with impact >= 5 must be filed
  * [x] All-passive advisory (kaizen #205)
@@ -36,7 +38,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import {
+  classifyReflectionQuality,
   formatReflectionComment,
+  matchesWaiverBlocklist,
   processHookInput,
 } from './pr-kaizen-clear.js';
 
@@ -474,9 +478,9 @@ describe('formatReflectionComment', () => {
       false,
     );
     expect(comment).toContain('## Kaizen Reflection');
-    expect(comment).toContain('**2 finding(s) addressed:**');
+    expect(comment).toContain('**2 finding(s) addressed** (Medium quality):');
     expect(comment).toContain('| test issue | standard | filed | #123 |');
-    expect(comment).toContain('| good pattern | positive | no-action | — |');
+    expect(comment).toContain('| good pattern | positive | no-action | \u2014 |');
     expect(comment).toContain('kaizen #388');
   });
 
@@ -646,5 +650,201 @@ describe('processHookInput: reflection persistence (kaizen #388)', () => {
     });
     expect(result).toContain('PR kaizen gate cleared');
     expect(postComment).toHaveBeenCalledOnce();
+  });
+});
+
+// ── Waiver quality scoring tests (kaizen #446) ─────────────────────
+
+describe('matchesWaiverBlocklist', () => {
+  it('detects "overengineering" in reason', () => {
+    expect(matchesWaiverBlocklist('This is overengineering for now')).toBe('overengineering');
+  });
+
+  it('detects "low frequency" in reason', () => {
+    expect(matchesWaiverBlocklist('low frequency issue, skip')).toBe('low frequency');
+  });
+
+  it('detects "edge case" in reason', () => {
+    expect(matchesWaiverBlocklist('rare edge case')).toBe('edge case');
+  });
+
+  it('is case-insensitive', () => {
+    expect(matchesWaiverBlocklist('OVERENGINEERING risk')).toBe('overengineering');
+  });
+
+  it('returns null for specific, valid reasons', () => {
+    expect(matchesWaiverBlocklist('tested manually, no regression risk for this read-only endpoint')).toBeNull();
+  });
+});
+
+describe('pr-kaizen-clear: waiver blocklist enforcement (kaizen #446)', () => {
+  it('rejects no-action with blocklisted reason "overengineering"', () => {
+    const json = JSON.stringify([
+      {
+        finding: 'could add more tests',
+        type: 'positive',
+        disposition: 'no-action',
+        reason: 'overengineering for this scope',
+      },
+    ]);
+    const output = runHook(impedimentsInput(json));
+    expect(output).toContain('blocklist');
+    expect(output).toContain('overengineering');
+    expect(gateExists()).toBe(true);
+  });
+
+  it('rejects no-action with blocklisted reason "low frequency"', () => {
+    const json = JSON.stringify([
+      {
+        finding: 'potential race condition',
+        type: 'positive',
+        disposition: 'no-action',
+        reason: 'low frequency, unlikely to hit',
+      },
+    ]);
+    const output = runHook(impedimentsInput(json));
+    expect(output).toContain('blocklist');
+    expect(output).toContain('low frequency');
+    expect(gateExists()).toBe(true);
+  });
+
+  it('accepts no-action with specific, non-blocklisted reason', () => {
+    const json = JSON.stringify([
+      {
+        finding: 'positive pattern observed',
+        type: 'positive',
+        disposition: 'no-action',
+        reason: 'confirmed existing error handling covers this path via integration test in test_api.py',
+      },
+    ]);
+    const output = runHook(impedimentsInput(json));
+    expect(output).toContain('PR kaizen gate cleared');
+  });
+
+  it('rejects even when mixed with valid impediments', () => {
+    const json = JSON.stringify([
+      { impediment: 'real bug', disposition: 'filed', ref: '#100' },
+      {
+        finding: 'minor thing',
+        type: 'positive',
+        disposition: 'no-action',
+        reason: 'cosmetic only',
+      },
+    ]);
+    const output = runHook(impedimentsInput(json));
+    expect(output).toContain('blocklist');
+    expect(output).toContain('cosmetic');
+    expect(gateExists()).toBe(true);
+  });
+});
+
+describe('classifyReflectionQuality', () => {
+  it('returns empty for no items', () => {
+    expect(classifyReflectionQuality([])).toBe('empty');
+  });
+
+  it('returns high for 2+ actionable items', () => {
+    const items = [
+      { impediment: 'bug A', disposition: 'filed', ref: '#1' },
+      { impediment: 'bug B', disposition: 'fixed-in-pr' },
+    ];
+    expect(classifyReflectionQuality(items)).toBe('high');
+  });
+
+  it('returns medium for 1 actionable item', () => {
+    const items = [
+      { impediment: 'bug A', disposition: 'filed', ref: '#1' },
+      { finding: 'ok', type: 'positive', disposition: 'no-action', reason: 'validated' },
+    ];
+    expect(classifyReflectionQuality(items)).toBe('medium');
+  });
+
+  it('returns low for all no-action', () => {
+    const items = [
+      { finding: 'ok', type: 'positive' as const, disposition: 'no-action', reason: 'validated' },
+    ];
+    expect(classifyReflectionQuality(items)).toBe('low');
+  });
+});
+
+describe('formatReflectionComment: quality tier (kaizen #446)', () => {
+  it('includes quality label in comment', () => {
+    const items = [
+      { impediment: 'bug', disposition: 'filed', ref: '#1' },
+      { impediment: 'fix', disposition: 'fixed-in-pr' },
+    ];
+    const comment = formatReflectionComment(items, '2 finding(s) addressed', false);
+    expect(comment).toContain('High quality');
+  });
+
+  it('shows Low quality for all no-action', () => {
+    const items = [
+      { finding: 'ok', type: 'positive', disposition: 'no-action', reason: 'validated' },
+    ];
+    const comment = formatReflectionComment(items, '1 finding(s) addressed', false);
+    expect(comment).toContain('Low quality');
+  });
+});
+
+describe('processHookInput: quality advisory (kaizen #446)', () => {
+  let unitStateDir: string;
+
+  beforeEach(() => {
+    unitStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kaizen-clear-q-'));
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf-8',
+    }).trim();
+    fs.writeFileSync(
+      path.join(unitStateDir, 'pr-kaizen-Garsson-io_kaizen_77'),
+      `PR_URL=https://github.com/Garsson-io/kaizen/pull/77\nSTATUS=needs_pr_kaizen\nBRANCH=${branch}\n`,
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(unitStateDir, { recursive: true, force: true });
+  });
+
+  it('shows LOW quality advisory when all findings are no-action', () => {
+    const postComment = vi.fn();
+    const input = {
+      tool_name: 'Bash',
+      tool_input: {
+        command: `echo 'KAIZEN_IMPEDIMENTS: [{"finding":"good","type":"positive","disposition":"no-action","reason":"confirmed existing tests cover this path"}]'`,
+      },
+      tool_response: {
+        stdout:
+          'KAIZEN_IMPEDIMENTS: [{"finding":"good","type":"positive","disposition":"no-action","reason":"confirmed existing tests cover this path"}]',
+        exit_code: 0,
+      },
+    };
+
+    const result = processHookInput(input, {
+      stateDir: unitStateDir,
+      postComment,
+    });
+    expect(result).toContain('PR kaizen gate cleared');
+    expect(result).toContain('Reflection quality: LOW');
+  });
+
+  it('does not show LOW advisory for high-quality reflections', () => {
+    const postComment = vi.fn();
+    const input = {
+      tool_name: 'Bash',
+      tool_input: {
+        command: `echo 'KAIZEN_IMPEDIMENTS: [{"impediment":"real bug","disposition":"filed","ref":"#50"},{"impediment":"fixed it","disposition":"fixed-in-pr"}]'`,
+      },
+      tool_response: {
+        stdout:
+          'KAIZEN_IMPEDIMENTS: [{"impediment":"real bug","disposition":"filed","ref":"#50"},{"impediment":"fixed it","disposition":"fixed-in-pr"}]',
+        exit_code: 0,
+      },
+    };
+
+    const result = processHookInput(input, {
+      stateDir: unitStateDir,
+      postComment,
+    });
+    expect(result).toContain('PR kaizen gate cleared');
+    expect(result).not.toContain('Reflection quality: LOW');
   });
 });

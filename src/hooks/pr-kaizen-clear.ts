@@ -84,6 +84,12 @@ function logWaiver(
   );
 }
 
+// ── Waiver quality (kaizen #446) ─────────────────────────────────────
+
+// Re-export for test imports; single source of truth in src/lib/waiver-blocklist.ts
+export { matchesWaiverBlocklist } from '../lib/waiver-blocklist.js';
+import { matchesWaiverBlocklist } from '../lib/waiver-blocklist.js';
+
 // ── Validation ───────────────────────────────────────────────────────
 
 /** Dispositions valid per finding type (kaizen #198: waived eliminated). */
@@ -152,6 +158,16 @@ function validateImpediments(items: Impediment[]): string[] {
       errors.push(
         `disposition "no-action" requires "reason" field for: ${desc}`,
       );
+    }
+
+    // Waiver quality check (kaizen #446): reject generic no-action reasons
+    if (disposition === 'no-action' && item.reason) {
+      const blocked = matchesWaiverBlocklist(item.reason);
+      if (blocked) {
+        errors.push(
+          `no-action reason for "${desc}" matches blocklist ("${blocked}"). Generic waivers mask real friction — provide a specific, quantified reason or reclassify.`,
+        );
+      }
     }
   }
   return errors;
@@ -250,6 +266,32 @@ function extractNoAction(
 
 // ── Reflection persistence (kaizen #388) ─────────────────────────────
 
+/** Classify reflection quality based on disposition distribution. */
+export function classifyReflectionQuality(
+  items: Impediment[],
+): 'high' | 'medium' | 'low' | 'empty' {
+  if (items.length === 0) return 'empty';
+
+  const filed = items.filter(
+    (i) => (i.disposition === 'filed' || i.disposition === 'incident') && i.ref,
+  ).length;
+  const fixedInPr = items.filter(
+    (i) => i.disposition === 'fixed-in-pr',
+  ).length;
+  const actionable = filed + fixedInPr;
+
+  if (actionable >= 2) return 'high';
+  if (actionable >= 1) return 'medium';
+  return 'low';
+}
+
+const QUALITY_LABELS: Record<string, string> = {
+  high: 'High quality',
+  medium: 'Medium quality',
+  low: 'Low quality',
+  empty: 'No findings',
+};
+
 /** Format impediments as a markdown PR comment for audit trail. */
 export function formatReflectionComment(
   items: Impediment[],
@@ -263,8 +305,9 @@ export function formatReflectionComment(
   } else if (items.length === 0) {
     lines.push(`**No impediments:** ${clearReason}`, '');
   } else {
+    const quality = classifyReflectionQuality(items);
     lines.push(
-      `**${items.length} finding(s) addressed:**`,
+      `**${items.length} finding(s) addressed** (${QUALITY_LABELS[quality]}):`,
       '',
       '| Finding | Type | Disposition | Ref |',
       '|---------|------|-------------|-----|',
@@ -273,7 +316,7 @@ export function formatReflectionComment(
       const desc = item.impediment || item.finding || '';
       const type = item.type || 'standard';
       const disposition = item.disposition || '';
-      const ref = item.ref || '—';
+      const ref = item.ref || '\u2014';
       lines.push(`| ${desc} | ${type} | ${disposition} | ${ref} |`);
     }
     lines.push('');
@@ -398,6 +441,16 @@ export function processHookInput(
       output.push(
         '\nAll findings classified as no-action \u2014 none filed or fixed-in-pr.\n"Every failure is a gift \u2014 if you file the issue."\n',
       );
+    }
+
+    // Quality scoring advisory (kaizen #446)
+    if (validatedItems.length > 0) {
+      const quality = classifyReflectionQuality(validatedItems);
+      if (quality === 'low') {
+        output.push(
+          '\nReflection quality: LOW \u2014 no findings filed or fixed-in-pr. Consider whether real friction is being overlooked.\n',
+        );
+      }
     }
 
     clearStateWithStatusAnyBranch(
