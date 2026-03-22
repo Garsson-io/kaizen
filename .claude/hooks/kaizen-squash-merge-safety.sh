@@ -17,9 +17,11 @@
 # Always allows non-squash merges, non-gh commands, and single-commit PRs.
 
 source "$(dirname "$0")/lib/parse-command.sh"
+source "$(dirname "$0")/lib/input-utils.sh"
+source "$(dirname "$0")/lib/hook-output.sh"
 
-INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+read_hook_input
+get_command
 
 if [ -z "$COMMAND" ]; then
   exit 0
@@ -84,8 +86,7 @@ fi
 MISSING_COUNT=$(echo "$MISSING_FILES" | wc -l)
 
 # Block with warning
-jq -n \
-  --arg reason "$(cat <<REASON
+emit_deny "$(cat <<REASON
 WARNING: Squash merge may silently drop $MISSING_COUNT file(s) (kaizen #289).
 
 Files present in branch diff but missing from squash preview:
@@ -103,13 +104,4 @@ To proceed safely:
 
 To skip this check: remove --squash and use --merge instead
 REASON
-)" \
-  '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: $reason
-    }
-  }'
-
-exit 0
+)"

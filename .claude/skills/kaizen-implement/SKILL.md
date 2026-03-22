@@ -3,19 +3,7 @@ name: kaizen-implement
 description: Take a spec from PRD to working code. Re-examines the spec against current reality, finds concrete next steps, and executes. Guided by the Zen of Kaizen (see .claude/kaizen/zen.md). Triggers on "implement spec", "implement prd", "start implementation", "pick up spec", "execute spec". ALSO triggers on greenlight phrases after discussing concrete work — "lets do it", "go ahead", "build it", "start on this", "do it", "make it happen", "go for it", "ship it", "yes do it". If a specific piece of work (issue, PR, case, spec) was just discussed and the user gives a go-ahead, this skill drives the implementation. Always create a case first (all dev work must be in a case with its own worktree per CLAUDE.md).
 ---
 
-## Host Configuration
-
-Before running commands, read the host configuration from `kaizen.config.json`:
-```bash
-KAIZEN_REPO=$(jq -r '.kaizen.repo' kaizen.config.json)
-HOST_REPO=$(jq -r '.host.repo' kaizen.config.json)
-KAIZEN_CLI=$(jq -r '.host.caseCli // ""' kaizen.config.json)
-ISSUE_BACKEND=$(jq -r '.issues.backend // "github"' kaizen.config.json)
-```
-Use `$KAIZEN_REPO` in kaizen issue operations, `$HOST_REPO` in host project operations.
-If `$KAIZEN_CLI` is empty, the host has no case system — use plain `git worktree add` for workspace isolation.
-
-**Issue backend:** When `$ISSUE_BACKEND` is `"github"` (default), use `gh issue` commands directly. When it is `"custom"`, use `npx tsx src/issue-backend.ts` instead of `gh issue` — it routes to the configured backend CLI.
+<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
 
 # Implement Spec — From PRD to Working Code
 

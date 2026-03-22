@@ -15,6 +15,11 @@
 STATE_DIR="${STATE_DIR:-/tmp/.pr-review-state}"
 MAX_STATE_AGE="${MAX_STATE_AGE:-7200}"  # 2 hours
 
+# Default audit log path. Override via AUDIT_LOG env var for test isolation (kaizen #429).
+_STATE_UTILS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AUDIT_DIR="${AUDIT_DIR:-$(cd "$_STATE_UTILS_DIR/../.." && pwd)/kaizen/audit}"
+AUDIT_LOG="${AUDIT_LOG:-${AUDIT_DIR}/no-action.log}"
+
 # Convert a PR URL to a safe state file key.
 # e.g. https://github.com/Garsson-io/kaizen/pull/33 → Garsson-io_kaizen_33
 #

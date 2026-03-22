@@ -19,6 +19,12 @@ import { join } from 'node:path';
 export const DEFAULT_STATE_DIR = '/tmp/.pr-review-state';
 export const DEFAULT_MAX_STATE_AGE = 7200; // 2 hours
 
+// Default audit directory. Override via AUDIT_DIR env var for test isolation (kaizen #429).
+export const DEFAULT_AUDIT_DIR = new URL(
+  '../../.claude/kaizen/audit',
+  import.meta.url,
+).pathname;
+
 export interface StateFile {
   PR_URL: string;
   STATUS: string;

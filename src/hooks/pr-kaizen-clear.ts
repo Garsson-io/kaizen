@@ -13,11 +13,11 @@
 
 import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
 import { stripHeredocBody } from './parse-command.js';
 import {
+  DEFAULT_AUDIT_DIR,
   DEFAULT_STATE_DIR,
   clearStateWithStatusAnyBranch,
   findNewestStateWithStatusAnyBranch,
@@ -39,8 +39,8 @@ interface Impediment {
 
 // ── Audit logging ────────────────────────────────────────────────────
 
-const __hookDirname = dirname(fileURLToPath(import.meta.url));
-const AUDIT_DIR = resolve(__hookDirname, '../../.claude/kaizen/audit');
+// AUDIT_DIR from shared state-utils, with env var override for test isolation (kaizen #429)
+const AUDIT_DIR = process.env.AUDIT_DIR ?? DEFAULT_AUDIT_DIR;
 
 function currentBranch(): string {
   try {
