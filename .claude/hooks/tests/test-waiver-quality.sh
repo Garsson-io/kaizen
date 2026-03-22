@@ -7,6 +7,7 @@
 source "$(dirname "$0")/test-helpers.sh"
 
 HOOK="$(dirname "$0")/../kaizen-pr-reflect-clear.sh"
+require_file "$HOOK" "hook migrated to TS" || exit 0
 setup_test_env
 
 setup() { reset_state; }

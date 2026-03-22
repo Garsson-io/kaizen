@@ -24,6 +24,7 @@ export DEBUG_LOG="$HARNESS_TEMP/debug.log"
 
 ENFORCE="$HOOKS_DIR/kaizen-enforce-pr-review.sh"
 LOOP="$HOOKS_DIR/kaizen-pr-review-loop.sh"
+require_file "$LOOP" "hook migrated to TS" || exit 0
 
 INTEG_MOCK_DIR="$HARNESS_TEMP/mock-bin"
 setup_default_gh_mock "$INTEG_MOCK_DIR"

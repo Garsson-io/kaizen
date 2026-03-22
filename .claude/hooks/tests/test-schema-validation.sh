@@ -203,8 +203,8 @@ POST_INPUT=$(build_post_tool_use_input "Bash" \
   "https://github.com/Garsson-io/kaizen/pull/70" "" "0")
 
 POST_HOOKS=(
-  "$HOOKS_DIR/kaizen-pr-review-loop.sh"
-  "$HOOKS_DIR/kaizen-reflect.sh"
+  "$HOOKS_DIR/pr-review-loop-ts.sh"
+  "$HOOKS_DIR/kaizen-reflect-ts.sh"
 )
 
 for hook in "${POST_HOOKS[@]}"; do

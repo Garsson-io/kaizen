@@ -13,6 +13,13 @@ jobs:
       - name: Run shell hook tests
         run: bash .claude/hooks/tests/run-all-tests.sh
 
+  hook-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate hook file integrity
+        run: bash .claude/hooks/tests/validate-hook-integrity.sh
+
   ts-tests:
     runs-on: ubuntu-latest
     steps:

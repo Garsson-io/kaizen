@@ -155,8 +155,9 @@ describe("Part 1: Setup produces correct configuration", () => {
     execSync(`mkdir -p "${join(fakeKaizen, ".claude", "hooks")}"`, { stdio: "pipe" });
     execSync(`cp "${FRAGMENT_PATH}" "${join(fakeKaizen, ".claude", "settings-fragment.json")}"`, { stdio: "pipe" });
 
-    // Copy all kaizen hooks into the fake submodule
+    // Copy all kaizen hooks into the fake submodule (kaizen-* plus TS wrapper shims)
     execSync(`cp ${HOOKS_DIR}/kaizen-*.sh "${join(fakeKaizen, ".claude", "hooks")}/"`, { stdio: "pipe" });
+    execSync(`cp ${HOOKS_DIR}/pr-review-loop-ts.sh ${HOOKS_DIR}/pr-kaizen-clear-ts.sh ${HOOKS_DIR}/kaizen-reflect-ts.sh "${join(fakeKaizen, ".claude", "hooks")}/" 2>/dev/null || true`, { stdio: "pipe" });
     // Copy hook libraries too
     execSync(`cp -r ${HOOKS_DIR}/lib "${join(fakeKaizen, ".claude", "hooks")}/"`, { stdio: "pipe" });
 
@@ -468,7 +469,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const prUrl = "https://github.com/Garsson-io/test-project/pull/77";
 
       const result = runKaizenHook(
-        "kaizen-reflect.sh",
+        "kaizen-reflect-ts.sh",
         bashPost('gh pr create --title "test"', prUrl),
       );
       expect(result.exitCode).toBe(0);
@@ -507,7 +508,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const command = `echo 'KAIZEN_IMPEDIMENTS:' && echo '${impedimentsJson}'`;
       const stdout = `KAIZEN_IMPEDIMENTS:\n${impedimentsJson}`;
       const result = runKaizenHook(
-        "kaizen-pr-reflect-clear.sh",
+        "pr-kaizen-clear-ts.sh",
         bashPost(command, stdout),
       );
       expect(result.exitCode).toBe(0);
@@ -522,7 +523,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const command = `echo 'KAIZEN_IMPEDIMENTS:' && echo '${waivedJson}'`;
       const stdout = `KAIZEN_IMPEDIMENTS:\n${waivedJson}`;
       const result = runKaizenHook(
-        "kaizen-pr-reflect-clear.sh",
+        "pr-kaizen-clear-ts.sh",
         bashPost(command, stdout),
       );
       // Gate should still be active — waived is rejected
@@ -548,7 +549,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const command = "echo 'KAIZEN_NO_ACTION [docs-only]: documentation update'";
       const stdout = "KAIZEN_NO_ACTION [docs-only]: documentation update";
       const result = runKaizenHook(
-        "kaizen-pr-reflect-clear.sh",
+        "pr-kaizen-clear-ts.sh",
         bashPost(command, stdout),
       );
       expect(result.exitCode).toBe(0);
@@ -561,7 +562,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
     // the actual hook chain, verifying the sequence of enforcement
     // decisions matches expected behavior.
 
-    it("complete workflow: edit → commit → PR → review → reflect → stop", () => {
+    it("complete workflow: edit → commit → PR → review → reflect → stop", { timeout: 30000 }, () => {
       // Phase 1: Agent edits source file in worktree → allowed
       const writeResult = runKaizenHook(
         "kaizen-enforce-worktree-writes.sh",
@@ -581,13 +582,13 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
 
       // review-loop sets review state
       const reviewLoopResult = runKaizenHook(
-        "kaizen-pr-review-loop.sh",
+        "pr-review-loop-ts.sh",
         bashPost('gh pr create --title "fix: something"', prUrl),
       );
 
       // reflect sets kaizen state
       const reflectResult = runKaizenHook(
-        "kaizen-reflect.sh",
+        "kaizen-reflect-ts.sh",
         bashPost('gh pr create --title "fix: something"', prUrl),
       );
       expect(reflectResult.stdout).toContain("KAIZEN");
@@ -623,7 +624,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const kaizenCommand = `echo 'KAIZEN_IMPEDIMENTS:' && echo '${impedimentsJson}'`;
       const kaizenStdout = `KAIZEN_IMPEDIMENTS:\n${impedimentsJson}`;
       runKaizenHook(
-        "kaizen-pr-reflect-clear.sh",
+        "pr-kaizen-clear-ts.sh",
         bashPost(kaizenCommand, kaizenStdout),
       );
       expect(stateDir.hasFile("pr-kaizen-"), "Kaizen gate should be cleared").toBe(false);

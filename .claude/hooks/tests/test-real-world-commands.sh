@@ -69,6 +69,7 @@ ENFORCE_CASE="$HOOKS_DIR/kaizen-enforce-case-worktree.sh"
 PR_REVIEW="$HOOKS_DIR/kaizen-enforce-pr-review.sh"
 PARSE_CMD="$HOOKS_DIR/lib/parse-command.sh"
 PR_LOOP="$HOOKS_DIR/kaizen-pr-review-loop.sh"
+require_file "$PR_LOOP" "hook migrated to TS" || exit 0
 
 echo "=== Heredoc in PR body: verification section detected ==="
 

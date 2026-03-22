@@ -19,6 +19,7 @@ if [ "$NOTIFY_CHANNEL" = "none" ] || [ -z "$NOTIFY_CHANNEL" ]; then
 fi
 
 HOOK="$(dirname "$0")/../kaizen-reflect.sh"
+require_file "$HOOK" "hook migrated to TS" || exit 0
 setup_test_env
 TEST_IPC_DIR=$(mktemp -d)
 MOCK_DIR=$(mktemp -d)
