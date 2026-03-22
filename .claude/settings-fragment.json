@@ -126,6 +126,11 @@
           },
           {
             "type": "command",
+            "command": "./.kaizen/.claude/hooks/kaizen-pr-kaizen-clear-fallback.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "./.kaizen/.claude/hooks/kaizen-capture-worktree-context.sh",
             "timeout": 10
           }
