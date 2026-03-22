@@ -30,12 +30,6 @@ export interface Detection {
   detail: string; // human-readable explanation
 }
 
-export interface AnalysisResult {
-  detections: Detection[];
-  scannedFiles: number;
-  scannedLines: number;
-}
-
 /** A unified diff hunk for analysis */
 export interface DiffFile {
   path: string;

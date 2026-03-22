@@ -1,7 +1,6 @@
 export { FailureMode } from './types.js';
 export type {
   Detection,
-  AnalysisResult,
   DiffFile,
   PRRecord,
   Impediment,

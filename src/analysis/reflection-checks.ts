@@ -5,6 +5,7 @@
  */
 
 import { type Impediment, type Detection, FailureMode } from './types.js';
+import { truncate } from './util.js';
 
 /** Waiver reasons that are generically useless (from real incidents) */
 const GENERIC_WAIVER_BLOCKLIST = [
@@ -139,6 +140,3 @@ export function classifyReflectionQuality(
   return 'low';
 }
 
-function truncate(s: string, maxLen: number): string {
-  return s.length > maxLen ? s.slice(0, maxLen - 3) + '...' : s;
-}

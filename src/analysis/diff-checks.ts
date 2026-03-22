@@ -10,6 +10,7 @@ import {
   type Detection,
   FailureMode,
 } from './types.js';
+import { truncate } from './util.js';
 
 /**
  * FM1: Detect duplicated code blocks in added lines.
@@ -249,6 +250,3 @@ function containsSymbol(line: string, symbol: string): boolean {
   return new RegExp(`\\b${escaped}\\b`).test(line);
 }
 
-function truncate(s: string, maxLen: number): string {
-  return s.length > maxLen ? s.slice(0, maxLen - 3) + '...' : s;
-}
