@@ -1,6 +1,8 @@
 node_modules/
 dist/
 *.tsbuildinfo
+__pycache__/
+*.pyc
 .claude/audit/
 .claude/kaizen/audit/
 .worktree-context.json
