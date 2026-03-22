@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-check-wip.sh",
+            "command": "./.claude/hooks/kaizen-check-wip.sh",
             "timeout": 15
           }
         ]
@@ -17,52 +17,52 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-enforce-pr-review.sh",
+            "command": "./.claude/hooks/kaizen-enforce-pr-review.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-enforce-case-worktree.sh",
+            "command": "./.claude/hooks/kaizen-enforce-case-worktree.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-check-test-coverage.sh",
+            "command": "./.claude/hooks/kaizen-check-test-coverage.sh",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-check-verification.sh",
+            "command": "./.claude/hooks/kaizen-check-verification.sh",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-check-dirty-files.sh",
+            "command": "./.claude/hooks/kaizen-check-dirty-files.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-enforce-pr-reflect.sh",
+            "command": "./.claude/hooks/kaizen-enforce-pr-reflect.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-warn-code-quality.sh",
+            "command": "./.claude/hooks/kaizen-warn-code-quality.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-check-practices.sh",
+            "command": "./.claude/hooks/kaizen-check-practices.sh",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-block-git-rebase.sh",
+            "command": "./.claude/hooks/kaizen-block-git-rebase.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-squash-merge-safety.sh",
+            "command": "./.claude/hooks/kaizen-squash-merge-safety.sh",
             "timeout": 15
           }
         ]
@@ -72,17 +72,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-enforce-worktree-writes.sh",
+            "command": "./.claude/hooks/kaizen-enforce-worktree-writes.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-enforce-case-exists.sh",
+            "command": "./.claude/hooks/kaizen-enforce-case-exists.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-enforce-pr-review-tools.sh",
+            "command": "./.claude/hooks/kaizen-enforce-pr-review-tools.sh",
             "timeout": 10
           }
         ]
@@ -92,7 +92,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-enforce-pr-review-tools.sh",
+            "command": "./.claude/hooks/kaizen-enforce-pr-review-tools.sh",
             "timeout": 10
           }
         ]
@@ -104,27 +104,27 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-pr-review-loop.sh",
+            "command": "./.claude/hooks/kaizen-pr-review-loop.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-reflect.sh",
+            "command": "./.claude/hooks/kaizen-reflect.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-post-merge-clear.sh",
+            "command": "./.claude/hooks/kaizen-post-merge-clear.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-pr-reflect-clear.sh",
+            "command": "./.claude/hooks/kaizen-pr-reflect-clear.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-capture-worktree-context.sh",
+            "command": "./.claude/hooks/kaizen-capture-worktree-context.sh",
             "timeout": 10
           }
         ]
@@ -134,7 +134,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-post-merge-clear.sh",
+            "command": "./.claude/hooks/kaizen-post-merge-clear.sh",
             "timeout": 10
           }
         ]
@@ -145,22 +145,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-enforce-pr-review-stop.sh",
+            "command": "./.claude/hooks/kaizen-enforce-pr-review-stop.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-enforce-post-merge-stop.sh",
+            "command": "./.claude/hooks/kaizen-enforce-post-merge-stop.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-verify-before-stop.sh",
+            "command": "./.claude/hooks/kaizen-verify-before-stop.sh",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "./.kaizen/.claude/hooks/kaizen-check-cleanup-on-stop.sh",
+            "command": "./.claude/hooks/kaizen-check-cleanup-on-stop.sh",
             "timeout": 10
           }
         ]
