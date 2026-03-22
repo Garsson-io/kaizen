@@ -237,21 +237,32 @@ If a system is at Level 3 of a 10-level taxonomy:
 
 **The test:** For every solution paragraph, ask: "Are we at the level where this solution is the next step?" If no, replace the solution with a problem statement and an open question.
 
-## Phase 4: Create the GitHub Issue
+## Phase 4: Create the Epic Issue and Sub-Issues
+
+Every PRD produces an **epic issue** — the tracking anchor for the initiative. The epic links to the spec and has two kinds of sub-issues: **practical** (concrete next steps) and **aspirational** (vague provocations that challenge the reader to make them concrete).
+
+### The Epic Issue
 
 **For issue-only PRDs (default):** The issue body IS the spec — use the full document structure from Phase 3. The issue is both the tracking anchor and the single source of truth.
 
 **For file+PR PRDs (large initiatives):** The issue is the epic anchor. Keep it short — the spec document has the details.
 
 ```bash
-gh issue create --repo {repo} --title "{Initiative Name}" --body "$(cat <<'EOF'
+gh issue create --repo {repo} --title "Epic: {Initiative Name}" --label "epic,{domain}" --body "$(cat <<'EOF'
 ## Summary
 
 {2-3 sentences: what this initiative is and why it matters}
 
 ## Spec
 
-See [`docs/{name}-spec.md`](link-to-file-in-PR) for the full specification.
+{For file+PR: See [`docs/{name}-spec.md`](link-to-file-in-PR)}
+{For issue-only: the spec body goes here}
+
+## Sub-issues
+
+Tracked as sub-issues linked to this epic.
+- **Practical:** concrete next steps with clear acceptance criteria
+- **Aspirational:** intentionally vague — challenge the reader to make them concrete
 
 ## Status
 
@@ -259,17 +270,67 @@ See [`docs/{name}-spec.md`](link-to-file-in-PR) for the full specification.
 - [ ] Implementation planning (break into sub-issues)
 - [ ] Implementation
 - [ ] Verification
-
-## Labels
-
-epic, {relevant-domain-labels}
 EOF
 )"
 ```
 
+### Practical Sub-Issues (3-5)
+
+These are the concrete next steps someone could pick up and implement. Each should have:
+- A clear deliverable
+- Acceptance criteria
+- A link back to the epic (`**Parent:** #NNN`)
+
+Derive these from the spec's "Needs Building" section and implementation phases. Focus on the first 1-2 phases — don't plan the whole thing.
+
+```markdown
+**Parent:** #{epic}
+
+{What to build, concretely.}
+
+**Acceptance:** {What "done" looks like — testable, reviewable.}
+```
+
+### Aspirational Sub-Issues (2-4)
+
+These are intentionally vague. They name a direction without prescribing the path. Their purpose is to **provoke the reader into thinking**, not to be implemented as-is.
+
+Good aspirational issues:
+- Ask open questions, not closed ones
+- Present possibilities as bullet lists, not requirements
+- End with a challenge: "Make this concrete: propose one thing and file a real issue for it"
+- Don't pretend to know the answer
+
+```markdown
+**Parent:** #{epic}
+
+{Description of an interesting direction or open question.}
+
+{Bullet list of possibilities — not requirements, just provocations.}
+
+This issue is intentionally vague. The first step is to make it concrete:
+pick one sub-question above, propose a practical approach, and file a real
+issue for it.
+```
+
+**Label aspirational issues with `aspirational`.** Create the label if it doesn't exist:
+```bash
+gh label create aspirational --repo {repo} \
+  --description "Intentionally vague — challenge the reader to make it concrete" \
+  --color "d4c5f9" 2>/dev/null || true
+```
+
+### Why both kinds?
+
+Practical issues give the initiative momentum — there's always something to pick up. Aspirational issues prevent tunnel vision — they keep the larger possibilities visible without over-specifying them. The natural flow: someone reads an aspirational issue, gets inspired, files a practical issue, and implements it. The aspirational issue stays open as a gathering point for more ideas.
+
+**Anti-pattern: all practical.** An epic with only concrete tasks is a project plan, not a vision. It closes when the tasks are done, even if the interesting questions remain unexplored.
+
+**Anti-pattern: all aspirational.** An epic with only vague issues is a brainstorm, not a plan. Nothing gets built because nothing is concrete enough to start.
+
 ## Phase 5: Create the Docs-Only PR (file+PR PRDs only)
 
-**Skip this phase for issue-only PRDs** — the issue created in Phase 4 is the complete deliverable.
+**Skip this phase for issue-only PRDs** — the epic and sub-issues from Phase 4 are the complete deliverable.
 
 For file+PR PRDs, the PR contains ONLY the spec document. No code changes.
 
@@ -380,7 +441,7 @@ Create these tasks at skill start using TaskCreate:
 | 1 | Understand initiative | Ask about problem space, solution space, constraints, threat models |
 | 2 | Iterative discovery | State understanding, ask pointed questions, repeat until model stable |
 | 3 | Write spec document | 9-section spec in `docs/{name}-spec.md` or issue body |
-| 4 | Create GitHub issue | Epic anchor issue with spec (issue-only) or pointer to spec file |
+| 4 | Create epic + sub-issues | Epic anchor with 3-5 practical + 2-4 aspirational sub-issues |
 | 5 | Create docs-only PR | Branch + spec file + commit + PR (skip for issue-only PRDs) |
 
 ## What Comes Next
