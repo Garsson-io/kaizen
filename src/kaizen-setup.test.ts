@@ -211,6 +211,63 @@ describe("mergeHooks", () => {
     expect(settings.hooks.PreToolUse).toHaveLength(1); // not 2
   });
 
+  it("rewrites hook paths for self-dogfood (kaizenRoot = '.')", () => {
+    // Fragment uses .kaizen/ prefix by default
+    writeFileSync(
+      join(kaizenDir, ".claude", "settings-fragment.json"),
+      JSON.stringify({
+        _install_prefix: ".kaizen/.claude/hooks/",
+        hooks: {
+          Stop: [
+            { hooks: [{ type: "command", command: "./.kaizen/.claude/hooks/kaizen-stop.sh" }] },
+          ],
+        },
+      })
+    );
+
+    // Self-dogfood: kaizenRoot is "." but fragment lives in .kaizen/
+    // We need the fragment to exist at the resolved path, so create it at "." too
+    const selfDir = tempDir;
+    mkdirSync(join(selfDir, ".claude"), { recursive: true });
+    writeFileSync(
+      join(selfDir, ".claude", "settings-fragment.json"),
+      JSON.stringify({
+        _install_prefix: ".kaizen/.claude/hooks/",
+        hooks: {
+          Stop: [
+            { hooks: [{ type: "command", command: "./.kaizen/.claude/hooks/kaizen-stop.sh" }] },
+          ],
+        },
+      })
+    );
+
+    const result = mergeHooks(tempDir, ".");
+    expect(result.status).toBe("ok");
+
+    const settings = JSON.parse(readFileSync(join(tempDir, ".claude", "settings.json"), "utf-8"));
+    expect(settings.hooks.Stop[0].hooks[0].command).toBe("./.claude/hooks/kaizen-stop.sh");
+  });
+
+  it("keeps .kaizen/ prefix for host projects (kaizenRoot = '.kaizen')", () => {
+    writeFileSync(
+      join(kaizenDir, ".claude", "settings-fragment.json"),
+      JSON.stringify({
+        _install_prefix: ".kaizen/.claude/hooks/",
+        hooks: {
+          Stop: [
+            { hooks: [{ type: "command", command: "./.kaizen/.claude/hooks/kaizen-stop.sh" }] },
+          ],
+        },
+      })
+    );
+
+    const result = mergeHooks(tempDir, ".kaizen");
+    expect(result.status).toBe("ok");
+
+    const settings = JSON.parse(readFileSync(join(tempDir, ".claude", "settings.json"), "utf-8"));
+    expect(settings.hooks.Stop[0].hooks[0].command).toBe("./.kaizen/.claude/hooks/kaizen-stop.sh");
+  });
+
   it("preserves existing non-hook settings", () => {
     mkdirSync(join(tempDir, ".claude"), { recursive: true });
     writeFileSync(join(tempDir, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: ["npm"] } }));
