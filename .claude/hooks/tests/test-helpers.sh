@@ -194,10 +194,13 @@ setup_test_env() {
   export STATE_DIR="$TEST_STATE_DIR"
   export DEBUG_LOG="/dev/null"
 
-  # Isolate audit log from repo (kaizen #429)
+  # Isolate audit log from repo (kaizen #429, #438)
+  # Set AUDIT_DIR (used by state-utils.sh to derive AUDIT_LOG) so both
+  # bash hooks and TS hooks write to the temp dir, not the repo.
   TEST_AUDIT_DIR="/tmp/.kaizen-audit-test-$$"
   rm -rf "$TEST_AUDIT_DIR"
   mkdir -p "$TEST_AUDIT_DIR"
+  export AUDIT_DIR="$TEST_AUDIT_DIR"
   export AUDIT_LOG="$TEST_AUDIT_DIR/no-action.log"
 
   TEST_MOCK_DIR=$(mktemp -d)

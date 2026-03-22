@@ -20,10 +20,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HOOKS_DIR="$(dirname "$SCRIPT_DIR")"
 source "$SCRIPT_DIR/harness.sh"
 
-# Isolated state directory
+# Isolated state and audit directories
 STATE_DIR="$HARNESS_TEMP/pr-review-state"
-mkdir -p "$STATE_DIR"
+AUDIT_DIR="$HARNESS_TEMP/audit"
+mkdir -p "$STATE_DIR" "$AUDIT_DIR"
 export STATE_DIR
+export AUDIT_DIR
 export DEBUG_LOG="$HARNESS_TEMP/debug.log"
 
 KAIZEN_REFLECT="$HOOKS_DIR/kaizen-reflect.sh"
@@ -35,7 +37,7 @@ PR_KAIZEN_CLEAR="$HOOKS_DIR/kaizen-pr-reflect-clear.sh"
 INTEG_MOCK_DIR="$HARNESS_TEMP/mock-bin"
 setup_default_gh_mock "$INTEG_MOCK_DIR"
 
-HOOK_ENV_VARS=$(printf 'STATE_DIR=%s\nPATH=%s\n' "$STATE_DIR" "$INTEG_MOCK_DIR:$PATH")
+HOOK_ENV_VARS=$(printf 'STATE_DIR=%s\nAUDIT_DIR=%s\nPATH=%s\n' "$STATE_DIR" "$AUDIT_DIR" "$INTEG_MOCK_DIR:$PATH")
 
 PR_URL="https://github.com/Garsson-io/kaizen/pull/99"
 
