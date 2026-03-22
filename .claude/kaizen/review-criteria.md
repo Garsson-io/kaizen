@@ -125,3 +125,39 @@ This section grows over time. Each entry is a pattern discovered through kaizen 
 **Pattern:** Evaluate/implement reduces scope by deferring "test infrastructure" or "E2E harness" — exactly the parts that prevent the 4-PR pattern.
 **Source:** Issue #400, multiple PRs shipping without E2E tests
 **Check:** If the PR adds a feature but defers its tests, that's a red flag. The test IS the feature.
+
+### FM-8: Stale references after rename/migration
+**Pattern:** A file, function, or skill is renamed/extracted but consumers still reference the old name. Tests SKIP on the missing dependency instead of failing, masking the breakage.
+**Source:** PR #416 (24 stale nanoclaw references), issue #413 (post-merge-clear checked wrong skill name), PR #406 (54 orphaned tests)
+**Check:** After any rename: `grep -r` for the old name across the entire repo. Any test SKIP that says "not found" for a removed dependency is a stale reference, not a valid skip.
+**Detector:** `src/analysis/diff-checks.ts:detectStaleReferences()` — deterministic, testable via synthetic scenarios.
+
+### FM-9: Environment/worktree assumptions in hooks
+**Pattern:** Shell hooks use `git status`/`git diff` without `-C` flag (checks CWD, not target repo), hardcode absolute paths, or create test git repos without `user.name`/`user.email` (fails in CI).
+**Source:** Issue #232 (CWD vs target), issue #219 (hardcoded path), PR #434 (git init in CI)
+**Check:** In shell hooks: every `git status`/`git diff` must have `-C "$TARGET"`. In tests: every `git init` must be followed by user config. No hardcoded `/home/*/` paths.
+**Detector:** `src/analysis/diff-checks.ts:detectEnvAssumptions()` — checks added lines for these patterns.
+
+### FM-10: Reflection gaming / generic waivers
+**Pattern:** Agent satisfies kaizen gate with minimal effort: all findings waived/no-action, generic reasons like "overengineering"/"low frequency"/"self-correcting", or "filed" without issue reference.
+**Source:** Issue #388 (15+ incidents), issue #280 ("low frequency" waiver), issue #258 ("overengineering" rationalization)
+**Check:** KAIZEN_IMPEDIMENTS with >50% waived/no-action, blocklist matches on waiver reasons, "filed" without ref field.
+**Detector:** `src/analysis/reflection-checks.ts:detectReflectionGaming()` — pure function, testable with synthetic impediment lists.
+
+### FM-11: Multi-PR fix cycles (ship-then-fix spiral)
+**Pattern:** 3+ PRs merged within 2 hours touching the same files, referencing the same issue, or all titled "fix:". Indicates iterating in production instead of validating before merge.
+**Source:** PRs #418-421 (4 fix PRs in 21 minutes for plugin.json), issue #400 (4 PRs for progress reporting)
+**Check:** Before creating a "fix:" PR, check recent merged PRs. If 2+ already exist for the same area, stop and ask: "what test would have caught this before the first PR?"
+**Detector:** `src/analysis/pr-pattern-checks.ts:detectMultiPRCycles()` — analyzes PR metadata for temporal/file clustering.
+
+---
+
+## Detector Integration
+
+The `src/analysis/` module provides deterministic detectors for FM-8 through FM-11. These complement the LLM-based review:
+
+- **Runtime:** `kaizen-warn-code-quality.sh` runs jscpd at PR create time (FM-3/DRY)
+- **Synthetic testing:** `npx vitest run src/analysis/` validates detectors against known-bad and known-good scenarios
+- **Gap analysis:** `/kaizen-gaps` Phase 2.7 runs detectors against real PRs and reports detection coverage
+
+When a new failure mode is discovered, add it here AND add a synthetic scenario to `src/analysis/run-scenarios.test.ts`. The scenario proves the detector works; the criteria entry tells the LLM reviewer what to look for.
