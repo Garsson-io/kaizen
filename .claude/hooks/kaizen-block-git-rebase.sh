@@ -27,6 +27,8 @@ if [ -z "$COMMAND" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 CMD_LINE=$(strip_heredoc_body "$COMMAND")
 
 # Check each command segment for `git rebase` invocations.

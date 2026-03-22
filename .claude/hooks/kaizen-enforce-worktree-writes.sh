@@ -27,6 +27,8 @@ if [ -z "$FILE_PATH" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Resolve the main checkout path from git
 GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)
 if [ -z "$GIT_COMMON" ]; then

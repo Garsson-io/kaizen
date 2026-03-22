@@ -125,12 +125,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-pr-review-loop.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/pr-review-loop-ts.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-reflect.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-reflect-ts.sh",
             "timeout": 10
           },
           {
@@ -140,7 +140,7 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-pr-reflect-clear.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/pr-kaizen-clear-ts.sh",
             "timeout": 10
           },
           {

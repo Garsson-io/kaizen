@@ -31,6 +31,8 @@ if [ -z "$COMMAND" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 CMD_LINE=$(strip_heredoc_body "$COMMAND")
 
 # Uses shared find_needs_review_state from state-utils.sh for worktree isolation.

@@ -1,5 +1,5 @@
 {
-  "_comment": "kAIzen Agent Control Flow — merge into host .claude/settings.json. Paths are relative to host project root, assuming kaizen is installed at .kaizen/",
+  "_comment": "DEPRECATED — plugin.json is now the source of truth for hook registrations. This file is kept only for reference. Host projects should install kaizen as a plugin, not merge this fragment.",
   "_install_prefix": ".kaizen/.claude/hooks/",
   "hooks": {
     "SessionStart": [

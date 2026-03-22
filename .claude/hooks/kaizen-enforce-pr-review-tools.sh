@@ -24,6 +24,8 @@ if [ -z "$TOOL_NAME" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Uses shared find_needs_review_state from state-utils.sh
 REVIEW_INFO=$(find_needs_review_state)
 if [ $? -ne 0 ] || [ -z "$REVIEW_INFO" ]; then

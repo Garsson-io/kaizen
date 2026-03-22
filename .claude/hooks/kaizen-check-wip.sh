@@ -12,6 +12,8 @@ if [ "$GIT_COMMON" != ".git" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Strong warning: you're on the main checkout, not a worktree
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 cat <<'WORKTREE_WARNING'

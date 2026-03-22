@@ -27,6 +27,8 @@ if ! $IS_COMMIT && ! $IS_PR; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Get changed files
 if $IS_COMMIT; then
   CHANGED_FILES=$(git diff --cached --name-only 2>/dev/null || true)

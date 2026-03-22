@@ -38,3 +38,5 @@ fi
 
 # Always allow stop — this is advisory only
 exit 0
+
+source "$(dirname "$0")/lib/scope-guard.sh"
