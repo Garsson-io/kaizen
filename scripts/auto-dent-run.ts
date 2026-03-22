@@ -237,16 +237,12 @@ export function extractArtifacts(text: string, result: RunResult): void {
 }
 
 export function checkStopSignal(text: string, result: RunResult): void {
-  const match = text.match(/AUTO_DENT_STOP:\s*(.+)/);
+  // Require signal at start of a line to avoid false positives from
+  // conversational text that mentions the signal (see batch-260322-2148-5c83).
+  const match = text.match(/^AUTO_DENT_STOP:\s*(.+)/m);
   if (match) {
     result.stopRequested = true;
     result.stopReason = match[1].trim();
-  }
-  // Also support legacy signal for backwards compat
-  const legacyMatch = text.match(/OVERNIGHT_STOP:\s*(.+)/);
-  if (legacyMatch) {
-    result.stopRequested = true;
-    result.stopReason = legacyMatch[1].trim();
   }
 }
 
