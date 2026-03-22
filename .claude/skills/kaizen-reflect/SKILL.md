@@ -265,6 +265,18 @@ Starting concrete and zooming out produces actionable output. Starting abstract 
 - **What prompt change would have made this session better?** Look at your mistakes, wrong turns, and suboptimal outputs. For each one, name the specific skill, the current wording gap, and the proposed improvement. The goal is self-improving prompts — every session should make the next one better.
 - **Were positive findings amplified?** Review any `type: "positive"` findings from step 2.5. For each non-obvious success, verify it was documented (`disposition: "amplified"` with a `target`). A validated practice that isn't written down will be independently rediscovered — or lost.
 - **PRD knowledge flow check (kaizen #381):** Is the parent PRD/epic's methodology reflected in the repo? Specifically: (1) Does the parent epic propose skill/hook/doc changes that haven't been applied? (2) Does it contain process insights that only exist in the GitHub issue body? (3) If gaps exist, file sub-issues with the specific changes needed — not "update skills" but the exact prompt text or doc section. Knowledge in issues is ephemeral; knowledge in skills/docs/hooks is durable. This check catches knowledge gaps that the PRD Knowledge Flow Checklist and the implement-spec methodology cross-check both missed.
+- **Admin teaching embedding (kaizen #457):** Did the admin correct your behavior or teach a new principle during this session? Every admin correction is signal about what kaizen L1 instructions are missing. For each correction: (1) Save as feedback memory for the current agent. (2) Identify where in kaizen infrastructure this should be codified — use the routing table below. (3) Make the change in this PR if small (<10 lines), or file an issue with the exact change needed.
+
+  **Admin teaching routing table:**
+  | Teaching type | Where to embed | Example |
+  |---------------|----------------|----------|
+  | Workflow discipline | SKILL.md (the relevant skill) | "Always check for existing work before starting" → add to evaluate skill |
+  | Philosophical principle | `.claude/kaizen/zen.md` | "Specs are hypotheses" → add as a zen principle |
+  | Quality standard | `.claude/kaizen/review-criteria.md` | "Never ship without E2E test" → add review criterion |
+  | Recurring enforcement need | File L2 hook issue | "Agents keep forgetting X" → propose a hook |
+  | Operational practice | `.claude/kaizen/policies.md` or `verification.md` | "Always timeout subprocesses" → add to verification |
+
+  **The recursive principle:** "Admin had to prompt me" = kaizen failed to teach the agent automatically. The fix is not memory (helps one agent) — it is infrastructure (helps all agents). Memory is a bandaid; skill/hook/doc changes are the cure.
 
 **Actionability rule:** Every meta-reflection finding MUST have a disposition — either a filed issue (with `ref: "#NNN"`) or fixed in this PR. An observation without a disposition is decoration, not kaizen. If something is truly not friction, reclassify as `type: "positive"` with `disposition: "no-action"`. Include meta-reflection findings in your `KAIZEN_IMPEDIMENTS` declaration with `"type": "meta"`:
 
