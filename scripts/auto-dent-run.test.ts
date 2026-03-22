@@ -8,6 +8,7 @@ import {
   processStreamMessage,
   type BatchState,
   type RunResult,
+  type RunMetrics,
   type StreamContext,
 } from './auto-dent-run.js';
 
@@ -530,5 +531,70 @@ describe('formatHeartbeat', () => {
     const ctx: StreamContext = { resultReceivedAt: Date.now() - 5_000 };
     const msg = formatHeartbeat(Date.now() - 60_000, 50, ctx);
     expect(msg).toContain('5s ago');
+  });
+});
+
+describe('RunMetrics type', () => {
+  it('can construct a valid RunMetrics object', () => {
+    const metrics: RunMetrics = {
+      run: 1,
+      start_epoch: 1742680800,
+      duration_seconds: 300,
+      exit_code: 0,
+      cost_usd: 2.5,
+      tool_calls: 42,
+      prs: ['https://github.com/Garsson-io/kaizen/pull/500'],
+      issues_filed: [],
+      issues_closed: ['#451'],
+      cases: ['260322-1200-k451-hook-fix'],
+      stop_requested: false,
+    };
+    expect(metrics.run).toBe(1);
+    expect(metrics.cost_usd).toBe(2.5);
+    expect(metrics.prs).toHaveLength(1);
+  });
+
+  it('supports run_history in BatchState', () => {
+    const state = makeBatchState({
+      run_history: [
+        {
+          run: 1,
+          start_epoch: 1742680800,
+          duration_seconds: 300,
+          exit_code: 0,
+          cost_usd: 2.5,
+          tool_calls: 42,
+          prs: [],
+          issues_filed: [],
+          issues_closed: [],
+          cases: [],
+          stop_requested: false,
+        },
+        {
+          run: 2,
+          start_epoch: 1742681400,
+          duration_seconds: 450,
+          exit_code: 0,
+          cost_usd: 3.1,
+          tool_calls: 60,
+          prs: ['https://github.com/Garsson-io/kaizen/pull/501'],
+          issues_filed: [],
+          issues_closed: ['#452'],
+          cases: [],
+          stop_requested: false,
+        },
+      ],
+    });
+    expect(state.run_history).toHaveLength(2);
+    const totalCost = state.run_history!.reduce(
+      (sum, r) => sum + r.cost_usd,
+      0,
+    );
+    expect(totalCost).toBeCloseTo(5.6);
+  });
+
+  it('defaults run_history to undefined when not set', () => {
+    const state = makeBatchState();
+    expect(state.run_history).toBeUndefined();
   });
 });

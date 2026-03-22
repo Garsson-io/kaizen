@@ -51,6 +51,21 @@ export interface BatchState {
   experiment?: boolean;
   last_heartbeat?: number;
   max_run_seconds?: number;
+  run_history?: RunMetrics[];
+}
+
+export interface RunMetrics {
+  run: number;
+  start_epoch: number;
+  duration_seconds: number;
+  exit_code: number;
+  cost_usd: number;
+  tool_calls: number;
+  prs: string[];
+  issues_filed: string[];
+  issues_closed: string[];
+  cases: string[];
+  stop_requested: boolean;
 }
 
 export interface RunResult {
@@ -479,6 +494,11 @@ export function closeBatchProgressIssue(
   const hours = Math.floor(elapsed / 3600);
   const mins = Math.floor((elapsed % 3600) / 60);
 
+  const totalCost = (state.run_history || []).reduce(
+    (sum, r) => sum + (r.cost_usd || 0),
+    0,
+  );
+
   const summary = [
     `### Batch Complete`,
     '',
@@ -486,6 +506,7 @@ export function closeBatchProgressIssue(
     `|--------|-------|`,
     `| **Runs** | ${state.run} |`,
     `| **Duration** | ${hours}h ${mins}m |`,
+    `| **Total cost** | $${totalCost.toFixed(2)} |`,
     `| **Stop reason** | ${state.stop_reason || 'completed'} |`,
     `| **PRs** | ${state.prs.length > 0 ? state.prs.join(', ') : 'none'} |`,
     `| **Issues filed** | ${state.issues_filed.length > 0 ? state.issues_filed.join(', ') : 'none'} |`,
@@ -794,6 +815,23 @@ async function main(): Promise<void> {
   // Update state
   const freshState = readState(stateFile);
   freshState.run = runNum;
+
+  // Append per-run metrics for batch observability
+  const runMetrics: RunMetrics = {
+    run: runNum,
+    start_epoch: Math.floor(runStart / 1000),
+    duration_seconds: duration,
+    exit_code: exitCode,
+    cost_usd: result.cost,
+    tool_calls: result.toolCalls,
+    prs: result.prs,
+    issues_filed: result.issuesFiled,
+    issues_closed: result.issuesClosed,
+    cases: result.cases,
+    stop_requested: result.stopRequested,
+  };
+  if (!freshState.run_history) freshState.run_history = [];
+  freshState.run_history.push(runMetrics);
 
   for (const pr of result.prs) {
     if (!freshState.prs.includes(pr)) freshState.prs.push(pr);
