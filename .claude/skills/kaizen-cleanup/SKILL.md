@@ -22,7 +22,7 @@ Cleanup criteria (ALL must be true to remove a worktree):
 ### Fast analysis (default when user says "du" or "quick check")
 
 ```bash
-./scripts/worktree-du.sh analyze --fast
+npx tsx src/worktree-du.ts analyze --fast
 ```
 
 Shows: worktree list with branch/lock/state/case status, branch counts, case status counts, stale active cases. Skips: disk sizes, Docker, open PRs.
@@ -30,7 +30,7 @@ Shows: worktree list with branch/lock/state/case status, branch counts, case sta
 ### Thorough analysis (when user says "thorough", "full", "how much space")
 
 ```bash
-./scripts/worktree-du.sh analyze
+npx tsx src/worktree-du.ts analyze
 ```
 
 Same as fast plus: per-worktree disk sizes, Docker `system df`, VHDX size (WSL), open PRs, total disk usage breakdown.
@@ -49,7 +49,7 @@ After running the script, provide analysis:
 ### Recommendations
 
 Based on analysis, suggest specific actions:
-- "N worktrees are merged+clean+unlocked — safe to remove with `./scripts/worktree-du.sh cleanup`"
+- "N worktrees are merged+clean+unlocked — safe to remove with `npx tsx src/worktree-du.ts cleanup`"
 - "N worktrees have stale locks — check if those Claude sessions are still alive before removing"
 - "N active cases have merged branches — their status should be updated to done"
 - "Docker has N dangling images and XGB of unreferenced build cache"
@@ -60,7 +60,7 @@ Based on analysis, suggest specific actions:
 ### Dry run first (ALWAYS do this before actual cleanup)
 
 ```bash
-./scripts/worktree-du.sh cleanup --dry-run
+npx tsx src/worktree-du.ts cleanup --dry-run
 ```
 
 Show the user what would be removed. **Always run dry-run first and present results before proceeding.**
@@ -68,7 +68,7 @@ Show the user what would be removed. **Always run dry-run first and present resu
 ### Actual cleanup
 
 ```bash
-./scripts/worktree-du.sh cleanup
+npx tsx src/worktree-du.ts cleanup
 ```
 
 The script runs 5 phases:

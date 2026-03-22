@@ -54,8 +54,10 @@ Creates `.claude/kaizen/policies-local.md` if it doesn't exist. Skips if already
 **Skip for plugin installs.**
 
 ```bash
-npx tsx src/kaizen-setup.ts --step symlinks --kaizen-root .kaizen
+npx tsx src/kaizen-setup.ts --step symlinks --kaizen-root <root>
 ```
+
+Use the `root` value from Step 0 detect (`.kaizen` for submodule installs, `.` for self-dogfood).
 
 Creates symlinks from host `.claude/skills/`, `.claude/agents/`, `.claude/kaizen/` into the kaizen submodule.
 
@@ -64,8 +66,10 @@ Creates symlinks from host `.claude/skills/`, `.claude/agents/`, `.claude/kaizen
 **Skip for plugin installs.**
 
 ```bash
-npx tsx src/kaizen-setup.ts --step hooks --kaizen-root .kaizen
+npx tsx src/kaizen-setup.ts --step hooks --kaizen-root <root>
 ```
+
+Use the `root` value from Step 0 detect. Hook paths in settings-fragment.json are automatically rewritten to match the kaizen root.
 
 Merges kaizen hooks into `.claude/settings.json`. Idempotent — won't duplicate on re-run.
 

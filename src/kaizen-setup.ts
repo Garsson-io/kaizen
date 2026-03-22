@@ -231,7 +231,11 @@ export function mergeHooks(cwd: string, kaizenRoot: string, settingsPath?: strin
   }
 
   const fragment = JSON.parse(readFileSync(fragmentPath, "utf-8"));
-  const newHooks = fragment.hooks ?? {};
+  const fragmentPrefix = fragment._install_prefix ?? ".kaizen/.claude/hooks/";
+  const targetPrefix = kaizenRoot === "." ? ".claude/hooks/" : `${kaizenRoot}/.claude/hooks/`;
+  const rawHooks = JSON.stringify(fragment.hooks ?? {});
+  const rewrittenHooks = rawHooks.split(fragmentPrefix).join(targetPrefix);
+  const newHooks = JSON.parse(rewrittenHooks);
 
   mkdirSync(dirname(resolvedSettings), { recursive: true });
 
@@ -355,7 +359,7 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       cwd: { type: "string" },
     },
     strict: false,
-  });
+  }) as { values: Record<string, string | undefined> };
 
   const cwd = values.cwd ?? process.cwd();
 
