@@ -145,6 +145,46 @@ describe("Part 1: Setup produces correct configuration", () => {
     );
   });
 
+  it("host project hook paths resolve when .kaizen/ submodule has hooks", () => {
+    // Simulate a host project with kaizen installed as submodule at .kaizen/
+    // Copy real hooks into the fake .kaizen/ submodule structure
+    const fakeKaizen = join(hostProject, ".kaizen");
+    execSync(`mkdir -p "${join(fakeKaizen, ".claude", "hooks")}"`, { stdio: "pipe" });
+    execSync(`cp "${FRAGMENT_PATH}" "${join(fakeKaizen, ".claude", "settings-fragment.json")}"`, { stdio: "pipe" });
+
+    // Copy all kaizen hooks into the fake submodule
+    execSync(`cp ${HOOKS_DIR}/kaizen-*.sh "${join(fakeKaizen, ".claude", "hooks")}/"`, { stdio: "pipe" });
+    // Copy hook libraries too
+    execSync(`cp -r ${HOOKS_DIR}/lib "${join(fakeKaizen, ".claude", "hooks")}/"`, { stdio: "pipe" });
+
+    // Run mergeHooks to generate host settings.json
+    mergeHooks(hostProject, ".kaizen");
+    const settings = JSON.parse(readFileSync(join(hostProject, ".claude", "settings.json"), "utf-8"));
+
+    // Every hook path in the generated settings.json must resolve relative to hostProject
+    const allCommands: string[] = [];
+    for (const eventEntries of Object.values(settings.hooks) as any[]) {
+      for (const entry of eventEntries) {
+        for (const hook of entry.hooks ?? []) {
+          if (hook.command) allCommands.push(hook.command);
+        }
+      }
+    }
+
+    expect(allCommands.length).toBeGreaterThanOrEqual(20);
+
+    const missing: string[] = [];
+    for (const cmd of allCommands) {
+      // Resolve ./ prefix relative to hostProject (how Claude Code resolves them)
+      const resolved = join(hostProject, cmd.replace(/^\.\//, ""));
+      if (!existsSync(resolved)) {
+        missing.push(`${cmd} → ${resolved}`);
+      }
+    }
+
+    expect(missing, `Hook paths that don't resolve in host project:\n${missing.join("\n")}`).toHaveLength(0);
+  });
+
   it("verifySetup passes for properly configured host", () => {
     // Write a CLAUDE.md with kaizen section
     execSync(`echo "# Project\n\n## Kaizen\nkaizen plugin installed" > "${join(hostProject, "CLAUDE.md")}"`, { stdio: "pipe" });
