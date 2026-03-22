@@ -72,6 +72,32 @@ Reflection happens at these mandatory checkpoints:
 - **New pattern** → file and monitor at appropriate level
 - **Recurrence** → the current enforcement level failed. **Must escalate** at least one level (L1→L2, L2→L3). An impediment that recurs at the same level is proof the level is insufficient.
 
+### 2.4. MULTI-PR QUALITY CHECK — are you iterating on the same feature? (kaizen #400)
+
+Before dispositioning individual impediments, check whether this session is part of a multi-PR fix cycle on the same feature:
+
+```bash
+# Check recent PRs touching the same files or referencing the same issue
+git log --oneline --all --since="3 days ago" --grep="Fixes.*#${ISSUE}" | head -5
+gh pr list --repo "$HOST_REPO" --state all --search "#${ISSUE}" --json number,title,state,mergedAt | head -10
+```
+
+**If this is the 2nd+ PR for the same feature/case, ask:**
+1. "What should I have tested before the FIRST PR that would have caught this?"
+2. "Is there a missing pre-flight check, test, or validation that would prevent the cycle?"
+3. "Am I fixing symptoms, or is there a root cause I have not addressed?"
+
+The answer to question 1 is the **missing pre-flight discipline** — file it as a kaizen issue targeting the pre-PR workflow (evaluation, testing, or review), not just the feature itself.
+
+**Signals of the multi-PR pattern:**
+| Signal | Meaning |
+|--------|--------|
+| 2+ PRs on same branch/case in quick succession | Iterating on a broken feature |
+| Same file modified in 3+ consecutive PRs | Core design issue, not polish |
+| PR titles starting with "fix:" referencing the same kaizen issue | Still broken |
+
+**The goal:** Multi-PR cycles are expensive — each PR requires review, CI, merge, and reflection overhead. A single well-tested PR is worth more than three iterative ones. This check makes the pattern visible so the reflection can produce a prevention mechanism, not just note the symptoms.
+
 ### 2.5. AMPLIFY POSITIVE FINDINGS (kaizen #349)
 
 Positive findings are equally valuable signal — they validate practices that future agents should follow. After listing impediments, **explicitly review what went well:**
@@ -340,6 +366,7 @@ Create these tasks at skill start using TaskCreate:
 |---|------|-------------|
 | 1 | Reflect on work | Review what happened: impediments, friction, near-misses, what slowed down, what went well |
 | 2 | Identify impediments — patterns first | 2a: List all impediments. 2b: Name categories before dispositioning. 2c: New pattern or recurrence? Recurrence must escalate. |
+| 2.4 | Multi-PR quality check | Is this the 2nd+ PR for the same feature? What pre-flight discipline was missing? See signals table. |
 | 2.5 | Amplify positive findings | What techniques worked? What was surprising? Document non-obvious successes for future agents. Disposition: amplified or no-action. |
 | 3 | Classify enforcement level | L1 (instructions), L2 (hooks), L2.5 (MCP tools), L3 (mechanistic). Apply escalation rules. |
 | 4 | File issues / incidents | Search for duplicates first. Disposition: fixed-in-pr, filed, incident, or positive/amplified. No waivers. |
