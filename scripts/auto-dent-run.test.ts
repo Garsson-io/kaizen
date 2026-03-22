@@ -123,10 +123,10 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('--squash --delete-branch --auto');
   });
 
-  it('includes AUTO_DENT_STOP instructions', () => {
+  it('includes structured STOP phase marker instructions', () => {
     const state = makeBatchState();
     const prompt = buildPrompt(state, 1);
-    expect(prompt).toContain('AUTO_DENT_STOP:');
+    expect(prompt).toContain('AUTO_DENT_PHASE: STOP | reason=');
   });
 
   it('generates test-task prompt when test_task is true', () => {
@@ -239,7 +239,7 @@ describe('loadPromptTemplate', () => {
     expect(template).not.toBeNull();
     expect(template).toContain('{{guidance}}');
     expect(template).toContain('{{run_tag}}');
-    expect(template).toContain('AUTO_DENT_STOP');
+    expect(template).toContain('AUTO_DENT_PHASE: STOP');
   });
 
   it('loads test-task template file', () => {
@@ -262,7 +262,7 @@ describe('buildPrompt with templates', () => {
     expect(prompt).toContain('/kaizen-deep-dive');
     expect(prompt).toContain('improve hooks reliability');
     expect(prompt).toContain('batch-260322-2100-a1b2/run-1');
-    expect(prompt).toContain('AUTO_DENT_STOP');
+    expect(prompt).toContain('AUTO_DENT_PHASE: STOP');
     // Should not contain raw template variables
     expect(prompt).not.toContain('{{guidance}}');
     expect(prompt).not.toContain('{{run_tag}}');
@@ -378,7 +378,19 @@ describe('extractArtifacts', () => {
 });
 
 describe('checkStopSignal', () => {
-  it('detects AUTO_DENT_STOP signal', () => {
+  it('detects structured STOP phase marker (preferred format)', () => {
+    const result = makeRunResult();
+    checkStopSignal(
+      'AUTO_DENT_PHASE: STOP | reason=backlog exhausted — no more open issues',
+      result,
+    );
+    expect(result.stopRequested).toBe(true);
+    expect(result.stopReason).toBe(
+      'backlog exhausted — no more open issues',
+    );
+  });
+
+  it('detects legacy AUTO_DENT_STOP signal', () => {
     const result = makeRunResult();
     checkStopSignal(
       'AUTO_DENT_STOP: backlog exhausted — no more open issues',
@@ -390,13 +402,29 @@ describe('checkStopSignal', () => {
     );
   });
 
+  it('prefers structured format over legacy when both present', () => {
+    const result = makeRunResult();
+    checkStopSignal(
+      'AUTO_DENT_PHASE: STOP | reason=structured reason\nAUTO_DENT_STOP: legacy reason',
+      result,
+    );
+    expect(result.stopRequested).toBe(true);
+    expect(result.stopReason).toBe('structured reason');
+  });
+
+  it('does not trigger on STOP phase without reason field', () => {
+    const result = makeRunResult();
+    checkStopSignal('AUTO_DENT_PHASE: STOP', result);
+    expect(result.stopRequested).toBe(false);
+  });
+
   it('does not trigger on text without stop signal', () => {
     const result = makeRunResult();
     checkStopSignal('Just regular output about AUTO_DENT features', result);
     expect(result.stopRequested).toBe(false);
   });
 
-  it('trims whitespace from stop reason', () => {
+  it('trims whitespace from legacy stop reason', () => {
     const result = makeRunResult();
     checkStopSignal('AUTO_DENT_STOP:   spaces around reason   ', result);
     expect(result.stopReason).toBe('spaces around reason');
@@ -417,7 +445,7 @@ describe('checkStopSignal', () => {
     expect(result.stopRequested).toBe(false);
   });
 
-  it('detects stop signal on its own line amid other text', () => {
+  it('detects legacy stop signal on its own line amid other text', () => {
     const result = makeRunResult();
     checkStopSignal(
       'Some preamble\nAUTO_DENT_STOP: backlog exhausted\nSome epilogue',
@@ -425,6 +453,27 @@ describe('checkStopSignal', () => {
     );
     expect(result.stopRequested).toBe(true);
     expect(result.stopReason).toBe('backlog exhausted');
+  });
+
+  it('detects structured stop amid other phase markers', () => {
+    const result = makeRunResult();
+    checkStopSignal(
+      'AUTO_DENT_PHASE: REFLECT | issues_filed=0 | lessons=done\nAUTO_DENT_PHASE: STOP | reason=all issues claimed',
+      result,
+    );
+    expect(result.stopRequested).toBe(true);
+    expect(result.stopReason).toBe('all issues claimed');
+  });
+
+  it('does not false-trigger when discussing the STOP phase in prose', () => {
+    const result = makeRunResult();
+    checkStopSignal(
+      'The AUTO_DENT_PHASE: STOP | reason=... marker is used to signal batch termination',
+      result,
+    );
+    // Both structured and legacy formats require the marker at start of line.
+    // Mid-sentence discussion of the signal mechanism does not trigger.
+    expect(result.stopRequested).toBe(false);
   });
 });
 
@@ -666,7 +715,7 @@ describe('processStreamMessage', () => {
         type: 'assistant',
         message: {
           content: [
-            { type: 'text', text: 'AUTO_DENT_STOP: backlog exhausted' },
+            { type: 'text', text: 'AUTO_DENT_PHASE: STOP | reason=backlog exhausted' },
           ],
         },
       },
@@ -1040,19 +1089,33 @@ describe('e2e: full workflow through stream pipeline', () => {
     expect(capture.result.cost).toBe(1.2);
   });
 
-  it('handles AUTO_DENT_STOP alongside phase markers', () => {
+  it('handles structured STOP phase marker alongside other phases', () => {
     const capture = runStream([
       msg.init(),
       msg.phase('PICK', { issue: '#450', title: 'last issue' }),
       msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/600' }),
-      msg.text('AUTO_DENT_STOP: backlog exhausted — no more matching issues'),
+      msg.phase('STOP', { reason: 'backlog exhausted — no more matching issues' }),
       msg.done(3.0, 'All done.'),
     ]);
 
     expectPhase(capture, 'PICK', '#450');
     expectPhase(capture, 'PR', 'pull/600');
+    expectPhase(capture, 'STOP');
     expect(capture.result.stopRequested).toBe(true);
     expect(capture.result.stopReason).toContain('backlog exhausted');
+  });
+
+  it('handles legacy AUTO_DENT_STOP alongside phase markers', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#450', title: 'last issue' }),
+      msg.text('AUTO_DENT_STOP: legacy stop reason'),
+      msg.done(2.0),
+    ]);
+
+    expectPhase(capture, 'PICK', '#450');
+    expect(capture.result.stopRequested).toBe(true);
+    expect(capture.result.stopReason).toBe('legacy stop reason');
   });
 
   it('handles mixed content blocks (text + tool in same message)', () => {
