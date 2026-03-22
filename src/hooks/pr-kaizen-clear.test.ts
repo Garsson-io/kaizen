@@ -41,10 +41,14 @@ import {
 } from './pr-kaizen-clear.js';
 
 let testStateDir: string;
+let testAuditDir: string;
 const HOOK_PATH = path.resolve(__dirname, 'pr-kaizen-clear.ts');
 
 beforeEach(() => {
   testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kaizen-clear-test-'));
+  testAuditDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kaizen-audit-test-'));
+  // Isolate audit writes to temp dir (kaizen #438 — prevent test side-effects on repo files)
+  process.env.AUDIT_DIR = testAuditDir;
   // Create a kaizen gate state
   const branch = execSync('git rev-parse --abbrev-ref HEAD', {
     encoding: 'utf-8',
@@ -57,6 +61,8 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(testStateDir, { recursive: true, force: true });
+  fs.rmSync(testAuditDir, { recursive: true, force: true });
+  delete process.env.AUDIT_DIR;
 });
 
 function runHook(input: object): string {
@@ -66,7 +72,7 @@ function runHook(input: object): string {
       `echo '${json.replace(/'/g, "'\\''")}' | npx tsx "${HOOK_PATH}"`,
       {
         encoding: 'utf-8',
-        env: { ...process.env, STATE_DIR: testStateDir },
+        env: { ...process.env, STATE_DIR: testStateDir, AUDIT_DIR: testAuditDir },
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 15000,
       },

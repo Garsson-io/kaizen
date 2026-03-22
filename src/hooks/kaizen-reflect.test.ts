@@ -28,9 +28,11 @@ function makeInput(overrides: {
   stdout?: string;
   stderr?: string;
   exit_code?: number;
+  transcript_path?: string;
 }): HookInput {
   return {
     tool_name: 'Bash',
+    transcript_path: overrides.transcript_path,
     tool_input: { command: overrides.command ?? 'echo test' },
     tool_response: {
       stdout: overrides.stdout ?? '',
@@ -227,6 +229,24 @@ describe('generateCreateReflection', () => {
     expect(output).toContain('docs-only');
     expect(output).toContain('trivial-refactor');
   });
+
+  it('includes transcript_path when provided', () => {
+    const output = generateCreateReflection(
+      'url',
+      'branch',
+      'files',
+      '/home/user/.claude/sessions/abc123.jsonl',
+    );
+    expect(output).toContain('Session transcript: /home/user/.claude/sessions/abc123.jsonl');
+    expect(output).toContain('Read the transcript file');
+    expect(output).toContain('user corrections');
+    expect(output).toContain('failed tool calls');
+  });
+
+  it('shows fallback message when no transcript_path', () => {
+    const output = generateCreateReflection('url', 'branch', 'files');
+    expect(output).toContain('no transcript path available');
+  });
 });
 
 describe('generateMergeReflection', () => {
@@ -235,5 +255,60 @@ describe('generateMergeReflection', () => {
     expect(output).toContain('post-merge steps');
     expect(output).toContain('Sync main');
     expect(output).toContain('/main');
+  });
+
+  it('includes transcript_path when provided', () => {
+    const output = generateMergeReflection(
+      'url',
+      'branch',
+      'files',
+      '/main',
+      '/tmp/transcript.jsonl',
+    );
+    expect(output).toContain('Session transcript: /tmp/transcript.jsonl');
+    expect(output).toContain('Read the transcript file');
+  });
+
+  it('shows fallback message when no transcript_path', () => {
+    const output = generateMergeReflection('url', 'branch', 'files', '/main');
+    expect(output).toContain('no transcript path available');
+  });
+});
+
+describe('transcript_path threading', () => {
+  it('processHookInput passes transcript_path from input to create reflection', () => {
+    const input = makeInput({
+      command: 'gh pr create --title "test"',
+      stdout: 'https://github.com/Garsson-io/kaizen/pull/42',
+      transcript_path: '/sessions/test-session.jsonl',
+    });
+
+    const output = processHookInput(input, defaultOpts);
+    expect(output).toContain('Session transcript: /sessions/test-session.jsonl');
+  });
+
+  it('processHookInput passes transcript_path from input to merge reflection', () => {
+    const input = makeInput({
+      command:
+        'gh pr merge https://github.com/Garsson-io/kaizen/pull/42 --squash',
+      stdout: '✓ Pull request merged',
+      transcript_path: '/sessions/merge-session.jsonl',
+    });
+
+    const output = processHookInput(input, {
+      ...defaultOpts,
+      sendNotification: vi.fn(),
+    });
+    expect(output).toContain('Session transcript: /sessions/merge-session.jsonl');
+  });
+
+  it('processHookInput handles missing transcript_path gracefully', () => {
+    const input = makeInput({
+      command: 'gh pr create --title "test"',
+      stdout: 'https://github.com/Garsson-io/kaizen/pull/42',
+    });
+
+    const output = processHookInput(input, defaultOpts);
+    expect(output).toContain('no transcript path available');
   });
 });

@@ -68,6 +68,7 @@ function hookPath(name: string): string {
 function hookEnv(opts?: { branch?: string; isWorktree?: boolean }): Record<string, string> {
   return {
     STATE_DIR: stateDir.path,
+    AUDIT_DIR: join(stateDir.path, "audit"),
     PATH: mockDir.pathWithMocks,
     DEBUG_LOG: "/dev/null",
     IPC_DIR: join(stateDir.path, "ipc"),

@@ -55,14 +55,14 @@ For kaizen issues, always pass `--github-issue` to link the case to the existing
 4. **Self-review: run /kaizen-review-pr** — Run the review skill against your own diff. Read `.claude/kaizen/review-criteria.md`. Fix all MUST-FIX and SHOULD-FIX findings.
 5. **Review fix loop** — Re-review after fixes until clean. Max 3 rounds.
 6. **Push + create PR** — Push branch, create PR with `Fixes Garsson-io/kaizen#N` in body.
-7. **Kaizen reflection** — Before declaring done: (1) What impediments did you hit? File each as a kaizen issue. (2) What patterns do these share with past incidents? (3) What almost went wrong but didn't? (4) What did this work reveal about the system? This task cannot be completed with `[] no impediments` unless truly nothing went wrong.
+7. **Kaizen reflection (subagent)** — The kaizen-bg subagent handles reflection in the background. It reads the full session transcript (uncompressed — it sees what you may have forgotten), scans for signals (user corrections, failed tool calls, hook denials, retries), and files incidents/issues independently. You launch it via the Agent tool when the hook fires, then wait for its results to clear the gate. Note any impediments you noticed during the session to pass along.
 8. **Merge + cleanup** — Merge PR (squash), remove worktree, delete branch.
 
 **Why this exists:** Agents discover tasks reactively — they forget review, skip reflection, leave worktrees behind. Making the full workflow visible from session start (as tasks you own) prevents this. The self-review task (#4) is particularly critical — it's where the review criteria file gets applied to your own code.
 
 **Adapt the list to the work:** Not every task applies to every case. Docs-only PRs skip TDD. Bug fixes might skip architecture assessment. But the default is ALL tasks — remove explicitly with a reason, don't silently skip.
 
-**When completing the reflection task (#7):** Use the impediments you collected throughout the session. If you noticed friction, patterns, or near-misses, they should already be noted. Format them as structured KAIZEN_IMPEDIMENTS for the gate. The L2 gate still fires independently as validation.
+**When completing the reflection task (#7):** The kaizen-bg subagent does the heavy lifting — reading the transcript, searching for duplicates, filing incidents. Your job is to (1) launch it with context when the hook fires, (2) note any impediments you noticed during the session, and (3) wait for its results to clear the gate with a KAIZEN_IMPEDIMENTS declaration. The subagent is an independent auditor — it may find impediments you didn't report.
 
 ## Re-examine the Spec
 

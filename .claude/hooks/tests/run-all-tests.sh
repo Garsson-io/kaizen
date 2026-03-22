@@ -73,7 +73,9 @@ run_test_file() {
   TOTAL_TESTS=$((TOTAL_TESTS + pass + fail))
 
   if [ "$exit_code" -ne 0 ] || [ "$fail" -gt 0 ]; then
-    echo "$output" | grep -E '(FAIL|PASS):' | head -20
+    # Show FAIL lines first (most important), then PASS for context
+    echo "$output" | grep -E 'FAIL:' || true
+    echo "$output" | grep -E 'FAILED TESTS:' -A 100 || true
     echo "  RESULT: $pass passed, $fail failed"
     FAILED_FILES+=("$name")
   else

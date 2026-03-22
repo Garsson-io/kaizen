@@ -67,6 +67,7 @@ function runWrapper(
         env: {
           ...process.env,
           STATE_DIR: tmpDir,
+          AUDIT_DIR: path.join(tmpDir, 'audit'),
           IPC_DIR: path.join(tmpDir, 'ipc'),
           ...extraEnv,
         },

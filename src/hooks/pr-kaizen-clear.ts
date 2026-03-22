@@ -39,8 +39,10 @@ interface Impediment {
 
 // ── Audit logging ────────────────────────────────────────────────────
 
-// AUDIT_DIR from shared state-utils, with env var override for test isolation (kaizen #429)
-const AUDIT_DIR = process.env.AUDIT_DIR ?? DEFAULT_AUDIT_DIR;
+// Read AUDIT_DIR on each call so tests can override via env var (kaizen #438).
+function getAuditDir(): string {
+  return process.env.AUDIT_DIR ?? DEFAULT_AUDIT_DIR;
+}
 
 function currentBranch(): string {
   try {
@@ -55,8 +57,9 @@ function currentBranch(): string {
 
 function logAudit(file: string, line: string): void {
   try {
-    mkdirSync(AUDIT_DIR, { recursive: true });
-    appendFileSync(join(AUDIT_DIR, file), line);
+    const auditDir = getAuditDir();
+    mkdirSync(auditDir, { recursive: true });
+    appendFileSync(join(auditDir, file), line);
   } catch {}
 }
 
