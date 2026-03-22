@@ -2,7 +2,7 @@
 # Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
 # enforce-case-exists.sh — Level 2 kaizen enforcement (Issue #94)
 # PreToolUse hook on Edit|Write: blocks source code edits in worktrees
-# that don't have a corresponding case record in the database.
+# that don't have a corresponding case record.
 #
 # This catches agents that skip case creation (via CLI or IPC)
 # before starting implementation work in a worktree.
@@ -10,8 +10,13 @@
 # Only fires in worktrees (not main checkout — enforce-worktree-writes.sh
 # handles that). Only blocks source files (same allowlist as
 # enforce-worktree-writes.sh).
+#
+# Case lookup strategy (no direct DB access — delegates to host CLI):
+#   1. If $KAIZEN_CASE_CLI is configured, use: $KAIZEN_CASE_CLI case-by-branch <branch>
+#   2. If no case CLI configured, skip enforcement (can't check without a backend)
 
 source "$(dirname "$0")/lib/allowlist.sh"
+source "$(dirname "$0")/lib/read-config.sh"
 
 INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
@@ -58,52 +63,23 @@ if [ -z "$BRANCH" ]; then
   exit 0
 fi
 
-# Query via the domain model (cases.ts getActiveCaseByBranch) — not raw SQL.
-# Prefer worktree's compiled dist/ (has latest code), fall back to main's.
-# If no dist/ anywhere, use tsx to run from source (kaizen #197).
-MAIN_ROOT=$(dirname "$GIT_COMMON")
-DB_PATH="$MAIN_ROOT/store/messages.db"
-
-if [ ! -f "$DB_PATH" ]; then
-  exit 0  # No DB — can't enforce
+# No case CLI configured — can't check, so allow
+if [ -z "$KAIZEN_CASE_CLI" ]; then
+  exit 0
 fi
 
-# Try compiled dist first, then tsx fallback from source
+# Query the case backend via the configured CLI
 HAS_CASE=""
-if [ -d "$WORKTREE_ROOT/dist" ]; then
-  DIST_DIR="$WORKTREE_ROOT/dist"
-elif [ -d "$MAIN_ROOT/dist" ]; then
-  DIST_DIR="$MAIN_ROOT/dist"
-else
-  DIST_DIR=""
+CASE_OUTPUT=$($KAIZEN_CASE_CLI case-by-branch "$BRANCH" 2>/dev/null)
+CASE_EXIT=$?
+
+if [ $CASE_EXIT -eq 0 ] && [ -n "$CASE_OUTPUT" ]; then
+  # CLI returned a case — allow
+  exit 0
 fi
 
-if [ -n "$DIST_DIR" ]; then
-  # Use compiled dist (fast path)
-  HAS_CASE=$(ENFORCE_BRANCH="$BRANCH" ENFORCE_DB="$DB_PATH" node -e "
-    const Database = require('better-sqlite3');
-    const cases = require('$DIST_DIR/cases.js');
-    const database = new Database(process.env.ENFORCE_DB, { readonly: true });
-    cases.createCasesSchema(database);
-    const c = cases.getActiveCaseByBranch(process.env.ENFORCE_BRANCH);
-    console.log(c ? '1' : '0');
-    database.close();
-  " 2>/dev/null)
-elif command -v npx >/dev/null 2>&1; then
-  # No dist/ — use tsx to run from source (kaizen #197: chicken-and-egg fix)
-  HAS_CASE=$(ENFORCE_BRANCH="$BRANCH" ENFORCE_DB="$DB_PATH" npx --yes tsx -e "
-    import Database from 'better-sqlite3';
-    import { createCasesSchema, getActiveCaseByBranch } from '$MAIN_ROOT/src/cases.js';
-    const database = new Database(process.env.ENFORCE_DB!, { readonly: true });
-    createCasesSchema(database);
-    const c = getActiveCaseByBranch(process.env.ENFORCE_BRANCH!);
-    console.log(c ? '1' : '0');
-    database.close();
-  " 2>/dev/null)
-fi
-
-# If query failed or case exists, allow
-if [ -z "$HAS_CASE" ] || [ "$HAS_CASE" = "1" ]; then
+# If CLI failed (not installed, errored), allow gracefully
+if [ $CASE_EXIT -ne 0 ] && [ -z "$CASE_OUTPUT" ]; then
   exit 0
 fi
 
@@ -112,14 +88,11 @@ WORKTREE_PATH="$WORKTREE_ROOT"
 jq -n \
   --arg branch "$BRANCH" \
   --arg file "$FILE_PATH" \
+  --arg cli "$KAIZEN_CASE_CLI" \
   --arg reason "No case record found for branch '$BRANCH'. All dev work must have a case before writing code.
 
-Create a case first (auto-detects your current worktree):
-  npx tsx src/cli-kaizen.ts case-create --description \"your description\" --type dev --github-issue N
-
-Or adopt this worktree explicitly:
-  npx tsx src/cli-kaizen.ts case-create --description \"your description\" --type dev --github-issue N \\
-    --worktree-path \"$WORKTREE_PATH\" --branch-name \"$BRANCH\"
+Create a case first:
+  $KAIZEN_CASE_CLI case-create --description \"your description\" --type dev --github-issue N
 
 Or via /kaizen-implement (which calls the CLI for you).
 
