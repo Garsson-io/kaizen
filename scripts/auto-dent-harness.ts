@@ -331,4 +331,4 @@ AUTO_DENT_PHASE: PICK | issue=#0 | title=smoke test probe
 AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=pipeline validation
 AUTO_DENT_PHASE: TEST | result=pass | count=0
 AUTO_DENT_PHASE: REFLECT | issues_filed=0 | lessons=pipeline is operational
-AUTO_DENT_STOP: smoke test complete — pipeline operational`;
+AUTO_DENT_PHASE: STOP | reason=smoke test complete — pipeline operational`;

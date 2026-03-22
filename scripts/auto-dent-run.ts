@@ -11,8 +11,9 @@
  * Spawns claude with --output-format stream-json for real-time milestones.
  * Writes results back after the run completes.
  *
- * Stop mechanism: if Claude outputs "AUTO_DENT_STOP: <reason>" in its
- * response, this sets stop_reason in state.json so the trampoline stops.
+ * Stop mechanism: Claude emits "AUTO_DENT_PHASE: STOP | reason=<reason>"
+ * (structured phase marker) to signal stop. Legacy "AUTO_DENT_STOP: <reason>"
+ * is also supported for backward compatibility. See issue #499.
  */
 
 import { spawn, execSync } from 'child_process';
@@ -111,13 +112,14 @@ function getRepoRoot(): string {
  * then falls back to the directory relative to this script.
  */
 export function resolvePromptsDir(): string {
+  // Use --show-toplevel (worktree-aware) not --git-common-dir (main repo root).
+  // Prompts are worktree-local files that may differ per branch.
   try {
-    const gitCommonDir = execSync(
-      'git rev-parse --path-format=absolute --git-common-dir',
+    const toplevel = execSync(
+      'git rev-parse --show-toplevel',
       { encoding: 'utf8' },
     ).trim();
-    const repoRoot = gitCommonDir.replace(/\/\.git$/, '');
-    const dir = resolve(repoRoot, 'prompts');
+    const dir = resolve(toplevel, 'prompts');
     if (existsSync(dir)) return dir;
   } catch {
     // Fall through
@@ -282,9 +284,9 @@ If you determine there is no more meaningful work to do matching the guidance
 (backlog exhausted, all relevant issues claimed, or remaining issues are
 blocked/too risky), include this exact marker in your final response:
 
-AUTO_DENT_STOP: <reason>
+AUTO_DENT_PHASE: STOP | reason=<reason>
 
-For example: "AUTO_DENT_STOP: backlog exhausted — no more open issues matching 'hooks reliability'"
+For example: "AUTO_DENT_PHASE: STOP | reason=backlog exhausted — no more open issues matching 'hooks reliability'"
 This will gracefully stop the batch loop. Only use this when you've genuinely
 run out of work — not when a single run is complete.
 
@@ -452,6 +454,17 @@ export function extractArtifacts(text: string, result: RunResult): void {
 }
 
 export function checkStopSignal(text: string, result: RunResult): void {
+  // Primary: structured phase marker format (preferred, avoids in-band ambiguity).
+  // AUTO_DENT_PHASE: STOP | reason=<text>
+  for (const marker of parsePhaseMarkers(text)) {
+    if (marker.phase === 'STOP' && marker.fields.reason) {
+      result.stopRequested = true;
+      result.stopReason = marker.fields.reason;
+      return;
+    }
+  }
+
+  // Legacy: in-band text signal (kept for backward compatibility).
   // Require signal at start of a line to avoid false positives from
   // conversational text that mentions the signal (see batch-260322-2148-5c83).
   const match = text.match(/^AUTO_DENT_STOP:\s*(.+)/m);

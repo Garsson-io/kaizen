@@ -30,9 +30,9 @@ If you determine there is no more meaningful work to do matching the guidance
 (backlog exhausted, all relevant issues claimed, or remaining issues are
 blocked/too risky), include this exact marker in your final response:
 
-AUTO_DENT_STOP: <reason>
+AUTO_DENT_PHASE: STOP | reason=<reason>
 
-For example: "AUTO_DENT_STOP: backlog exhausted — no more open issues matching 'hooks reliability'"
+For example: "AUTO_DENT_PHASE: STOP | reason=backlog exhausted — no more open issues matching 'hooks reliability'"
 This will gracefully stop the batch loop. Only use this when you've genuinely
 run out of work — not when a single run is complete.
 
