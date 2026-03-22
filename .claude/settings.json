@@ -64,6 +64,11 @@
             "type": "command",
             "command": "./.claude/hooks/kaizen-block-git-rebase.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "./.claude/hooks/kaizen-bump-plugin-version.sh",
+            "timeout": 10
           }
         ]
       },
