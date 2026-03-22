@@ -11,6 +11,7 @@ import {
   handleStart,
   handleRecord,
   handleView,
+  handleParse,
   parseFrontmatter,
   serializeFrontmatter,
   getNextExpId,
@@ -306,5 +307,45 @@ describe('experiment lifecycle', () => {
 
     expect(logs[0]).toContain('EXP-001');
     expect(logs[0]).toContain('lifecycle test');
+  });
+});
+
+describe('handleParse', () => {
+  test('parses a markdown file and outputs JSON spec', () => {
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `exp-parse-test-${Date.now()}.md`,
+    );
+    fs.writeFileSync(
+      tmpFile,
+      `# Experiment: Parse test
+## Hypothesis
+It parses correctly.
+## Variants
+- baseline: prompts/v1.md
+- treatment: prompts/v2.md
+## Metric
+Primary: score
+## Budget
+3 runs per variant, $2 max per run
+`,
+    );
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (msg: string) => logs.push(msg);
+
+    handleParse([tmpFile]);
+
+    console.log = origLog;
+    fs.unlinkSync(tmpFile);
+
+    const spec = JSON.parse(logs[0]);
+    expect(spec.title).toBe('Parse test');
+    expect(spec.hypothesis).toBe('It parses correctly.');
+    expect(spec.variants).toHaveLength(2);
+    expect(spec.metrics).toEqual([{ type: 'primary', name: 'score' }]);
+    expect(spec.budget.runsPerVariant).toBe(3);
+    expect(spec.budget.maxCostPerRun).toBe(2);
   });
 });

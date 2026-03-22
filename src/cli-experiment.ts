@@ -10,6 +10,7 @@
  *   npx tsx src/cli-experiment.ts view <exp-id>
  *   npx tsx src/cli-experiment.ts record <exp-id> --result supported|falsified|inconclusive [--summary "..."]
  *   npx tsx src/cli-experiment.ts start <exp-id>
+ *   npx tsx src/cli-experiment.ts parse <file-or-stdin>
  */
 
 import fs from 'fs';
@@ -17,6 +18,8 @@ import path from 'path';
 
 import { execSync } from 'child_process';
 import YAML from 'yaml';
+
+import { parseExperimentSpec } from './experiment-spec-parser.js';
 
 // --- Types ---
 
@@ -379,7 +382,26 @@ export function handleRecord(
   );
 }
 
-// --- Helpers ---
+export function handleParse(args: string[]): void {
+  const filePath = args[0];
+  let markdown: string;
+
+  if (filePath && filePath !== '-') {
+    if (!fs.existsSync(filePath)) {
+      console.error(`Error: file not found: ${filePath}`);
+      process.exit(1);
+    }
+    markdown = fs.readFileSync(filePath, 'utf-8');
+  } else {
+    // Read from stdin
+    markdown = fs.readFileSync(0, 'utf-8');
+  }
+
+  const spec = parseExperimentSpec(markdown);
+  console.log(JSON.stringify(spec, null, 2));
+}
+
+// Helpers
 
 function findExpFile(dir: string, expId: string): string | null {
   if (!fs.existsSync(dir)) return null;
@@ -412,6 +434,9 @@ async function main(): Promise<void> {
     console.error(
       '  npx tsx src/cli-experiment.ts record <exp-id> --result supported|falsified|inconclusive [--summary "..."]',
     );
+    console.error(
+      '  npx tsx src/cli-experiment.ts parse <file-or-stdin>',
+    );
     process.exit(1);
   }
 
@@ -421,12 +446,13 @@ async function main(): Promise<void> {
     view: handleView,
     start: handleStart,
     record: handleRecord,
+    parse: handleParse,
   };
 
   const handler = handlers[command];
   if (!handler) {
     console.error(`Unknown command: ${command}`);
-    console.error('Available commands: create, list, view, start, record');
+    console.error('Available commands: create, list, view, start, record, parse');
     process.exit(1);
   }
 
