@@ -1,6 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildPrompt,
+  buildTemplateVars,
+  renderTemplate,
+  loadPromptTemplate,
   extractArtifacts,
   checkStopSignal,
   formatToolUse,
@@ -133,6 +136,158 @@ describe('buildPrompt', () => {
     const state = makeBatchState({ test_task: false });
     const prompt = buildPrompt(state, 1);
     expect(prompt).toContain('/kaizen-deep-dive');
+  });
+});
+
+describe('buildTemplateVars', () => {
+  it('builds all expected template variables', () => {
+    const state = makeBatchState({
+      issues_closed: ['#100', '#200'],
+      prs: ['https://github.com/Garsson-io/kaizen/pull/450'],
+    });
+    const vars = buildTemplateVars(state, 3);
+
+    expect(vars.guidance).toBe('improve hooks reliability');
+    expect(vars.run_tag).toBe('batch-260322-2100-a1b2/run-3');
+    expect(vars.run_tag_slug).toBe('batch-260322-2100-a1b2-run-3');
+    expect(vars.run_num).toBe('3');
+    expect(vars.run_context).toBe('3 of 5');
+    expect(vars.host_repo).toBe('Garsson-io/kaizen');
+    expect(vars.batch_id).toBe('batch-260322-2100-a1b2');
+    expect(vars.issues_closed).toBe('#100 #200');
+    expect(vars.prs).toContain('pull/450');
+  });
+
+  it('omits max runs from run_context when unlimited', () => {
+    const state = makeBatchState({ max_runs: 0 });
+    const vars = buildTemplateVars(state, 2);
+    expect(vars.run_context).toBe('2');
+  });
+
+  it('uses kaizen_repo as fallback for host_repo', () => {
+    const state = makeBatchState({ host_repo: '', kaizen_repo: 'Garsson-io/kaizen' });
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.host_repo).toBe('Garsson-io/kaizen');
+  });
+
+  it('produces empty strings for empty arrays', () => {
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.issues_closed).toBe('');
+    expect(vars.prs).toBe('');
+  });
+});
+
+describe('renderTemplate', () => {
+  it('substitutes simple variables', () => {
+    const result = renderTemplate('Hello {{name}}!', { name: 'world' });
+    expect(result).toBe('Hello world!');
+  });
+
+  it('preserves unresolved variables', () => {
+    const result = renderTemplate('{{known}} and {{unknown}}', { known: 'yes' });
+    expect(result).toBe('yes and {{unknown}}');
+  });
+
+  it('renders conditional sections when variable is non-empty', () => {
+    const result = renderTemplate(
+      'before\n{{#items}}Items: {{items}}{{/items}}\nafter',
+      { items: 'a b c' },
+    );
+    expect(result).toContain('Items: a b c');
+    expect(result).toContain('before');
+    expect(result).toContain('after');
+  });
+
+  it('removes conditional sections when variable is empty', () => {
+    const result = renderTemplate(
+      'before\n{{#items}}Items: {{items}}{{/items}}\nafter',
+      { items: '' },
+    );
+    expect(result).not.toContain('Items:');
+    expect(result).toContain('before');
+    expect(result).toContain('after');
+  });
+
+  it('handles multiple conditional sections', () => {
+    const template = '{{#a}}A={{a}}{{/a}} {{#b}}B={{b}}{{/b}}';
+    const result = renderTemplate(template, { a: '1', b: '' });
+    expect(result).toContain('A=1');
+    expect(result).not.toContain('B=');
+  });
+
+  it('collapses excessive blank lines from removed sections', () => {
+    const template = 'top\n\n{{#empty}}removed{{/empty}}\n\n\nbottom';
+    const result = renderTemplate(template, { empty: '' });
+    expect(result).not.toMatch(/\n{3,}/);
+  });
+
+  it('trims leading and trailing whitespace', () => {
+    const result = renderTemplate('\n  Hello  \n', {});
+    expect(result).toBe('Hello');
+  });
+});
+
+describe('loadPromptTemplate', () => {
+  it('loads existing template file', () => {
+    const template = loadPromptTemplate('deep-dive-default.md');
+    expect(template).not.toBeNull();
+    expect(template).toContain('{{guidance}}');
+    expect(template).toContain('{{run_tag}}');
+    expect(template).toContain('AUTO_DENT_STOP');
+  });
+
+  it('loads test-task template file', () => {
+    const template = loadPromptTemplate('test-task.md');
+    expect(template).not.toBeNull();
+    expect(template).toContain('synthetic test task');
+    expect(template).toContain('{{run_tag}}');
+  });
+
+  it('returns null for non-existent template', () => {
+    const template = loadPromptTemplate('nonexistent-template.md');
+    expect(template).toBeNull();
+  });
+});
+
+describe('buildPrompt with templates', () => {
+  it('uses template file for deep-dive prompt', () => {
+    const state = makeBatchState();
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).toContain('/kaizen-deep-dive');
+    expect(prompt).toContain('improve hooks reliability');
+    expect(prompt).toContain('batch-260322-2100-a1b2/run-1');
+    expect(prompt).toContain('AUTO_DENT_STOP');
+    // Should not contain raw template variables
+    expect(prompt).not.toContain('{{guidance}}');
+    expect(prompt).not.toContain('{{run_tag}}');
+  });
+
+  it('uses template file for test-task prompt', () => {
+    const state = makeBatchState({ test_task: true });
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).toContain('synthetic test task');
+    expect(prompt).toContain('test-probe');
+    expect(prompt).not.toContain('{{run_tag}}');
+  });
+
+  it('renders conditional sections based on state', () => {
+    const stateWithHistory = makeBatchState({
+      issues_closed: ['#100', '#200'],
+      prs: ['https://github.com/Garsson-io/kaizen/pull/450'],
+    });
+    const prompt = buildPrompt(stateWithHistory, 2);
+    expect(prompt).toContain('#100 #200');
+    expect(prompt).toContain('pull/450');
+    expect(prompt).toContain('do not rework');
+    expect(prompt).toContain('avoid overlapping');
+  });
+
+  it('omits conditional sections when state arrays are empty', () => {
+    const state = makeBatchState();
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).not.toContain('do not rework');
+    expect(prompt).not.toContain('avoid overlapping');
   });
 });
 
