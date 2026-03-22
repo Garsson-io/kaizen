@@ -86,6 +86,8 @@ beforeAll(() => {
 
   // Initialize git repo so hooks can use git commands
   execSync("git init", { cwd: hostProject, stdio: "pipe" });
+  execSync('git config user.email "test@kaizen.dev"', { cwd: hostProject, stdio: "pipe" });
+  execSync('git config user.name "Kaizen Test"', { cwd: hostProject, stdio: "pipe" });
   execSync('git commit --allow-empty -m "init"', { cwd: hostProject, stdio: "pipe" });
 });
 
