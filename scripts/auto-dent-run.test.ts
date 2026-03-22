@@ -225,13 +225,6 @@ describe('checkStopSignal', () => {
     );
   });
 
-  it('detects legacy OVERNIGHT_STOP signal', () => {
-    const result = makeRunResult();
-    checkStopSignal('OVERNIGHT_STOP: all done', result);
-    expect(result.stopRequested).toBe(true);
-    expect(result.stopReason).toBe('all done');
-  });
-
   it('does not trigger on text without stop signal', () => {
     const result = makeRunResult();
     checkStopSignal('Just regular output about AUTO_DENT features', result);
@@ -242,6 +235,31 @@ describe('checkStopSignal', () => {
     const result = makeRunResult();
     checkStopSignal('AUTO_DENT_STOP:   spaces around reason   ', result);
     expect(result.stopReason).toBe('spaces around reason');
+  });
+
+  it('does not false-trigger on mid-sentence stop signal mention', () => {
+    const result = makeRunResult();
+    checkStopSignal(
+      'The agent uses AUTO_DENT_STOP: <reason> to signal completion',
+      result,
+    );
+    expect(result.stopRequested).toBe(false);
+  });
+
+  it('does not match removed OVERNIGHT_STOP legacy signal', () => {
+    const result = makeRunResult();
+    checkStopSignal('OVERNIGHT_STOP: all done', result);
+    expect(result.stopRequested).toBe(false);
+  });
+
+  it('detects stop signal on its own line amid other text', () => {
+    const result = makeRunResult();
+    checkStopSignal(
+      'Some preamble\nAUTO_DENT_STOP: backlog exhausted\nSome epilogue',
+      result,
+    );
+    expect(result.stopRequested).toBe(true);
+    expect(result.stopReason).toBe('backlog exhausted');
   });
 });
 
