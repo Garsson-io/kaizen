@@ -22,7 +22,6 @@ import { execSync } from "node:child_process";
 import {
   generateConfig,
   scaffoldPolicies,
-  setupSymlinks,
   mergeHooks,
   verifySetup,
 } from "../kaizen-setup.js";
