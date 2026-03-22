@@ -28,22 +28,34 @@ This is a conversation, not a checklist. The phases overlap. Use judgment about 
 
 ### Phase 0: Collision detection
 
-**Before evaluating, check if someone else is already working on this issue.** This prevents wasted effort from parallel work.
+**Before evaluating, check if someone else is already working on this issue — or if it's already fixed.** This prevents wasted effort.
 
-**Check all three sources — labels alone are not authoritative:**
+**Check all four sources — labels alone are not authoritative:**
 
-1. **GitHub labels:** Does the kaizen issue have `status:active`, `status:backlog`, or `status:blocked` labels?
+1. **Already fixed?** Check if the issue was already resolved by a merged PR or commit:
+   ```bash
+   # Check if issue is closed
+   gh issue view {N} --repo "$KAIZEN_REPO" --json state
+   # Search git log for commits referencing this issue
+   git log --oneline --all --grep="#{N}" | head -5
+   # Search for PRs that fixed this issue
+   gh pr list --repo "$HOST_REPO" --state merged --search "#{N}" --json number,title
+   ```
+   **If the issue is already closed or a merged PR references it, STOP.** Report to the admin: "Issue #{N} appears to be already fixed by {evidence}. Verify before proceeding."
+
+2. **GitHub labels:** Does the kaizen issue have `status:active`, `status:backlog`, or `status:blocked` labels?
    ```bash
    gh issue view {N} --repo "$KAIZEN_REPO" --json labels,state
    ```
 
-2. **Active cases in database:** Is there a case linked to this issue?
+3. **Active cases in database:** Is there a case linked to this issue?
    ```bash
    $KAIZEN_CLI case-list --status active,backlog,blocked
    # Then filter by github_issue == {N} in the JSON output
    ```
+   If `$KAIZEN_CLI` is not configured (e.g., kaizen self-dogfood repo has no case CLI), skip this check.
 
-3. **Open PRs:** Are there PRs referencing this issue?
+4. **Open PRs:** Are there PRs referencing this issue?
    ```bash
    gh pr list --repo "$HOST_REPO" --state open --search "kaizen #{N}" --json number,title,headRefName
    ```

@@ -24,20 +24,28 @@ description: Take a spec from PRD to working code. Re-examines the spec against 
 Before touching any source code, verify a case exists. The `enforce-case-exists.sh` hook (Level 2) will block edits in worktrees without a case, but you should create the case proactively rather than being blocked.
 
 **Checklist:**
-1. **Case exists in DB** for the current branch:
+1. **Issue still open?** Before entering a worktree or creating a case, verify the issue isn't already fixed:
+   ```bash
+   gh issue view {N} --repo "$KAIZEN_REPO" --json state
+   git log --oneline --all --grep="#{N}" | head -5
+   ```
+   If closed or a commit references it, STOP — report to admin before proceeding.
+2. **Case exists in DB** for the current branch (skip if `$KAIZEN_CLI` is not configured):
    ```bash
    $KAIZEN_CLI case-by-branch "$(git rev-parse --abbrev-ref HEAD)"
    ```
-2. **Case has `github_issue` linked** (when working on a kaizen issue)
-3. **Case status is `ACTIVE`**
+3. **Case has `github_issue` linked** (when working on a kaizen issue)
+4. **Case status is `ACTIVE`**
 
-If any check fails, create the case via the CLI before proceeding:
+If any check fails and `$KAIZEN_CLI` is configured, create the case via the CLI before proceeding:
 ```bash
 $KAIZEN_CLI case-create --description "your description" --type dev --github-issue N
 ```
 The CLI **auto-detects your current worktree** — if you're already in one, it adopts it instead of creating a duplicate. No need for `--worktree-path`/`--branch-name` flags. Use `--new-worktree` to force creation of a fresh worktree instead.
 
 Works without `dist/` (uses tsx directly from source — no build step needed).
+
+**When `$KAIZEN_CLI` is not available** (e.g., kaizen self-dogfood repo): Skip case DB checks. The worktree and branch name serve as the case identifier. The `enforce-case-exists.sh` hook will still fire — it checks for worktree isolation, not the case DB.
 
 For kaizen issues, always pass `--github-issue` to link the case to the existing issue. Container agents should use `case_create` MCP tool instead.
 
