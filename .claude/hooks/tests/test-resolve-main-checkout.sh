@@ -23,8 +23,11 @@ assert_eq "MAIN_CHECKOUT is a directory" "true" "$([ -d "$MAIN_CHECKOUT" ] && ec
 # Test 4: MAIN_CHECKOUT contains a .git directory (it's the main checkout)
 assert_eq "MAIN_CHECKOUT has .git" "true" "$([ -d "$MAIN_CHECKOUT/.git" ] && echo true || echo false)"
 
-# Test 5: MAIN_CHECKOUT does NOT contain hardcoded username
-assert_not_contains "no hardcoded aviadr1" "aviadr1" "$MAIN_CHECKOUT"
+# Test 5: resolve-main-checkout.sh script does NOT contain hardcoded username
+# (The resolved VALUE will contain the real username — that's fine.
+#  We're checking the SCRIPT doesn't have a hardcoded path.)
+SCRIPT_CONTENTS=$(cat "$LIB")
+assert_not_contains "no hardcoded aviadr1 in script" '/home/aviadr1' "$SCRIPT_CONTENTS"
 
 # Test 6: MAIN_CHECKOUT matches git worktree list first entry
 EXPECTED="$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"

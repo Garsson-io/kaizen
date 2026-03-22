@@ -12,6 +12,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run shell hook tests
         run: bash .claude/hooks/tests/run-all-tests.sh
+      - name: Verify no test side-effects on repo files
+        run: |
+          DIRTY=$(git status --porcelain)
+          if [ -n "$DIRTY" ]; then
+            echo "::error::Tests left side-effects on repo files (kaizen #448):"
+            echo "$DIRTY"
+            exit 1
+          fi
 
   hook-integrity:
     runs-on: ubuntu-latest
@@ -30,3 +38,11 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - name: Verify no test side-effects on repo files
+        run: |
+          DIRTY=$(git status --porcelain)
+          if [ -n "$DIRTY" ]; then
+            echo "::error::Tests left side-effects on repo files (kaizen #448):"
+            echo "$DIRTY"
+            exit 1
+          fi
