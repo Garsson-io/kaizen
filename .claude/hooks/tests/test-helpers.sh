@@ -188,6 +188,12 @@ setup_test_env() {
   export STATE_DIR="$TEST_STATE_DIR"
   export DEBUG_LOG="/dev/null"
 
+  # Isolate audit log from repo (kaizen #429)
+  TEST_AUDIT_DIR="/tmp/.kaizen-audit-test-$$"
+  rm -rf "$TEST_AUDIT_DIR"
+  mkdir -p "$TEST_AUDIT_DIR"
+  export AUDIT_LOG="$TEST_AUDIT_DIR/no-action.log"
+
   TEST_MOCK_DIR=$(mktemp -d)
   cat > "$TEST_MOCK_DIR/gh" << 'MOCK_EOF'
 #!/bin/bash
@@ -206,7 +212,7 @@ reset_state() {
 
 # Cleanup everything created by setup_test_env
 cleanup_test_env() {
-  rm -rf "$TEST_STATE_DIR" "$TEST_MOCK_DIR"
+  rm -rf "$TEST_STATE_DIR" "$TEST_MOCK_DIR" "$TEST_AUDIT_DIR"
 }
 
 # Create PR review state file with mandatory BRANCH field

@@ -43,9 +43,7 @@ source "$(dirname "$0")/lib/parse-command.sh"
 source "$(dirname "$0")/lib/state-utils.sh"
 
 # Audit log for no-action declarations (kaizen #140)
-# Finds the repo root relative to this hook's location (.claude/kaizen/hooks/)
-HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-AUDIT_LOG="${HOOK_DIR}/../audit/no-action.log"
+# AUDIT_LOG is set by state-utils.sh with env var override for test isolation (kaizen #429)
 
 log_no_action() {
   local category="$1"

@@ -21,9 +21,10 @@
 # Exit 0 with JSON {"decision":"block","reason":"..."} = block stop
 
 source "$(dirname "$0")/lib/state-utils.sh"
+source "$(dirname "$0")/lib/input-utils.sh"
+source "$(dirname "$0")/lib/hook-output.sh"
 
-INPUT=$(cat)
-STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
+read_hook_input
 
 # Uses shared find_needs_review_state from state-utils.sh
 REVIEW_INFO=$(find_needs_review_state)
@@ -36,13 +37,11 @@ PR_URL=$(echo "$REVIEW_INFO" | cut -d'|' -f1)
 ROUND=$(echo "$REVIEW_INFO" | cut -d'|' -f2)
 
 # Block stop: agent must review the PR first.
-# Use jq --arg for safe string interpolation (no injection risk).
-jq -n \
-  --arg pr_url "$PR_URL" \
-  --arg round "$ROUND" \
-  '{
-    decision: "block",
-    reason: ("STOP BLOCKED: You have a pending PR review that must be completed before you can finish.\n\n  PR: " + $pr_url + " (round " + $round + ")\n\nYou MUST run `gh pr diff " + $pr_url + "` now and complete the self-review checklist.\nOnly after reviewing can you finish your response.\n\nThis is a mandatory part of the PR creation workflow.")
-  }'
+emit_stop_block "STOP BLOCKED: You have a pending PR review that must be completed before you can finish.
 
-exit 0
+  PR: $PR_URL (round $ROUND)
+
+You MUST run \`gh pr diff $PR_URL\` now and complete the self-review checklist.
+Only after reviewing can you finish your response.
+
+This is a mandatory part of the PR creation workflow."

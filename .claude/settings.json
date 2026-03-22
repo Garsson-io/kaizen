@@ -145,6 +145,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "./.claude/hooks/kaizen-debug-stop-cwd.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "./.claude/hooks/kaizen-enforce-pr-review-stop.sh",
             "timeout": 10
           },

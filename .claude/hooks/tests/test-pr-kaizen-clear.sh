@@ -412,10 +412,8 @@ echo "=== Audit log is written for no-action declarations ==="
 setup
 create_pr_kaizen_state "https://github.com/Garsson-io/kaizen/pull/42"
 
-# The hook resolves audit log relative to its own location
-# HOOK is set at top of file: "$(dirname "$0")/../kaizen-pr-reflect-clear.sh"
-HOOK_REAL_DIR="$(cd "$(dirname "$HOOK")" && pwd)"
-TEST_AUDIT_LOG="${HOOK_REAL_DIR}/../audit/no-action.log"
+# AUDIT_LOG is set by setup_test_env to an isolated temp path (kaizen #429)
+TEST_AUDIT_LOG="$AUDIT_LOG"
 rm -f "$TEST_AUDIT_LOG"
 
 OUTPUT=$(run_posttool_bash \
@@ -446,9 +444,8 @@ else
   ((FAIL++))
   ((FAIL++))
 fi
-# Clean up audit log after test
+# Clean up audit log after test (isolated via AUDIT_LOG env var — kaizen #429)
 rm -f "$TEST_AUDIT_LOG"
-rmdir "$(dirname "$TEST_AUDIT_LOG")" 2>/dev/null || true
 
 echo ""
 echo "=== gh issue create alone does NOT clear gate ==="

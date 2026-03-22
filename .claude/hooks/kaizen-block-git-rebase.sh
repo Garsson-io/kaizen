@@ -17,9 +17,11 @@
 #   - git rebase --skip (skip conflicting commit)
 
 source "$(dirname "$0")/lib/parse-command.sh"
+source "$(dirname "$0")/lib/input-utils.sh"
+source "$(dirname "$0")/lib/hook-output.sh"
 
-INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+read_hook_input
+get_command
 
 if [ -z "$COMMAND" ]; then
   exit 0
@@ -55,8 +57,7 @@ if ! is_rebase_command "$CMD_LINE"; then
 fi
 
 # Block the rebase command
-jq -n \
-  --arg reason "BLOCKED: git rebase is not allowed on PR branches (kaizen #296).
+emit_deny "BLOCKED: git rebase is not allowed on PR branches (kaizen #296).
 
 Rebase rewrites commit history and requires force-push, which is dangerous
 in multi-agent environments. It can silently drop changes and loses the
@@ -71,13 +72,4 @@ normal push (no force-push needed).
 Recovery commands are allowed:
   git rebase --abort     (undo accidental rebase)
   git rebase --continue  (finish in-progress rebase)
-  git rebase --skip      (skip conflicting commit)" \
-  '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: $reason
-    }
-  }'
-
-exit 0
+  git rebase --skip      (skip conflicting commit)"

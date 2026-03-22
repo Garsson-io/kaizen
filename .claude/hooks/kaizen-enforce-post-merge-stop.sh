@@ -23,8 +23,10 @@
 
 source "$(dirname "$0")/lib/state-utils.sh"
 source "$(dirname "$0")/lib/resolve-main-checkout.sh"
+source "$(dirname "$0")/lib/input-utils.sh"
+source "$(dirname "$0")/lib/hook-output.sh"
 
-INPUT=$(cat)
+read_hook_input
 
 # Check for ALL pending post-merge workflows (kaizen #279)
 ALL_STATES=$(find_all_states_with_status "needs_post_merge")
@@ -60,6 +62,4 @@ You MUST complete these steps before finishing:
 
 The /kaizen skill will clear this gate when complete."
 
-jq -n --arg reason "$REASON" '{ decision: "block", reason: $reason }'
-
-exit 0
+emit_stop_block "$REASON"
