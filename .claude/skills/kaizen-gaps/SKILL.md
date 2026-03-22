@@ -337,3 +337,18 @@ This skill should be run periodically (every 2-4 weeks or after a burst of incid
 - **Counting without reasoning** — Raw issue counts mean nothing. A horizon with 2 issues and 5 incidents is more important than one with 10 issues and 0 incidents.
 - **Ignoring the unnamed** — The most valuable output is often the unnamed dimension. Don't force-fit everything into existing categories.
 - **Skipping incidents** — Issues are hypotheses. Incidents are data. Always weight incidents higher than issue counts.
+
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Gather landscape (parallel agents) | Agent A: issues + structure. Agent B: incidents + friction. |
+| 2 | Cluster by root cause | Group issues with common roots. Identify clusters of 3+ (high-value for deep-dive). |
+| 3 | Classify gaps | Testing gaps, tooling gaps, taxonomy/horizon gaps. Failure mode analysis (FM1-FM12). |
+| 4 | Analyze concentration | Per-horizon: open issues, incidents, active work. Over/under-concentrated, orphaned. |
+| 5 | Identify unnamed dimensions | Incident clusters not in existing horizons. Missing axes. Evaluate: new horizon vs axis vs feature. |
+| 6 | Present actionable output | 3 lists: low-hanging fruit, feature PRD candidates, meta/horizon PRD candidates. Present to admin. |
+
+**What comes next:** Low-hanging fruit → file issues → `/kaizen-pick`. Feature PRDs → `/kaizen-prd`. Meta/horizon PRDs → `/kaizen-prd` in horizon mode. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

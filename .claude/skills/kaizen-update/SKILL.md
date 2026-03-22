@@ -42,3 +42,15 @@ git -C .kaizen log --oneline -10
 ```
 
 Report what changed to the user.
+
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Pull updates | `git submodule update --remote` or `git pull` |
+| 2 | Install and re-setup | `npm install`, re-run symlinks/hooks (idempotent) |
+| 3 | Show changelog | `git log --oneline -10`, report new skills |
+
+**What comes next:** Nothing — standalone update. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

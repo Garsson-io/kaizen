@@ -305,6 +305,20 @@ These questions are intentionally abstract. They produce value when they surface
 | Mechanistic error notifications | 3 | `src/index.ts` | Users always informed of failures (no silent errors) |
 | Immediate ack | 3 | `src/index.ts` | Users always know message was received |
 
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Reflect on work | Review what happened: impediments, friction, what slowed down, what went well |
+| 2 | Identify impediments | Be specific (exact moment, not category). Group by shared root cause if 2+ share one. |
+| 3 | Classify enforcement level | L1 (instructions), L2 (hooks), L2.5 (MCP tools), L3 (mechanistic). Apply escalation rules. |
+| 4 | File issues / incidents | Search for duplicates first. Disposition: fixed-in-pr, filed, incident, or positive/no-action. No waivers. |
+| 5 | Meta-reflection | 5-question ladder: specific friction → generalized → kaizen system change → self-improvement → mechanism. Post-cycle ultrathink. |
+
+**What comes next:** Cleanup (worktree + branch deletion). If sub-issues remain from `/kaizen-plan`, loop back to `/kaizen-implement` for next sub-issue. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
+
 ## Pending Escalations
 
 These are currently Level 1 (instructions) but should be higher:

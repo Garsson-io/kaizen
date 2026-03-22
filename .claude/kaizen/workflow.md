@@ -37,6 +37,23 @@ Work is done
   -> /kaizen-reflect  (reflect on impediments, suggest improvements)
 ```
 
+## Task Tracking
+
+Every skill creates tasks at start using TaskCreate. This gives the user progress visibility and prevents forgotten steps (review, reflection, cleanup). See [workflow-tasks.md](workflow-tasks.md) for the canonical task list for each skill, hook firing points, and the full dev workflow sequence diagram.
+
+## Entry Point Decision Tree
+
+```
+Starting fresh, no specific work?           → /kaizen-pick
+Have a specific issue number?               → /kaizen-evaluate #N
+Issue evaluated, admin approved?            → /kaizen-implement
+Large work planned with sub-issues?         → /kaizen-implement for sub-issue #1 (skip evaluate)
+Need to define the problem first?           → /kaizen-prd
+Want strategic backlog analysis?            → /kaizen-gaps
+Want to audit issue hygiene?                → /kaizen-audit-issues
+Want autonomous category fix?               → /kaizen-deep-dive
+```
+
 ## Key Triggers to Recognize
 
 - **Strategic gap analysis:** "gap analysis", "analyze gaps", "tooling gaps" -> `/kaizen-gaps`

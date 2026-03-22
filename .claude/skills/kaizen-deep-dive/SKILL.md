@@ -133,3 +133,19 @@ After shipping, update the kaizen backlog:
 5. **Be complementary, not competitive.** Check what other agents are working on (Phase 0) and pick an orthogonal domain. The best dent is one that improves the system without creating merge conflicts or duplicating another agent's context-loading.
 
 6. **Leave the system better.** The skill itself is part of the fix — it codifies the workflow so the next deep dive is faster.
+
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | WIP deconfliction | Map worktrees, cases, PRs. Build occupied/available domain map. Choose target from available. |
+| 2 | Map territory (parallel agents) | Agent A: issue archaeology (open + closed, classify symptom vs root cause). Agent B: code exploration (actual code, interaction surface). |
+| 3 | Find the category | Identify pattern, root cause, compound fix. Write as GitHub issue with problem/root-cause/solution. |
+| 4 | Fix concrete bugs | Fix all symptoms of root cause. Run existing tests — no regressions. |
+| 5 | Add prevention tests | Interaction tests at the boundary (not just unit tests per component). |
+| 6 | Ship PR | Branch, commit, self-review (`/kaizen-review-pr` — see its 4-task workflow), create PR, wait for CI, merge. |
+| 7 | Update metadata + reflect | Close/comment related issues, update labels. Run `/kaizen-reflect` (5-task workflow). |
+
+**What comes next:** Domain addressed, issues closed. Feeds back into `/kaizen-pick` scoring (domain now has coverage). See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

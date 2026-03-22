@@ -105,3 +105,15 @@ To reclaim host disk space after Docker cleanup:
 - **Empty directories in worktrees dir** (not git worktrees) — the script skips these. If found during analysis, mention them: "N empty directories in .claude/worktrees/ — these are not git worktrees and can be removed with rmdir."
 - **Worktrees on main branch** — likely broken/accidental creations. Flag for manual review.
 - **Nested worktrees** (worktree inside another worktree) — `git worktree prune` handles stale references. Flag any that still exist physically.
+
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Analyze state | List worktrees, branches, cases, Docker images, disk usage, staleness |
+| 2 | Present dry-run | Show what would be removed. Wait for user confirmation. |
+| 3 | Execute cleanup | Remove stale worktrees, merged branches, Docker prune, git gc, mark stale cases done |
+
+**What comes next:** Nothing — standalone utility. Run periodically or when disk is full. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

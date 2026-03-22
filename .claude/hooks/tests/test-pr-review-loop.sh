@@ -402,6 +402,12 @@ setup
 SAME_STATE_FILE="$STATE_DIR/Garsson-io_kaizen_102"
 printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/102\nROUND=1\nSTATUS=passed\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$SAME_STATE_FILE"
 
+# Use a distinct MAIN_HEAD that won't collide with mock parent hashes.
+# In CI, origin/main may not exist, so the fallback "abc123" from the
+# earlier test collides with the mock parents — causing this test to
+# falsely detect a merge-from-main and skip the round increment.
+NONMAIN_MAIN_HEAD="main_head_999"
+
 # Mock git with merge commit from a non-main branch
 cat > "$MOCK_DIR/git" << MOCK
 #!/bin/bash
@@ -411,7 +417,7 @@ if [ "\$1" = "log" ] && echo "\$@" | grep -q -- "--format=%P"; then
   exit 0
 fi
 if [ "\$1" = "rev-parse" ] && [ "\$2" = "origin/main" ]; then
-  echo "$MAIN_HEAD"
+  echo "$NONMAIN_MAIN_HEAD"
   exit 0
 fi
 if [ "\$1" = "rev-parse" ] && [ "\$2" = "--abbrev-ref" ]; then

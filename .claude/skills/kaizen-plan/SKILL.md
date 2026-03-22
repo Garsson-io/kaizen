@@ -205,3 +205,17 @@ Before declaring the plan done, check:
 | Duplicating details in sub-issues | Sub-issues are thin pointers — epic has details, spec has rationale |
 | Acceptance criteria in sub-issues | Keep in epic's dependency table — one place to update |
 | Planning distant levels in detail | If a spec defines a 10-level taxonomy and you're at level 3, only plan PRs for levels 3-4. Leave levels 5+ as future work on the epic. The spec defines the *problem* at all levels but solutions only for the current horizon. |
+
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Understand scope | Read spec end-to-end, list components, models, integration points |
+| 2 | Decompose into PRs | Apply ordering (schema → infra → features → integration), find boundaries |
+| 3 | Map dependencies | Build dependency table with phases, identify parallelism, critical path |
+| 4 | Create GitHub sub-issues | Update epic with implementation plan, create thin sub-issues linked to epic |
+| 5 | Validate plan | Every component has a home, no cycles, high-risk PRs are small, first phase has no deps |
+
+**What comes next:** `/kaizen-implement` for sub-issue #1. Evaluate is already done — go directly to implementation. After each sub-issue PR merges, continue to next sub-issue (default: CONTINUE, not STOP). See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
