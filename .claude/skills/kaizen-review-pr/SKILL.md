@@ -22,9 +22,12 @@ The `pr-review-loop.sh` hook enforces that this review happens. This skill defin
 
 Launch review agents, each focused on one dimension from the criteria file. Each agent reads the diff and returns findings with confidence scores (0-100).
 
-**Execution modes:**
-- **Full review** (external/CI, or when invoked manually): Use parallel subagents for each dimension. Thorough but token-expensive.
-- **Self-review** (during `/kaizen-implement` task #4): Run as a single agent that checks all dimensions sequentially. Cheaper, still thorough — you're reviewing your own code so context is already loaded.
+**Execution modes — scale agents to PR size:**
+- **Small PR** (≤50 lines changed, ≤3 files): Single-agent sequential review. Check all dimensions yourself. Most self-reviews during `/kaizen-implement` fall here.
+- **Medium PR** (50-300 lines, 3-10 files): Use 2-3 focused subagents (e.g., DRY+Reuse, Testability+Harness, Security+Horizons). Balance thoroughness with cost.
+- **Large PR** (>300 lines or >10 files): Use all 5 parallel subagents. The token cost is justified by the risk surface.
+
+Use judgment — a 100-line PR touching security-sensitive code deserves more agents than a 200-line refactor.
 
 **Agent assignments (for full review — in self-review, check all sequentially):**
 

@@ -4,7 +4,7 @@ This file is the **modifiable review prompt** consumed by `/kaizen-review-pr`. I
 
 ## How This File Is Used
 
-The review skill reads this file and applies each section against the PR diff. Findings are scored by confidence (0-100) and only high-confidence issues (≥80) are reported. The reviewer should cite specific lines and link to code.
+The review skill reads this file and applies each section against the PR diff. Findings are scored by confidence (0-100) and only high-confidence issues (≥75) are reported. The reviewer should cite specific lines and link to code.
 
 ---
 
