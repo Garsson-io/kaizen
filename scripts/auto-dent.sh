@@ -397,6 +397,8 @@ node -e "
   console.log('║ Runs:      ' + s.run);
   console.log('║ Duration:  ' + hours + 'h ' + mins + 'm');
   console.log('║ Stop:      ' + (s.stop_reason || 'completed'));
+  const totalCost = (s.run_history || []).reduce((sum, r) => sum + (r.cost_usd || 0), 0);
+  if (totalCost > 0) console.log('║ Cost:      $' + totalCost.toFixed(2));
   console.log('╠══════════════════════════════════════════════════════════╣');
 
   if (s.prs.length > 0) {

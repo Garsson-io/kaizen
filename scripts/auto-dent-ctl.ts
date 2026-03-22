@@ -89,12 +89,18 @@ export function formatBatchStatus(batch: BatchInfo): string {
   const hours = Math.floor(elapsed / 3600);
   const mins = Math.floor((elapsed % 3600) / 60);
 
+  const totalCost = (s.run_history || []).reduce(
+    (sum: number, r: any) => sum + (r.cost_usd || 0),
+    0,
+  );
+
   const lines = [
     `  Batch:     ${batch.batchId}`,
     `  Status:    ${status}`,
     `  Guidance:  ${s.guidance}`,
     `  Runs:      ${s.run}${s.max_runs > 0 ? ` / ${s.max_runs}` : ''}`,
     `  Duration:  ${hours}h ${mins}m`,
+    `  Cost:      $${totalCost.toFixed(2)}`,
     `  PRs:       ${s.prs.length > 0 ? s.prs.join(' ') : 'none'}`,
   ];
 
