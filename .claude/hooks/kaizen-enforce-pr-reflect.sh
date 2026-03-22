@@ -82,46 +82,18 @@ if is_kaizen_command "$CMD_LINE"; then
 fi
 
 # Block the command — agent must complete kaizen reflection first
-jq -n \
-  --arg reason "BLOCKED: Kaizen reflection required — ALL findings must be addressed.
+source "$(dirname "$0")/lib/hook-output.sh"
+
+IMPEDIMENTS_FORMAT=$(render_prompt "impediments-format.md")
+
+emit_deny "BLOCKED: Kaizen reflection required — ALL findings must be addressed.
 
 You must reflect on the development process before proceeding.
   PR: $PR_URL
 
-To clear this gate, submit a KAIZEN_IMPEDIMENTS JSON declaration:
-
-  echo 'KAIZEN_IMPEDIMENTS:' && cat <<'IMPEDIMENTS'
-  [
-    {\"impediment\": \"description\", \"disposition\": \"filed\", \"ref\": \"#NNN\"},
-    {\"impediment\": \"description\", \"disposition\": \"incident\", \"ref\": \"#NNN\"},
-    {\"impediment\": \"description\", \"disposition\": \"fixed-in-pr\"},
-    {\"finding\": \"observation\", \"type\": \"meta\", \"disposition\": \"filed\", \"ref\": \"#NNN\"},
-    {\"finding\": \"what worked\", \"type\": \"positive\", \"disposition\": \"no-action\", \"reason\": \"why\"}
-  ]
-  IMPEDIMENTS
-
-Types: impediment (default), meta (process observations), positive (validated patterns)
-  - Meta-findings MUST be filed or fixed-in-pr (waived is not allowed — kaizen #198)
-  - Positive findings accept no-action with a reason
-
-If no impediments found: echo 'KAIZEN_IMPEDIMENTS: [] brief reason here'
-
-For trivial changes only: echo 'KAIZEN_NO_ACTION [category]: reason'
-  Categories: docs-only, formatting, typo, config-only, test-only, trivial-refactor
+${IMPEDIMENTS_FORMAT}
 
 Allowed commands during reflection:
   gh issue create/comment/list/search/view, gh pr diff/view/comment/edit
   gh api, gh run view/list/watch
-  git diff, git log, git show, git status, git branch
-
-HOW CLEARING WORKS: Run your echo command (KAIZEN_IMPEDIMENTS or KAIZEN_NO_ACTION).
-The gate clears automatically after the command completes — no extra step needed." \
-  '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: $reason
-    }
-  }'
-
-exit 0
+  git diff, git log, git show, git status, git branch"
