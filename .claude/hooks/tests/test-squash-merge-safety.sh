@@ -22,7 +22,7 @@ run_pretool_bash() {
 
 # Helper to create gh mock that returns specific diff outputs
 setup_squash_mocks() {
-  local branch_files="$1"     # files in branch diff (git diff main...HEAD --name-only)
+  local branch_files="$1"     # files in PR (gh pr view --json files)
   local squash_files="$2"     # files in squash diff (gh pr diff --name-only)
   local pr_state="${3:-OPEN}"
 
@@ -33,6 +33,11 @@ if echo "\$@" | grep -q "pr diff.*--name-only"; then
   exit 0
 fi
 if echo "\$@" | grep -q "pr view.*--json"; then
+  if echo "\$@" | grep -q "files"; then
+    # Return file paths for --json files --jq '.files[].path'
+    printf '%s\n' $branch_files
+    exit 0
+  fi
   if echo "\$@" | grep -q -- "--jq"; then
     echo "3"
   else
@@ -44,16 +49,6 @@ echo "OPEN"
 exit 0
 MOCK
   chmod +x "$MOCK_DIR/gh"
-
-  cat > "$MOCK_DIR/git" << MOCK
-#!/bin/bash
-if echo "\$@" | grep -q "diff.*--name-only"; then
-  printf '%s\n' $branch_files
-  exit 0
-fi
-/usr/bin/git "\$@"
-MOCK
-  chmod +x "$MOCK_DIR/git"
 }
 
 # ============================================================

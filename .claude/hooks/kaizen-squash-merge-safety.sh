@@ -11,7 +11,7 @@
 # This hook:
 #   1. Detects `gh pr merge --squash` commands
 #   2. Skips single-commit PRs (no squash risk)
-#   3. Compares branch files (git diff) with squash preview (gh pr diff)
+#   3. Compares branch files (gh pr view --json files) with squash preview (gh pr diff)
 #   4. Blocks if files in the branch are missing from the squash
 #
 # Always allows non-squash merges, non-gh commands, and single-commit PRs.
@@ -59,8 +59,13 @@ if [ -n "$COMMIT_COUNT" ] && [ "$COMMIT_COUNT" -le 1 ] 2>/dev/null; then
   exit 0
 fi
 
-# Get files from branch diff (local)
-BRANCH_FILES=$(git diff --name-only main...HEAD 2>/dev/null | sort)
+# Get files from PR's file list via GitHub API (not local git diff, which
+# includes merge-commit files from main and causes false positives — kaizen #435)
+PR_VIEW_ARGS="$PR_NUM"
+if [ -z "$PR_VIEW_ARGS" ]; then
+  PR_VIEW_ARGS=""
+fi
+BRANCH_FILES=$(gh pr view $PR_VIEW_ARGS $REPO_ARGS --json files --jq '.files[].path' 2>/dev/null | sort)
 
 # Get files from squash preview (GitHub)
 SQUASH_FILES=""
