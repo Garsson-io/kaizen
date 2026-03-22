@@ -8,3 +8,4 @@ __pycache__/
 .worktree-context.json
 .claude/worktrees/
 store/
+logs/
