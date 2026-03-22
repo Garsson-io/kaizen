@@ -760,6 +760,7 @@ async function main(): Promise<void> {
   console.log(`Tag: ${runTag}`);
   console.log(`Log: ${logFile}`);
 
+  const runStartEpoch = Math.floor(Date.now() / 1000);
   const { exitCode, duration, result } = await runClaude(
     state,
     runNum,
@@ -819,7 +820,7 @@ async function main(): Promise<void> {
   // Append per-run metrics for batch observability
   const runMetrics: RunMetrics = {
     run: runNum,
-    start_epoch: Math.floor(runStart / 1000),
+    start_epoch: runStartEpoch,
     duration_seconds: duration,
     exit_code: exitCode,
     cost_usd: result.cost,
