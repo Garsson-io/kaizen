@@ -7,7 +7,7 @@
  * See issue #507.
  */
 
-import type { RunMetrics, RunResult } from './auto-dent-run.js';
+import type { RunMetrics, RunResult, MergeStatus } from './auto-dent-run.js';
 
 export interface RunScore {
   /** Whether the run succeeded: exit code 0 AND at least one PR created */
@@ -55,6 +55,32 @@ export interface BatchScore {
   overall_efficiency: number;
   /** Per-run scores */
   runs: RunScore[];
+  /** Post-hoc merge results (populated by postHocScoreBatch) */
+  post_hoc?: PostHocBatchResult;
+}
+
+export interface PostHocPRResult {
+  /** PR URL */
+  url: string;
+  /** Current merge status */
+  status: MergeStatus;
+}
+
+export interface PostHocBatchResult {
+  /** Per-PR merge outcomes */
+  prs: PostHocPRResult[];
+  /** Number of PRs that successfully merged */
+  merged_count: number;
+  /** Number of PRs still open or queued */
+  pending_count: number;
+  /** Number of PRs closed without merging */
+  closed_count: number;
+  /** Merge rate: merged / total (NaN if no PRs) */
+  merge_rate: number;
+  /** Effective efficiency: merged PRs / total cost (0 if no cost) */
+  effective_efficiency: number;
+  /** Timestamp of scoring */
+  scored_at: string;
 }
 
 /** Score a single run from RunMetrics (stored in state.run_history). */
@@ -158,5 +184,58 @@ export function formatBatchScoreTable(score: BatchScore): string {
     `| **Avg cost/success** | ${isNaN(score.avg_cost_per_success) ? 'N/A' : '$' + score.avg_cost_per_success.toFixed(2)} |`,
     `| **Efficiency** | ${score.overall_efficiency > 0 ? score.overall_efficiency.toFixed(2) + ' PR/$' : 'N/A'} |`,
   ];
+  if (score.post_hoc) {
+    const ph = score.post_hoc;
+    lines.push(
+      `| **PR merge rate** | ${isNaN(ph.merge_rate) ? 'N/A' : (ph.merge_rate * 100).toFixed(0) + '%'} (${ph.merged_count}/${ph.prs.length}) |`,
+    );
+    if (ph.effective_efficiency > 0) {
+      lines.push(
+        `| **Effective efficiency** | ${ph.effective_efficiency.toFixed(2)} merged/$  |`,
+      );
+    }
+  }
   return lines.join('\n');
+}
+
+/**
+ * Build post-hoc merge results from PR URLs and their statuses.
+ * The caller is responsible for fetching statuses (e.g. via checkMergeStatus).
+ */
+export function postHocScoreBatch(
+  prStatuses: Array<{ url: string; status: MergeStatus }>,
+  totalCostUsd: number,
+): PostHocBatchResult {
+  const prs: PostHocPRResult[] = prStatuses.map(({ url, status }) => ({
+    url,
+    status,
+  }));
+
+  const merged = prs.filter((p) => p.status === 'merged').length;
+  const closed = prs.filter((p) => p.status === 'closed').length;
+  const pending = prs.length - merged - closed;
+
+  return {
+    prs,
+    merged_count: merged,
+    pending_count: pending,
+    closed_count: closed,
+    merge_rate: prs.length > 0 ? merged / prs.length : NaN,
+    effective_efficiency: totalCostUsd > 0 ? merged / totalCostUsd : 0,
+    scored_at: new Date().toISOString(),
+  };
+}
+
+/** Format post-hoc results as a compact summary line. */
+export function formatPostHocLine(ph: PostHocBatchResult): string {
+  const rate = isNaN(ph.merge_rate)
+    ? 'N/A'
+    : `${(ph.merge_rate * 100).toFixed(0)}%`;
+  const parts = [
+    `merge rate: ${rate}`,
+    `${ph.merged_count} merged`,
+    `${ph.pending_count} pending`,
+    `${ph.closed_count} closed`,
+  ];
+  return parts.join(' | ');
 }

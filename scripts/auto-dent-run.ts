@@ -19,7 +19,7 @@ import { spawn, execSync } from 'child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
-import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable } from './auto-dent-score.js';
+import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine } from './auto-dent-score.js';
 
 // Types
 
@@ -787,6 +787,21 @@ export function updateBatchProgressIssue(
   console.log(`  [hygiene] updated progress issue with run #${runNum}`);
 }
 
+/**
+ * Run post-hoc scoring: check merge status for all batch PRs.
+ * Returns the post-hoc result which can be attached to a BatchScore.
+ */
+export function runPostHocScoring(
+  allPrUrls: string[],
+  totalCostUsd: number,
+): ReturnType<typeof postHocScoreBatch> {
+  const prStatuses = allPrUrls.map((url) => ({
+    url,
+    status: checkMergeStatus(url),
+  }));
+  return postHocScoreBatch(prStatuses, totalCostUsd);
+}
+
 export function closeBatchProgressIssue(
   progressIssue: string,
   kaizenRepo: string,
@@ -801,6 +816,13 @@ export function closeBatchProgressIssue(
   const mins = Math.floor((elapsed % 3600) / 60);
 
   const batchScore = scoreBatch(state.run_history || []);
+
+  // Post-hoc: check final merge status for all PRs
+  if (state.prs.length > 0) {
+    const postHoc = runPostHocScoring(state.prs, batchScore.total_cost_usd);
+    batchScore.post_hoc = postHoc;
+    console.log(`  [post-hoc] ${formatPostHocLine(postHoc)}`);
+  }
 
   const summary = [
     `### Batch Complete`,
@@ -1226,6 +1248,36 @@ function closeBatch(): void {
   }
 }
 
+// Post-hoc scoring subcommand
+
+function postHocScore(): void {
+  const stateFile = process.argv[3];
+  if (!stateFile || !existsSync(stateFile)) {
+    console.error('Usage: auto-dent-run.ts --post-hoc-score <state-file>');
+    process.exit(1);
+  }
+  const state = readState(stateFile);
+  const batchScore = scoreBatch(state.run_history || []);
+
+  if (state.prs.length === 0) {
+    console.log('No PRs to score.');
+    return;
+  }
+
+  console.log(`Checking merge status for ${state.prs.length} PR(s)...`);
+  const postHoc = runPostHocScoring(state.prs, batchScore.total_cost_usd);
+  batchScore.post_hoc = postHoc;
+
+  console.log('');
+  console.log(formatBatchScoreTable(batchScore));
+  console.log('');
+  for (const pr of postHoc.prs) {
+    console.log(`  ${pr.status.padEnd(12)} ${pr.url}`);
+  }
+  console.log('');
+  console.log(formatPostHocLine(postHoc));
+}
+
 // Guard: don't run main() when imported for testing
 const isDirectRun =
   process.argv[1]?.endsWith('auto-dent-run.ts') ||
@@ -1234,6 +1286,8 @@ const isDirectRun =
 if (isDirectRun) {
   if (process.argv[2] === '--close-batch') {
     closeBatch();
+  } else if (process.argv[2] === '--post-hoc-score') {
+    postHocScore();
   } else {
     main().catch((err) => {
       console.error('Fatal error:', err);

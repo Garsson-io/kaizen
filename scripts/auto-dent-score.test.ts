@@ -5,8 +5,11 @@ import {
   scoreBatch,
   formatRunScoreLine,
   formatBatchScoreTable,
+  postHocScoreBatch,
+  formatPostHocLine,
   type RunScore,
   type BatchScore,
+  type PostHocBatchResult,
 } from './auto-dent-score.js';
 import type { RunMetrics, RunResult } from './auto-dent-run.js';
 
@@ -288,5 +291,157 @@ describe('formatBatchScoreTable', () => {
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Avg cost/success** | N/A |');
     expect(table).toContain('| **Efficiency** | N/A |');
+  });
+
+  it('includes post-hoc merge rate when available', () => {
+    const score: BatchScore = {
+      total_runs: 3,
+      successful_runs: 3,
+      success_rate: 1.0,
+      total_cost_usd: 9.0,
+      total_prs: 3,
+      total_issues_closed: 3,
+      total_duration_seconds: 900,
+      avg_cost_per_success: 3.0,
+      avg_duration_seconds: 300,
+      overall_efficiency: 1 / 3,
+      runs: [],
+      post_hoc: {
+        prs: [
+          { url: 'https://github.com/org/repo/pull/1', status: 'merged' },
+          { url: 'https://github.com/org/repo/pull/2', status: 'merged' },
+          { url: 'https://github.com/org/repo/pull/3', status: 'closed' },
+        ],
+        merged_count: 2,
+        pending_count: 0,
+        closed_count: 1,
+        merge_rate: 2 / 3,
+        effective_efficiency: 2 / 9,
+        scored_at: '2026-03-23T00:00:00.000Z',
+      },
+    };
+    const table = formatBatchScoreTable(score);
+    expect(table).toContain('| **PR merge rate** | 67% (2/3) |');
+    expect(table).toContain('| **Effective efficiency** |');
+  });
+
+  it('omits post-hoc rows when not present', () => {
+    const score: BatchScore = {
+      total_runs: 1,
+      successful_runs: 1,
+      success_rate: 1.0,
+      total_cost_usd: 3.0,
+      total_prs: 1,
+      total_issues_closed: 1,
+      total_duration_seconds: 300,
+      avg_cost_per_success: 3.0,
+      avg_duration_seconds: 300,
+      overall_efficiency: 1 / 3,
+      runs: [],
+    };
+    const table = formatBatchScoreTable(score);
+    expect(table).not.toContain('merge rate');
+  });
+});
+
+describe('postHocScoreBatch', () => {
+  it('scores a batch with mixed merge outcomes', () => {
+    const result = postHocScoreBatch(
+      [
+        { url: 'https://github.com/org/repo/pull/1', status: 'merged' },
+        { url: 'https://github.com/org/repo/pull/2', status: 'merged' },
+        { url: 'https://github.com/org/repo/pull/3', status: 'closed' },
+        { url: 'https://github.com/org/repo/pull/4', status: 'open' },
+      ],
+      10.0,
+    );
+
+    expect(result.merged_count).toBe(2);
+    expect(result.closed_count).toBe(1);
+    expect(result.pending_count).toBe(1);
+    expect(result.merge_rate).toBe(0.5);
+    expect(result.effective_efficiency).toBe(0.2);
+    expect(result.prs).toHaveLength(4);
+    expect(result.scored_at).toBeTruthy();
+  });
+
+  it('returns NaN merge rate for empty PR list', () => {
+    const result = postHocScoreBatch([], 5.0);
+    expect(isNaN(result.merge_rate)).toBe(true);
+    expect(result.merged_count).toBe(0);
+    expect(result.pending_count).toBe(0);
+    expect(result.closed_count).toBe(0);
+  });
+
+  it('handles all merged PRs', () => {
+    const result = postHocScoreBatch(
+      [
+        { url: 'https://github.com/org/repo/pull/1', status: 'merged' },
+        { url: 'https://github.com/org/repo/pull/2', status: 'merged' },
+      ],
+      4.0,
+    );
+    expect(result.merge_rate).toBe(1.0);
+    expect(result.effective_efficiency).toBe(0.5);
+    expect(result.pending_count).toBe(0);
+    expect(result.closed_count).toBe(0);
+  });
+
+  it('handles zero cost', () => {
+    const result = postHocScoreBatch(
+      [{ url: 'https://github.com/org/repo/pull/1', status: 'merged' }],
+      0,
+    );
+    expect(result.effective_efficiency).toBe(0);
+    expect(result.merge_rate).toBe(1.0);
+  });
+
+  it('treats auto_queued and unknown as pending', () => {
+    const result = postHocScoreBatch(
+      [
+        { url: 'https://github.com/org/repo/pull/1', status: 'auto_queued' },
+        { url: 'https://github.com/org/repo/pull/2', status: 'unknown' },
+      ],
+      2.0,
+    );
+    expect(result.pending_count).toBe(2);
+    expect(result.merged_count).toBe(0);
+    expect(result.closed_count).toBe(0);
+  });
+});
+
+describe('formatPostHocLine', () => {
+  it('formats a post-hoc result summary', () => {
+    const ph: PostHocBatchResult = {
+      prs: [
+        { url: 'pr1', status: 'merged' },
+        { url: 'pr2', status: 'open' },
+      ],
+      merged_count: 1,
+      pending_count: 1,
+      closed_count: 0,
+      merge_rate: 0.5,
+      effective_efficiency: 0.25,
+      scored_at: '2026-03-23T00:00:00.000Z',
+    };
+    const line = formatPostHocLine(ph);
+    expect(line).toContain('merge rate: 50%');
+    expect(line).toContain('1 merged');
+    expect(line).toContain('1 pending');
+    expect(line).toContain('0 closed');
+  });
+
+  it('shows N/A for empty batch', () => {
+    const ph: PostHocBatchResult = {
+      prs: [],
+      merged_count: 0,
+      pending_count: 0,
+      closed_count: 0,
+      merge_rate: NaN,
+      effective_efficiency: 0,
+      scored_at: '2026-03-23T00:00:00.000Z',
+    };
+    const line = formatPostHocLine(ph);
+    expect(line).toContain('merge rate: N/A');
   });
 });
