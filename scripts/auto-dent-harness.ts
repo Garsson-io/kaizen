@@ -1,7 +1,7 @@
 /**
  * auto-dent-harness — Test infrastructure for the auto-dent stream pipeline.
  *
- * Three layers:
+ * Four layers:
  *   1. Message builders  — construct stream-json messages declaratively
  *   2. runStream()       — feed messages through processStreamMessage, capture output
  *   3. replayLog()       — replay a real captured .log file through the pipeline
@@ -21,9 +21,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   processStreamMessage,
-  parsePhaseMarkers,
   type RunResult,
-  type PhaseMarker,
 } from './auto-dent-run.js';
 
 // Result types
@@ -55,11 +53,15 @@ function makeRunResult(): RunResult {
   };
 }
 
+const KNOWN_PHASES = new Set([
+  'PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT', 'STOP',
+]);
+
 function extractPhasesFromLog(logLines: string[]): Array<{ phase: string; line: string }> {
   const phases: Array<{ phase: string; line: string }> = [];
   for (const line of logLines) {
     const match = line.match(/\[([A-Z]+)\]/);
-    if (match) {
+    if (match && KNOWN_PHASES.has(match[1])) {
       phases.push({ phase: match[1], line });
     }
   }
@@ -121,20 +123,22 @@ export function runStream(
 ): StreamCapture {
   const logLines: string[] = [];
   const realLog = console.log;
+  const result = makeRunResult();
+  const start = Date.now();
+
   console.log = (...args: any[]) => {
     const line = args.map(a => String(a)).join(' ');
     logLines.push(line);
     if (opts.verbose) realLog(line);
   };
 
-  const result = makeRunResult();
-  const start = Date.now();
-
-  for (const m of messages) {
-    processStreamMessage(m, result, start);
+  try {
+    for (const m of messages) {
+      processStreamMessage(m, result, start);
+    }
+  } finally {
+    console.log = realLog;
   }
-
-  console.log = realLog;
 
   return {
     logLines,
@@ -213,7 +217,13 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
       timeout: timeoutMs,
     });
 
-    let stderr = '';
+    // Intercept console.log once for the entire probe
+    const realLog = console.log;
+    console.log = (...a: any[]) => {
+      const l = a.map(x => String(x)).join(' ');
+      logLines.push(l);
+      if (verbose) realLog(l);
+    };
 
     const rl = createInterface({ input: child.stdout! });
     rl.on('line', (line) => {
@@ -224,23 +234,14 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
       try {
         const parsed = JSON.parse(line);
         rawMessages.push(parsed);
-
-        // Capture console output
-        const realLog = console.log;
-        console.log = (...a: any[]) => {
-          const l = a.map(x => String(x)).join(' ');
-          logLines.push(l);
-          if (verbose) realLog(l);
-        };
         processStreamMessage(parsed, result, start);
-        console.log = realLog;
       } catch {
         // Non-JSON
       }
     });
 
-    child.stderr?.on('data', (data: Buffer) => {
-      stderr += data.toString();
+    child.stderr?.on('data', () => {
+      // Stderr captured in log file, not needed in memory
     });
 
     // Safety timeout
@@ -250,6 +251,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
 
     child.on('close', (code) => {
       clearTimeout(timer);
+      console.log = realLog;
       const durationMs = Date.now() - start;
 
       resolve({
@@ -262,8 +264,9 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
       });
     });
 
-    child.on('error', (err) => {
+    child.on('error', () => {
       clearTimeout(timer);
+      console.log = realLog;
       resolve({
         logLines,
         result,
