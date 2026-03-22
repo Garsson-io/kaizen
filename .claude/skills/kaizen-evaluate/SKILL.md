@@ -154,6 +154,25 @@ FASTEST TEST: [experiment that takes minutes, not hours]
 
 See [experiments/README.md](../../kaizen/experiments/README.md) for experiment patterns (A/B compare, probe-and-observe, toggle-and-measure).
 
+### Phase 3.7: Architecture & Tooling Fitness — MANDATORY assessment
+
+Before accepting work, assess whether you have the right tools to do it well. Bad tooling choices are the root cause of many multi-PR fix cycles — the code works but is untestable, unmaintainable, or fragile.
+
+**For every piece of work, answer these questions:**
+
+| Question | Red flag → Action |
+|----------|-------------------|
+| What language should this be in? | Bash with complex branching → propose TypeScript with thin bash wrapper |
+| What runtime? | tsx when bun is available and faster → use bun |
+| What libraries exist for this problem? | None considered → search npm and package.json before hand-rolling |
+| Can we test this E2E? | No harness exists → **building the harness is IN SCOPE, not a follow-up** |
+| What existing patterns in the codebase should we reuse? | None found → grep before writing |
+| What test infrastructure do we need? | Nothing planned → mock helpers, fixtures, shared setup must be scoped |
+
+**The critical rule:** If the E2E test harness doesn't exist, building it is part of this work. Deferring testability is how we get the 4-PR pattern (#400). "Tests later" = no tests. "Harness in a follow-up" = no harness.
+
+**How to apply:** State your tooling assessment in the evaluation output. If the admin approves the work, the tooling choices carry forward to `/kaizen-implement`. If you identify a harness gap, the implement task plan must include building it as a task BEFORE writing the feature code.
+
 ### Scope Reduction Discipline — MANDATORY gate
 
 When your evaluation proposes doing less than the full solution — "start with L1, escalate later", "implement the simple version first", "defer the hook to a follow-up" — you are making a promise about future work. **Promises without mechanisms are just scope cuts.**
