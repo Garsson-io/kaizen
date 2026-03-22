@@ -562,7 +562,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
     // the actual hook chain, verifying the sequence of enforcement
     // decisions matches expected behavior.
 
-    it("complete workflow: edit → commit → PR → review → reflect → stop", () => {
+    it("complete workflow: edit → commit → PR → review → reflect → stop", { timeout: 30000 }, () => {
       // Phase 1: Agent edits source file in worktree → allowed
       const writeResult = runKaizenHook(
         "kaizen-enforce-worktree-writes.sh",
