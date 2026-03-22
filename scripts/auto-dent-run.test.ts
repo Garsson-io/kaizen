@@ -1,16 +1,19 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   buildPrompt,
   buildTemplateVars,
   renderTemplate,
   loadPromptTemplate,
   extractArtifacts,
+  parsePhaseMarkers,
+  formatPhaseMarker,
   checkStopSignal,
   formatToolUse,
   formatHeartbeat,
   processStreamMessage,
   type BatchState,
   type RunResult,
+  type PhaseMarker,
   type RunMetrics,
   type StreamContext,
   type SweepAction,
@@ -423,6 +426,115 @@ describe('checkStopSignal', () => {
   });
 });
 
+describe('parsePhaseMarkers', () => {
+  it('parses a PICK marker with fields', () => {
+    const markers = parsePhaseMarkers('AUTO_DENT_PHASE: PICK | issue=#472 | title=improve hook test DRY');
+    expect(markers).toHaveLength(1);
+    expect(markers[0].phase).toBe('PICK');
+    expect(markers[0].fields.issue).toBe('#472');
+    expect(markers[0].fields.title).toBe('improve hook test DRY');
+  });
+
+  it('parses a phase with no fields', () => {
+    const markers = parsePhaseMarkers('AUTO_DENT_PHASE: REFLECT');
+    expect(markers).toHaveLength(1);
+    expect(markers[0].phase).toBe('REFLECT');
+    expect(markers[0].fields).toEqual({});
+  });
+
+  it('parses multiple markers in multi-line text', () => {
+    const text = [
+      'Some preamble text',
+      'AUTO_DENT_PHASE: PICK | issue=#472 | title=hook DRY',
+      'More text in between',
+      'AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=clear spec',
+      'AUTO_DENT_PHASE: IMPLEMENT | case=260323-1200-k472',
+    ].join('\n');
+    const markers = parsePhaseMarkers(text);
+    expect(markers).toHaveLength(3);
+    expect(markers[0].phase).toBe('PICK');
+    expect(markers[1].phase).toBe('EVALUATE');
+    expect(markers[2].phase).toBe('IMPLEMENT');
+  });
+
+  it('ignores non-marker lines', () => {
+    const markers = parsePhaseMarkers('Just regular text about implementing things');
+    expect(markers).toHaveLength(0);
+  });
+
+  it('ignores mid-line markers (must start at beginning of line)', () => {
+    const markers = parsePhaseMarkers('The agent uses AUTO_DENT_PHASE: PICK | issue=#1');
+    expect(markers).toHaveLength(0);
+  });
+
+  it('handles fields with URLs containing equals signs', () => {
+    const markers = parsePhaseMarkers('AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/500');
+    expect(markers).toHaveLength(1);
+    expect(markers[0].fields.url).toBe('https://github.com/Garsson-io/kaizen/pull/500');
+  });
+
+  it('parses TEST marker with result and count', () => {
+    const markers = parsePhaseMarkers('AUTO_DENT_PHASE: TEST | result=pass | count=15');
+    expect(markers).toHaveLength(1);
+    expect(markers[0].fields.result).toBe('pass');
+    expect(markers[0].fields.count).toBe('15');
+  });
+
+  it('parses MERGE marker with status', () => {
+    const markers = parsePhaseMarkers('AUTO_DENT_PHASE: MERGE | url=https://github.com/Garsson-io/kaizen/pull/500 | status=queued');
+    expect(markers).toHaveLength(1);
+    expect(markers[0].fields.status).toBe('queued');
+  });
+});
+
+describe('formatPhaseMarker', () => {
+  it('formats PICK with issue and title', () => {
+    const result = formatPhaseMarker({ phase: 'PICK', fields: { issue: '#472', title: 'improve hook test DRY' } });
+    expect(result).toBe('[PICK] #472 improve hook test DRY');
+  });
+
+  it('formats EVALUATE with verdict and reason', () => {
+    const result = formatPhaseMarker({ phase: 'EVALUATE', fields: { verdict: 'proceed', reason: 'clear spec' } });
+    expect(result).toBe('[EVALUATE] proceed (clear spec)');
+  });
+
+  it('formats IMPLEMENT with case and branch', () => {
+    const result = formatPhaseMarker({ phase: 'IMPLEMENT', fields: { case: '260323-1200-k472', branch: 'case/260323-1200-k472' } });
+    expect(result).toBe('[IMPLEMENT] case:260323-1200-k472 branch:case/260323-1200-k472');
+  });
+
+  it('formats TEST with result and count', () => {
+    const result = formatPhaseMarker({ phase: 'TEST', fields: { result: 'pass', count: '15' } });
+    expect(result).toBe('[TEST] pass 15 tests');
+  });
+
+  it('formats PR with url', () => {
+    const result = formatPhaseMarker({ phase: 'PR', fields: { url: 'https://github.com/Garsson-io/kaizen/pull/500' } });
+    expect(result).toBe('[PR] https://github.com/Garsson-io/kaizen/pull/500');
+  });
+
+  it('formats MERGE with url and status', () => {
+    const result = formatPhaseMarker({ phase: 'MERGE', fields: { url: 'https://github.com/Garsson-io/kaizen/pull/500', status: 'queued' } });
+    expect(result).toBe('[MERGE] https://github.com/Garsson-io/kaizen/pull/500 queued');
+  });
+
+  it('formats REFLECT with issues_filed and lessons', () => {
+    const result = formatPhaseMarker({ phase: 'REFLECT', fields: { issues_filed: '2', lessons: 'shared helpers reduce boilerplate' } });
+    expect(result).toBe('[REFLECT] 2 issues filed shared helpers reduce boilerplate');
+  });
+
+  it('formats phase with no fields', () => {
+    const result = formatPhaseMarker({ phase: 'REFLECT', fields: {} });
+    expect(result).toBe('[REFLECT]');
+  });
+
+  it('truncates very long output', () => {
+    const longTitle = 'A'.repeat(200);
+    const result = formatPhaseMarker({ phase: 'PICK', fields: { issue: '#1', title: longTitle } });
+    expect(result.length).toBeLessThanOrEqual(120);
+  });
+});
+
 describe('formatToolUse', () => {
   it('formats Read tool with file path', () => {
     expect(formatToolUse('Read', { file_path: '/src/hooks/main.ts' })).toBe(
@@ -773,5 +885,161 @@ describe('SweepResult type', () => {
       expect(result.pr).toContain('pull/500');
       expect(result.action).toBe(action);
     }
+  });
+});
+
+// Import the shared harness
+import {
+  msg,
+  runStream,
+  expectPhase,
+  expectNoPhase,
+  expectToolLogged,
+} from './auto-dent-harness.js';
+
+describe('e2e: full workflow through stream pipeline', () => {
+  it('surfaces all 7 phases from a complete deep-dive run', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#472', title: 'improve hook test DRY' }),
+      msg.tool('Bash', { command: 'gh issue view 472' }),
+      msg.phase('EVALUATE', { verdict: 'proceed', reason: 'clear spec and bounded scope' }),
+      msg.phase('IMPLEMENT', { case: '260323-1200-k472', branch: 'case/260323-1200-k472' }),
+      msg.tool('EnterWorktree', { name: 'k472-hook-test-dry' }),
+      msg.phase('TEST', { result: 'pass', count: '15' }),
+      msg.text('Created PR: https://github.com/Garsson-io/kaizen/pull/500'),
+      msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/500' }),
+      msg.phase('MERGE', { url: 'https://github.com/Garsson-io/kaizen/pull/500', status: 'queued' }),
+      msg.phase('REFLECT', { issues_filed: '1', lessons: 'shared helpers reduce boilerplate' }),
+      msg.done(2.5, 'Done. Closes #472.'),
+    ]);
+
+    expectPhase(capture, 'PICK', '#472', 'improve hook test DRY');
+    expectPhase(capture, 'EVALUATE', 'proceed');
+    expectPhase(capture, 'IMPLEMENT', 'case:260323-1200-k472');
+    expectPhase(capture, 'TEST', 'pass', '15 tests');
+    expectPhase(capture, 'PR', 'pull/500');
+    expectPhase(capture, 'MERGE', 'queued');
+    expectPhase(capture, 'REFLECT', 'issues filed');
+
+    expect(capture.result.toolCalls).toBe(2);
+    expect(capture.result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/500');
+    expect(capture.result.issuesClosed).toContain('#472');
+    expect(capture.result.cost).toBe(2.5);
+  });
+
+  it('extracts phase markers embedded in prose blocks', () => {
+    const capture = runStream([
+      msg.proseWithPhase(
+        'Looking at the issue backlog to find the best candidate.',
+        'PICK',
+        { issue: '#300', title: 'fix flaky test' },
+        'This issue has clear reproduction steps and a bounded scope.',
+      ),
+    ]);
+
+    expectPhase(capture, 'PICK', '#300', 'fix flaky test');
+  });
+
+  it('rejects mid-line marker mentions (no false positives)', () => {
+    const capture = runStream([
+      msg.text('The harness expects AUTO_DENT_PHASE: PICK markers from the agent.'),
+    ]);
+
+    expectNoPhase(capture, 'PICK');
+  });
+
+  it('handles a run with no phase markers (tools-only)', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.tool('Read', { file_path: '/src/index.ts' }),
+      msg.tool('Grep', { pattern: 'TODO', path: 'src/' }),
+      msg.tool('Edit', { file_path: '/src/index.ts' }),
+      msg.done(1.0),
+    ]);
+
+    expect(capture.result.toolCalls).toBe(3);
+    expectToolLogged(capture, 'Read /src/index.ts', 'Grep "TODO"', 'Edit /src/index.ts');
+    for (const phase of ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']) {
+      expectNoPhase(capture, phase);
+    }
+  });
+
+  it('handles EVALUATE skip — agent defers an issue', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#400', title: 'risky migration' }),
+      msg.phase('EVALUATE', { verdict: 'skip', reason: 'too risky for unattended batch' }),
+      msg.phase('PICK', { issue: '#401', title: 'add test helpers' }),
+      msg.phase('EVALUATE', { verdict: 'proceed', reason: 'safe and bounded' }),
+      msg.done(0.8),
+    ]);
+
+    expect(capture.phases.filter(p => p.phase === 'PICK')).toHaveLength(2);
+    expect(capture.phases.filter(p => p.phase === 'EVALUATE')).toHaveLength(2);
+    expectPhase(capture, 'PICK', '#400');
+    expectPhase(capture, 'PICK', '#401');
+  });
+
+  it('handles failed run with error result', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#500', title: 'broken hook' }),
+      msg.phase('IMPLEMENT', { case: '260323-1500-k500' }),
+      msg.phase('TEST', { result: 'fail', count: '3' }),
+      msg.error(1.2, 'Tests failed, could not complete.'),
+    ]);
+
+    expectPhase(capture, 'TEST', 'fail', '3 tests');
+    expect(capture.logLines.some(l => l.includes('error'))).toBe(true);
+    expect(capture.result.cost).toBe(1.2);
+  });
+
+  it('handles AUTO_DENT_STOP alongside phase markers', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#450', title: 'last issue' }),
+      msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/600' }),
+      msg.text('AUTO_DENT_STOP: backlog exhausted — no more matching issues'),
+      msg.done(3.0, 'All done.'),
+    ]);
+
+    expectPhase(capture, 'PICK', '#450');
+    expectPhase(capture, 'PR', 'pull/600');
+    expect(capture.result.stopRequested).toBe(true);
+    expect(capture.result.stopReason).toContain('backlog exhausted');
+  });
+
+  it('handles mixed content blocks (text + tool in same message)', () => {
+    const capture = runStream([
+      msg.mixed(
+        { type: 'text', text: 'AUTO_DENT_PHASE: IMPLEMENT | case=260323-0900-k100' },
+        { type: 'tool_use', name: 'EnterWorktree', input: { name: 'k100-fix' } },
+        { type: 'tool_use', name: 'Bash', input: { command: 'npm test' } },
+      ),
+    ]);
+
+    expectPhase(capture, 'IMPLEMENT', 'case:260323-0900-k100');
+    expectToolLogged(capture, 'EnterWorktree k100-fix', '$ npm test');
+    expect(capture.result.toolCalls).toBe(2);
+  });
+
+  it('tracks artifacts across multiple messages', () => {
+    const { result } = runStream([
+      msg.text('Filed https://github.com/Garsson-io/kaizen/issues/700'),
+      msg.text('Created https://github.com/Garsson-io/kaizen/pull/701'),
+      msg.text('Also created https://github.com/Garsson-io/kaizen/pull/702'),
+      msg.done(2.0, 'Closes #450. Fixes #451.'),
+    ]);
+
+    expect(result.issuesFiled).toContain('https://github.com/Garsson-io/kaizen/issues/700');
+    expect(result.prs).toHaveLength(2);
+    expect(result.issuesClosed).toContain('#450');
+    expect(result.issuesClosed).toContain('#451');
+  });
+
+  it('handles phase with no fields gracefully', () => {
+    const capture = runStream([msg.phase('REFLECT')]);
+    expectPhase(capture, 'REFLECT');
   });
 });

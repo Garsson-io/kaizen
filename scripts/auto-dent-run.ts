@@ -288,7 +288,37 @@ This will gracefully stop the batch loop. Only use this when you've genuinely
 run out of work — not when a single run is complete.
 
 When done, summarize what was accomplished. List all PRs created, issues filed,
-and issues closed with full URLs.`;
+and issues closed with full URLs.
+
+## Progress Markers
+
+Throughout your work, emit structured progress markers so the harness can show
+what you're doing. Place each marker on its own line. Format:
+
+AUTO_DENT_PHASE: <PHASE> | key=value | key=value ...
+
+Phases and their expected keys:
+
+| Phase | When | Keys |
+|-------|------|------|
+| PICK | After selecting an issue | issue=<#NNN or URL>, title=<short title> |
+| EVALUATE | After scoping the work | verdict=<proceed/skip/defer>, reason=<why> |
+| IMPLEMENT | Starting implementation | case=<case-id>, branch=<branch-name> |
+| TEST | After running tests | result=<pass/fail>, count=<number of tests> |
+| PR | After creating a PR | url=<PR URL> |
+| MERGE | After queuing auto-merge | url=<PR URL>, status=<queued/merged> |
+| REFLECT | After reflection | issues_filed=<N>, lessons=<short summary> |
+
+Example:
+  AUTO_DENT_PHASE: PICK | issue=#472 | title=improve hook test DRY
+  AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=clear spec, medium complexity
+  AUTO_DENT_PHASE: IMPLEMENT | case=260323-1200-k472 | branch=case/260323-1200-k472
+  AUTO_DENT_PHASE: TEST | result=pass | count=15
+  AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/500
+  AUTO_DENT_PHASE: MERGE | url=https://github.com/Garsson-io/kaizen/pull/500 | status=queued
+  AUTO_DENT_PHASE: REFLECT | issues_filed=1 | lessons=shared helpers reduce test boilerplate
+
+Emit these naturally as you complete each phase. Missing keys are fine — emit what you have.`;
 
   return prompt;
 }
@@ -331,9 +361,68 @@ export function formatToolUse(
       return `Task+ ${truncate(input?.subject || '?', 50)}`;
     case 'TaskUpdate':
       return `Task~ #${input?.taskId || '?'} -> ${input?.status || '?'}`;
+    case 'EnterWorktree':
+      return `EnterWorktree ${input?.name || ''}`;
+    case 'ExitWorktree':
+      return `ExitWorktree`;
+    case 'ToolSearch':
+      return `ToolSearch`;
     default:
       return name;
   }
+}
+
+// Structured phase marker parsing
+// Agents emit: AUTO_DENT_PHASE: <PHASE> | key=value | key=value ...
+
+export interface PhaseMarker {
+  phase: string;
+  fields: Record<string, string>;
+}
+
+export function parsePhaseMarkers(text: string): PhaseMarker[] {
+  const markers: PhaseMarker[] = [];
+
+  for (const match of text.matchAll(
+    /^AUTO_DENT_PHASE:\s*(\w+)(?:\s*\|(.+))?$/gm,
+  )) {
+    const phase = match[1];
+    const fields: Record<string, string> = {};
+
+    if (match[2]) {
+      for (const pair of match[2].split('|')) {
+        const eqIdx = pair.indexOf('=');
+        if (eqIdx > 0) {
+          fields[pair.slice(0, eqIdx).trim()] = pair.slice(eqIdx + 1).trim();
+        }
+      }
+    }
+
+    markers.push({ phase, fields });
+  }
+
+  return markers;
+}
+
+export function formatPhaseMarker(marker: PhaseMarker): string {
+  const parts = [`[${marker.phase}]`];
+
+  // Show the most informative fields for each phase
+  const { fields } = marker;
+  if (fields.issue) parts.push(fields.issue);
+  if (fields.title) parts.push(fields.title);
+  if (fields.verdict) parts.push(fields.verdict);
+  if (fields.reason) parts.push(`(${fields.reason})`);
+  if (fields.case) parts.push(`case:${fields.case}`);
+  if (fields.branch) parts.push(`branch:${fields.branch}`);
+  if (fields.result) parts.push(fields.result);
+  if (fields.count) parts.push(`${fields.count} tests`);
+  if (fields.url) parts.push(fields.url);
+  if (fields.status) parts.push(fields.status);
+  if (fields.issues_filed) parts.push(`${fields.issues_filed} issues filed`);
+  if (fields.lessons) parts.push(fields.lessons);
+
+  return truncate(parts.join(' '), 120);
 }
 
 export function extractArtifacts(text: string, result: RunResult): void {
@@ -404,6 +493,9 @@ export function processStreamMessage(
           if (block.type === 'text' && block.text) {
             extractArtifacts(block.text, result);
             checkStopSignal(block.text, result);
+            for (const marker of parsePhaseMarkers(block.text)) {
+              console.log(`  [${elapsed}]  ${formatPhaseMarker(marker)}`);
+            }
           }
         }
       }
