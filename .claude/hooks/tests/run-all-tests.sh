@@ -25,6 +25,24 @@ TOTAL_FAIL=0
 TOTAL_TESTS=0
 FAILED_FILES=()
 
+# Global test isolation: all hooks write state to temp dirs by default.
+# This prevents tests from polluting production state directories
+# (/tmp/.pr-review-state/, repo kaizen/audit/, etc.).
+# Individual tests that call setup_test_env() will override with their own
+# temp dirs, which is fine — the important thing is that NO test can
+# accidentally write to production paths. (kaizen #373, #340, #448)
+GLOBAL_TEST_STATE_DIR=$(mktemp -d "/tmp/.kaizen-test-state-XXXXXX")
+GLOBAL_TEST_AUDIT_DIR=$(mktemp -d "/tmp/.kaizen-test-audit-XXXXXX")
+export STATE_DIR="$GLOBAL_TEST_STATE_DIR"
+export AUDIT_DIR="$GLOBAL_TEST_AUDIT_DIR"
+export AUDIT_LOG="$GLOBAL_TEST_AUDIT_DIR/no-action.log"
+export DEBUG_LOG="/dev/null"
+export KAIZEN_TEST_RUNNER=1
+cleanup_global_isolation() {
+  rm -rf "$GLOBAL_TEST_STATE_DIR" "$GLOBAL_TEST_AUDIT_DIR"
+}
+trap cleanup_global_isolation EXIT
+
 # Tests to exclude from auto-discovery (with reasons)
 EXCLUDE_TESTS=(
   # Shared library, not a test

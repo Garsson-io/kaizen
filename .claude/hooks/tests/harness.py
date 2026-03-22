@@ -191,7 +191,19 @@ class HookHarness:
         self.hooks_dir = hooks_dir or HOOKS_DIR
         self.settings_path = settings_path or SETTINGS_PATH
         self.temp_dir = Path(tempfile.mkdtemp(prefix="hook-harness-"))
-        self.env_overrides: dict[str, str] = {}
+        # Auto-isolate state: hooks write to temp dirs by default, preventing
+        # pollution of production state (/tmp/.pr-review-state/, repo audit/).
+        # Tests can override via set_env() if needed. (kaizen #373, #340, #448)
+        state_dir = self.temp_dir / "state"
+        state_dir.mkdir()
+        audit_dir = self.temp_dir / "audit"
+        audit_dir.mkdir()
+        self.env_overrides: dict[str, str] = {
+            "STATE_DIR": str(state_dir),
+            "AUDIT_DIR": str(audit_dir),
+            "AUDIT_LOG": str(audit_dir / "no-action.log"),
+            "DEBUG_LOG": "/dev/null",
+        }
 
     def cleanup(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
