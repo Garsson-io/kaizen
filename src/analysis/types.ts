@@ -21,6 +21,8 @@ export enum FailureMode {
   STALE_REFERENCE = 'FM6:STALE_REFERENCE',
   /** FM7: Squash merge data loss from incomplete commits */
   SQUASH_DATA_LOSS = 'FM7:SQUASH_DATA_LOSS',
+  /** FM8: Trivial impediment filed as issue instead of fixed in-PR */
+  FILED_WHEN_FIXABLE = 'FM8:FILED_WHEN_FIXABLE',
 }
 
 export interface Detection {
@@ -53,6 +55,8 @@ export interface PRRecord {
 /** KAIZEN_IMPEDIMENTS entry for reflection quality analysis */
 export interface Impediment {
   finding: string;
+  /** Alternative key used in KAIZEN_IMPEDIMENTS JSON (same as finding) */
+  impediment?: string;
   type?: 'meta' | 'positive' | 'standard';
   disposition: string;
   reason?: string;

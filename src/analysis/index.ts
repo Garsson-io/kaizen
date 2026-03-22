@@ -22,6 +22,7 @@ export {
 
 export {
   detectReflectionGaming,
+  detectFiledWhenFixable,
   classifyReflectionQuality,
 } from './reflection-checks.js';
 

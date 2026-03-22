@@ -26,7 +26,7 @@ import {
   detectEnvAssumptions,
   detectScopeCutTestability,
 } from './diff-checks.js';
-import { detectReflectionGaming } from './reflection-checks.js';
+import { detectReflectionGaming, detectFiledWhenFixable } from './reflection-checks.js';
 import { detectMultiPRCycles } from './pr-pattern-checks.js';
 
 /**
@@ -82,7 +82,10 @@ function detectForScenario(scenario: Scenario): Detection[] {
     }
     case 'reflection': {
       const s = scenario as ReflectionScenario;
-      return detectReflectionGaming(s.impediments);
+      return [
+        ...detectReflectionGaming(s.impediments),
+        ...detectFiledWhenFixable(s.impediments),
+      ];
     }
     case 'pr-history': {
       const s = scenario as PRHistoryScenario;

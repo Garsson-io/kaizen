@@ -119,6 +119,59 @@ export function detectReflectionGaming(
   return detections;
 }
 
+/** Keywords that suggest an impediment is a trivial/config fix */
+const TRIVIAL_FIX_SIGNALS = [
+  'gitignore',
+  '.gitignore',
+  'tsconfig',
+  'package.json',
+  'typo',
+  'rename',
+  'unused import',
+  'unused variable',
+  'unused type',
+  'missing comma',
+  'missing semicolon',
+  'duplicate line',
+  'config',
+  'formatting',
+  'whitespace',
+  'comment',
+  'lint',
+];
+
+/**
+ * FM8: Detect impediments filed as issues when they could have been fixed in-PR.
+ *
+ * Flags impediments with disposition "filed" whose description matches
+ * trivial-fix signals (config changes, typos, small cleanup). These should
+ * use "fixed-in-pr" instead — filing creates unnecessary context-reload cost.
+ */
+export function detectFiledWhenFixable(
+  impediments: Impediment[],
+): Detection[] {
+  const detections: Detection[] = [];
+
+  for (const imp of impediments) {
+    if (imp.disposition !== 'filed') continue;
+
+    const text = (imp.finding ?? imp.impediment ?? '').toLowerCase();
+    for (const signal of TRIVIAL_FIX_SIGNALS) {
+      if (text.includes(signal)) {
+        detections.push({
+          mode: FailureMode.FILED_WHEN_FIXABLE,
+          confidence: 70,
+          location: `impediment: "${truncate(imp.finding ?? imp.impediment ?? '', 50)}"`,
+          detail: `Filed as issue but description suggests trivial fix ("${signal}"). Could this have been fixed in < 10 min? Fix-first saves context-reload cost.`,
+        });
+        break;
+      }
+    }
+  }
+
+  return detections;
+}
+
 /**
  * Classify impediments by quality tier for reporting.
  */

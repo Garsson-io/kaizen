@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   detectReflectionGaming,
+  detectFiledWhenFixable,
   classifyReflectionQuality,
 } from './reflection-checks.js';
 import { FailureMode, type Impediment } from './types.js';
@@ -188,5 +189,92 @@ describe('classifyReflectionQuality', () => {
         { finding: 'b', disposition: 'no-action', type: 'positive' },
       ]),
     ).toBe('low');
+  });
+});
+
+// ============================================================
+// FM8: Filed-When-Fixable Detection
+// ============================================================
+
+describe('FM8: detectFiledWhenFixable', () => {
+  // --- Real incident: this very PR filed #450 for gitignore fix that took 1 line ---
+  it('detects trivial gitignore fix filed as issue (issue #450 pattern)', () => {
+    const impediments: Impediment[] = [
+      {
+        finding: '.claude/kaizen/audit/ not in .gitignore — dirty file every session',
+        disposition: 'filed',
+        ref: '#450',
+      },
+    ];
+
+    const detections = detectFiledWhenFixable(impediments);
+    expect(detections.length).toBeGreaterThan(0);
+    expect(detections[0].mode).toBe(FailureMode.FILED_WHEN_FIXABLE);
+    expect(detections[0].detail).toContain('gitignore');
+  });
+
+  it('detects filed unused type/import impediment', () => {
+    const impediments: Impediment[] = [
+      {
+        finding: 'unused import in pr-pattern-checks.ts should be removed',
+        disposition: 'filed',
+        ref: '#999',
+      },
+    ];
+
+    const detections = detectFiledWhenFixable(impediments);
+    expect(detections.length).toBeGreaterThan(0);
+  });
+
+  it('detects filed config fix', () => {
+    const impediments: Impediment[] = [
+      {
+        finding: 'tsconfig.json missing strict null checks setting',
+        disposition: 'filed',
+        ref: '#888',
+      },
+    ];
+
+    const detections = detectFiledWhenFixable(impediments);
+    expect(detections.length).toBeGreaterThan(0);
+  });
+
+  // --- Clean: complex filed impediment that genuinely needs a separate issue ---
+  it('does NOT flag complex architectural filed impediment', () => {
+    const impediments: Impediment[] = [
+      {
+        finding: 'Hook enforcement system needs a redesign to support parallel gate clearing across worktrees',
+        disposition: 'filed',
+        ref: '#500',
+      },
+    ];
+
+    const detections = detectFiledWhenFixable(impediments);
+    expect(detections).toHaveLength(0);
+  });
+
+  it('does NOT flag fixed-in-pr disposition (already correct)', () => {
+    const impediments: Impediment[] = [
+      {
+        finding: '.gitignore missing kaizen audit directory',
+        disposition: 'fixed-in-pr',
+      },
+    ];
+
+    const detections = detectFiledWhenFixable(impediments);
+    expect(detections).toHaveLength(0);
+  });
+
+  it('does NOT flag incident disposition', () => {
+    const impediments: Impediment[] = [
+      {
+        finding: 'gitignore gap caused dirty file on every session',
+        disposition: 'incident',
+        ref: '#450',
+      },
+    ];
+
+    const detections = detectFiledWhenFixable(impediments);
+    expect(detections).toHaveLength(0);
   });
 });

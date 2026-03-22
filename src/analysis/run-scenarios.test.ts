@@ -223,6 +223,27 @@ const BAD_SCOPE_CUT: DiffScenario = {
   ],
 };
 
+const BAD_FILED_WHEN_FIXABLE: ReflectionScenario = {
+  kind: 'reflection',
+  name: 'Trivial gitignore fix filed as issue instead of fixed-in-pr (#450)',
+  description: 'Agent filed a 1-line gitignore fix as a separate issue instead of fixing it in the PR',
+  targetMode: FailureMode.FILED_WHEN_FIXABLE,
+  expectDetection: true,
+  impediments: [
+    {
+      finding: '.claude/kaizen/audit/ not in .gitignore — dirty file every session',
+      disposition: 'filed',
+      ref: '#450',
+    },
+    {
+      finding: 'Self-review caught DRY violation',
+      type: 'positive',
+      disposition: 'no-action',
+      reason: 'Review criteria working as designed',
+    },
+  ],
+};
+
 // ============================================================
 // Scenario definitions: known-good (expect NO detection)
 // ============================================================
@@ -344,6 +365,21 @@ const GOOD_PR_HISTORY_NORMAL: PRHistoryScenario = {
   ],
 };
 
+const GOOD_FILED_COMPLEX: ReflectionScenario = {
+  kind: 'reflection',
+  name: 'Complex impediment correctly filed (clean for FM8)',
+  description: 'Architectural issue correctly filed as separate issue — not trivially fixable',
+  targetMode: FailureMode.FILED_WHEN_FIXABLE,
+  expectDetection: false,
+  impediments: [
+    {
+      finding: 'Hook enforcement system needs redesign for parallel gate clearing across worktrees',
+      disposition: 'filed',
+      ref: '#500',
+    },
+  ],
+};
+
 // ============================================================
 // All scenarios
 // ============================================================
@@ -358,12 +394,14 @@ const ALL_SCENARIOS: Scenario[] = [
   BAD_REFLECTION_ALL_WAIVED,
   BAD_MULTI_PR_RAPID_FIX,
   BAD_SCOPE_CUT,
+  BAD_FILED_WHEN_FIXABLE,
   // Known-good (expect no detection)
   GOOD_DRY_UNIQUE_CODE,
   GOOD_RENAME_COMPLETE,
   GOOD_ENV_WITH_C_FLAG,
   GOOD_REFLECTION_HIGH_QUALITY,
   GOOD_PR_HISTORY_NORMAL,
+  GOOD_FILED_COMPLEX,
 ];
 
 // ============================================================

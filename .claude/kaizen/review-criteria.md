@@ -150,6 +150,12 @@ This section grows over time. Each entry is a pattern discovered through kaizen 
 **Check:** Before creating a "fix:" PR, check recent merged PRs. If 2+ already exist for the same area, stop and ask: "what test would have caught this before the first PR?"
 **Detector:** `src/analysis/pr-pattern-checks.ts:detectMultiPRCycles()` — analyzes PR metadata for temporal/file clustering.
 
+### FM-12: Filing trivial impediments instead of fixing in-PR
+**Pattern:** Agent identifies a small fix during reflection (gitignore, unused import, config tweak, typo) but files it as a new issue instead of fixing it in the current PR. This creates unnecessary context-reload cost — the issue sits in the backlog, and the next session must re-learn the context to make a 1-line change.
+**Source:** This PR (#449) — filed #450 for a 1-line gitignore fix that was then fixed in the same PR anyway.
+**Check:** For each "filed" impediment, ask: is this < 10 min and < 30 lines? Is it in files already touched? If yes, fix it now with `disposition: "fixed-in-pr"`.
+**Detector:** `src/analysis/reflection-checks.ts:detectFiledWhenFixable()` — flags "filed" impediments whose description matches trivial-fix keywords.
+
 ---
 
 ## Detector Integration
