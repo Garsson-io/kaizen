@@ -50,7 +50,14 @@ is_review_command() {
   return 1
 }
 
-# Check for active review gate
+# FAST PATH (kaizen #451): Check command relevance BEFORE expensive state
+# iteration. Allowed commands exit immediately — no need to check whether
+# a gate is active, since they'd be allowed through regardless.
+if is_review_command "$CMD_LINE"; then
+  exit 0
+fi
+
+# SLOW PATH: Command would be blocked if gate is active. Check state.
 REVIEW_INFO=$(find_needs_review_state)
 if [ $? -ne 0 ] || [ -z "$REVIEW_INFO" ]; then
   # No active review — allow everything
@@ -59,11 +66,6 @@ fi
 
 PR_URL=$(echo "$REVIEW_INFO" | cut -d'|' -f1)
 ROUND=$(echo "$REVIEW_INFO" | cut -d'|' -f2)
-
-# If the command is review-related, allow it through
-if is_review_command "$CMD_LINE"; then
-  exit 0
-fi
 
 # Block the command — agent must review first
 jq -n \

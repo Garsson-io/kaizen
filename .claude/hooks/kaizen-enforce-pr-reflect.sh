@@ -33,15 +33,6 @@ fi
 
 CMD_LINE=$(strip_heredoc_body "$COMMAND")
 
-# Check for active PR kaizen gate
-STATE_INFO=$(find_state_with_status "needs_pr_kaizen")
-if [ $? -ne 0 ] || [ -z "$STATE_INFO" ]; then
-  # No active kaizen gate — allow everything
-  exit 0
-fi
-
-PR_URL=$(echo "$STATE_INFO" | cut -d'|' -f1)
-
 # Check if the command is allowed during kaizen gate.
 # Uses segment splitting (kaizen #172 bug fix) to prevent bypass via pipes/chains.
 # Before: `npm build && echo KAIZEN_IMPEDIMENTS:` passed the gate.
@@ -77,9 +68,21 @@ is_kaizen_command() {
   return 1
 }
 
+# FAST PATH (kaizen #451): Check command relevance BEFORE expensive state
+# iteration. Allowed commands exit immediately — no need to check whether
+# a gate is active, since they'd be allowed through regardless.
 if is_kaizen_command "$CMD_LINE"; then
   exit 0
 fi
+
+# SLOW PATH: Command would be blocked if gate is active. Check state.
+STATE_INFO=$(find_state_with_status "needs_pr_kaizen")
+if [ $? -ne 0 ] || [ -z "$STATE_INFO" ]; then
+  # No active kaizen gate — allow everything
+  exit 0
+fi
+
+PR_URL=$(echo "$STATE_INFO" | cut -d'|' -f1)
 
 # Block the command — agent must complete kaizen reflection first
 source "$(dirname "$0")/lib/hook-output.sh"
