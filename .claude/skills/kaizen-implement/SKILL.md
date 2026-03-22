@@ -321,6 +321,21 @@ This is not duplicating the issue — it's transforming planning artifacts into 
 
 **Anti-pattern: "The code is self-documenting."** Shell scripts with `--help` flags are not documentation. They tell you what flags exist, not when to run the command, what the policy is, or what happens if you don't.
 
+### 4b-ext. Methodology cross-check — does the parent epic's knowledge live in the repo? (kaizen #381)
+
+After completing documentation deliverables, check whether the parent PRD or epic contains **process insights or methodology** that should be in the repo but aren't. This is the safety net for knowledge that the PRD author didn't capture via the Knowledge Flow Checklist.
+
+**Ask:**
+- Does the parent epic/PRD propose skill prompt changes? Are they applied?
+- Does it contain process patterns ("always do X before Y") that should be in a SKILL.md?
+- Does it reference methodology (hypothesis formation, progressive detail, escalation rules) that future agents need but can only find by reading the GitHub issue?
+
+**If gaps exist:**
+- Small gaps (< 10 lines of prompt changes): apply them in this PR alongside the code
+- Large gaps (new skills, major doc rewrites): file a sub-issue with the specific change
+
+**Example:** Epic #334 proposed "hypothesis-driven experimentation" as methodology. Sub-issues #348, #376, #377, #380 designed specific skill prompt changes. But after implementing the code, none of the skill prompts were updated. This cross-check would have caught that: "Epic #334 proposes adding hypothesis formation to /kaizen-evaluate Phase 3.5 — is it there? No. Apply it now."
+
 ### 4c. Adjacent discovery check — what did this work reveal?
 
 After implementation but before moving on, pause and ask:

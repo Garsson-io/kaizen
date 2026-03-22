@@ -93,6 +93,8 @@ gh issue view {N} --repo "$KAIZEN_REPO" --json body --jq '.body' | wc -l
 
 This prevents redundant analysis when someone already invested in understanding the problem. The spec is your starting point — verify it's still accurate (Phase 4) rather than re-deriving it.
 
+**If this issue is part of an epic (has a `Parent: #N` reference):** Read the parent epic. Check whether it contains methodology or process patterns that should already be in skills/docs/hooks but aren't. Epics accumulate process insights ("always form hypotheses," "use progressive detail," "escalate on recurrence") that are more valuable than the feature work itself — but they only help future agents if they're in the repo. If you find unapplied methodology, include applying it in this case's scope. (kaizen #381)
+
 ### Phase 1: Gather the incidents
 
 Don't work in the abstract. Find what actually happened.
