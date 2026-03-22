@@ -39,6 +39,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import {
   classifyReflectionQuality,
+  detectFixableFiledImpediments,
   formatReflectionComment,
   matchesWaiverBlocklist,
   processHookInput,
@@ -846,5 +847,147 @@ describe('processHookInput: quality advisory (kaizen #446)', () => {
     });
     expect(result).toContain('PR kaizen gate cleared');
     expect(result).not.toContain('Reflection quality: LOW');
+  });
+});
+
+// ── Fixable-filed advisory tests (kaizen #401) ─────────────────────
+
+describe('detectFixableFiledImpediments', () => {
+  it('returns advisory for "hand-rolled" in description', () => {
+    const items = [
+      { impediment: 'Hand-rolled JSON parser', disposition: 'filed', ref: '#10' },
+    ];
+    const advisories = detectFixableFiledImpediments(items);
+    expect(advisories).toHaveLength(1);
+    expect(advisories[0]).toContain('hand-rolled');
+    expect(advisories[0]).toContain('fixed-in-pr');
+  });
+
+  it('returns advisory for "could use" in description', () => {
+    const items = [
+      { impediment: 'Could use a helper function here', disposition: 'filed', ref: '#11' },
+    ];
+    const advisories = detectFixableFiledImpediments(items);
+    expect(advisories).toHaveLength(1);
+    expect(advisories[0]).toContain('could use');
+  });
+
+  it('returns advisory for "hack" in description', () => {
+    const items = [
+      { impediment: 'This is a hack to work around the API', disposition: 'filed', ref: '#12' },
+    ];
+    const advisories = detectFixableFiledImpediments(items);
+    expect(advisories).toHaveLength(1);
+    expect(advisories[0]).toContain('hack');
+  });
+
+  it('returns advisory for "hardcoded" in description', () => {
+    const items = [
+      { finding: 'Hardcoded timeout value', disposition: 'filed', ref: '#13' },
+    ];
+    const advisories = detectFixableFiledImpediments(items);
+    expect(advisories).toHaveLength(1);
+    expect(advisories[0]).toContain('hardcoded');
+  });
+
+  it('returns advisory for "TODO" in description (case-insensitive)', () => {
+    const items = [
+      { impediment: 'TODO: clean up error handling', disposition: 'filed', ref: '#14' },
+    ];
+    const advisories = detectFixableFiledImpediments(items);
+    expect(advisories).toHaveLength(1);
+    expect(advisories[0]).toContain('todo');
+  });
+
+  it('returns empty array for legitimate filed items without fixable patterns', () => {
+    const items = [
+      { impediment: 'CI pipeline flaky on ARM builds', disposition: 'filed', ref: '#20' },
+      { impediment: 'Upstream library missing feature X', disposition: 'filed', ref: '#21' },
+    ];
+    const advisories = detectFixableFiledImpediments(items);
+    expect(advisories).toHaveLength(0);
+  });
+
+  it('ignores non-filed dispositions even with fixable patterns', () => {
+    const items = [
+      { impediment: 'Hand-rolled parser', disposition: 'fixed-in-pr' },
+      { impediment: 'Could use a helper', disposition: 'incident', ref: '#30' },
+      { finding: 'Hack in code', type: 'positive', disposition: 'no-action', reason: 'validated existing pattern' },
+    ];
+    const advisories = detectFixableFiledImpediments(items);
+    expect(advisories).toHaveLength(0);
+  });
+
+  it('returns multiple advisories for multiple fixable filed items', () => {
+    const items = [
+      { impediment: 'Hand-rolled validation', disposition: 'filed', ref: '#40' },
+      { impediment: 'Workaround for missing API', disposition: 'filed', ref: '#41' },
+    ];
+    const advisories = detectFixableFiledImpediments(items);
+    expect(advisories).toHaveLength(2);
+  });
+});
+
+describe('processHookInput: fixable-filed advisory (kaizen #401)', () => {
+  let unitStateDir: string;
+
+  beforeEach(() => {
+    unitStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kaizen-clear-fix-'));
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf-8',
+    }).trim();
+    fs.writeFileSync(
+      path.join(unitStateDir, 'pr-kaizen-Garsson-io_kaizen_88'),
+      `PR_URL=https://github.com/Garsson-io/kaizen/pull/88\nSTATUS=needs_pr_kaizen\nBRANCH=${branch}\n`,
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(unitStateDir, { recursive: true, force: true });
+  });
+
+  it('shows advisory but still clears gate when fixable filed detected', () => {
+    const postComment = vi.fn();
+    const input = {
+      tool_name: 'Bash',
+      tool_input: {
+        command: `echo 'KAIZEN_IMPEDIMENTS: [{"impediment":"Hand-rolled JSON parser","disposition":"filed","ref":"#10"}]'`,
+      },
+      tool_response: {
+        stdout:
+          'KAIZEN_IMPEDIMENTS: [{"impediment":"Hand-rolled JSON parser","disposition":"filed","ref":"#10"}]',
+        exit_code: 0,
+      },
+    };
+
+    const result = processHookInput(input, {
+      stateDir: unitStateDir,
+      postComment,
+    });
+    expect(result).toContain('PR kaizen gate cleared');
+    expect(result).toContain('hand-rolled');
+    expect(result).toContain('fixed-in-pr');
+  });
+
+  it('does not show advisory for legitimate filed items', () => {
+    const postComment = vi.fn();
+    const input = {
+      tool_name: 'Bash',
+      tool_input: {
+        command: `echo 'KAIZEN_IMPEDIMENTS: [{"impediment":"CI flaky on ARM","disposition":"filed","ref":"#20"}]'`,
+      },
+      tool_response: {
+        stdout:
+          'KAIZEN_IMPEDIMENTS: [{"impediment":"CI flaky on ARM","disposition":"filed","ref":"#20"}]',
+        exit_code: 0,
+      },
+    };
+
+    const result = processHookInput(input, {
+      stateDir: unitStateDir,
+      postComment,
+    });
+    expect(result).toContain('PR kaizen gate cleared');
+    expect(result).not.toContain('Advisory');
   });
 });
