@@ -28,6 +28,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `docs/kaizen-ipc-architecture.md` | IPC architecture for kaizen-cases |
 | `docs/case-create-auto-adopt-worktree-spec.md` | Worktree adoption for case system |
 | `docs/test-side-effects-and-kaizen-escalation-spec.md` | Test side-effects and L1→L2 escalation patterns |
+| `docs/auto-dent-operations.md` | Auto-dent operational guide — how to run, monitor, debug batch operations |
 
 ## Skills
 
