@@ -84,7 +84,7 @@ export function formatBatchStatus(batch: BatchInfo): string {
       : s.stop_reason || 'STOPPED';
 
   const elapsed = Math.floor(
-    ((s.batch_end || Date.now() / 1000) - s.batch_start) / 1,
+    (s.batch_end || Date.now() / 1000) - s.batch_start,
   );
   const hours = Math.floor(elapsed / 3600);
   const mins = Math.floor((elapsed % 3600) / 60);
@@ -109,6 +109,21 @@ export function formatBatchStatus(batch: BatchInfo): string {
   if (s.last_case) lines.push(`  Last case:     ${s.last_case}`);
   if (s.last_branch) lines.push(`  Last branch:   ${s.last_branch}`);
   if (s.last_worktree) lines.push(`  Last worktree: ${s.last_worktree}`);
+
+  if (s.run_history && s.run_history.length > 0) {
+    lines.push('  Runs:');
+    for (const r of s.run_history) {
+      const rm = Math.floor(r.duration_seconds / 60);
+      const rs = r.duration_seconds % 60;
+      const status = r.exit_code === 0 ? 'ok' : `exit ${r.exit_code}`;
+      const prCount = r.prs.length;
+      const issueCount =
+        r.issues_filed.length + r.issues_closed.length;
+      lines.push(
+        `    #${r.run}: ${rm}m${rs}s $${r.cost_usd.toFixed(2)} ${r.tool_calls}tc ${status}${prCount > 0 ? ` ${prCount}PR` : ''}${issueCount > 0 ? ` ${issueCount}iss` : ''}${r.stop_requested ? ' STOP' : ''}`,
+      );
+    }
+  }
 
   return lines.join('\n');
 }

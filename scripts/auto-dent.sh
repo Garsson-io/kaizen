@@ -417,6 +417,21 @@ node -e "
     console.log('║ Issues closed: ' + s.issues_closed.join(' '));
   }
 
+  if (s.run_history && s.run_history.length > 0) {
+    console.log('╠══════════════════════════════════════════════════════════╣');
+    console.log('║ Per-run metrics:');
+    s.run_history.forEach(function(r) {
+      var rm = Math.floor(r.duration_seconds / 60);
+      var rs = r.duration_seconds % 60;
+      var status = r.exit_code === 0 ? 'ok' : 'exit ' + r.exit_code;
+      var prCount = r.prs.length;
+      var line = '║   #' + r.run + ': ' + rm + 'm' + rs + 's $' + (r.cost_usd || 0).toFixed(2) + ' ' + r.tool_calls + 'tc ' + status;
+      if (prCount > 0) line += ' ' + prCount + 'PR';
+      if (r.stop_requested) line += ' STOP';
+      console.log(line);
+    });
+  }
+
   console.log('╚══════════════════════════════════════════════════════════╝');
   console.log('');
 
@@ -432,13 +447,24 @@ node -e "
     'guidance=' + s.guidance,
     'runs=' + s.run,
     'total_duration_seconds=' + duration,
+    'total_cost_usd=' + totalCost.toFixed(2),
     'stop_reason=' + (s.stop_reason || 'completed'),
     'prs=' + s.prs.join(' '),
     'issues_filed=' + s.issues_filed.join(' '),
     'issues_closed=' + s.issues_closed.join(' '),
     'cases=' + s.cases.join(' '),
-  ].join('\n');
-  fs.writeFileSync(summaryPath, lines + '\n');
+  ];
+  if (s.run_history && s.run_history.length > 0) {
+    lines.push('');
+    s.run_history.forEach(function(r) {
+      lines.push('run_' + r.run + '_duration=' + r.duration_seconds);
+      lines.push('run_' + r.run + '_cost=' + (r.cost_usd || 0).toFixed(2));
+      lines.push('run_' + r.run + '_tools=' + r.tool_calls);
+      lines.push('run_' + r.run + '_exit=' + r.exit_code);
+      if (r.prs.length > 0) lines.push('run_' + r.run + '_prs=' + r.prs.join(' '));
+    });
+  }
+  fs.writeFileSync(summaryPath, lines.join('\n') + '\n');
   console.log('Summary: ' + summaryPath);
 " "$STATE_FILE"
 
