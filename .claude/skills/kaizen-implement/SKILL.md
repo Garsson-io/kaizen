@@ -43,16 +43,26 @@ For kaizen issues, always pass `--github-issue` to link the case to the existing
 
 **Naming convention for kaizen work:** `YYMMDD-HHMM-kNN-kebab-description` (e.g., `260318-2107-k21-fix-newline-prefix`). The `kNN` segment embeds the kaizen issue number, making it visible in worktree names, branch names, and `git worktree list` output — even if the DB step is somehow skipped.
 
-## Kaizen Reflection Task — Create at Session Start (H6 experiment, kaizen #388)
+## Workflow Task Plan — Create at Session Start (MANDATORY)
 
-**Immediately after the case gate passes**, create a reflection task using TaskCreate:
+**Immediately after the case gate passes**, create the full workflow task list using TaskCreate. These tasks are the contract — they make the entire workflow visible from the start so you can't "forget" review, reflection, or cleanup.
 
-- **Subject:** `Kaizen reflection — identify impediments, patterns, and near-misses`
-- **Description:** `Before declaring done: (1) What impediments did you hit? File each as a kaizen issue. (2) What patterns do these share with past incidents? (3) What almost went wrong but didn't? (4) What did this work reveal about the system? This task cannot be completed with '[] no impediments' unless truly nothing went wrong.`
+**Create ALL of these tasks:**
 
-**Why this exists:** Hypothesis H6 from kaizen #388 — making reflection visible from session start (as a task you own) rather than only firing as an exit gate (imposed on you after the fact). The task primes you to notice impediments *as they happen* rather than trying to recall them at the end. The L2 gate still fires independently as validation.
+1. **Assess architecture/tooling fitness** — Right language? Right runtime? Libraries to reuse? E2E harness exists? (From `/kaizen-evaluate` Phase 3.7 assessment — verify it's still valid)
+2. **Write failing tests (TDD RED)** — Express target invariants as tests. They must fail before implementation.
+3. **Implement (TDD GREEN)** — Make the failing tests pass with the simplest correct change.
+4. **Self-review: run /kaizen-review-pr** — Run the review skill against your own diff. Read `.claude/kaizen/review-criteria.md`. Fix all MUST-FIX and SHOULD-FIX findings.
+5. **Review fix loop** — Re-review after fixes until clean. Max 3 rounds.
+6. **Push + create PR** — Push branch, create PR with `Fixes Garsson-io/kaizen#N` in body.
+7. **Kaizen reflection** — Before declaring done: (1) What impediments did you hit? File each as a kaizen issue. (2) What patterns do these share with past incidents? (3) What almost went wrong but didn't? (4) What did this work reveal about the system? This task cannot be completed with `[] no impediments` unless truly nothing went wrong.
+8. **Merge + cleanup** — Merge PR (squash), remove worktree, delete branch.
 
-**When completing this task:** Use the impediments you collected throughout the session. If you noticed friction, patterns, or near-misses, they should already be noted. Format them as structured KAIZEN_IMPEDIMENTS for the gate.
+**Why this exists:** Agents discover tasks reactively — they forget review, skip reflection, leave worktrees behind. Making the full workflow visible from session start (as tasks you own) prevents this. The self-review task (#4) is particularly critical — it's where the review criteria file gets applied to your own code.
+
+**Adapt the list to the work:** Not every task applies to every case. Docs-only PRs skip TDD. Bug fixes might skip architecture assessment. But the default is ALL tasks — remove explicitly with a reason, don't silently skip.
+
+**When completing the reflection task (#7):** Use the impediments you collected throughout the session. If you noticed friction, patterns, or near-misses, they should already be noted. Format them as structured KAIZEN_IMPEDIMENTS for the gate. The L2 gate still fires independently as validation.
 
 ## Re-examine the Spec
 
