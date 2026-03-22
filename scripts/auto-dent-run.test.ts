@@ -560,200 +560,158 @@ describe('processStreamMessage', () => {
   });
 });
 
-describe('e2e: phase markers through stream pipeline', () => {
-  it('displays phase markers from assistant text blocks to console', () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = makeRunResult();
+// Import the shared harness
+import {
+  msg,
+  runStream,
+  expectPhase,
+  expectNoPhase,
+  expectToolLogged,
+} from './auto-dent-harness.js';
 
-    // Simulate a real stream-json sequence: init → assistant with phase markers → result
-    processStreamMessage(
-      { type: 'system', subtype: 'init', session_id: 'test-e2e-session', model: 'claude-opus-4-6' },
-      result,
-      Date.now(),
-    );
+describe('e2e: full workflow through stream pipeline', () => {
+  it('surfaces all 7 phases from a complete deep-dive run', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#472', title: 'improve hook test DRY' }),
+      msg.tool('Bash', { command: 'gh issue view 472' }),
+      msg.phase('EVALUATE', { verdict: 'proceed', reason: 'clear spec and bounded scope' }),
+      msg.phase('IMPLEMENT', { case: '260323-1200-k472', branch: 'case/260323-1200-k472' }),
+      msg.tool('EnterWorktree', { name: 'k472-hook-test-dry' }),
+      msg.phase('TEST', { result: 'pass', count: '15' }),
+      msg.text('Created PR: https://github.com/Garsson-io/kaizen/pull/500'),
+      msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/500' }),
+      msg.phase('MERGE', { url: 'https://github.com/Garsson-io/kaizen/pull/500', status: 'queued' }),
+      msg.phase('REFLECT', { issues_filed: '1', lessons: 'shared helpers reduce boilerplate' }),
+      msg.done(2.5, 'Done. Closes #472.'),
+    ]);
 
-    processStreamMessage(
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'text', text: 'AUTO_DENT_PHASE: PICK | issue=#472 | title=improve hook test DRY' },
-            { type: 'tool_use', name: 'Bash', input: { command: 'gh issue view 472' } },
-          ],
-        },
-      },
-      result,
-      Date.now(),
-    );
+    expectPhase(capture, 'PICK', '#472', 'improve hook test DRY');
+    expectPhase(capture, 'EVALUATE', 'proceed');
+    expectPhase(capture, 'IMPLEMENT', 'case:260323-1200-k472');
+    expectPhase(capture, 'TEST', 'pass', '15 tests');
+    expectPhase(capture, 'PR', 'pull/500');
+    expectPhase(capture, 'MERGE', 'queued');
+    expectPhase(capture, 'REFLECT', 'issues filed');
 
-    processStreamMessage(
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'text', text: 'AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=clear spec and bounded scope' },
-          ],
-        },
-      },
-      result,
-      Date.now(),
-    );
-
-    processStreamMessage(
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'text', text: 'AUTO_DENT_PHASE: IMPLEMENT | case=260323-1200-k472 | branch=case/260323-1200-k472' },
-            { type: 'tool_use', name: 'EnterWorktree', input: { name: 'k472-hook-test-dry' } },
-          ],
-        },
-      },
-      result,
-      Date.now(),
-    );
-
-    processStreamMessage(
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'text', text: 'AUTO_DENT_PHASE: TEST | result=pass | count=15' },
-          ],
-        },
-      },
-      result,
-      Date.now(),
-    );
-
-    processStreamMessage(
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'text', text: 'Created PR.\nAUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/500' },
-          ],
-        },
-      },
-      result,
-      Date.now(),
-    );
-
-    processStreamMessage(
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'text', text: 'AUTO_DENT_PHASE: MERGE | url=https://github.com/Garsson-io/kaizen/pull/500 | status=queued' },
-          ],
-        },
-      },
-      result,
-      Date.now(),
-    );
-
-    processStreamMessage(
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            { type: 'text', text: 'AUTO_DENT_PHASE: REFLECT | issues_filed=1 | lessons=shared helpers reduce boilerplate' },
-          ],
-        },
-      },
-      result,
-      Date.now(),
-    );
-
-    processStreamMessage(
-      { type: 'result', subtype: 'success', total_cost_usd: 2.5, result: 'Done. Closes #472.' },
-      result,
-      Date.now(),
-    );
-
-    const logCalls = logSpy.mock.calls.map(args => args[0] as string);
-    logSpy.mockRestore();
-
-    // Verify all phase markers were logged
-    expect(logCalls.some(line => line.includes('[PICK]') && line.includes('#472'))).toBe(true);
-    expect(logCalls.some(line => line.includes('[EVALUATE]') && line.includes('proceed'))).toBe(true);
-    expect(logCalls.some(line => line.includes('[IMPLEMENT]') && line.includes('case:260323-1200-k472'))).toBe(true);
-    expect(logCalls.some(line => line.includes('[TEST]') && line.includes('pass'))).toBe(true);
-    expect(logCalls.some(line => line.includes('[PR]') && line.includes('pull/500'))).toBe(true);
-    expect(logCalls.some(line => line.includes('[MERGE]') && line.includes('queued'))).toBe(true);
-    expect(logCalls.some(line => line.includes('[REFLECT]') && line.includes('issues filed'))).toBe(true);
-
-    // Verify tool calls were also counted alongside phase markers
-    expect(result.toolCalls).toBe(2); // Bash + EnterWorktree
-
-    // Verify artifacts were still extracted from text containing markers
-    expect(result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/500');
-    expect(result.issuesClosed).toContain('#472');
-
-    // Verify cost recorded
-    expect(result.cost).toBe(2.5);
+    expect(capture.result.toolCalls).toBe(2);
+    expect(capture.result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/500');
+    expect(capture.result.issuesClosed).toContain('#472');
+    expect(capture.result.cost).toBe(2.5);
   });
 
-  it('handles mixed text with phase markers and regular prose', () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = makeRunResult();
+  it('extracts phase markers embedded in prose blocks', () => {
+    const capture = runStream([
+      msg.proseWithPhase(
+        'Looking at the issue backlog to find the best candidate.',
+        'PICK',
+        { issue: '#300', title: 'fix flaky test' },
+        'This issue has clear reproduction steps and a bounded scope.',
+      ),
+    ]);
 
-    processStreamMessage(
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            {
-              type: 'text',
-              text: [
-                'Looking at the issue backlog to find the best candidate.',
-                '',
-                'AUTO_DENT_PHASE: PICK | issue=#300 | title=fix flaky test',
-                '',
-                'This issue has clear reproduction steps and a bounded scope.',
-              ].join('\n'),
-            },
-          ],
-        },
-      },
-      result,
-      Date.now(),
-    );
-
-    const logCalls = logSpy.mock.calls.map(args => args[0] as string);
-    logSpy.mockRestore();
-
-    // Only the structured marker should produce output, not the prose
-    const phaseLines = logCalls.filter(line => line.includes('[PICK]'));
-    expect(phaseLines).toHaveLength(1);
-    expect(phaseLines[0]).toContain('#300');
-    expect(phaseLines[0]).toContain('fix flaky test');
+    expectPhase(capture, 'PICK', '#300', 'fix flaky test');
   });
 
-  it('does not emit phase markers for text that merely mentions the protocol', () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = makeRunResult();
+  it('rejects mid-line marker mentions (no false positives)', () => {
+    const capture = runStream([
+      msg.text('The harness expects AUTO_DENT_PHASE: PICK markers from the agent.'),
+    ]);
 
-    processStreamMessage(
-      {
-        type: 'assistant',
-        message: {
-          content: [
-            {
-              type: 'text',
-              text: 'The harness expects AUTO_DENT_PHASE: PICK markers from the agent.',
-            },
-          ],
-        },
-      },
-      result,
-      Date.now(),
-    );
+    expectNoPhase(capture, 'PICK');
+  });
 
-    const logCalls = logSpy.mock.calls.map(args => args[0] as string);
-    logSpy.mockRestore();
+  it('handles a run with no phase markers (tools-only)', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.tool('Read', { file_path: '/src/index.ts' }),
+      msg.tool('Grep', { pattern: 'TODO', path: 'src/' }),
+      msg.tool('Edit', { file_path: '/src/index.ts' }),
+      msg.done(1.0),
+    ]);
 
-    const phaseLines = logCalls.filter(line => line.includes('[PICK]'));
-    expect(phaseLines).toHaveLength(0);
+    expect(capture.result.toolCalls).toBe(3);
+    expectToolLogged(capture, 'Read /src/index.ts', 'Grep "TODO"', 'Edit /src/index.ts');
+    for (const phase of ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']) {
+      expectNoPhase(capture, phase);
+    }
+  });
+
+  it('handles EVALUATE skip — agent defers an issue', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#400', title: 'risky migration' }),
+      msg.phase('EVALUATE', { verdict: 'skip', reason: 'too risky for unattended batch' }),
+      msg.phase('PICK', { issue: '#401', title: 'add test helpers' }),
+      msg.phase('EVALUATE', { verdict: 'proceed', reason: 'safe and bounded' }),
+      msg.done(0.8),
+    ]);
+
+    expect(capture.phases.filter(p => p.phase === 'PICK')).toHaveLength(2);
+    expect(capture.phases.filter(p => p.phase === 'EVALUATE')).toHaveLength(2);
+    expectPhase(capture, 'PICK', '#400');
+    expectPhase(capture, 'PICK', '#401');
+  });
+
+  it('handles failed run with error result', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#500', title: 'broken hook' }),
+      msg.phase('IMPLEMENT', { case: '260323-1500-k500' }),
+      msg.phase('TEST', { result: 'fail', count: '3' }),
+      msg.error(1.2, 'Tests failed, could not complete.'),
+    ]);
+
+    expectPhase(capture, 'TEST', 'fail', '3 tests');
+    expect(capture.logLines.some(l => l.includes('error'))).toBe(true);
+    expect(capture.result.cost).toBe(1.2);
+  });
+
+  it('handles AUTO_DENT_STOP alongside phase markers', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#450', title: 'last issue' }),
+      msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/600' }),
+      msg.text('AUTO_DENT_STOP: backlog exhausted — no more matching issues'),
+      msg.done(3.0, 'All done.'),
+    ]);
+
+    expectPhase(capture, 'PICK', '#450');
+    expectPhase(capture, 'PR', 'pull/600');
+    expect(capture.result.stopRequested).toBe(true);
+    expect(capture.result.stopReason).toContain('backlog exhausted');
+  });
+
+  it('handles mixed content blocks (text + tool in same message)', () => {
+    const capture = runStream([
+      msg.mixed(
+        { type: 'text', text: 'AUTO_DENT_PHASE: IMPLEMENT | case=260323-0900-k100' },
+        { type: 'tool_use', name: 'EnterWorktree', input: { name: 'k100-fix' } },
+        { type: 'tool_use', name: 'Bash', input: { command: 'npm test' } },
+      ),
+    ]);
+
+    expectPhase(capture, 'IMPLEMENT', 'case:260323-0900-k100');
+    expectToolLogged(capture, 'EnterWorktree k100-fix', '$ npm test');
+    expect(capture.result.toolCalls).toBe(2);
+  });
+
+  it('tracks artifacts across multiple messages', () => {
+    const { result } = runStream([
+      msg.text('Filed https://github.com/Garsson-io/kaizen/issues/700'),
+      msg.text('Created https://github.com/Garsson-io/kaizen/pull/701'),
+      msg.text('Also created https://github.com/Garsson-io/kaizen/pull/702'),
+      msg.done(2.0, 'Closes #450. Fixes #451.'),
+    ]);
+
+    expect(result.issuesFiled).toContain('https://github.com/Garsson-io/kaizen/issues/700');
+    expect(result.prs).toHaveLength(2);
+    expect(result.issuesClosed).toContain('#450');
+    expect(result.issuesClosed).toContain('#451');
+  });
+
+  it('handles phase with no fields gracefully', () => {
+    const capture = runStream([msg.phase('REFLECT')]);
+    expectPhase(capture, 'REFLECT');
   });
 });
