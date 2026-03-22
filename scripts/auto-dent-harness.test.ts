@@ -10,16 +10,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, readdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { join, resolve, dirname } from 'path';
+import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import {
   replayLog,
   runLiveProbe,
-  expectPhase,
-  phaseCount,
   SMOKE_TEST_PROMPT,
-  type StreamCapture,
 } from './auto-dent-harness.js';
 
 // Resolve repo root (works from worktrees too)
@@ -103,9 +101,6 @@ describe('replay: captured logs', () => {
 
 describe('replay: edge cases', () => {
   it('handles empty log gracefully', () => {
-    // Create a temp empty file
-    const { mkdtempSync, writeFileSync } = require('fs');
-    const { tmpdir } = require('os');
     const dir = mkdtempSync(join(tmpdir(), 'harness-test-'));
     const emptyLog = join(dir, 'empty.log');
     writeFileSync(emptyLog, '');
@@ -117,8 +112,6 @@ describe('replay: edge cases', () => {
   });
 
   it('handles log with non-JSON lines (stderr, metadata)', () => {
-    const { mkdtempSync, writeFileSync } = require('fs');
-    const { tmpdir } = require('os');
     const dir = mkdtempSync(join(tmpdir(), 'harness-test-'));
     const mixedLog = join(dir, 'mixed.log');
     writeFileSync(mixedLog, [
