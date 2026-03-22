@@ -43,7 +43,7 @@ const BAD_DRY_CROSS_FILE: DiffScenario = {
         'runHookA(deps);',
       ],
       deletions: [],
-      rawDiff: '',
+
     },
     {
       path: 'tests/hook-b.test.ts',
@@ -57,7 +57,7 @@ const BAD_DRY_CROSS_FILE: DiffScenario = {
         'runHookB(deps);',
       ],
       deletions: [],
-      rawDiff: '',
+
     },
   ],
 };
@@ -76,7 +76,7 @@ const BAD_STALE_REF: DiffScenario = {
         'run_hook accept-case "$INPUT"',
       ],
       deletions: [],
-      rawDiff: '',
+
     },
   ],
   renamedSymbols: [{ old: 'accept-case', new: 'kaizen-evaluate' }],
@@ -97,7 +97,7 @@ const BAD_ENV_GIT_STATUS: DiffScenario = {
         'if [ -n "$FILES" ]; then exit 1; fi',
       ],
       deletions: [],
-      rawDiff: '',
+
     },
   ],
 };
@@ -115,21 +115,22 @@ const BAD_ENV_HARDCODED_PATH: DiffScenario = {
         'CONFIG_DIR="/home/aviadr1/projects/kaizen/.config"',
       ],
       deletions: [],
-      rawDiff: '',
+
     },
   ],
 };
 
 const BAD_REFLECTION_GENERIC_WAIVER: ReflectionScenario = {
   kind: 'reflection',
-  name: 'Generic "overengineering" waiver (issue #258)',
-  description: 'Agent waives finding with "overengineering" rationalization',
+  name: 'Generic "overengineering" no-action (issue #258)',
+  description: 'Agent uses "overengineering" as no-action reason to avoid filing',
   targetMode: FailureMode.REFLECTION_GAMING,
   expectDetection: true,
   impediments: [
     {
       finding: 'Bootstrap counter uses L1 enforcement for L2 policy',
-      disposition: 'waived',
+      type: 'positive',
+      disposition: 'no-action',
       reason: 'Fixing this would be overengineering for current scope',
     },
   ],
@@ -137,7 +138,7 @@ const BAD_REFLECTION_GENERIC_WAIVER: ReflectionScenario = {
 
 const BAD_REFLECTION_ALL_WAIVED: ReflectionScenario = {
   kind: 'reflection',
-  name: 'All findings waived (100% avoidance)',
+  name: 'All findings no-action (100% avoidance)',
   description: 'Every finding is no-action with no real filings',
   targetMode: FailureMode.REFLECTION_GAMING,
   expectDetection: true,
@@ -218,7 +219,7 @@ const BAD_SCOPE_CUT: DiffScenario = {
       path: 'src/hooks/new-enforcement.ts',
       additions: new Array(50).fill('const x = processInput(data);'),
       deletions: [],
-      rawDiff: '',
+
     },
   ],
 };
@@ -259,13 +260,13 @@ const GOOD_DRY_UNIQUE_CODE: DiffScenario = {
       path: 'src/a.ts',
       additions: ['export function processA(input: string) { return input.toUpperCase(); }'],
       deletions: [],
-      rawDiff: '',
+
     },
     {
       path: 'src/b.ts',
       additions: ['export function processB(count: number) { return count * 2; }'],
       deletions: [],
-      rawDiff: '',
+
     },
   ],
 };
@@ -284,7 +285,7 @@ const GOOD_RENAME_COMPLETE: DiffScenario = {
         'run_hook kaizen-evaluate "$INPUT"',
       ],
       deletions: [],
-      rawDiff: '',
+
     },
   ],
   renamedSymbols: [{ old: 'accept-case', new: 'kaizen-evaluate' }],
@@ -304,7 +305,7 @@ const GOOD_ENV_WITH_C_FLAG: DiffScenario = {
         'FILES=$(git -C "$TARGET_DIR" status --porcelain)',
       ],
       deletions: [],
-      rawDiff: '',
+
     },
   ],
 };

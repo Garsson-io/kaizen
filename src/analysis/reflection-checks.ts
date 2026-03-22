@@ -47,9 +47,11 @@ export function detectReflectionGaming(
     return detections;
   }
 
-  // Check for generic waiver reasons
+  // Check for generic waiver reasons in no-action dispositions
+  // Note: 'waived' is rejected by the pr-kaizen-clear gate (kaizen #198),
+  // so we only check 'no-action' which is the current escape hatch
   for (const imp of impediments) {
-    if (imp.disposition === 'waived' || imp.disposition === 'no-action') {
+    if (imp.disposition === 'no-action') {
       const reason = (imp.reason ?? imp.finding ?? '').toLowerCase();
       for (const blocked of GENERIC_WAIVER_BLOCKLIST) {
         if (reason.includes(blocked)) {
@@ -70,7 +72,7 @@ export function detectReflectionGaming(
     (i) => i.disposition === 'filed' || i.disposition === 'incident' || i.disposition === 'fixed-in-pr',
   );
   const avoided = impediments.filter(
-    (i) => i.disposition === 'waived' || i.disposition === 'no-action',
+    (i) => i.disposition === 'no-action',
   );
 
   if (actionable.length === 0 && avoided.length > 0) {
@@ -155,13 +157,13 @@ export function detectFiledWhenFixable(
   for (const imp of impediments) {
     if (imp.disposition !== 'filed') continue;
 
-    const text = (imp.finding ?? imp.impediment ?? '').toLowerCase();
+    const text = imp.finding.toLowerCase();
     for (const signal of TRIVIAL_FIX_SIGNALS) {
       if (text.includes(signal)) {
         detections.push({
           mode: FailureMode.FILED_WHEN_FIXABLE,
           confidence: 70,
-          location: `impediment: "${truncate(imp.finding ?? imp.impediment ?? '', 50)}"`,
+          location: `impediment: "${truncate(imp.finding, 50)}"`,
           detail: `Filed as issue but description suggests trivial fix ("${signal}"). Could this have been fixed in < 10 min? Fix-first saves context-reload cost.`,
         });
         break;

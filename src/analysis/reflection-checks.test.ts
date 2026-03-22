@@ -11,12 +11,13 @@ import { FailureMode, type Impediment } from './types.js';
 // ============================================================
 
 describe('FM3: detectReflectionGaming', () => {
-  // --- Real incident: issue #280, agent waived finding as "low frequency" ---
-  it('detects generic "low frequency" waiver (issue #280)', () => {
+  // --- Real incident: issue #280, agent used "low frequency" as no-action reason ---
+  it('detects generic "low frequency" no-action reason (issue #280)', () => {
     const impediments: Impediment[] = [
       {
         finding: 'Stacked post-merge gates block subsequent PR workflows',
-        disposition: 'waived',
+        type: 'positive',
+        disposition: 'no-action',
         reason: 'low frequency — only happens when multiple PRs merge in the same session',
       },
     ];
@@ -27,12 +28,13 @@ describe('FM3: detectReflectionGaming', () => {
     expect(detections[0].detail).toContain('low frequency');
   });
 
-  // --- Real incident: issue #258, "overengineering" waiver ---
-  it('detects "overengineering" waiver (issue #258)', () => {
+  // --- Real incident: issue #258, "overengineering" no-action ---
+  it('detects "overengineering" no-action reason (issue #258)', () => {
     const impediments: Impediment[] = [
       {
         finding: 'Bootstrap counter uses L1 enforcement for L2 policy',
-        disposition: 'waived',
+        type: 'positive',
+        disposition: 'no-action',
         reason: 'fixing this would be overengineering for the current scope',
       },
     ];

@@ -27,19 +27,19 @@ describe('FM1: detectDryViolations', () => {
         path: 'tests/test-hook-a.ts',
         additions: [...mockCliBlock, 'runHookA(mockCli);'],
         deletions: [],
-        rawDiff: '',
+
       },
       {
         path: 'tests/test-hook-b.ts',
         additions: [...mockCliBlock, 'runHookB(mockCli);'],
         deletions: [],
-        rawDiff: '',
+
       },
       {
         path: 'tests/test-hook-c.ts',
         additions: [...mockCliBlock, 'runHookC(mockCli);'],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -67,7 +67,7 @@ describe('FM1: detectDryViolations', () => {
           'logResult(data);',
         ],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -83,13 +83,13 @@ describe('FM1: detectDryViolations', () => {
         path: 'src/a.ts',
         additions: ['function handleA() { return 1; }'],
         deletions: [],
-        rawDiff: '',
+
       },
       {
         path: 'src/b.ts',
         additions: ['function handleB() { return 2; }'],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -103,13 +103,13 @@ describe('FM1: detectDryViolations', () => {
         path: 'src/a.ts',
         additions: ['import { foo } from "./lib";', 'foo();'],
         deletions: [],
-        rawDiff: '',
+
       },
       {
         path: 'src/b.ts',
         additions: ['import { foo } from "./lib";', 'foo();'],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -135,7 +135,7 @@ describe('FM6: detectStaleReferences', () => {
           'fi',
         ],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -156,7 +156,7 @@ describe('FM6: detectStaleReferences', () => {
           'const cli = resolveCliKaizen();',
         ],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -177,7 +177,7 @@ describe('FM6: detectStaleReferences', () => {
           'fi',
         ],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -197,7 +197,7 @@ describe('FM6: detectStaleReferences', () => {
           'Renamed kaizen to kaizen-reflect for clarity',
         ],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -227,7 +227,7 @@ describe('FM5: detectEnvAssumptions', () => {
           'fi',
         ],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -248,7 +248,7 @@ describe('FM5: detectEnvAssumptions', () => {
           'REPO_ROOT="/home/aviadr1/projects/nanoclaw"',
         ],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -268,7 +268,7 @@ describe('FM5: detectEnvAssumptions', () => {
           'execSync("git commit --allow-empty -m init", { cwd: tmpDir });',
         ],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -288,7 +288,7 @@ describe('FM5: detectEnvAssumptions', () => {
           'DIRTY=$(git -C "$TARGET_DIR" status --porcelain)',
         ],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -305,7 +305,7 @@ describe('FM5: detectEnvAssumptions', () => {
         path: '.claude/hooks/check-dirty-files.sh',
         additions: ['# DIRTY=$(git status --porcelain)'],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -323,7 +323,7 @@ describe('FM5: detectEnvAssumptions', () => {
           'execSync("git config user.email test@test.com", { cwd: tmpDir });',
         ],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -346,7 +346,7 @@ describe('FM4: detectScopeCutTestability', () => {
         path: 'src/analysis/new-feature.ts',
         additions: new Array(30).fill('const x = 1;'),
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -361,13 +361,13 @@ describe('FM4: detectScopeCutTestability', () => {
         path: 'src/analysis/new-feature.ts',
         additions: new Array(30).fill('const x = 1;'),
         deletions: [],
-        rawDiff: '',
+
       },
       {
         path: 'src/analysis/new-feature.test.ts',
         additions: ['it("works", () => { expect(true).toBe(true); });'],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 
@@ -381,7 +381,7 @@ describe('FM4: detectScopeCutTestability', () => {
         path: 'src/utils.ts',
         additions: ['export const VERSION = "2.0.0";'],
         deletions: [],
-        rawDiff: '',
+
       },
     ];
 

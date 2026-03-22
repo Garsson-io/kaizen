@@ -31,37 +31,26 @@ export function detectMultiPRCycles(
     (a, b) => new Date(a.mergedAt).getTime() - new Date(b.mergedAt).getTime(),
   );
 
-  // Strategy 1: Same files touched in rapid succession
-  const fileClusterDetections = detectFileOverlapClusters(
-    sorted,
-    windowMs,
-    minClusterSize,
-  );
-  detections.push(...fileClusterDetections);
+  const windowHours = windowMs / 3600000;
 
-  // Strategy 2: Same issue referenced
-  const issueClusterDetections = detectIssueReferenceClusters(
-    sorted,
-    windowMs,
-    minClusterSize,
+  detections.push(
+    ...detectFileOverlapClusters(sorted, windowMs, minClusterSize, windowHours),
+    ...detectIssueReferenceClusters(sorted, windowMs, minClusterSize, windowHours),
+    ...detectFixChains(sorted, windowMs, minClusterSize, windowHours),
   );
-  detections.push(...issueClusterDetections);
-
-  // Strategy 3: Rapid-fire fix PRs (any "fix:" PRs within window)
-  const fixChainDetections = detectFixChains(
-    sorted,
-    windowMs,
-    minClusterSize,
-  );
-  detections.push(...fixChainDetections);
 
   return detections;
+}
+
+function formatPRNums(prs: PRRecord[]): string {
+  return prs.map((p) => `#${p.number}`).join(', ');
 }
 
 function detectFileOverlapClusters(
   prs: PRRecord[],
   windowMs: number,
   minSize: number,
+  windowHours: number,
 ): Detection[] {
   const detections: Detection[] = [];
 
@@ -79,14 +68,13 @@ function detectFileOverlapClusters(
     }
 
     if (cluster.length >= minSize) {
-      const prNums = cluster.map((p) => `#${p.number}`).join(', ');
+      const prNums = formatPRNums(cluster);
       detections.push({
         mode: FailureMode.MULTI_PR_FIX_CYCLE,
         confidence: 85,
         location: prNums,
-        detail: `${cluster.length} PRs touch overlapping files within ${windowMs / 3600000}h: ${prNums}. Likely iterating on a broken feature.`,
+        detail: `${cluster.length} PRs touch overlapping files within ${windowHours}h: ${prNums}. Likely iterating on a broken feature.`,
       });
-      // Skip past this cluster to avoid duplicate detections
       i += cluster.length - 2;
       break;
     }
@@ -99,10 +87,10 @@ function detectIssueReferenceClusters(
   prs: PRRecord[],
   windowMs: number,
   minSize: number,
+  windowHours: number,
 ): Detection[] {
   const detections: Detection[] = [];
 
-  // Group PRs by linked issue
   const byIssue = new Map<number, PRRecord[]>();
   for (const pr of prs) {
     for (const issue of pr.linkedIssues) {
@@ -115,16 +103,15 @@ function detectIssueReferenceClusters(
   for (const [issue, group] of byIssue) {
     if (group.length < minSize) continue;
 
-    // Check if they're within the time window
     const first = new Date(group[0].mergedAt).getTime();
     const last = new Date(group[group.length - 1].mergedAt).getTime();
     if (last - first <= windowMs) {
-      const prNums = group.map((p) => `#${p.number}`).join(', ');
+      const prNums = formatPRNums(group);
       detections.push({
         mode: FailureMode.MULTI_PR_FIX_CYCLE,
         confidence: 90,
         location: prNums,
-        detail: `${group.length} PRs all reference issue #${issue} within ${windowMs / 3600000}h: ${prNums}. What test would have caught this before the first PR?`,
+        detail: `${group.length} PRs all reference issue #${issue} within ${windowHours}h: ${prNums}. What test would have caught this before the first PR?`,
       });
     }
   }
@@ -136,6 +123,7 @@ function detectFixChains(
   prs: PRRecord[],
   windowMs: number,
   minSize: number,
+  windowHours: number,
 ): Detection[] {
   const detections: Detection[] = [];
   const fixPRs = prs.filter((p) =>
@@ -144,7 +132,6 @@ function detectFixChains(
 
   if (fixPRs.length < minSize) return detections;
 
-  // Sliding window of rapid fix PRs
   for (let i = 0; i < fixPRs.length; i++) {
     const chain: PRRecord[] = [fixPRs[i]];
     const windowEnd = new Date(fixPRs[i].mergedAt).getTime() + windowMs;
@@ -155,12 +142,12 @@ function detectFixChains(
     }
 
     if (chain.length >= minSize) {
-      const prNums = chain.map((p) => `#${p.number}`).join(', ');
+      const prNums = formatPRNums(chain);
       detections.push({
         mode: FailureMode.MULTI_PR_FIX_CYCLE,
         confidence: 80,
         location: prNums,
-        detail: `${chain.length} "fix:" PRs merged within ${windowMs / 3600000}h: ${prNums}. Ship-then-fix spiral pattern.`,
+        detail: `${chain.length} "fix:" PRs merged within ${windowHours}h: ${prNums}. Ship-then-fix spiral pattern.`,
       });
       i += chain.length - 2;
       break;

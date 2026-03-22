@@ -10,7 +10,7 @@ import {
   type Detection,
   FailureMode,
 } from './types.js';
-import { truncate } from './util.js';
+import { truncate, isTestFile } from './util.js';
 
 /**
  * FM1: Detect duplicated code blocks in added lines.
@@ -126,8 +126,7 @@ export function detectEnvAssumptions(files: DiffFile[]): Detection[] {
   for (const file of files) {
     const isShellOrHook =
       file.path.endsWith('.sh') || file.path.includes('hooks/');
-    const isTest =
-      file.path.includes('test') || file.path.includes('.test.');
+    const isTest = isTestFile(file.path);
 
     for (let i = 0; i < file.additions.length; i++) {
       const line = file.additions[i];
@@ -187,21 +186,12 @@ export function detectScopeCutTestability(files: DiffFile[]): Detection[] {
   const sourceFiles = files.filter(
     (f) =>
       (f.path.endsWith('.ts') || f.path.endsWith('.sh')) &&
-      !f.path.includes('test') &&
-      !f.path.includes('__tests__') &&
-      !f.path.includes('.test.') &&
+      !isTestFile(f.path) &&
       f.additions.length > 20, // only flag significant additions
   );
 
   const testFiles = new Set(
-    files
-      .filter(
-        (f) =>
-          f.path.includes('test') ||
-          f.path.includes('.test.') ||
-          f.path.includes('__tests__'),
-      )
-      .map((f) => f.path),
+    files.filter((f) => isTestFile(f.path)).map((f) => f.path),
   );
 
   for (const src of sourceFiles) {

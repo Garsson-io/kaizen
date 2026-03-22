@@ -160,7 +160,7 @@ This section grows over time. Each entry is a pattern discovered through kaizen 
 
 ## Detector Integration
 
-The `src/analysis/` module provides deterministic detectors for FM-8 through FM-11. These complement the LLM-based review:
+The `src/analysis/` module provides deterministic detectors for FM-8 through FM-12. The code enum uses short names (`FM1:DRY_VIOLATION` etc.) while the docs use sequential FM-N numbering. Both reference the same taxonomy from epic #441. These complement the LLM-based review:
 
 - **Runtime:** `kaizen-warn-code-quality.sh` runs jscpd at PR create time (FM-3/DRY)
 - **Synthetic testing:** `npx vitest run src/analysis/` validates detectors against known-bad and known-good scenarios

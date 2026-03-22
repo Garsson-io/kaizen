@@ -32,12 +32,11 @@ export interface Detection {
   detail: string; // human-readable explanation
 }
 
-/** A unified diff hunk for analysis */
+/** A unified diff hunk for analysis. Callers pre-parse diffs into additions/deletions. */
 export interface DiffFile {
   path: string;
   additions: string[]; // lines added (without + prefix)
   deletions: string[]; // lines removed (without - prefix)
-  rawDiff: string;
 }
 
 /** PR metadata for multi-PR pattern detection */
@@ -52,11 +51,13 @@ export interface PRRecord {
   linkedIssues: number[]; // issue numbers referenced
 }
 
-/** KAIZEN_IMPEDIMENTS entry for reflection quality analysis */
+/**
+ * KAIZEN_IMPEDIMENTS entry for reflection quality analysis.
+ * Note: pr-kaizen-clear.ts has its own Impediment interface with additional fields
+ * (impact_minutes). These should be unified in src/lib/ when the hook is next refactored.
+ */
 export interface Impediment {
   finding: string;
-  /** Alternative key used in KAIZEN_IMPEDIMENTS JSON (same as finding) */
-  impediment?: string;
   type?: 'meta' | 'positive' | 'standard';
   disposition: string;
   reason?: string;
