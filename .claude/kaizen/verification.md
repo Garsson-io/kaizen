@@ -78,3 +78,29 @@ Smoke test checklist:
 4. **If you can't smoke test** — explicitly state what's blocking and ask the user. Don't hand-wave it as "recommended before deploy."
 
 The point of review is to catch gaps. A gap identified but not closed is not a review — it's a TODO list.
+
+## Stall Detection Principle — crashes and stalls need separate handling
+
+Discovered during batch-260321-1108-3ef8 analysis. Stalls and crashes are fundamentally different failure modes requiring separate detection mechanisms. This applies to every autonomous process boundary in the system.
+
+| Property | Crash | Stall |
+|----------|-------|-------|
+| Signal | Exit code, error message, stack trace | Silence — no output, no exit |
+| Self-healing | Failure counters, retry logic, circuit breakers | None without explicit timeout/watchdog |
+| Detection | Automatic (process exits, error handlers fire) | Requires liveness probes or timeout wrappers |
+| Risk | Known and bounded — system handles it | Unbounded — consumes infinite time silently |
+| Analogy | Kubernetes readiness probe fails | Kubernetes liveness probe fails |
+
+**The rule:** Every autonomous process boundary must have BOTH:
+1. **Crash handling** — exit code check, retry with backoff, circuit breaker
+2. **Stall handling** — timeout wrapper, liveness probe, progress watchdog
+
+**Where this applies in kaizen:**
+- **Overnight-dent batch runner:** crash → failure counter → next run; stall → infinite hang → no signal (fixed by timeout wrappers)
+- **Hook execution:** crash → error log → hook skipped; stall → blocks all subsequent hooks (need per-hook timeout)
+- **Test runners in agents:** crash → test failure reported; stall → agent hangs forever (must use `timeout N` wrapper — see kaizen #359)
+- **Container agents:** crash → container restart; hang → needs external watchdog (see kaizen #358)
+
+**The anti-pattern:** Building only crash handling and assuming stalls can't happen. Every I/O boundary (network, filesystem, subprocess) can stall. If you only handle crashes, stalls will be your most expensive failure mode — they waste time silently instead of failing loudly.
+
+**Practical check:** When reviewing any code that spawns subprocesses or makes network calls, ask: "What happens if this never returns?" If the answer is "we wait forever," add a timeout.
