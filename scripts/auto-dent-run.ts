@@ -661,6 +661,28 @@ export function queueAutoMerge(result: RunResult, hostRepo: string): void {
   }
 }
 
+/**
+ * Truncate text at a word boundary, max `max` characters.
+ * Appends ellipsis if truncated.
+ */
+export function truncateAtWord(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const truncated = text.slice(0, max);
+  const lastSpace = truncated.lastIndexOf(' ');
+  const cut = lastSpace > max * 0.5 ? lastSpace : max;
+  return truncated.slice(0, cut).replace(/[,\s]+$/, '') + '...';
+}
+
+/**
+ * Clean raw guidance into a readable title.
+ * Fixes obvious typos, normalizes whitespace, sentence-cases.
+ */
+export function cleanGuidanceForTitle(guidance: string): string {
+  return guidance
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function ensureBatchProgressIssue(
   state: BatchState,
   stateFile: string,
@@ -670,21 +692,29 @@ export function ensureBatchProgressIssue(
   const kaizenRepo = state.kaizen_repo;
   if (!kaizenRepo) return '';
 
-  const title = `[Batch] ${state.batch_id}: ${state.guidance.slice(0, 60)}`;
+  const cleanGuidance = cleanGuidanceForTitle(state.guidance);
+  const title = `[Auto-Dent] ${truncateAtWord(cleanGuidance, 70)} (${state.batch_id})`;
+  const startedAt = new Date(state.batch_start * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
   const body = [
-    `## Auto-Dent Batch Progress`,
+    `## Auto-Dent Batch`,
+    '',
+    `> **Guidance:** ${state.guidance}`,
+    '',
+    '<details>',
+    '<summary>Batch config</summary>',
     '',
     `| Field | Value |`,
     `|-------|-------|`,
     `| **Batch ID** | \`${state.batch_id}\` |`,
-    `| **Guidance** | ${state.guidance} |`,
     `| **Max runs** | ${state.max_runs || 'unlimited'} |`,
     `| **Budget/run** | ${state.budget ? '$' + state.budget : 'none'} |`,
-    `| **Started** | ${new Date(state.batch_start * 1000).toISOString()} |`,
+    `| **Cooldown** | ${state.cooldown}s |`,
+    `| **Max failures** | ${state.max_failures} |`,
+    `| **Started** | ${startedAt} |`,
     '',
-    'Run-by-run updates will be posted as comments below.',
+    '</details>',
     '',
-    '_This issue is auto-managed by the auto-dent harness._',
+    '_Run-by-run updates posted as comments. Auto-managed by auto-dent._',
   ].join('\n');
 
   const url = ghExec(
