@@ -173,6 +173,44 @@ function validateImpediments(items: Impediment[]): string[] {
   return errors;
 }
 
+// ── Fixable-filed detection (kaizen #401) ─────────────────────────────
+
+const FIXABLE_PATTERNS = [
+  'hand-rolled',
+  'fragile',
+  'could use',
+  'should use',
+  'acceptable for now',
+  'could be',
+  'should be',
+  'todo',
+  'hack',
+  'workaround',
+  'hardcoded',
+  'hard-coded',
+  'duplicated',
+  'copy-paste',
+];
+
+/** Detect filed impediments that look fixable in the current PR. Advisory only. */
+export function detectFixableFiledImpediments(items: Impediment[]): string[] {
+  const advisories: string[] = [];
+  for (const item of items) {
+    if (item.disposition !== 'filed') continue;
+    const desc = (item.impediment || item.finding || '').toLowerCase();
+    for (const pattern of FIXABLE_PATTERNS) {
+      if (desc.includes(pattern)) {
+        const original = item.impediment || item.finding || '';
+        advisories.push(
+          `Advisory: "${original}" looks fixable in the current PR (matched "${pattern}"). Consider disposition: "fixed-in-pr" instead of filing for later.`,
+        );
+        break;
+      }
+    }
+  }
+  return advisories;
+}
+
 // ── JSON extraction ──────────────────────────────────────────────────
 
 function extractImpedimentsJson(
@@ -450,6 +488,14 @@ export function processHookInput(
         output.push(
           '\nReflection quality: LOW \u2014 no findings filed or fixed-in-pr. Consider whether real friction is being overlooked.\n',
         );
+      }
+    }
+
+    // Fixable-filed advisory (kaizen #401)
+    if (validatedItems.length > 0) {
+      const fixableAdvisories = detectFixableFiledImpediments(validatedItems);
+      if (fixableAdvisories.length > 0) {
+        output.push(`\n${fixableAdvisories.join('\n')}\n`);
       }
     }
 
