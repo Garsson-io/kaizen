@@ -155,8 +155,9 @@ describe("Part 1: Setup produces correct configuration", () => {
     execSync(`mkdir -p "${join(fakeKaizen, ".claude", "hooks")}"`, { stdio: "pipe" });
     execSync(`cp "${FRAGMENT_PATH}" "${join(fakeKaizen, ".claude", "settings-fragment.json")}"`, { stdio: "pipe" });
 
-    // Copy all kaizen hooks into the fake submodule
+    // Copy all kaizen hooks into the fake submodule (kaizen-* plus TS wrapper shims)
     execSync(`cp ${HOOKS_DIR}/kaizen-*.sh "${join(fakeKaizen, ".claude", "hooks")}/"`, { stdio: "pipe" });
+    execSync(`cp ${HOOKS_DIR}/pr-review-loop-ts.sh ${HOOKS_DIR}/pr-kaizen-clear-ts.sh ${HOOKS_DIR}/kaizen-reflect-ts.sh "${join(fakeKaizen, ".claude", "hooks")}/" 2>/dev/null || true`, { stdio: "pipe" });
     // Copy hook libraries too
     execSync(`cp -r ${HOOKS_DIR}/lib "${join(fakeKaizen, ".claude", "hooks")}/"`, { stdio: "pipe" });
 
