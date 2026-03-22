@@ -19,6 +19,7 @@ import { spawn, execSync } from 'child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
+import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable } from './auto-dent-score.js';
 
 // Types
 
@@ -622,12 +623,15 @@ export function updateBatchProgressIssue(
   if (!m) return;
   const issueNum = m[1];
 
-  const status = exitCode === 0 ? 'success' : `failed (exit ${exitCode})`;
+  const score = scoreRunResult(result, exitCode, duration);
+  const status = score.success ? 'pass' : exitCode === 0 ? 'no-pr' : `fail (exit ${exitCode})`;
   const mins = Math.floor(duration / 60);
   const secs = duration % 60;
 
   const lines = [
     `### Run #${runNum} — ${status}`,
+    '',
+    `> ${formatRunScoreLine(score)}`,
     '',
     `| Metric | Value |`,
     `|--------|-------|`,
@@ -674,23 +678,18 @@ export function closeBatchProgressIssue(
   const hours = Math.floor(elapsed / 3600);
   const mins = Math.floor((elapsed % 3600) / 60);
 
-  const totalCost = (state.run_history || []).reduce(
-    (sum, r) => sum + (r.cost_usd || 0),
-    0,
-  );
+  const batchScore = scoreBatch(state.run_history || []);
 
   const summary = [
     `### Batch Complete`,
     '',
-    `| Metric | Value |`,
-    `|--------|-------|`,
-    `| **Runs** | ${state.run} |`,
-    `| **Duration** | ${hours}h ${mins}m |`,
-    `| **Total cost** | $${totalCost.toFixed(2)} |`,
+    formatBatchScoreTable(batchScore),
+    `| **Wall time** | ${hours}h ${mins}m |`,
     `| **Stop reason** | ${state.stop_reason || 'completed'} |`,
-    `| **PRs** | ${state.prs.length > 0 ? state.prs.join(', ') : 'none'} |`,
-    `| **Issues filed** | ${state.issues_filed.length > 0 ? state.issues_filed.join(', ') : 'none'} |`,
-    `| **Issues closed** | ${state.issues_closed.length > 0 ? state.issues_closed.join(' ') : 'none'} |`,
+    '',
+    `**PRs:** ${state.prs.length > 0 ? state.prs.join(', ') : 'none'}`,
+    `**Issues filed:** ${state.issues_filed.length > 0 ? state.issues_filed.join(', ') : 'none'}`,
+    `**Issues closed:** ${state.issues_closed.length > 0 ? state.issues_closed.join(' ') : 'none'}`,
   ].join('\n');
 
   ghExec(
