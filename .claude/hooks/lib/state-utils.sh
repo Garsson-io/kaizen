@@ -20,6 +20,31 @@ _STATE_UTILS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUDIT_DIR="${AUDIT_DIR:-$(cd "$_STATE_UTILS_DIR/../.." && pwd)/kaizen/audit}"
 AUDIT_LOG="${AUDIT_LOG:-${AUDIT_DIR}/no-action.log}"
 
+# Prune stale state files (kaizen #452 — hook performance optimization).
+# Called once per list operation to keep the state directory small.
+# Deletes files older than MAX_STATE_AGE, preventing unbounded growth
+# that caused 97-file iteration and 400-520ms hook times.
+_PRUNED_THIS_INVOCATION=false
+prune_stale_state_files() {
+  # Only prune once per shell invocation to avoid redundant work
+  if [ "$_PRUNED_THIS_INVOCATION" = true ]; then
+    return 0
+  fi
+  _PRUNED_THIS_INVOCATION=true
+  [ -d "$STATE_DIR" ] || return 0
+  local now
+  now=$(date +%s)
+  for f in "$STATE_DIR"/*; do
+    [ -f "$f" ] || continue
+    local mtime
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "0")
+    local age=$(( now - mtime ))
+    if [ "$age" -gt "$MAX_STATE_AGE" ]; then
+      rm -f "$f" 2>/dev/null
+    fi
+  done
+}
+
 # Convert a PR URL to a safe state file key.
 # e.g. https://github.com/Garsson-io/kaizen/pull/33 → Garsson-io_kaizen_33
 #
@@ -49,18 +74,13 @@ pr_url_to_state_key() {
 #   fi
 is_state_for_current_worktree() {
   local f="$1"
-  local now="${2:-$(date +%s)}"
+  local now="${2:-}"  # unused after kaizen #452 (stale files pruned upfront)
   local current_branch="${3:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")}"
 
   [ -f "$f" ] || return 1
 
-  # Skip stale state files
-  local mtime
-  mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "0")
-  local age=$(( now - mtime ))
-  if [ "$age" -gt "$MAX_STATE_AGE" ]; then
-    return 1
-  fi
+  # Staleness check removed — prune_stale_state_files() handles this upfront (kaizen #452).
+  # This eliminates per-file stat calls during iteration.
 
   # Skip state files from other branches (prevents cross-worktree contamination)
   local file_branch
@@ -86,11 +106,11 @@ is_state_for_current_worktree() {
 #     # process $f
 #   done < <(list_state_files_for_current_worktree)
 list_state_files_for_current_worktree() {
-  local now current_branch
-  now=$(date +%s)
+  prune_stale_state_files  # kaizen #452: remove stale files before iterating
+  local current_branch
   current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
   for f in "$STATE_DIR"/*; do
-    if is_state_for_current_worktree "$f" "$now" "$current_branch"; then
+    if is_state_for_current_worktree "$f" "" "$current_branch"; then
       echo "$f"
     fi
   done
@@ -116,21 +136,36 @@ find_needs_review_state() {
       local pr_url round
       pr_url=$(grep -E '^PR_URL=' "$f" 2>/dev/null | head -1 | cut -d= -f2-)
       round=$(grep -E '^ROUND=' "$f" 2>/dev/null | head -1 | cut -d= -f2-)
-      # Auto-clear state for merged/closed PRs (kaizen #85, Fix A)
-      # One API call per stale state encounter — after cleanup, no further calls.
-      if [ -n "$pr_url" ]; then
-        local pr_state
-        pr_state=$(gh pr view "$pr_url" --json state --jq .state 2>/dev/null)
-        if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
-          rm -f "$f" 2>/dev/null
-          continue
-        fi
-      fi
+      # Auto-clear for merged/closed PRs moved to cleanup_merged_review_states()
+      # (kaizen #452 — was calling gh pr view on every PreToolUse, adding ~400ms)
       echo "$pr_url|$round"
       return 0
     fi
   done < <(list_state_files_for_current_worktree)
   return 1
+}
+
+# Cleanup merged/closed PR review states (kaizen #452).
+# Moved from find_needs_review_state hot path — was calling gh pr view
+# on every PreToolUse invocation (~400ms per HTTP call).
+# Call this from SessionStart or Stop hooks, not on every tool call.
+cleanup_merged_review_states() {
+  for f in "$STATE_DIR"/*; do
+    [ -f "$f" ] || continue
+    local status
+    status=$(grep -E '^STATUS=' "$f" 2>/dev/null | head -1 | cut -d= -f2-)
+    if [ "$status" = "needs_review" ]; then
+      local pr_url
+      pr_url=$(grep -E '^PR_URL=' "$f" 2>/dev/null | head -1 | cut -d= -f2-)
+      if [ -n "$pr_url" ]; then
+        local pr_state
+        pr_state=$(gh pr view "$pr_url" --json state --jq .state 2>/dev/null)
+        if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
+          rm -f "$f" 2>/dev/null
+        fi
+      fi
+    fi
+  done
 }
 
 # Find the first state file with a given STATUS for the current branch.
@@ -229,17 +264,10 @@ clear_all_states_with_status() {
 
 # List state files checking staleness but NOT branch.
 list_state_files_any_branch() {
-  local now
-  now=$(date +%s)
+  prune_stale_state_files  # kaizen #452: remove stale files before iterating
   for f in "$STATE_DIR"/*; do
     [ -f "$f" ] || continue
-    # Skip stale state files
-    local mtime
-    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "0")
-    local age=$(( now - mtime ))
-    if [ "$age" -gt "$MAX_STATE_AGE" ]; then
-      continue
-    fi
+    # Staleness already handled by prune_stale_state_files (kaizen #452)
     # Skip files without BRANCH (legacy)
     local file_branch
     file_branch=$(grep -E '^BRANCH=' "$f" 2>/dev/null | head -1 | cut -d= -f2-)
@@ -384,16 +412,8 @@ is_reflection_done() {
   local key
   key=$(pr_url_to_state_key "$pr_url")
   local marker="$STATE_DIR/kaizen-done-$key"
+  # Stale markers are pruned by prune_stale_state_files (kaizen #452)
   [ -f "$marker" ] || return 1
-  # Check staleness
-  local now mtime age
-  now=$(date +%s)
-  mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null || echo "0")
-  age=$(( now - mtime ))
-  if [ "$age" -gt "$MAX_STATE_AGE" ]; then
-    rm -f "$marker" 2>/dev/null
-    return 1
-  fi
   return 0
 }
 

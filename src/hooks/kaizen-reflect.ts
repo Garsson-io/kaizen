@@ -147,6 +147,28 @@ function getPrTitle(prUrl: string): string {
   }
 }
 
+/** Run the hook timing sentinel and return its report (empty if all hooks are fast). */
+function runHookTimingSentinel(changedFiles: string): string {
+  try {
+    // Convert newline-separated changed files to comma-separated for sentinel
+    const csvFiles = changedFiles.split('\n').filter(Boolean).join(',');
+    const sentinelPath = join(
+      new URL('../../.claude/hooks/lib/hook-timing-sentinel.sh', import.meta.url).pathname,
+    );
+    const result = execSync(
+      `bash -c 'source "${sentinelPath}" && run_hook_benchmark "${csvFiles}"'`,
+      {
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 30000, // 30s max for benchmarking all hooks
+      },
+    ).trim();
+    return result;
+  } catch {
+    return ''; // Sentinel is advisory — never block on failure
+  }
+}
+
 /** Build the transcript instruction line for subagent prompts. */
 function transcriptInstruction(transcriptPath?: string): string {
   if (transcriptPath) {
@@ -348,8 +370,14 @@ export function processHookInput(
 
   const transcriptPath = input.transcript_path;
 
+  // Run hook timing sentinel (kaizen #453 — speed as a kaizen dimension)
+  const timingReport = runHookTimingSentinel(changed);
+  const timingSection = timingReport
+    ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${timingReport}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`
+    : '';
+
   if (isCreate) {
-    return generateCreateReflection(prUrl, branch, changed, transcriptPath);
+    return generateCreateReflection(prUrl, branch, changed, transcriptPath) + timingSection;
   }
 
   // Merge path
@@ -371,7 +399,7 @@ export function processHookInput(
     sendTelegramIpc(notifyText);
   }
 
-  return output;
+  return output + timingSection;
 }
 
 /** Main entry point — read stdin, process, write stdout. */
