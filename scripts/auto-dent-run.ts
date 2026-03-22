@@ -357,6 +357,78 @@ export function checkMergeStatus(prUrl: string): MergeStatus {
   }
 }
 
+export type SweepAction = 'updated' | 'already_current' | 'merged' | 'closed' | 'failed';
+
+export interface SweepResult {
+  pr: string;
+  action: SweepAction;
+}
+
+/**
+ * Sweep all batch PRs: update stale branches so auto-merge can proceed.
+ *
+ * When strict branch protection is enabled and main advances (from a
+ * previous run's PR merging), subsequent PRs fall BEHIND and auto-merge
+ * stalls silently. This sweep detects BEHIND branches and calls the
+ * GitHub API to update them.
+ *
+ * See issue #368, hypothesis H1/H4.
+ */
+export function sweepBatchPRs(allPrUrls: string[]): SweepResult[] {
+  const results: SweepResult[] = [];
+
+  for (const prUrl of allPrUrls) {
+    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+    if (!m) continue;
+
+    const [, repo, prNum] = m;
+
+    try {
+      const json = ghExec(
+        `gh pr view ${prNum} --repo ${repo} --json state,mergeStateStatus,autoMergeRequest`,
+      );
+      if (!json) {
+        results.push({ pr: prUrl, action: 'failed' });
+        continue;
+      }
+
+      const data = JSON.parse(json);
+
+      if (data.state === 'MERGED') {
+        results.push({ pr: prUrl, action: 'merged' });
+        continue;
+      }
+      if (data.state === 'CLOSED') {
+        results.push({ pr: prUrl, action: 'closed' });
+        continue;
+      }
+
+      // Only update if branch is behind and auto-merge is queued
+      if (
+        data.mergeStateStatus === 'BEHIND' &&
+        data.autoMergeRequest
+      ) {
+        const updateOut = ghExec(
+          `gh api repos/${repo}/pulls/${prNum}/update-branch -X PUT -f expected_head_sha="" 2>&1`,
+        );
+        if (updateOut && !updateOut.includes('error')) {
+          console.log(`  [sweep] updated stale branch for PR #${prNum}`);
+          results.push({ pr: prUrl, action: 'updated' });
+        } else {
+          console.log(`  [sweep] failed to update branch for PR #${prNum}`);
+          results.push({ pr: prUrl, action: 'failed' });
+        }
+      } else {
+        results.push({ pr: prUrl, action: 'already_current' });
+      }
+    } catch {
+      results.push({ pr: prUrl, action: 'failed' });
+    }
+  }
+
+  return results;
+}
+
 export function labelArtifacts(result: RunResult, label: string): void {
   for (const pr of result.prs) {
     const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
@@ -801,6 +873,20 @@ async function main(): Promise<void> {
     console.log(`  [merge-tracking] ${pr}: ${status}`);
     if (state.experiment) {
       appendFileSync(logFile, `merge_status=${pr} ${status}\n`);
+    }
+  }
+
+  // Sweep ALL batch PRs (not just this run's) to update stale branches.
+  // When main advances from a merged PR, earlier PRs fall BEHIND and
+  // auto-merge stalls. This unblocks them. (Issue #368, H1/H4)
+  const allBatchPRs = [...new Set([...state.prs, ...result.prs])];
+  if (allBatchPRs.length > 0) {
+    const sweepResults = sweepBatchPRs(allBatchPRs);
+    const updated = sweepResults.filter((r) => r.action === 'updated');
+    if (updated.length > 0) {
+      console.log(
+        `  [sweep] updated ${updated.length} stale PR branch(es)`,
+      );
     }
   }
 
