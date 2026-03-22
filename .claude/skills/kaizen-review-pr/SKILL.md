@@ -111,3 +111,22 @@ When this review (or a kaizen reflection) discovers a new failure pattern:
 4. The next review automatically picks up the new pattern
 
 This is how the review system learns. Every incident that slips through becomes a check that prevents the next one.
+
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Gather context | Load review criteria from `.claude/kaizen/review-criteria.md`, read full diff, read linked issues, scan failure modes (FM-1 through FM-12) |
+| 2 | Review (subagents or sequential) | Small PR (≤50 lines): sequential. Medium (50-300): 2-3 agents. Large (>300): 5 parallel agents (DRY, testability, tooling, security, horizons). Each finding needs file, line, criterion, confidence 0-100. |
+| 3 | Filter and classify findings | Drop confidence < 75. MUST-FIX ≥ 90 (blocks merge). SHOULD-FIX 75-89 (fix before merge). |
+| 4 | Fix loop (max 3 rounds) | Fix each finding, commit+push, re-review from task #1. Repeat until clean or 3 rounds. If still unclean at round 3: escalate to human. |
+
+**Hooks enforcing review:**
+- `pr-review-loop.sh` — state machine tracking review rounds
+- `enforce-pr-review.sh` — blocks non-review commands during review
+- `enforce-pr-review-tools.sh` — blocks edits during review phase
+- `enforce-pr-review-stop.sh` — blocks stop with pending review
+
+**What comes next:** After review is clean → merge (squash). After merge → `/kaizen-reflect` is mandatory (stop hook blocks without it). See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

@@ -83,3 +83,15 @@ After presenting the summary, suggest actions:
 - For stale branches: "These are merged and can be cleaned up with `git branch -d <name>`"
 - For orphaned worktrees (no corresponding PR): flag them
 - For open PRs: note if the local branch is behind remote
+
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Scan worktrees and PRs | `git worktree list`, `gh pr list`, per-worktree status and unpushed commits |
+| 2 | Scan branches and cases | Unmerged branches, merged-not-deleted, active cases with issue links |
+| 3 | Present summary | Concise table with recommendations (commit dirty, delete merged, pick up existing work) |
+
+**What comes next:** Pick up existing work, or `/kaizen-pick` for new work. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

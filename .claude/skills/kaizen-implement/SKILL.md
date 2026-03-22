@@ -52,17 +52,22 @@ For kaizen issues, always pass `--github-issue` to link the case to the existing
 1. **Assess architecture/tooling fitness** — Right language? Right runtime? Libraries to reuse? E2E harness exists? (From `/kaizen-evaluate` Phase 3.7 assessment — verify it's still valid)
 2. **Write failing tests (TDD RED)** — Express target invariants as tests. They must fail before implementation.
 3. **Implement (TDD GREEN)** — Make the failing tests pass with the simplest correct change.
-4. **Self-review: run /kaizen-review-pr** — Run the review skill against your own diff. Read `.claude/kaizen/review-criteria.md`. Fix all MUST-FIX and SHOULD-FIX findings.
-5. **Review fix loop** — Re-review after fixes until clean. Max 3 rounds.
-6. **Push + create PR** — Push branch, create PR with `Fixes Garsson-io/kaizen#N` in body.
-7. **Kaizen reflection (subagent)** — The kaizen-bg subagent handles reflection in the background. It reads the full session transcript (uncompressed — it sees what you may have forgotten), scans for signals (user corrections, failed tool calls, hook denials, retries), and files incidents/issues independently. You launch it via the Agent tool when the hook fires, then wait for its results to clear the gate. Note any impediments you noticed during the session to pass along.
-8. **Merge + cleanup** — Merge PR (squash), remove worktree, delete branch.
+4. **Self-review: invoke `/kaizen-review-pr`** — This invokes the review skill which has its own 4-task workflow: (1) load review criteria from `.claude/kaizen/review-criteria.md`, read full diff, scan failure modes FM-1 through FM-12; (2) review using subagents — small PR (≤50 lines): sequential, medium (50-300): 2-3 agents, large (>300): 5 parallel agents covering DRY, testability, tooling, security, and horizons; (3) filter findings — drop confidence < 75, classify MUST-FIX (≥90) and SHOULD-FIX (75-89); (4) fix loop below.
+5. **Review fix loop** — Fix all MUST-FIX and SHOULD-FIX findings from the review. Commit + push fixes. Re-run `/kaizen-review-pr` from step (1). Repeat until clean or max 3 rounds. If still unclean at round 3: escalate to human with `gh pr comment`. Hooks `pr-review-loop.sh` and `enforce-pr-review-stop.sh` enforce this — you cannot stop with pending review.
+6. **Commit + push** — Stage changes, commit with descriptive message, push to remote branch.
+7. **Create PR** — `gh pr create` with `Fixes Garsson-io/kaizen#N` in body (cross-repo prefix required for auto-close). Add `status:has-pr` label to kaizen issue. Add PR link as comment.
+8. **Wait for CI** — Run `gh pr checks` to watch for CI failures. If checks fail, read the failure, fix, commit, push, and re-check. Do not merge with failing checks.
+9. **Merge (squash)** — Verify no merge conflicts. Squash merge. Verify merge completed cleanly (check PR state is "merged"). If conflicts: merge main into branch, resolve, push, re-check CI, then merge.
+10. **Kaizen reflection (subagent)** — The kaizen-bg subagent handles reflection in the background. It reads the full session transcript (uncompressed — it sees what you may have forgotten), scans for signals (user corrections, failed tool calls, hook denials, retries), and files incidents/issues independently. You launch it via the Agent tool when the hook fires, then wait for its results to clear the gate. Note any impediments you noticed during the session to pass along.
+11. **Cleanup** — Remove worktree (`ExitWorktree remove`). Verify branch deleted on remote. Verify issue closed (auto-closed by `Fixes` keyword, or close manually). If sub-issues remain from `/kaizen-plan`, loop back to task #1 for next sub-issue.
 
 **Why this exists:** Agents discover tasks reactively — they forget review, skip reflection, leave worktrees behind. Making the full workflow visible from session start (as tasks you own) prevents this. The self-review task (#4) is particularly critical — it's where the review criteria file gets applied to your own code.
 
-**Adapt the list to the work:** Not every task applies to every case. Docs-only PRs skip TDD. Bug fixes might skip architecture assessment. But the default is ALL tasks — remove explicitly with a reason, don't silently skip.
+**Adapt the list to the work:** Not every task applies to every case. Docs-only PRs skip TDD (#2-3). Bug fixes might skip architecture assessment (#1). But the default is ALL tasks — delete explicitly with a reason, don't silently skip.
 
-**When completing the reflection task (#7):** The kaizen-bg subagent does the heavy lifting — reading the transcript, searching for duplicates, filing incidents. Your job is to (1) launch it with context when the hook fires, (2) note any impediments you noticed during the session, and (3) wait for its results to clear the gate with a KAIZEN_IMPEDIMENTS declaration. The subagent is an independent auditor — it may find impediments you didn't report.
+**When completing the reflection task (#10):** The kaizen-bg subagent does the heavy lifting — reading the transcript, searching for duplicates, filing incidents. Your job is to (1) launch it with context when the hook fires, (2) note any impediments you noticed during the session, and (3) wait for its results to clear the gate with a KAIZEN_IMPEDIMENTS declaration. The subagent is an independent auditor — it may find impediments you didn't report.
+
+**Hooks that fire during implementation:** See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for the full hook map.
 
 ## Re-examine the Spec
 

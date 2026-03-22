@@ -188,3 +188,17 @@ Ask the user which fixes to apply. Apply only what's confirmed.
 - **Fixing labels without reading the issue** — Don't blindly apply keyword-based suggestions. Read the issue body to confirm the labels are correct.
 - **Counting without reasoning** — "5 unlabeled issues" is less useful than "5 unlabeled issues, 3 of which are hook-related and should be `area/hooks, level-2`"
 - **Running the audit but not acting** — The report is not the goal. The goal is the fixes. If the user doesn't confirm actions, at minimum file the findings as an incident on #237.
+
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Gather all open issues | Fetch up to 200 issues with labels, assignees, timestamps |
+| 2 | Audit labels and epics | Find unlabeled issues, suggest labels. Check epic health: staleness, sub-issues, premature closures. |
+| 3 | Audit incidents and density | Count incidents per issue. Flag high-incident issues without active work. |
+| 4 | Audit horizons and staleness | Issues per horizon, concentration. Issues untouched 30+ days. |
+| 5 | Produce report and offer fixes | Structured report. Offer to apply labels, reopen epics, file meta-incidents. |
+
+**What comes next:** Findings feed into `/kaizen-gaps` for deeper analysis, or directly into `/kaizen-pick` for issue selection. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

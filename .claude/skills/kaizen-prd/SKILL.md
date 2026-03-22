@@ -371,12 +371,26 @@ A spec will be subjected to the five-step algorithm when implementation begins (
 
 The best spec is one where an implementor can read it, delete 40% of it, and still have a clear direction. If deleting any section makes the spec incoherent, the spec is too tightly coupled.
 
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Understand initiative | Ask about problem space, solution space, constraints, threat models |
+| 2 | Iterative discovery | State understanding, ask pointed questions, repeat until model stable |
+| 3 | Write spec document | 9-section spec in `docs/{name}-spec.md` or issue body |
+| 4 | Create GitHub issue | Epic anchor issue with spec (issue-only) or pointer to spec file |
+| 5 | Create docs-only PR | Branch + spec file + commit + PR (skip for issue-only PRDs) |
+
 ## What Comes Next
 
 After the spec is merged and reviewed:
 - Use **`/kaizen-evaluate`** to evaluate whether to proceed, gather incidents, and find low-hanging fruit.
 - Use **`/kaizen-implement`** to bridge spec to code — re-examine against current reality, apply the five-step algorithm, and execute incrementally.
 - Use **`/kaizen-plan`** when implementation is too big for one PR — break into independent, sequenced PRs with dependency graph and sub-issues.
+
+See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
 
 ### Recursive Kaizen
 

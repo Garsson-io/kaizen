@@ -318,6 +318,27 @@ When you decide to split work into multiple PRs:
 - When splitting into sub-issues, follow the Multi-PR Follow-Through Discipline — file all sub-issues upfront and continue working through them
 - Lessons learned feed back into future accept-case evaluations
 
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Collision detection | Check GitHub labels, case DB, open PRs for existing work on this issue |
+| 2 | Gather incidents | Search git log, PRs, review comments for concrete occurrences with dates and impact |
+| 3 | Assess scope and architecture | Check implementation fitness, testability, library reuse, E2E harness |
+| 4 | Critique spec (if exists) | Validate problem statement against incidents, check proportionality, identify gaps |
+| 5 | Ask the admin | Present 3 TLDRs (problem, current state, proposed change), ask targeted questions |
+| 6 | Record lessons and decide | Capture admin input, record calibration, output GO/NO-GO with scope |
+
+**What comes next:**
+- **GO → single PR:** `/kaizen-implement` — will create case, worktree, and 11 implementation tasks
+- **GO → multi-PR:** `/kaizen-plan` first (breaks into sub-issues), then `/kaizen-implement` per sub-issue
+- **Needs spec:** `/kaizen-prd` first, then back to evaluate
+- **NO-GO:** Close with reason
+
+See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
+
 ## Recursive Kaizen
 
 This skill is part of the improvement system. Apply it to itself: after evaluating a case, reflect on whether the evaluation process helped or got in the way. Did Phase 1 (gather incidents) reveal the right things? Did Phase 3 (low-hanging fruit) find something the spec missed? Was Phase 5 (ask the admin) worth the admin's time? These observations, captured in kaizen reflections, are the raw material for improving this skill. See `/kaizen-implement` for the fuller picture of recursive kaizen.

@@ -192,3 +192,16 @@ When the user selects an issue:
 ```
 
 This skill is the entry point to the dev work skill chain. It replaces ad-hoc browsing of the kaizen backlog with structured, collision-aware selection.
+
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Gather landscape | Fetch open issues, claimed issues, active cases, worktrees, open PRs, recent closures |
+| 2 | Filter and score | Remove unavailable issues, map domains, score by momentum/diversity/priority |
+| 3 | Present recommendations | Show top 3-5 issues with reasoning, first step, estimated scope |
+| 4 | Hand off to evaluate | User selects → invoke `/kaizen-evaluate` with issue context |
+
+**What comes next:** `/kaizen-evaluate` — expects issue number. Will do collision detection, evidence gathering, admin approval. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

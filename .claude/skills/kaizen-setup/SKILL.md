@@ -95,6 +95,19 @@ npx tsx src/kaizen-setup.ts --step verify --method <plugin|submodule>
 
 Outputs structured check results. Report to the user which checks passed and which failed. Suggest fixes for failures.
 
+## Workflow Tasks
+
+Create these tasks at skill start using TaskCreate:
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Detect installation method | Plugin, submodule, or fresh install |
+| 2 | Create config and policies | `kaizen.config.json` + `.claude/kaizen/policies-local.md` |
+| 3 | Configure hooks/symlinks | Merge hook registrations (submodule) or skip (plugin). Symlinks for skills/agents. |
+| 4 | Inject CLAUDE.md and verify | Add kaizen section to CLAUDE.md. Run verification script. |
+
+**What comes next:** Nothing — standalone setup. Run `/kaizen-update` to pull future updates. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
+
 ## Idempotency
 
 This setup is idempotent — running it again updates config and re-applies settings without duplicating entries. Safe to re-run after `/kaizen-update`.
