@@ -23,6 +23,7 @@ require_file() {
 
 PASS=0
 FAIL=0
+FAILED_NAMES=()
 
 assert_eq() {
   local test_name="$1"
@@ -35,6 +36,7 @@ assert_eq() {
     echo "  FAIL: $test_name"
     echo "    expected: '$expected'"
     echo "    actual:   '$actual'"
+    FAILED_NAMES+=("$test_name")
     ((FAIL++))
   fi
 }
@@ -50,6 +52,7 @@ assert_contains() {
     echo "  FAIL: $test_name"
     echo "    expected to contain: '$needle'"
     echo "    actual: '$haystack'"
+    FAILED_NAMES+=("$test_name")
     ((FAIL++))
   fi
 }
@@ -64,6 +67,7 @@ assert_not_contains() {
   else
     echo "  FAIL: $test_name"
     echo "    expected NOT to contain: '$needle'"
+    FAILED_NAMES+=("$test_name")
     ((FAIL++))
   fi
 }
@@ -78,6 +82,7 @@ assert_ok() {
   else
     echo "  FAIL: $test_name"
     echo "    expected success, got failure"
+    FAILED_NAMES+=("$test_name")
     ((FAIL++))
   fi
 }
@@ -89,6 +94,7 @@ assert_fails() {
   if "$@" 2>/dev/null; then
     echo "  FAIL: $test_name"
     echo "    expected failure, got success"
+    FAILED_NAMES+=("$test_name")
     ((FAIL++))
   else
     echo "  PASS: $test_name"
@@ -356,6 +362,10 @@ print_results() {
   echo "================================"
   echo "Results: $PASS passed, $FAIL failed"
   if [ "$FAIL" -gt 0 ]; then
+    echo "FAILED TESTS:"
+    for name in "${FAILED_NAMES[@]}"; do
+      echo "  - $name"
+    done
     exit 1
   fi
   echo "All tests passed."
