@@ -49,6 +49,23 @@ export interface BatchState {
   progress_issue?: string;
   test_task?: boolean;
   experiment?: boolean;
+  last_heartbeat?: number;
+  max_run_seconds?: number;
+  run_history?: RunMetrics[];
+}
+
+export interface RunMetrics {
+  run: number;
+  start_epoch: number;
+  duration_seconds: number;
+  exit_code: number;
+  cost_usd: number;
+  tool_calls: number;
+  prs: string[];
+  issues_filed: string[];
+  issues_closed: string[];
+  cases: string[];
+  stop_requested: boolean;
 }
 
 export interface RunResult {
@@ -88,7 +105,115 @@ function getRepoRoot(): string {
 
 // Prompt building
 
+/**
+ * Resolve the prompts directory. Checks repo-root/prompts first,
+ * then falls back to the directory relative to this script.
+ */
+export function resolvePromptsDir(): string {
+  try {
+    const gitCommonDir = execSync(
+      'git rev-parse --path-format=absolute --git-common-dir',
+      { encoding: 'utf8' },
+    ).trim();
+    const repoRoot = gitCommonDir.replace(/\/\.git$/, '');
+    const dir = resolve(repoRoot, 'prompts');
+    if (existsSync(dir)) return dir;
+  } catch {
+    // Fall through
+  }
+  return resolve(dirname(new URL(import.meta.url).pathname), '..', 'prompts');
+}
+
+/**
+ * Build template variables from batch state and run number.
+ * These are substituted into prompt templates via {{variable}} syntax.
+ */
+export function buildTemplateVars(
+  state: BatchState,
+  runNum: number,
+): Record<string, string> {
+  const runTag = `${state.batch_id}/run-${runNum}`;
+  const hostRepo = state.host_repo || state.kaizen_repo || 'unknown';
+  const now = new Date();
+
+  return {
+    guidance: state.guidance,
+    run_tag: runTag,
+    run_tag_slug: runTag.replace(/\//g, '-'),
+    run_num: String(runNum),
+    run_context: `${runNum}${state.max_runs > 0 ? ` of ${state.max_runs}` : ''}`,
+    host_repo: hostRepo,
+    kaizen_repo: state.kaizen_repo || 'unknown',
+    batch_id: state.batch_id,
+    timestamp: now.toISOString().replace(/[-:T]/g, '').slice(0, 14),
+    iso_now: now.toISOString(),
+    issues_closed: state.issues_closed.join(' '),
+    prs: state.prs.join(' '),
+  };
+}
+
+/**
+ * Render a Mustache-lite template string.
+ *
+ * Supports:
+ *   {{variable}}          — simple substitution
+ *   {{#variable}}...{{/variable}} — conditional section (rendered if variable is non-empty)
+ */
+export function renderTemplate(
+  template: string,
+  vars: Record<string, string>,
+): string {
+  // Process conditional sections: {{#key}}...{{/key}}
+  let result = template.replace(
+    /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g,
+    (_match, key: string, body: string) => {
+      return vars[key] ? body : '';
+    },
+  );
+
+  // Substitute variables: {{key}}
+  result = result.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => {
+    return vars[key] ?? `{{${key}}}`;
+  });
+
+  // Clean up blank lines left by removed conditional sections
+  result = result.replace(/\n{3,}/g, '\n\n');
+
+  return result.trim();
+}
+
+/**
+ * Load a prompt template from the prompts directory.
+ * Returns null if the file doesn't exist (caller should fall back to inline).
+ */
+export function loadPromptTemplate(templateName: string): string | null {
+  const promptsDir = resolvePromptsDir();
+  const templatePath = resolve(promptsDir, templateName);
+  try {
+    return readFileSync(templatePath, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 export function buildPrompt(state: BatchState, runNum: number): string {
+  const vars = buildTemplateVars(state, runNum);
+
+  // Try to load from external template file
+  const templateFile = state.test_task
+    ? 'test-task.md'
+    : 'deep-dive-default.md';
+  const template = loadPromptTemplate(templateFile);
+
+  if (template) {
+    return renderTemplate(template, vars);
+  }
+
+  // Inline fallback (kept for backward compatibility)
+  return buildPromptInline(state, runNum);
+}
+
+function buildPromptInline(state: BatchState, runNum: number): string {
   const runTag = `${state.batch_id}/run-${runNum}`;
   const kaizenRepo = state.kaizen_repo || 'unknown';
   const hostRepo = state.host_repo || kaizenRepo;
@@ -335,10 +460,15 @@ export function checkStopSignal(text: string, result: RunResult): void {
   }
 }
 
+export interface StreamContext {
+  resultReceivedAt?: number;
+}
+
 export function processStreamMessage(
   msg: Record<string, any>,
   result: RunResult,
   runStart: number,
+  ctx?: StreamContext,
 ): void {
   const elapsed = formatElapsed(runStart);
 
@@ -372,6 +502,9 @@ export function processStreamMessage(
       break;
 
     case 'result':
+      if (ctx) {
+        ctx.resultReceivedAt = Date.now();
+      }
       if (msg.total_cost_usd) {
         result.cost = msg.total_cost_usd;
       }
@@ -422,6 +555,78 @@ export function checkMergeStatus(prUrl: string): MergeStatus {
   } catch {
     return 'unknown';
   }
+}
+
+export type SweepAction = 'updated' | 'already_current' | 'merged' | 'closed' | 'failed';
+
+export interface SweepResult {
+  pr: string;
+  action: SweepAction;
+}
+
+/**
+ * Sweep all batch PRs: update stale branches so auto-merge can proceed.
+ *
+ * When strict branch protection is enabled and main advances (from a
+ * previous run's PR merging), subsequent PRs fall BEHIND and auto-merge
+ * stalls silently. This sweep detects BEHIND branches and calls the
+ * GitHub API to update them.
+ *
+ * See issue #368, hypothesis H1/H4.
+ */
+export function sweepBatchPRs(allPrUrls: string[]): SweepResult[] {
+  const results: SweepResult[] = [];
+
+  for (const prUrl of allPrUrls) {
+    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+    if (!m) continue;
+
+    const [, repo, prNum] = m;
+
+    try {
+      const json = ghExec(
+        `gh pr view ${prNum} --repo ${repo} --json state,mergeStateStatus,autoMergeRequest`,
+      );
+      if (!json) {
+        results.push({ pr: prUrl, action: 'failed' });
+        continue;
+      }
+
+      const data = JSON.parse(json);
+
+      if (data.state === 'MERGED') {
+        results.push({ pr: prUrl, action: 'merged' });
+        continue;
+      }
+      if (data.state === 'CLOSED') {
+        results.push({ pr: prUrl, action: 'closed' });
+        continue;
+      }
+
+      // Only update if branch is behind and auto-merge is queued
+      if (
+        data.mergeStateStatus === 'BEHIND' &&
+        data.autoMergeRequest
+      ) {
+        const updateOut = ghExec(
+          `gh api repos/${repo}/pulls/${prNum}/update-branch -X PUT -f expected_head_sha="" 2>&1`,
+        );
+        if (updateOut && !updateOut.includes('error')) {
+          console.log(`  [sweep] updated stale branch for PR #${prNum}`);
+          results.push({ pr: prUrl, action: 'updated' });
+        } else {
+          console.log(`  [sweep] failed to update branch for PR #${prNum}`);
+          results.push({ pr: prUrl, action: 'failed' });
+        }
+      } else {
+        results.push({ pr: prUrl, action: 'already_current' });
+      }
+    } catch {
+      results.push({ pr: prUrl, action: 'failed' });
+    }
+  }
+
+  return results;
 }
 
 export function labelArtifacts(result: RunResult, label: string): void {
@@ -561,6 +766,11 @@ export function closeBatchProgressIssue(
   const hours = Math.floor(elapsed / 3600);
   const mins = Math.floor((elapsed % 3600) / 60);
 
+  const totalCost = (state.run_history || []).reduce(
+    (sum, r) => sum + (r.cost_usd || 0),
+    0,
+  );
+
   const summary = [
     `### Batch Complete`,
     '',
@@ -568,6 +778,7 @@ export function closeBatchProgressIssue(
     `|--------|-------|`,
     `| **Runs** | ${state.run} |`,
     `| **Duration** | ${hours}h ${mins}m |`,
+    `| **Total cost** | $${totalCost.toFixed(2)} |`,
     `| **Stop reason** | ${state.stop_reason || 'completed'} |`,
     `| **PRs** | ${state.prs.length > 0 ? state.prs.join(', ') : 'none'} |`,
     `| **Issues filed** | ${state.issues_filed.length > 0 ? state.issues_filed.join(', ') : 'none'} |`,
@@ -583,11 +794,32 @@ export function closeBatchProgressIssue(
 
 // Execute Claude
 
+// Default max wall time per run: 45 minutes
+const DEFAULT_MAX_RUN_SECONDS = 45 * 60;
+// Grace period after result before SIGTERM
+const POST_RESULT_GRACE_MS = 60_000;
+// Grace period after SIGTERM before SIGKILL
+const SIGKILL_GRACE_MS = 10_000;
+
+export function formatHeartbeat(
+  runStart: number,
+  toolCalls: number,
+  ctx: StreamContext,
+): string {
+  const elapsed = formatElapsed(runStart);
+  if (ctx.resultReceivedAt) {
+    const ago = Math.floor((Date.now() - ctx.resultReceivedAt) / 1000);
+    return `  [${elapsed}]  ... waiting for process exit (result received ${ago}s ago, ${toolCalls} tool calls)`;
+  }
+  return `  [${elapsed}]  ... working (${toolCalls} tool calls so far)`;
+}
+
 async function runClaude(
   state: BatchState,
   runNum: number,
   logFile: string,
   repoRoot: string,
+  stateFile: string,
 ): Promise<{ exitCode: number; duration: number; result: RunResult }> {
   const result: RunResult = {
     prs: [],
@@ -598,6 +830,8 @@ async function runClaude(
     toolCalls: 0,
     stopRequested: false,
   };
+
+  const ctx: StreamContext = {};
 
   const prompt = buildPrompt(state, runNum);
   const nonce = `${new Date()
@@ -620,22 +854,67 @@ async function runClaude(
   }
 
   const runStart = Date.now();
+  const maxRunMs =
+    (state.max_run_seconds || DEFAULT_MAX_RUN_SECONDS) * 1000;
 
   return new Promise((resolve) => {
+    let processExited = false;
+
     const child = spawn('claude', args, {
       cwd: repoRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    const cleanup = (...timers: (ReturnType<typeof setInterval> | ReturnType<typeof setTimeout> | undefined)[]) => {
+      for (const t of timers) {
+        if (t) clearTimeout(t as any);
+      }
+    };
+
+    // Heartbeat: distinguish done-vs-stuck (#355)
     let lastOutputTime = Date.now();
     const heartbeatInterval = setInterval(() => {
       const silence = Math.floor((Date.now() - lastOutputTime) / 1000);
       if (silence >= 55) {
-        console.log(
-          `  [${formatElapsed(runStart)}]  ... working (${result.toolCalls} tool calls so far)`,
-        );
+        console.log(formatHeartbeat(runStart, result.toolCalls, ctx));
       }
     }, 60_000);
+
+    // Liveness marker: update state.json periodically (#357)
+    const livenessInterval = setInterval(() => {
+      try {
+        const s = readState(stateFile);
+        s.last_heartbeat = Math.floor(Date.now() / 1000);
+        writeState(stateFile, s);
+      } catch {
+        // State file write failure is non-fatal
+      }
+    }, 60_000);
+
+    // Global wall-time timeout (#354)
+    const wallTimer = setTimeout(() => {
+      if (!processExited) {
+        console.log(
+          `  [watchdog] run exceeded ${maxRunMs / 1000}s wall time — SIGTERM`,
+        );
+        appendFileSync(
+          logFile,
+          `\n[watchdog] wall-time timeout (${maxRunMs / 1000}s) — sending SIGTERM\n`,
+        );
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          if (!processExited) {
+            console.log(
+              `  [watchdog] process still alive after SIGTERM+${SIGKILL_GRACE_MS / 1000}s — SIGKILL`,
+            );
+            child.kill('SIGKILL');
+          }
+        }, SIGKILL_GRACE_MS);
+      }
+    }, maxRunMs);
+
+    // Post-result kill timer (#354)
+    let postResultTimer: ReturnType<typeof setTimeout> | undefined;
 
     const rl = createInterface({ input: child.stdout! });
     rl.on('line', (line) => {
@@ -644,7 +923,31 @@ async function runClaude(
 
       try {
         const msg = JSON.parse(line);
-        processStreamMessage(msg, result, runStart);
+        processStreamMessage(msg, result, runStart, ctx);
+
+        // Start post-result kill timer when result is received
+        if (msg.type === 'result' && !postResultTimer) {
+          postResultTimer = setTimeout(() => {
+            if (!processExited) {
+              console.log(
+                `  [watchdog] result received but process alive after ${POST_RESULT_GRACE_MS / 1000}s — SIGTERM`,
+              );
+              appendFileSync(
+                logFile,
+                `\n[watchdog] post-result timeout (${POST_RESULT_GRACE_MS / 1000}s) — sending SIGTERM\n`,
+              );
+              child.kill('SIGTERM');
+              setTimeout(() => {
+                if (!processExited) {
+                  console.log(
+                    `  [watchdog] process still alive after SIGTERM+${SIGKILL_GRACE_MS / 1000}s — SIGKILL`,
+                  );
+                  child.kill('SIGKILL');
+                }
+              }, SIGKILL_GRACE_MS);
+            }
+          }, POST_RESULT_GRACE_MS);
+        }
       } catch {
         // Non-JSON line
       }
@@ -655,13 +958,15 @@ async function runClaude(
     });
 
     child.on('close', (code) => {
-      clearInterval(heartbeatInterval);
+      processExited = true;
+      cleanup(heartbeatInterval, livenessInterval, wallTimer, postResultTimer);
       const duration = Math.floor((Date.now() - runStart) / 1000);
       resolve({ exitCode: code ?? 1, duration, result });
     });
 
     child.on('error', (err) => {
-      clearInterval(heartbeatInterval);
+      processExited = true;
+      cleanup(heartbeatInterval, livenessInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
       resolve({ exitCode: 1, duration, result });
@@ -727,11 +1032,13 @@ async function main(): Promise<void> {
   console.log(`Tag: ${runTag}`);
   console.log(`Log: ${logFile}`);
 
+  const runStartEpoch = Math.floor(Date.now() / 1000);
   const { exitCode, duration, result } = await runClaude(
     state,
     runNum,
     logFile,
     repoRoot,
+    stateFile,
   );
 
   // Append metadata to log
@@ -769,6 +1076,20 @@ async function main(): Promise<void> {
     }
   }
 
+  // Sweep ALL batch PRs (not just this run's) to update stale branches.
+  // When main advances from a merged PR, earlier PRs fall BEHIND and
+  // auto-merge stalls. This unblocks them. (Issue #368, H1/H4)
+  const allBatchPRs = [...new Set([...state.prs, ...result.prs])];
+  if (allBatchPRs.length > 0) {
+    const sweepResults = sweepBatchPRs(allBatchPRs);
+    const updated = sweepResults.filter((r) => r.action === 'updated');
+    if (updated.length > 0) {
+      console.log(
+        `  [sweep] updated ${updated.length} stale PR branch(es)`,
+      );
+    }
+  }
+
   updateBatchProgressIssue(
     progressIssue,
     state.kaizen_repo,
@@ -781,6 +1102,23 @@ async function main(): Promise<void> {
   // Update state
   const freshState = readState(stateFile);
   freshState.run = runNum;
+
+  // Append per-run metrics for batch observability
+  const runMetrics: RunMetrics = {
+    run: runNum,
+    start_epoch: runStartEpoch,
+    duration_seconds: duration,
+    exit_code: exitCode,
+    cost_usd: result.cost,
+    tool_calls: result.toolCalls,
+    prs: result.prs,
+    issues_filed: result.issuesFiled,
+    issues_closed: result.issuesClosed,
+    cases: result.cases,
+    stop_requested: result.stopRequested,
+  };
+  if (!freshState.run_history) freshState.run_history = [];
+  freshState.run_history.push(runMetrics);
 
   for (const pr of result.prs) {
     if (!freshState.prs.includes(pr)) freshState.prs.push(pr);

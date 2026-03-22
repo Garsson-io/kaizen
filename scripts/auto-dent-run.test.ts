@@ -1,15 +1,23 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildPrompt,
+  buildTemplateVars,
+  renderTemplate,
+  loadPromptTemplate,
   extractArtifacts,
   parsePhaseMarkers,
   formatPhaseMarker,
   checkStopSignal,
   formatToolUse,
+  formatHeartbeat,
   processStreamMessage,
   type BatchState,
   type RunResult,
   type PhaseMarker,
+  type RunMetrics,
+  type StreamContext,
+  type SweepAction,
+  type SweepResult,
 } from './auto-dent-run.js';
 
 function makeBatchState(overrides: Partial<BatchState> = {}): BatchState {
@@ -131,6 +139,158 @@ describe('buildPrompt', () => {
     const state = makeBatchState({ test_task: false });
     const prompt = buildPrompt(state, 1);
     expect(prompt).toContain('/kaizen-deep-dive');
+  });
+});
+
+describe('buildTemplateVars', () => {
+  it('builds all expected template variables', () => {
+    const state = makeBatchState({
+      issues_closed: ['#100', '#200'],
+      prs: ['https://github.com/Garsson-io/kaizen/pull/450'],
+    });
+    const vars = buildTemplateVars(state, 3);
+
+    expect(vars.guidance).toBe('improve hooks reliability');
+    expect(vars.run_tag).toBe('batch-260322-2100-a1b2/run-3');
+    expect(vars.run_tag_slug).toBe('batch-260322-2100-a1b2-run-3');
+    expect(vars.run_num).toBe('3');
+    expect(vars.run_context).toBe('3 of 5');
+    expect(vars.host_repo).toBe('Garsson-io/kaizen');
+    expect(vars.batch_id).toBe('batch-260322-2100-a1b2');
+    expect(vars.issues_closed).toBe('#100 #200');
+    expect(vars.prs).toContain('pull/450');
+  });
+
+  it('omits max runs from run_context when unlimited', () => {
+    const state = makeBatchState({ max_runs: 0 });
+    const vars = buildTemplateVars(state, 2);
+    expect(vars.run_context).toBe('2');
+  });
+
+  it('uses kaizen_repo as fallback for host_repo', () => {
+    const state = makeBatchState({ host_repo: '', kaizen_repo: 'Garsson-io/kaizen' });
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.host_repo).toBe('Garsson-io/kaizen');
+  });
+
+  it('produces empty strings for empty arrays', () => {
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.issues_closed).toBe('');
+    expect(vars.prs).toBe('');
+  });
+});
+
+describe('renderTemplate', () => {
+  it('substitutes simple variables', () => {
+    const result = renderTemplate('Hello {{name}}!', { name: 'world' });
+    expect(result).toBe('Hello world!');
+  });
+
+  it('preserves unresolved variables', () => {
+    const result = renderTemplate('{{known}} and {{unknown}}', { known: 'yes' });
+    expect(result).toBe('yes and {{unknown}}');
+  });
+
+  it('renders conditional sections when variable is non-empty', () => {
+    const result = renderTemplate(
+      'before\n{{#items}}Items: {{items}}{{/items}}\nafter',
+      { items: 'a b c' },
+    );
+    expect(result).toContain('Items: a b c');
+    expect(result).toContain('before');
+    expect(result).toContain('after');
+  });
+
+  it('removes conditional sections when variable is empty', () => {
+    const result = renderTemplate(
+      'before\n{{#items}}Items: {{items}}{{/items}}\nafter',
+      { items: '' },
+    );
+    expect(result).not.toContain('Items:');
+    expect(result).toContain('before');
+    expect(result).toContain('after');
+  });
+
+  it('handles multiple conditional sections', () => {
+    const template = '{{#a}}A={{a}}{{/a}} {{#b}}B={{b}}{{/b}}';
+    const result = renderTemplate(template, { a: '1', b: '' });
+    expect(result).toContain('A=1');
+    expect(result).not.toContain('B=');
+  });
+
+  it('collapses excessive blank lines from removed sections', () => {
+    const template = 'top\n\n{{#empty}}removed{{/empty}}\n\n\nbottom';
+    const result = renderTemplate(template, { empty: '' });
+    expect(result).not.toMatch(/\n{3,}/);
+  });
+
+  it('trims leading and trailing whitespace', () => {
+    const result = renderTemplate('\n  Hello  \n', {});
+    expect(result).toBe('Hello');
+  });
+});
+
+describe('loadPromptTemplate', () => {
+  it('loads existing template file', () => {
+    const template = loadPromptTemplate('deep-dive-default.md');
+    expect(template).not.toBeNull();
+    expect(template).toContain('{{guidance}}');
+    expect(template).toContain('{{run_tag}}');
+    expect(template).toContain('AUTO_DENT_STOP');
+  });
+
+  it('loads test-task template file', () => {
+    const template = loadPromptTemplate('test-task.md');
+    expect(template).not.toBeNull();
+    expect(template).toContain('synthetic test task');
+    expect(template).toContain('{{run_tag}}');
+  });
+
+  it('returns null for non-existent template', () => {
+    const template = loadPromptTemplate('nonexistent-template.md');
+    expect(template).toBeNull();
+  });
+});
+
+describe('buildPrompt with templates', () => {
+  it('uses template file for deep-dive prompt', () => {
+    const state = makeBatchState();
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).toContain('/kaizen-deep-dive');
+    expect(prompt).toContain('improve hooks reliability');
+    expect(prompt).toContain('batch-260322-2100-a1b2/run-1');
+    expect(prompt).toContain('AUTO_DENT_STOP');
+    // Should not contain raw template variables
+    expect(prompt).not.toContain('{{guidance}}');
+    expect(prompt).not.toContain('{{run_tag}}');
+  });
+
+  it('uses template file for test-task prompt', () => {
+    const state = makeBatchState({ test_task: true });
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).toContain('synthetic test task');
+    expect(prompt).toContain('test-probe');
+    expect(prompt).not.toContain('{{run_tag}}');
+  });
+
+  it('renders conditional sections based on state', () => {
+    const stateWithHistory = makeBatchState({
+      issues_closed: ['#100', '#200'],
+      prs: ['https://github.com/Garsson-io/kaizen/pull/450'],
+    });
+    const prompt = buildPrompt(stateWithHistory, 2);
+    expect(prompt).toContain('#100 #200');
+    expect(prompt).toContain('pull/450');
+    expect(prompt).toContain('do not rework');
+    expect(prompt).toContain('avoid overlapping');
+  });
+
+  it('omits conditional sections when state arrays are empty', () => {
+    const state = makeBatchState();
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).not.toContain('do not rework');
+    expect(prompt).not.toContain('avoid overlapping');
   });
 });
 
@@ -557,6 +717,174 @@ describe('processStreamMessage', () => {
       Date.now(),
     );
     expect(result.toolCalls).toBe(0);
+  });
+
+  it('sets resultReceivedAt in context when result message arrives', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const before = Date.now();
+    processStreamMessage(
+      {
+        type: 'result',
+        subtype: 'success',
+        total_cost_usd: 1.0,
+        result: 'All done',
+      },
+      result,
+      Date.now(),
+      ctx,
+    );
+    expect(ctx.resultReceivedAt).toBeDefined();
+    expect(ctx.resultReceivedAt!).toBeGreaterThanOrEqual(before);
+  });
+
+  it('does not set resultReceivedAt for non-result messages', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', name: 'Read', input: { file_path: '/a.ts' } },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+      ctx,
+    );
+    expect(ctx.resultReceivedAt).toBeUndefined();
+  });
+
+  it('works without ctx parameter (backwards compatible)', () => {
+    const result = makeRunResult();
+    processStreamMessage(
+      {
+        type: 'result',
+        subtype: 'success',
+        total_cost_usd: 1.0,
+        result: 'All done',
+      },
+      result,
+      Date.now(),
+    );
+    expect(result.cost).toBe(1.0);
+  });
+});
+
+describe('formatHeartbeat', () => {
+  it('shows working message when no result received', () => {
+    const ctx: StreamContext = {};
+    const msg = formatHeartbeat(Date.now() - 120_000, 42, ctx);
+    expect(msg).toContain('working');
+    expect(msg).toContain('42 tool calls so far');
+  });
+
+  it('shows waiting-for-exit message after result received', () => {
+    const ctx: StreamContext = { resultReceivedAt: Date.now() - 30_000 };
+    const msg = formatHeartbeat(Date.now() - 120_000, 90, ctx);
+    expect(msg).toContain('waiting for process exit');
+    expect(msg).toContain('result received');
+    expect(msg).toContain('90 tool calls');
+    expect(msg).toMatch(/\d+s ago/);
+  });
+
+  it('includes elapsed time from run start', () => {
+    const ctx: StreamContext = {};
+    const msg = formatHeartbeat(Date.now() - 180_000, 10, ctx);
+    expect(msg).toMatch(/\[3m00s\]/);
+  });
+
+  it('shows accurate seconds-ago for recent result', () => {
+    const ctx: StreamContext = { resultReceivedAt: Date.now() - 5_000 };
+    const msg = formatHeartbeat(Date.now() - 60_000, 50, ctx);
+    expect(msg).toContain('5s ago');
+  });
+});
+
+describe('RunMetrics type', () => {
+  it('can construct a valid RunMetrics object', () => {
+    const metrics: RunMetrics = {
+      run: 1,
+      start_epoch: 1742680800,
+      duration_seconds: 300,
+      exit_code: 0,
+      cost_usd: 2.5,
+      tool_calls: 42,
+      prs: ['https://github.com/Garsson-io/kaizen/pull/500'],
+      issues_filed: [],
+      issues_closed: ['#451'],
+      cases: ['260322-1200-k451-hook-fix'],
+      stop_requested: false,
+    };
+    expect(metrics.run).toBe(1);
+    expect(metrics.cost_usd).toBe(2.5);
+    expect(metrics.prs).toHaveLength(1);
+  });
+
+  it('supports run_history in BatchState', () => {
+    const state = makeBatchState({
+      run_history: [
+        {
+          run: 1,
+          start_epoch: 1742680800,
+          duration_seconds: 300,
+          exit_code: 0,
+          cost_usd: 2.5,
+          tool_calls: 42,
+          prs: [],
+          issues_filed: [],
+          issues_closed: [],
+          cases: [],
+          stop_requested: false,
+        },
+        {
+          run: 2,
+          start_epoch: 1742681400,
+          duration_seconds: 450,
+          exit_code: 0,
+          cost_usd: 3.1,
+          tool_calls: 60,
+          prs: ['https://github.com/Garsson-io/kaizen/pull/501'],
+          issues_filed: [],
+          issues_closed: ['#452'],
+          cases: [],
+          stop_requested: false,
+        },
+      ],
+    });
+    expect(state.run_history).toHaveLength(2);
+    const totalCost = state.run_history!.reduce(
+      (sum, r) => sum + r.cost_usd,
+      0,
+    );
+    expect(totalCost).toBeCloseTo(5.6);
+  });
+
+  it('defaults run_history to undefined when not set', () => {
+    const state = makeBatchState();
+    expect(state.run_history).toBeUndefined();
+  });
+});
+
+describe('SweepResult type', () => {
+  it('can construct valid SweepResult objects for each action', () => {
+    const actions: SweepAction[] = [
+      'updated',
+      'already_current',
+      'merged',
+      'closed',
+      'failed',
+    ];
+    for (const action of actions) {
+      const result: SweepResult = {
+        pr: 'https://github.com/Garsson-io/kaizen/pull/500',
+        action,
+      };
+      expect(result.pr).toContain('pull/500');
+      expect(result.action).toBe(action);
+    }
   });
 });
 

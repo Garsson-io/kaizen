@@ -46,6 +46,7 @@ MAX_RUNS=0              # 0 = unlimited
 COOLDOWN=30             # seconds between runs
 BUDGET=""               # per-run budget
 MAX_FAILURES=3          # consecutive failures before stopping
+MAX_RUN_SECONDS=2700    # 45 minutes per run (wall-time timeout)
 DRY_RUN=false
 TEST_TASK=false
 EXPERIMENT=false
@@ -64,6 +65,7 @@ Options:
   --cooldown N         Seconds between runs (default: 30)
   --budget N.NN        Max USD per run (passed to claude --max-budget-usd)
   --max-failures N     Stop after N consecutive failures (default: 3)
+  --max-run-seconds N  Wall-time timeout per run in seconds (default: 2700 = 45min)
   --dry-run            Show what would run without executing
   --test-task          Use synthetic fast task instead of /kaizen-deep-dive
   --experiment         Enable extra pipeline diagnostics
@@ -106,6 +108,7 @@ while [[ $# -gt 0 ]]; do
     --cooldown) COOLDOWN="$2"; shift 2 ;;
     --budget) BUDGET="$2"; shift 2 ;;
     --max-failures) MAX_FAILURES="$2"; shift 2 ;;
+    --max-run-seconds) MAX_RUN_SECONDS="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     --test-task) TEST_TASK=true; shift ;;
     --experiment) EXPERIMENT=true; shift ;;
@@ -167,7 +170,9 @@ cat > "$STATE_FILE" << STATEOF
   "last_worktree": "",
   "progress_issue": "",
   "test_task": $TEST_TASK,
-  "experiment": $EXPERIMENT
+  "experiment": $EXPERIMENT,
+  "max_run_seconds": $MAX_RUN_SECONDS,
+  "last_heartbeat": 0
 }
 STATEOF
 
@@ -226,6 +231,7 @@ echo "║ Guidance:  $GUIDANCE"
 echo "║ Max runs:  $([ "$MAX_RUNS" -eq 0 ] && echo "unlimited" || echo "$MAX_RUNS")"
 echo "║ Cooldown:  ${COOLDOWN}s"
 [[ -n "$BUDGET" ]] && echo "║ Budget/run: \$$BUDGET"
+echo "║ Run timeout: ${MAX_RUN_SECONDS}s ($(( MAX_RUN_SECONDS / 60 ))min)"
 [[ "$TEST_TASK" = true ]] && echo "║ Mode:      TEST TASK (synthetic pipeline probe)"
 [[ "$EXPERIMENT" = true ]] && echo "║ Experiment: enabled (extra diagnostics)"
 echo "║ Max consecutive failures: $MAX_FAILURES"
@@ -391,6 +397,8 @@ node -e "
   console.log('║ Runs:      ' + s.run);
   console.log('║ Duration:  ' + hours + 'h ' + mins + 'm');
   console.log('║ Stop:      ' + (s.stop_reason || 'completed'));
+  const totalCost = (s.run_history || []).reduce((sum, r) => sum + (r.cost_usd || 0), 0);
+  if (totalCost > 0) console.log('║ Cost:      $' + totalCost.toFixed(2));
   console.log('╠══════════════════════════════════════════════════════════╣');
 
   if (s.prs.length > 0) {
@@ -409,6 +417,21 @@ node -e "
     console.log('║ Issues closed: ' + s.issues_closed.join(' '));
   }
 
+  if (s.run_history && s.run_history.length > 0) {
+    console.log('╠══════════════════════════════════════════════════════════╣');
+    console.log('║ Per-run metrics:');
+    s.run_history.forEach(function(r) {
+      var rm = Math.floor(r.duration_seconds / 60);
+      var rs = r.duration_seconds % 60;
+      var status = r.exit_code === 0 ? 'ok' : 'exit ' + r.exit_code;
+      var prCount = r.prs.length;
+      var line = '║   #' + r.run + ': ' + rm + 'm' + rs + 's $' + (r.cost_usd || 0).toFixed(2) + ' ' + r.tool_calls + 'tc ' + status;
+      if (prCount > 0) line += ' ' + prCount + 'PR';
+      if (r.stop_requested) line += ' STOP';
+      console.log(line);
+    });
+  }
+
   console.log('╚══════════════════════════════════════════════════════════╝');
   console.log('');
 
@@ -424,13 +447,24 @@ node -e "
     'guidance=' + s.guidance,
     'runs=' + s.run,
     'total_duration_seconds=' + duration,
+    'total_cost_usd=' + totalCost.toFixed(2),
     'stop_reason=' + (s.stop_reason || 'completed'),
     'prs=' + s.prs.join(' '),
     'issues_filed=' + s.issues_filed.join(' '),
     'issues_closed=' + s.issues_closed.join(' '),
     'cases=' + s.cases.join(' '),
-  ].join('\n');
-  fs.writeFileSync(summaryPath, lines + '\n');
+  ];
+  if (s.run_history && s.run_history.length > 0) {
+    lines.push('');
+    s.run_history.forEach(function(r) {
+      lines.push('run_' + r.run + '_duration=' + r.duration_seconds);
+      lines.push('run_' + r.run + '_cost=' + (r.cost_usd || 0).toFixed(2));
+      lines.push('run_' + r.run + '_tools=' + r.tool_calls);
+      lines.push('run_' + r.run + '_exit=' + r.exit_code);
+      if (r.prs.length > 0) lines.push('run_' + r.run + '_prs=' + r.prs.join(' '));
+    });
+  }
+  fs.writeFileSync(summaryPath, lines.join('\n') + '\n');
   console.log('Summary: ' + summaryPath);
 " "$STATE_FILE"
 

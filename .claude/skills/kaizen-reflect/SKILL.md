@@ -202,6 +202,7 @@ Every kaizen reflection must include meta-reflection on the kaizen system itself
 **Answer these in order. Each builds on the previous:**
 
 1. **What specific friction did you encounter?** Name the exact moment, not the category. Example: "gap analysis recommended #107 as low-hanging fruit but it was already fixed in PR #210."
+1b. **What near-misses occurred?** A near-miss is when you almost took a wrong action but something stopped you — a user correction, a test failure, a second look, or a gut check. Name the moment and what prevented the mistake. Near-misses reveal the same process gaps as actual incidents; they just didn't cause damage *this time*. If nothing stopped the mistake and it went through, that's friction (step 1), not a near-miss.
 2. **Is there a generalized version of this friction?** Extract the principle — does this apply beyond this session? Example: "any system that recommends action from cached state is vulnerable to cache-code drift."
 3. **What should change in the kaizen system?** Which skill, hook, or process should be different? Example: "gap-analysis should verify recommendations against git log before declaring low-hanging fruit."
 4. **What should change in how kaizen improves itself?** Is the reflection mechanism catching this type of friction? Example: "meta-findings are filed individually but never aggregated — the same friction recurs across sessions without anyone connecting the dots."
@@ -311,7 +312,7 @@ Create these tasks at skill start using TaskCreate:
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | Reflect on work | Review what happened: impediments, friction, what slowed down, what went well |
+| 1 | Reflect on work | Review what happened: impediments, friction, near-misses, what slowed down, what went well |
 | 2 | Identify impediments | Be specific (exact moment, not category). Group by shared root cause if 2+ share one. |
 | 3 | Classify enforcement level | L1 (instructions), L2 (hooks), L2.5 (MCP tools), L3 (mechanistic). Apply escalation rules. |
 | 4 | File issues / incidents | Search for duplicates first. Disposition: fixed-in-pr, filed, incident, or positive/no-action. No waivers. |
