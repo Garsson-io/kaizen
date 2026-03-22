@@ -11,6 +11,8 @@ import {
   formatToolUse,
   formatHeartbeat,
   processStreamMessage,
+  truncateAtWord,
+  cleanGuidanceForTitle,
   type BatchState,
   type RunResult,
   type PhaseMarker,
@@ -865,6 +867,49 @@ describe('RunMetrics type', () => {
   it('defaults run_history to undefined when not set', () => {
     const state = makeBatchState();
     expect(state.run_history).toBeUndefined();
+  });
+});
+
+describe('truncateAtWord', () => {
+  it('returns short text unchanged', () => {
+    expect(truncateAtWord('hello world', 50)).toBe('hello world');
+  });
+
+  it('truncates at word boundary with ellipsis', () => {
+    const result = truncateAtWord('improve the auto dent harness and reflection', 30);
+    expect(result.length).toBeLessThanOrEqual(33); // 30 + "..."
+    expect(result).toContain('...');
+    expect(result).not.toContain(' ...');
+  });
+
+  it('truncates exactly at max when no good word boundary', () => {
+    const result = truncateAtWord('abcdefghijklmnopqrstuvwxyz', 10);
+    expect(result).toBe('abcdefghij...');
+  });
+
+  it('strips trailing commas and spaces before ellipsis', () => {
+    const result = truncateAtWord('improve hooks, testing, and more stuff here', 25);
+    expect(result).not.toMatch(/[,\s]\.\.\.$/);
+    expect(result).toContain('...');
+  });
+
+  it('handles text exactly at max length', () => {
+    const text = 'exactly ten';
+    expect(truncateAtWord(text, 11)).toBe('exactly ten');
+  });
+});
+
+describe('cleanGuidanceForTitle', () => {
+  it('normalizes whitespace', () => {
+    expect(cleanGuidanceForTitle('  hello   world  ')).toBe('hello world');
+  });
+
+  it('preserves clean guidance unchanged', () => {
+    expect(cleanGuidanceForTitle('improve hooks reliability')).toBe('improve hooks reliability');
+  });
+
+  it('handles newlines and tabs', () => {
+    expect(cleanGuidanceForTitle('line one\nline two\ttab')).toBe('line one line two tab');
   });
 });
 
