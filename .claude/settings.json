@@ -7,6 +7,11 @@
             "type": "command",
             "command": "./.claude/hooks/kaizen-check-wip.sh",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "./.claude/hooks/kaizen-session-cleanup.sh",
+            "timeout": 15
           }
         ]
       }
