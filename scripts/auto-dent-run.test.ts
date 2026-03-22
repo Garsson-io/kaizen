@@ -10,6 +10,8 @@ import {
   type RunResult,
   type RunMetrics,
   type StreamContext,
+  type SweepAction,
+  type SweepResult,
 } from './auto-dent-run.js';
 
 function makeBatchState(overrides: Partial<BatchState> = {}): BatchState {
@@ -596,5 +598,25 @@ describe('RunMetrics type', () => {
   it('defaults run_history to undefined when not set', () => {
     const state = makeBatchState();
     expect(state.run_history).toBeUndefined();
+  });
+});
+
+describe('SweepResult type', () => {
+  it('can construct valid SweepResult objects for each action', () => {
+    const actions: SweepAction[] = [
+      'updated',
+      'already_current',
+      'merged',
+      'closed',
+      'failed',
+    ];
+    for (const action of actions) {
+      const result: SweepResult = {
+        pr: 'https://github.com/Garsson-io/kaizen/pull/500',
+        action,
+      };
+      expect(result.pr).toContain('pull/500');
+      expect(result.action).toBe(action);
+    }
   });
 });
