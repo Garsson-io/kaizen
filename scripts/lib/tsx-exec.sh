@@ -27,6 +27,26 @@ tsx_exec() {
     exec "$tsx" "$ts_src" "$@"
   fi
 
+  # Fallback: plugin root (kaizen installed as Claude Code plugin)
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    local plugin_tsx="$CLAUDE_PLUGIN_ROOT/node_modules/.bin/tsx"
+    local plugin_ts="$CLAUDE_PLUGIN_ROOT/src/$name.ts"
+    if [ -x "$plugin_tsx" ] && [ -f "$plugin_ts" ]; then
+      exec "$plugin_tsx" "$plugin_ts" "$@"
+    fi
+  fi
+
+  # Fallback: script's own repo root (when called from plugin cache)
+  local script_root
+  script_root="$(cd "$(dirname "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}")/.." 2>/dev/null && pwd)"
+  if [ "$script_root" != "$main_root" ]; then
+    local sr_tsx="$script_root/node_modules/.bin/tsx"
+    local sr_ts="$script_root/src/$name.ts"
+    if [ -x "$sr_tsx" ] && [ -f "$sr_ts" ]; then
+      exec "$sr_tsx" "$sr_ts" "$@"
+    fi
+  fi
+
   # Fallback: compiled dist/ (try worktree first, then main)
   for root in "$project_root" "$main_root"; do
     local dist_js="$root/dist/$name.js"

@@ -18,6 +18,7 @@ export interface DetectResult {
   status: "ok";
   method: "plugin" | "submodule" | "none";
   root: string;
+  needsInstall?: boolean;
 }
 
 export interface ConfigInput {
@@ -80,13 +81,16 @@ export function detectInstall(opts: { cwd: string; env?: Record<string, string |
   const cwd = opts.cwd;
 
   if (env.CLAUDE_PLUGIN_ROOT) {
-    return { step: "detect", status: "ok", method: "plugin", root: env.CLAUDE_PLUGIN_ROOT };
+    const needsInstall = !existsSync(join(env.CLAUDE_PLUGIN_ROOT, "node_modules"));
+    return { step: "detect", status: "ok", method: "plugin", root: env.CLAUDE_PLUGIN_ROOT, needsInstall };
   }
   if (existsSync(join(cwd, ".kaizen", ".claude-plugin"))) {
-    return { step: "detect", status: "ok", method: "submodule", root: ".kaizen" };
+    const needsInstall = !existsSync(join(cwd, ".kaizen", "node_modules"));
+    return { step: "detect", status: "ok", method: "submodule", root: ".kaizen", needsInstall };
   }
   if (existsSync(join(cwd, ".kaizen", ".claude"))) {
-    return { step: "detect", status: "ok", method: "submodule", root: ".kaizen" };
+    const needsInstall = !existsSync(join(cwd, ".kaizen", "node_modules"));
+    return { step: "detect", status: "ok", method: "submodule", root: ".kaizen", needsInstall };
   }
   return { step: "detect", status: "ok", method: "none", root: "" };
 }
@@ -293,6 +297,19 @@ export function verifySetup(cwd: string, method: string): VerifyResult {
     checks.push({ name: "config-exists", ok: false, detail: "not found" });
   }
 
+  // node_modules (needed for tsx hooks like cli-kaizen)
+  const detect = detectInstall({ cwd });
+  if (detect.method !== "none") {
+    const kaizenRoot = detect.root;
+    const nodeModulesPath = join(kaizenRoot, "node_modules");
+    const hasNodeModules = existsSync(nodeModulesPath);
+    checks.push({
+      name: "node-modules",
+      ok: hasNodeModules,
+      detail: hasNodeModules ? undefined : `run: npm --prefix ${kaizenRoot} install`,
+    });
+  }
+
   // Policies
   checks.push({
     name: "policies-local",
@@ -390,13 +407,25 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       console.log(JSON.stringify(scaffoldPolicies(cwd)));
       break;
 
-    case "symlinks":
-      console.log(JSON.stringify(setupSymlinks(cwd, values["kaizen-root"] ?? ".kaizen")));
+    case "symlinks": {
+      const detect = detectInstall({ cwd });
+      if (detect.method === "plugin") {
+        console.log(JSON.stringify({ step: "symlinks", status: "skipped", reason: "plugin mode — symlinks not needed, plugin.json serves skills directly" }));
+      } else {
+        console.log(JSON.stringify(setupSymlinks(cwd, values["kaizen-root"] ?? ".kaizen")));
+      }
       break;
+    }
 
-    case "hooks":
-      console.log(JSON.stringify(mergeHooks(cwd, values["kaizen-root"] ?? ".kaizen")));
+    case "hooks": {
+      const detect = detectInstall({ cwd });
+      if (detect.method === "plugin") {
+        console.log(JSON.stringify({ step: "hooks", status: "skipped", reason: "plugin mode — hooks registered via plugin.json, not settings.json", settingsPath: "" }));
+      } else {
+        console.log(JSON.stringify(mergeHooks(cwd, values["kaizen-root"] ?? ".kaizen")));
+      }
       break;
+    }
 
     case "verify":
       console.log(JSON.stringify(verifySetup(cwd, values.method ?? "plugin")));

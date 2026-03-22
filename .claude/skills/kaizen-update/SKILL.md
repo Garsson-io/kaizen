@@ -4,41 +4,74 @@ description: Pull kaizen plugin updates and re-run setup to apply new hooks and 
 user_invocable: true
 ---
 
+<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
+
 # /kaizen-update — Update Kaizen Plugin
 
 Pull the latest kaizen updates and re-apply the setup.
 
-## Process
-
-### Step 1: Pull updates
+## Step 0: Detect install method
 
 ```bash
-# If installed as submodule
+npx tsx src/kaizen-setup.ts --step detect
+```
+
+This tells you whether kaizen is installed as `plugin`, `submodule`, or `self` (self-dogfood).
+
+## Step 1: Pull updates
+
+**For submodule installs:**
+```bash
 git submodule update --remote .kaizen
-
-# If installed as plain clone
-# git -C .kaizen pull origin main
 ```
 
-### Step 2: Install dependencies
+**For plugin installs:**
+```bash
+claude plugin update kaizen
+```
+
+**For self-dogfood (kaizen repo itself):**
+```bash
+git fetch origin main && git merge origin/main --no-edit
+```
+
+## Step 2: Install dependencies
 
 ```bash
+# For submodule:
 cd .kaizen && npm install && cd ..
+
+# For plugin: dependencies are in the plugin cache
+# Run npm install from the plugin root if needed:
+# npm --prefix "${CLAUDE_PLUGIN_ROOT}" install
+
+# For self-dogfood:
+npm install
 ```
 
-### Step 3: Re-run setup
+## Step 3: Re-run setup
 
-Re-apply symlinks and merge any new hook registrations. This is the same as `/kaizen-setup` steps 3-4, which are idempotent.
+Re-apply symlinks and merge any new hook registrations. **Skip for plugin installs** — the plugin system handles hook registration via plugin.json.
 
-### Step 4: Check for new skills
+For submodule installs, this is the same as `/kaizen-setup` steps 3-4, which are idempotent.
 
-Compare skills in `.kaizen/.claude/skills/` against symlinks in `.claude/skills/`. Report any new skills that were added.
+## Step 4: Check for new skills
 
-### Step 5: Show changelog
+For submodule installs, compare skills in `.kaizen/.claude/skills/` against symlinks in `.claude/skills/`. Report any new skills that were added.
+
+For plugin installs, skills are served directly from the plugin — no symlinks needed.
+
+## Step 5: Show changelog
 
 ```bash
-# Show recent kaizen commits
+# For submodule:
 git -C .kaizen log --oneline -10
+
+# For self-dogfood:
+git log --oneline -10
+
+# For plugin: check the plugin's git log
+# git -C "${CLAUDE_PLUGIN_ROOT}" log --oneline -10
 ```
 
 Report what changed to the user.
