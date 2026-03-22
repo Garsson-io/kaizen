@@ -83,18 +83,19 @@ function isCorrection(text: string): boolean {
 }
 
 // ── Hook denial patterns ──
+// These patterns only apply to tool_result entries that are errors (is_error: true)
+// or from Bash tool calls. Reading a file that mentions "enforce-*.sh" is not a denial.
 
 const HOOK_DENIAL_PATTERNS = [
-  /BLOCKED:/i,
+  /^BLOCKED:/m,
+  /^STOP BLOCKED:/m,
   /blocked\s+by\s+hook/i,
-  /enforce-.*\.sh/i,
   /Cannot\s+commit\s+outside\s+worktree/i,
   /pre-commit\s+hook\s+failed/i,
   /GATED\s+until/i,
-  /--no-verify/i,
 ];
 
-/** Check if a tool result indicates a hook denial. */
+/** Check if a tool result indicates a hook denial. Only meaningful for error results. */
 function isHookDenial(content: string): boolean {
   return HOOK_DENIAL_PATTERNS.some((p) => p.test(content));
 }
@@ -225,15 +226,18 @@ export function analyzeTranscript(entries: TranscriptEntry[]): TranscriptAnalysi
               description: 'Tool call failed',
               evidence: truncate(resultContent, 200),
             });
-          }
 
-          if (isHookDenial(resultContent)) {
-            hookDenials++;
-            signals.push({
-              type: 'hook_denial',
-              description: 'Hook blocked an action (near-miss caught by L2)',
-              evidence: truncate(resultContent, 200),
-            });
+            // Only check for hook denials on error results — successful tool
+            // results (e.g., Read returning file contents) may mention hooks
+            // without being actual denials.
+            if (isHookDenial(resultContent)) {
+              hookDenials++;
+              signals.push({
+                type: 'hook_denial',
+                description: 'Hook blocked an action (near-miss caught by L2)',
+                evidence: truncate(resultContent, 200),
+              });
+            }
           }
 
           // Record for retry detection

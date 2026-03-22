@@ -112,18 +112,26 @@ describe('analyzeTranscript', () => {
       ).toBe(true);
     });
 
-    it('detects BLOCKED: pattern', () => {
+    it('detects BLOCKED: pattern in error results', () => {
       const session = new SyntheticSession()
         .toolUse('Bash', { command: 'git push' })
-        .toolResult('BLOCKED: enforce-worktree.sh — not in a worktree');
+        .toolError('BLOCKED: enforce-worktree.sh — not in a worktree');
       const analysis = analyzeTranscript(session.getEntries());
       expect(analysis.summary.hookDenials).toBe(1);
     });
 
-    it('detects --no-verify attempts', () => {
+    it('ignores hook mentions in successful tool results (e.g. Read)', () => {
+      const session = new SyntheticSession()
+        .toolUse('Read', { file_path: '/hooks/enforce-worktree.sh' })
+        .toolResult('#!/bin/bash\n# enforce-case-worktree.sh\nBLOCKED: test');
+      const analysis = analyzeTranscript(session.getEntries());
+      expect(analysis.summary.hookDenials).toBe(0);
+    });
+
+    it('detects --no-verify block in error results', () => {
       const session = new SyntheticSession()
         .toolUse('Bash', { command: 'git commit --no-verify -m "hack"' })
-        .toolResult(
+        .toolError(
           'BLOCKED: --no-verify is not allowed',
         );
       const analysis = analyzeTranscript(session.getEntries());

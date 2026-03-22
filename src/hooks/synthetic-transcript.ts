@@ -212,7 +212,7 @@ export function sessionWithHookDenials(): SyntheticSession {
   return new SyntheticSession()
     .userMessage('Commit and push the changes')
     .toolUse('Bash', { command: 'git commit -m "fix: patch"' })
-    .toolResult('BLOCKED: enforce-case-worktree.sh — Cannot commit outside worktree')
+    .toolError('BLOCKED: enforce-case-worktree.sh — Cannot commit outside worktree')
     .assistantText('I need to enter a worktree first.')
     .toolUse('Bash', { command: 'git commit -m "fix: patch" --no-verify' })
     .toolError('pre-commit hook failed: blocked on main checkout')
