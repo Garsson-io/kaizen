@@ -135,7 +135,6 @@ All hooks prefixed `kaizen-`:
 | `block-git-rebase.sh` | `kaizen-block-git-rebase.sh` |
 | `capture-worktree-context.sh` | `kaizen-capture-worktree-context.sh` |
 | `check-practices.sh` | `kaizen-check-practices.sh` |
-| `squash-merge-safety.sh` | `kaizen-squash-merge-safety.sh` |
 | `warn-code-quality.sh` | `kaizen-warn-code-quality.sh` |
 | `check-wip.sh` | `kaizen-check-wip.sh` |
 
@@ -197,7 +196,6 @@ garsson-io/kaizen/
 │   │   ├── kaizen-block-git-rebase.sh
 │   │   ├── kaizen-capture-worktree-context.sh
 │   │   ├── kaizen-check-practices.sh
-│   │   ├── kaizen-squash-merge-safety.sh
 │   │   ├── kaizen-warn-code-quality.sh
 │   │   ├── kaizen-check-wip.sh
 │   │   ├── lib/
