@@ -19,7 +19,7 @@
 # Exit 0 with no output = allow stop
 # Exit 0 with JSON {"decision":"block","reason":"..."} = block stop
 
-source "$(dirname "$0")/lib/state-utils.sh"
+source "$(dirname "$0")/lib/state-utils.sh" 2>/dev/null || { exit 0; }
 
 INPUT=$(cat)
 
@@ -46,7 +46,7 @@ else
 fi
 
 # Block stop: agent must complete kaizen reflection first.
-source "$(dirname "$0")/lib/hook-output.sh"
+source "$(dirname "$0")/lib/hook-output.sh" 2>/dev/null || { exit 0; }
 
 REASON=$(render_prompt "pr-kaizen-block.md" "PR_HEADER=$PR_HEADER")
 

@@ -17,7 +17,7 @@
 #
 # Runs as PreToolUse hook on Edit and Write tool calls.
 
-source "$(dirname "$0")/lib/allowlist.sh"
+source "$(dirname "$0")/lib/allowlist.sh" 2>/dev/null || { exit 0; }
 
 INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')

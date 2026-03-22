@@ -14,7 +14,7 @@
 # Exit 0 = allow
 # JSON with permissionDecision deny = block
 
-source "$(dirname "$0")/lib/parse-command.sh"
+source "$(dirname "$0")/lib/parse-command.sh" 2>/dev/null || { exit 0; }
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')

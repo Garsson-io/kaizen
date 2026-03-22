@@ -15,7 +15,7 @@
 # Read-only tools (Read, Glob, Grep) are NOT blocked because they're useful
 # for reviewing code during the review process.
 
-source "$(dirname "$0")/lib/state-utils.sh"
+source "$(dirname "$0")/lib/state-utils.sh" 2>/dev/null || { exit 0; }
 
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')

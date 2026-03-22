@@ -16,9 +16,9 @@
 #   - git rebase --continue (finish in-progress rebase)
 #   - git rebase --skip (skip conflicting commit)
 
-source "$(dirname "$0")/lib/parse-command.sh"
-source "$(dirname "$0")/lib/input-utils.sh"
-source "$(dirname "$0")/lib/hook-output.sh"
+source "$(dirname "$0")/lib/parse-command.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/hook-output.sh" 2>/dev/null || { exit 0; }
 
 read_hook_input
 get_command

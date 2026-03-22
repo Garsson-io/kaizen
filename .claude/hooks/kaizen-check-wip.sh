@@ -37,7 +37,7 @@ if [ -z "$WORKTREES" ]; then
 fi
 
 # Read config for repo name
-source "$(dirname "$0")/lib/read-config.sh"
+source "$(dirname "$0")/lib/read-config.sh" 2>/dev/null || { exit 0; }
 
 # Collect open PRs (fast, cached by gh)
 PR_COUNT=0

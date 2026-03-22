@@ -20,9 +20,9 @@
 #   git diff, git log, git show, git status, git branch, git fetch
 #   ls, cat, stat, find, head, tail, wc, file (read-only)
 
-source "$(dirname "$0")/lib/parse-command.sh"
-source "$(dirname "$0")/lib/state-utils.sh"
-source "$(dirname "$0")/lib/allowlist.sh"
+source "$(dirname "$0")/lib/parse-command.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/state-utils.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/allowlist.sh" 2>/dev/null || { exit 0; }
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
@@ -87,7 +87,7 @@ fi
 PR_URL=$(echo "$STATE_INFO" | cut -d'|' -f1)
 
 # Block the command — agent must complete kaizen reflection first
-source "$(dirname "$0")/lib/hook-output.sh"
+source "$(dirname "$0")/lib/hook-output.sh" 2>/dev/null || { exit 0; }
 
 IMPEDIMENTS_FORMAT=$(render_prompt "impediments-format.md")
 
