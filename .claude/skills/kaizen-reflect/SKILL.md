@@ -54,20 +54,44 @@ Reflection happens at these mandatory checkpoints:
 | Incident (human time wasted) | What failed, why the process didn't catch it | Immediate escalation assessment |
 | Periodic review | Kaizen backlog triage, pattern detection | Priority adjustments |
 
-### 2. IDENTIFY the improvement
+### 2. IDENTIFY impediments — patterns first, then details (kaizen #241, #351)
 
-Be specific. Not "we should test more" but "the roeto-session.js stealth plugin import was never tested in the container — need a pre-merge check that runs imports."
+**Lead with categories, not symptoms.** The most common reflection failure mode is dispositioning each impediment individually and never noticing they share a root cause. Reverse the order: name the patterns first, then drill into individual items.
 
-### 2.5. ROOT CAUSE CATEGORY CHECK (kaizen #241)
+**Step 2a — List all impediments.** Be specific. Not "we should test more" but "the roeto-session.js stealth plugin import was never tested in the container — need a pre-merge check that runs imports."
 
-Before classifying individual impediments, ask: **do these impediments share a root cause category?**
+**Step 2b — Name the categories BEFORE dispositioning individuals.** Ask: **do these impediments share a root cause category?**
 
-- List all impediments identified in step 2
 - Group any that share a common pattern (e.g., "format mismatch", "missing test category", "stale cache")
 - If 2+ impediments share a root cause, **name the category** and file a single kaizen issue for the category — not separate issues for each symptom
 - The category issue is more valuable than the individual symptoms because it enables compound fixes (see `/kaizen-deep-dive`)
 
 **Example:** Three impediments — "hook X didn't match format Y", "hook Z expected format W", "test used wrong format" — all share root cause "no format contract between hooks." File one issue for the format contract, not three for the individual mismatches.
+
+**Step 2c — For each category, ask: is this a new pattern or a recurrence?**
+- **New pattern** → file and monitor at appropriate level
+- **Recurrence** → the current enforcement level failed. **Must escalate** at least one level (L1→L2, L2→L3). An impediment that recurs at the same level is proof the level is insufficient.
+
+### 2.5. AMPLIFY POSITIVE FINDINGS (kaizen #349)
+
+Positive findings are equally valuable signal — they validate practices that future agents should follow. After listing impediments, **explicitly review what went well:**
+
+- **What techniques saved time or caught bugs?** (e.g., "TDD caught a real bug in RED phase", "hypothesis framing produced a better PRD")
+- **What was surprising or non-obvious?** Non-obvious successes are the most valuable — they're validated practices that wouldn't be discovered by reading docs alone.
+- **Is this positive pattern documented where a future agent would find it?** If not, add it to a memory file, CLAUDE.md section, or skill prompt. The goal is not just to avoid repeating mistakes — **it's to repeat successes.**
+
+Positive findings use `type: "positive"` in KAIZEN_IMPEDIMENTS:
+```json
+{"finding": "TDD caught Buffer vs string mock mismatch in RED phase", "type": "positive", "disposition": "amplified", "target": "memory/practices_tdd_validation.md"}
+{"finding": "Testability-first approach saved 5x iteration time", "type": "positive", "disposition": "amplified", "target": ".claude/kaizen/practices.md"}
+{"finding": "Foundation-first approach validated", "type": "positive", "disposition": "no-action", "reason": "Already documented in practices.md"}
+```
+
+**Disposition for positive findings:**
+- `"amplified"` — the pattern was non-obvious and has been documented for future agents (with `target` field pointing to where)
+- `"no-action"` — the pattern is already documented or is self-evident
+
+**The asymmetry to fix:** Impediments get filed, analyzed, and escalated. Positive findings must get the same treatment — documented, aggregated, and surfaced. A practice that worked in 5 sessions but is never written down will be independently rediscovered (or not) in session 6.
 
 ### 3. CLASSIFY the level
 
@@ -213,6 +237,7 @@ Starting concrete and zooming out produces actionable output. Starting abstract 
 **Additional cross-checks (after the ladder):**
 - **Were all accept-case preventions dispositioned?** If `/kaizen-evaluate` identified preventions or root causes, list each one and its status: implemented in this PR, filed as issue #N, or not addressed. If any are "not addressed," file them now — a prevention identified but not tracked is a prevention lost.
 - **What prompt change would have made this session better?** Look at your mistakes, wrong turns, and suboptimal outputs. For each one, name the specific skill, the current wording gap, and the proposed improvement. The goal is self-improving prompts — every session should make the next one better.
+- **Were positive findings amplified?** Review any `type: "positive"` findings from step 2.5. For each non-obvious success, verify it was documented (`disposition: "amplified"` with a `target`). A validated practice that isn't written down will be independently rediscovered — or lost.
 
 **Actionability rule:** Every meta-reflection finding MUST have a disposition — either a filed issue (with `ref: "#NNN"`) or fixed in this PR. An observation without a disposition is decoration, not kaizen. If something is truly not friction, reclassify as `type: "positive"` with `disposition: "no-action"`. Include meta-reflection findings in your `KAIZEN_IMPEDIMENTS` declaration with `"type": "meta"`:
 
@@ -221,7 +246,7 @@ Starting concrete and zooming out produces actionable output. Starting abstract 
 {"finding": "foundation-first approach validated", "type": "positive", "disposition": "no-action", "reason": "Already natural pattern"}
 ```
 
-Positive findings (`type: "positive"`) may use `disposition: "no-action"` when the pattern is already working and needs no reinforcement. But if a positive finding is surprising or non-obvious, consider filing it as a reference for future agents.
+Positive findings (`type: "positive"`) use `disposition: "amplified"` when the pattern is non-obvious and worth documenting for future agents (see step 2.5 above). Use `disposition: "no-action"` only when the pattern is already documented or self-evident.
 
 ### No-waiver policy (kaizen #198)
 
@@ -313,9 +338,10 @@ Create these tasks at skill start using TaskCreate:
 | # | Task | Description |
 |---|------|-------------|
 | 1 | Reflect on work | Review what happened: impediments, friction, near-misses, what slowed down, what went well |
-| 2 | Identify impediments | Be specific (exact moment, not category). Group by shared root cause if 2+ share one. |
+| 2 | Identify impediments — patterns first | 2a: List all impediments. 2b: Name categories before dispositioning. 2c: New pattern or recurrence? Recurrence must escalate. |
+| 2.5 | Amplify positive findings | What techniques worked? What was surprising? Document non-obvious successes for future agents. Disposition: amplified or no-action. |
 | 3 | Classify enforcement level | L1 (instructions), L2 (hooks), L2.5 (MCP tools), L3 (mechanistic). Apply escalation rules. |
-| 4 | File issues / incidents | Search for duplicates first. Disposition: fixed-in-pr, filed, incident, or positive/no-action. No waivers. |
+| 4 | File issues / incidents | Search for duplicates first. Disposition: fixed-in-pr, filed, incident, or positive/amplified. No waivers. |
 | 5 | Meta-reflection | 5-question ladder: specific friction → generalized → kaizen system change → self-improvement → mechanism. Post-cycle ultrathink. |
 
 **What comes next:** Cleanup (worktree + branch deletion). If sub-issues remain from `/kaizen-plan`, loop back to `/kaizen-implement` for next sub-issue. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
