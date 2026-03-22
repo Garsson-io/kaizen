@@ -62,6 +62,9 @@ The tower has three floors and a mirror on the ceiling.
 Improve along known dimensions. Discover unknown dimensions. Review whether your dimensions are complete.
 There is no fourth floor. The mirror is enough.
 
+Parallel work produces overlap, not waste.
+The first to merge wins. The rest close gracefully.
+
 The goal is not to be done. The goal is to be better at not being done.
 ```
 
@@ -161,6 +164,16 @@ The temptation is always to stay at Level 1. Instructions are cheap to write, fe
 This sounds authoritarian. It's the opposite. A hook that blocks a dangerous command at 2 AM means a human doesn't get paged at 3 AM. A gate that forces a test before merge means a customer doesn't hit a bug on Tuesday. Enforcement removes the burden of vigilance from agents (who forget) and humans (who sleep).
 
 The alternative — trusting that agents will always follow instructions — is not trust. It's negligence wearing a kind face. Real trust is built on verified behavior, not hoped-for compliance.
+
+### Supersession is a feature, not a bug
+
+When multiple autonomous agents work the same backlog in parallel — overnight-dent runs, concurrent sessions, agent swarms — their PRs will overlap. Two agents may pick the same issue, or related issues whose fixes overlap. This is not a coordination failure. It's an inherent property of parallel autonomous work against a shared backlog.
+
+The wrong response is to prevent overlap. Deconfliction protocols, exclusive locks, and pre-allocation all kill parallelism. They turn N agents into 1 agent with N times the overhead.
+
+The right response is to detect supersession and resolve it gracefully. The first PR to merge wins. The rest auto-close with a comment linking to the merged PR. Issues closed by a merged PR don't need the other PRs. This is cheap, robust, and preserves full parallelism.
+
+The pattern generalizes beyond PRs. Any shared resource in a parallel autonomous system — issues, branches, worktrees, state files — will experience contention. The question is never "how do we prevent contention?" but "how do we detect and resolve it cheaply?" Prevention is sequential thinking applied to a parallel problem. Detection-and-resolution is the parallel-native approach.
 
 ### The goal
 
