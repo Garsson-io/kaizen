@@ -6,6 +6,8 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "test:e2e": "vitest run src/e2e/",
+    "test:e2e:live": "KAIZEN_LIVE_TEST=1 vitest run src/e2e/",
     "test:hooks": "bash .claude/hooks/tests/run-all-tests.sh",
     "typecheck": "tsc --noEmit"
   },
