@@ -107,6 +107,25 @@ If re-examination reveals something significant has changed (e.g., half the spec
 
 **The spec was written to be complete. Implementation should match the problem.** Not everything in the spec needs to be built right now — but what you do build should be built well. *"Avoiding overengineering is not a license to underengineer."*
 
+### Surface the encoded hypothesis (kaizen #348)
+
+Every spec encodes a hypothesis about the root cause, even if it does not say so explicitly. Before implementing, make that hypothesis visible:
+
+```
+SPEC HYPOTHESIS: This spec assumes [X causes Y].
+IF WRONG: [what would be true instead, and what consequence that has for the implementation]
+VALIDATION: [has any experiment, incident, or code reading confirmed this?]
+```
+
+**Why this matters:** When the hypothesis is implicit, you cannot tell whether you are fixing the right thing. You implement the spec, ship the PR, and only discover the root cause was different when the problem recurs. Making the hypothesis explicit lets you check it before committing hours of work.
+
+**If the hypothesis has NOT been validated:**
+- Is there a 15-minute experiment that would confirm or falsify it? Run it first.
+- Does the code tell a different story than the spec? Trust the code.
+- Are there incidents that contradict the hypothesis? Trust the incidents.
+
+**If the hypothesis IS validated:** State the evidence and proceed. This is not busywork — it is a 2-minute checkpoint that prevents multi-day rework.
+
 ## Work Classification — BEFORE writing code (kaizen #257)
 
 Before diving into implementation, classify what TYPE of work this is. Different types have different risk profiles:
