@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildPrompt,
   extractArtifacts,
@@ -557,5 +557,203 @@ describe('processStreamMessage', () => {
       Date.now(),
     );
     expect(result.toolCalls).toBe(0);
+  });
+});
+
+describe('e2e: phase markers through stream pipeline', () => {
+  it('displays phase markers from assistant text blocks to console', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = makeRunResult();
+
+    // Simulate a real stream-json sequence: init → assistant with phase markers → result
+    processStreamMessage(
+      { type: 'system', subtype: 'init', session_id: 'test-e2e-session', model: 'claude-opus-4-6' },
+      result,
+      Date.now(),
+    );
+
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'AUTO_DENT_PHASE: PICK | issue=#472 | title=improve hook test DRY' },
+            { type: 'tool_use', name: 'Bash', input: { command: 'gh issue view 472' } },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=clear spec and bounded scope' },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'AUTO_DENT_PHASE: IMPLEMENT | case=260323-1200-k472 | branch=case/260323-1200-k472' },
+            { type: 'tool_use', name: 'EnterWorktree', input: { name: 'k472-hook-test-dry' } },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'AUTO_DENT_PHASE: TEST | result=pass | count=15' },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'Created PR.\nAUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/500' },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'AUTO_DENT_PHASE: MERGE | url=https://github.com/Garsson-io/kaizen/pull/500 | status=queued' },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'AUTO_DENT_PHASE: REFLECT | issues_filed=1 | lessons=shared helpers reduce boilerplate' },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    processStreamMessage(
+      { type: 'result', subtype: 'success', total_cost_usd: 2.5, result: 'Done. Closes #472.' },
+      result,
+      Date.now(),
+    );
+
+    const logCalls = logSpy.mock.calls.map(args => args[0] as string);
+    logSpy.mockRestore();
+
+    // Verify all phase markers were logged
+    expect(logCalls.some(line => line.includes('[PICK]') && line.includes('#472'))).toBe(true);
+    expect(logCalls.some(line => line.includes('[EVALUATE]') && line.includes('proceed'))).toBe(true);
+    expect(logCalls.some(line => line.includes('[IMPLEMENT]') && line.includes('case:260323-1200-k472'))).toBe(true);
+    expect(logCalls.some(line => line.includes('[TEST]') && line.includes('pass'))).toBe(true);
+    expect(logCalls.some(line => line.includes('[PR]') && line.includes('pull/500'))).toBe(true);
+    expect(logCalls.some(line => line.includes('[MERGE]') && line.includes('queued'))).toBe(true);
+    expect(logCalls.some(line => line.includes('[REFLECT]') && line.includes('issues filed'))).toBe(true);
+
+    // Verify tool calls were also counted alongside phase markers
+    expect(result.toolCalls).toBe(2); // Bash + EnterWorktree
+
+    // Verify artifacts were still extracted from text containing markers
+    expect(result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/500');
+    expect(result.issuesClosed).toContain('#472');
+
+    // Verify cost recorded
+    expect(result.cost).toBe(2.5);
+  });
+
+  it('handles mixed text with phase markers and regular prose', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = makeRunResult();
+
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'text',
+              text: [
+                'Looking at the issue backlog to find the best candidate.',
+                '',
+                'AUTO_DENT_PHASE: PICK | issue=#300 | title=fix flaky test',
+                '',
+                'This issue has clear reproduction steps and a bounded scope.',
+              ].join('\n'),
+            },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    const logCalls = logSpy.mock.calls.map(args => args[0] as string);
+    logSpy.mockRestore();
+
+    // Only the structured marker should produce output, not the prose
+    const phaseLines = logCalls.filter(line => line.includes('[PICK]'));
+    expect(phaseLines).toHaveLength(1);
+    expect(phaseLines[0]).toContain('#300');
+    expect(phaseLines[0]).toContain('fix flaky test');
+  });
+
+  it('does not emit phase markers for text that merely mentions the protocol', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = makeRunResult();
+
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'text',
+              text: 'The harness expects AUTO_DENT_PHASE: PICK markers from the agent.',
+            },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    const logCalls = logSpy.mock.calls.map(args => args[0] as string);
+    logSpy.mockRestore();
+
+    const phaseLines = logCalls.filter(line => line.includes('[PICK]'));
+    expect(phaseLines).toHaveLength(0);
   });
 });
