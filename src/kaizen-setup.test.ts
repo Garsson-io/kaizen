@@ -25,19 +25,26 @@ afterEach(() => {
 describe("detectInstall", () => {
   it("detects plugin install via CLAUDE_PLUGIN_ROOT", () => {
     const result = detectInstall({ cwd: tempDir, env: { CLAUDE_PLUGIN_ROOT: "/plugins/kaizen" } });
-    expect(result).toEqual({ step: "detect", status: "ok", method: "plugin", root: "/plugins/kaizen" });
+    expect(result).toEqual({ step: "detect", status: "ok", method: "plugin", root: "/plugins/kaizen", needsInstall: true });
   });
 
   it("detects submodule via .kaizen/.claude-plugin", () => {
     mkdirSync(join(tempDir, ".kaizen", ".claude-plugin"), { recursive: true });
     const result = detectInstall({ cwd: tempDir, env: {} });
-    expect(result).toEqual({ step: "detect", status: "ok", method: "submodule", root: ".kaizen" });
+    expect(result).toEqual({ step: "detect", status: "ok", method: "submodule", root: ".kaizen", needsInstall: true });
   });
 
   it("detects submodule via .kaizen/.claude", () => {
     mkdirSync(join(tempDir, ".kaizen", ".claude"), { recursive: true });
     const result = detectInstall({ cwd: tempDir, env: {} });
-    expect(result).toEqual({ step: "detect", status: "ok", method: "submodule", root: ".kaizen" });
+    expect(result).toEqual({ step: "detect", status: "ok", method: "submodule", root: ".kaizen", needsInstall: true });
+  });
+
+  it("reports needsInstall=false when node_modules exists", () => {
+    mkdirSync(join(tempDir, ".kaizen", ".claude"), { recursive: true });
+    mkdirSync(join(tempDir, ".kaizen", "node_modules"), { recursive: true });
+    const result = detectInstall({ cwd: tempDir, env: {} });
+    expect(result.needsInstall).toBe(false);
   });
 
   it("returns none when nothing found", () => {
