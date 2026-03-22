@@ -36,7 +36,6 @@ fi
 
 PROJECT_ROOT="$(resolve_project_root "$SCRIPT_DIR")"
 WORKTREES_DIR="$PROJECT_ROOT/.claude/worktrees"
-DB_PATH="$PROJECT_ROOT/store/messages.db"
 
 # Colors (disabled if not a terminal)
 if [ -t 1 ]; then
@@ -67,15 +66,6 @@ done
 
 # Resolve cli-kaizen (kaizen #209: single-line executable pattern)
 CLI_KAIZEN=$("$SCRIPT_DIR/lib/resolve-cli-kaizen.sh" "$PROJECT_ROOT" 2>/dev/null) || CLI_KAIZEN="node $PROJECT_ROOT/dist/cli-kaizen.js"
-
-# Helpers
-query_db() {
-  node -e "
-    const db = require('better-sqlite3')('$DB_PATH');
-    const rows = db.prepare(\`$1\`).all();
-    console.log(JSON.stringify(rows));
-  " 2>/dev/null || echo "[]"
-}
 
 human_size() {
   numfmt --to=iec --suffix=B "$1" 2>/dev/null || echo "${1}B"

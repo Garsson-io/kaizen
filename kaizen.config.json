@@ -15,6 +15,9 @@
     "epicPrefix": "epic/",
     "horizonPrefix": "horizon/"
   },
+  "issues": {
+    "backend": "github"
+  },
   "notifications": {
     "channel": "none"
   }

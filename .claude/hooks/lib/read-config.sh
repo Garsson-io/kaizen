@@ -22,6 +22,8 @@ if [ -f "$KAIZEN_CONFIG" ] && command -v jq &>/dev/null; then
   HOST_NAME=$(jq -r '.host.name // ""' "$KAIZEN_CONFIG")
   KAIZEN_CASE_CLI=$(jq -r '.host.caseCli // ""' "$KAIZEN_CONFIG")
   KAIZEN_NOTIFICATION_CHANNEL=$(jq -r '.notifications.channel // "none"' "$KAIZEN_CONFIG")
+  KAIZEN_ISSUE_BACKEND=$(jq -r '.issues.backend // "github"' "$KAIZEN_CONFIG")
+  KAIZEN_ISSUE_CLI=$(jq -r '.issues.config.customCli // ""' "$KAIZEN_CONFIG")
 else
   # Defaults when no config exists
   KAIZEN_REPO="Garsson-io/kaizen"
@@ -29,4 +31,6 @@ else
   HOST_NAME=""
   KAIZEN_CASE_CLI=""
   KAIZEN_NOTIFICATION_CHANNEL="none"
+  KAIZEN_ISSUE_BACKEND="github"
+  KAIZEN_ISSUE_CLI=""
 fi
