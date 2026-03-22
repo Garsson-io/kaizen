@@ -4,9 +4,11 @@ import {
   extractArtifacts,
   checkStopSignal,
   formatToolUse,
+  formatHeartbeat,
   processStreamMessage,
   type BatchState,
   type RunResult,
+  type StreamContext,
 } from './auto-dent-run.js';
 
 function makeBatchState(overrides: Partial<BatchState> = {}): BatchState {
@@ -445,5 +447,88 @@ describe('processStreamMessage', () => {
       Date.now(),
     );
     expect(result.toolCalls).toBe(0);
+  });
+
+  it('sets resultReceivedAt in context when result message arrives', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const before = Date.now();
+    processStreamMessage(
+      {
+        type: 'result',
+        subtype: 'success',
+        total_cost_usd: 1.0,
+        result: 'All done',
+      },
+      result,
+      Date.now(),
+      ctx,
+    );
+    expect(ctx.resultReceivedAt).toBeDefined();
+    expect(ctx.resultReceivedAt!).toBeGreaterThanOrEqual(before);
+  });
+
+  it('does not set resultReceivedAt for non-result messages', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', name: 'Read', input: { file_path: '/a.ts' } },
+          ],
+        },
+      },
+      result,
+      Date.now(),
+      ctx,
+    );
+    expect(ctx.resultReceivedAt).toBeUndefined();
+  });
+
+  it('works without ctx parameter (backwards compatible)', () => {
+    const result = makeRunResult();
+    processStreamMessage(
+      {
+        type: 'result',
+        subtype: 'success',
+        total_cost_usd: 1.0,
+        result: 'All done',
+      },
+      result,
+      Date.now(),
+    );
+    expect(result.cost).toBe(1.0);
+  });
+});
+
+describe('formatHeartbeat', () => {
+  it('shows working message when no result received', () => {
+    const ctx: StreamContext = {};
+    const msg = formatHeartbeat(Date.now() - 120_000, 42, ctx);
+    expect(msg).toContain('working');
+    expect(msg).toContain('42 tool calls so far');
+  });
+
+  it('shows waiting-for-exit message after result received', () => {
+    const ctx: StreamContext = { resultReceivedAt: Date.now() - 30_000 };
+    const msg = formatHeartbeat(Date.now() - 120_000, 90, ctx);
+    expect(msg).toContain('waiting for process exit');
+    expect(msg).toContain('result received');
+    expect(msg).toContain('90 tool calls');
+    expect(msg).toMatch(/\d+s ago/);
+  });
+
+  it('includes elapsed time from run start', () => {
+    const ctx: StreamContext = {};
+    const msg = formatHeartbeat(Date.now() - 180_000, 10, ctx);
+    expect(msg).toMatch(/\[3m00s\]/);
+  });
+
+  it('shows accurate seconds-ago for recent result', () => {
+    const ctx: StreamContext = { resultReceivedAt: Date.now() - 5_000 };
+    const msg = formatHeartbeat(Date.now() - 60_000, 50, ctx);
+    expect(msg).toContain('5s ago');
   });
 });

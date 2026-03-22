@@ -46,6 +46,7 @@ MAX_RUNS=0              # 0 = unlimited
 COOLDOWN=30             # seconds between runs
 BUDGET=""               # per-run budget
 MAX_FAILURES=3          # consecutive failures before stopping
+MAX_RUN_SECONDS=2700    # 45 minutes per run (wall-time timeout)
 DRY_RUN=false
 TEST_TASK=false
 EXPERIMENT=false
@@ -64,6 +65,7 @@ Options:
   --cooldown N         Seconds between runs (default: 30)
   --budget N.NN        Max USD per run (passed to claude --max-budget-usd)
   --max-failures N     Stop after N consecutive failures (default: 3)
+  --max-run-seconds N  Wall-time timeout per run in seconds (default: 2700 = 45min)
   --dry-run            Show what would run without executing
   --test-task          Use synthetic fast task instead of /kaizen-deep-dive
   --experiment         Enable extra pipeline diagnostics
@@ -106,6 +108,7 @@ while [[ $# -gt 0 ]]; do
     --cooldown) COOLDOWN="$2"; shift 2 ;;
     --budget) BUDGET="$2"; shift 2 ;;
     --max-failures) MAX_FAILURES="$2"; shift 2 ;;
+    --max-run-seconds) MAX_RUN_SECONDS="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     --test-task) TEST_TASK=true; shift ;;
     --experiment) EXPERIMENT=true; shift ;;
@@ -167,7 +170,9 @@ cat > "$STATE_FILE" << STATEOF
   "last_worktree": "",
   "progress_issue": "",
   "test_task": $TEST_TASK,
-  "experiment": $EXPERIMENT
+  "experiment": $EXPERIMENT,
+  "max_run_seconds": $MAX_RUN_SECONDS,
+  "last_heartbeat": 0
 }
 STATEOF
 
@@ -226,6 +231,7 @@ echo "║ Guidance:  $GUIDANCE"
 echo "║ Max runs:  $([ "$MAX_RUNS" -eq 0 ] && echo "unlimited" || echo "$MAX_RUNS")"
 echo "║ Cooldown:  ${COOLDOWN}s"
 [[ -n "$BUDGET" ]] && echo "║ Budget/run: \$$BUDGET"
+echo "║ Run timeout: ${MAX_RUN_SECONDS}s ($(( MAX_RUN_SECONDS / 60 ))min)"
 [[ "$TEST_TASK" = true ]] && echo "║ Mode:      TEST TASK (synthetic pipeline probe)"
 [[ "$EXPERIMENT" = true ]] && echo "║ Experiment: enabled (extra diagnostics)"
 echo "║ Max consecutive failures: $MAX_FAILURES"

@@ -49,6 +49,8 @@ export interface BatchState {
   progress_issue?: string;
   test_task?: boolean;
   experiment?: boolean;
+  last_heartbeat?: number;
+  max_run_seconds?: number;
 }
 
 export interface RunResult {
@@ -246,10 +248,15 @@ export function checkStopSignal(text: string, result: RunResult): void {
   }
 }
 
+export interface StreamContext {
+  resultReceivedAt?: number;
+}
+
 export function processStreamMessage(
   msg: Record<string, any>,
   result: RunResult,
   runStart: number,
+  ctx?: StreamContext,
 ): void {
   const elapsed = formatElapsed(runStart);
 
@@ -280,6 +287,9 @@ export function processStreamMessage(
       break;
 
     case 'result':
+      if (ctx) {
+        ctx.resultReceivedAt = Date.now();
+      }
       if (msg.total_cost_usd) {
         result.cost = msg.total_cost_usd;
       }
@@ -491,11 +501,32 @@ export function closeBatchProgressIssue(
 
 // Execute Claude
 
+// Default max wall time per run: 45 minutes
+const DEFAULT_MAX_RUN_SECONDS = 45 * 60;
+// Grace period after result before SIGTERM
+const POST_RESULT_GRACE_MS = 60_000;
+// Grace period after SIGTERM before SIGKILL
+const SIGKILL_GRACE_MS = 10_000;
+
+export function formatHeartbeat(
+  runStart: number,
+  toolCalls: number,
+  ctx: StreamContext,
+): string {
+  const elapsed = formatElapsed(runStart);
+  if (ctx.resultReceivedAt) {
+    const ago = Math.floor((Date.now() - ctx.resultReceivedAt) / 1000);
+    return `  [${elapsed}]  ... waiting for process exit (result received ${ago}s ago, ${toolCalls} tool calls)`;
+  }
+  return `  [${elapsed}]  ... working (${toolCalls} tool calls so far)`;
+}
+
 async function runClaude(
   state: BatchState,
   runNum: number,
   logFile: string,
   repoRoot: string,
+  stateFile: string,
 ): Promise<{ exitCode: number; duration: number; result: RunResult }> {
   const result: RunResult = {
     prs: [],
@@ -506,6 +537,8 @@ async function runClaude(
     toolCalls: 0,
     stopRequested: false,
   };
+
+  const ctx: StreamContext = {};
 
   const prompt = buildPrompt(state, runNum);
   const nonce = `${new Date()
@@ -528,22 +561,67 @@ async function runClaude(
   }
 
   const runStart = Date.now();
+  const maxRunMs =
+    (state.max_run_seconds || DEFAULT_MAX_RUN_SECONDS) * 1000;
 
   return new Promise((resolve) => {
+    let processExited = false;
+
     const child = spawn('claude', args, {
       cwd: repoRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    const cleanup = (...timers: (ReturnType<typeof setInterval> | ReturnType<typeof setTimeout> | undefined)[]) => {
+      for (const t of timers) {
+        if (t) clearTimeout(t as any);
+      }
+    };
+
+    // Heartbeat: distinguish done-vs-stuck (#355)
     let lastOutputTime = Date.now();
     const heartbeatInterval = setInterval(() => {
       const silence = Math.floor((Date.now() - lastOutputTime) / 1000);
       if (silence >= 55) {
-        console.log(
-          `  [${formatElapsed(runStart)}]  ... working (${result.toolCalls} tool calls so far)`,
-        );
+        console.log(formatHeartbeat(runStart, result.toolCalls, ctx));
       }
     }, 60_000);
+
+    // Liveness marker: update state.json periodically (#357)
+    const livenessInterval = setInterval(() => {
+      try {
+        const s = readState(stateFile);
+        s.last_heartbeat = Math.floor(Date.now() / 1000);
+        writeState(stateFile, s);
+      } catch {
+        // State file write failure is non-fatal
+      }
+    }, 60_000);
+
+    // Global wall-time timeout (#354)
+    const wallTimer = setTimeout(() => {
+      if (!processExited) {
+        console.log(
+          `  [watchdog] run exceeded ${maxRunMs / 1000}s wall time — SIGTERM`,
+        );
+        appendFileSync(
+          logFile,
+          `\n[watchdog] wall-time timeout (${maxRunMs / 1000}s) — sending SIGTERM\n`,
+        );
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          if (!processExited) {
+            console.log(
+              `  [watchdog] process still alive after SIGTERM+${SIGKILL_GRACE_MS / 1000}s — SIGKILL`,
+            );
+            child.kill('SIGKILL');
+          }
+        }, SIGKILL_GRACE_MS);
+      }
+    }, maxRunMs);
+
+    // Post-result kill timer (#354)
+    let postResultTimer: ReturnType<typeof setTimeout> | undefined;
 
     const rl = createInterface({ input: child.stdout! });
     rl.on('line', (line) => {
@@ -552,7 +630,31 @@ async function runClaude(
 
       try {
         const msg = JSON.parse(line);
-        processStreamMessage(msg, result, runStart);
+        processStreamMessage(msg, result, runStart, ctx);
+
+        // Start post-result kill timer when result is received
+        if (msg.type === 'result' && !postResultTimer) {
+          postResultTimer = setTimeout(() => {
+            if (!processExited) {
+              console.log(
+                `  [watchdog] result received but process alive after ${POST_RESULT_GRACE_MS / 1000}s — SIGTERM`,
+              );
+              appendFileSync(
+                logFile,
+                `\n[watchdog] post-result timeout (${POST_RESULT_GRACE_MS / 1000}s) — sending SIGTERM\n`,
+              );
+              child.kill('SIGTERM');
+              setTimeout(() => {
+                if (!processExited) {
+                  console.log(
+                    `  [watchdog] process still alive after SIGTERM+${SIGKILL_GRACE_MS / 1000}s — SIGKILL`,
+                  );
+                  child.kill('SIGKILL');
+                }
+              }, SIGKILL_GRACE_MS);
+            }
+          }, POST_RESULT_GRACE_MS);
+        }
       } catch {
         // Non-JSON line
       }
@@ -563,13 +665,15 @@ async function runClaude(
     });
 
     child.on('close', (code) => {
-      clearInterval(heartbeatInterval);
+      processExited = true;
+      cleanup(heartbeatInterval, livenessInterval, wallTimer, postResultTimer);
       const duration = Math.floor((Date.now() - runStart) / 1000);
       resolve({ exitCode: code ?? 1, duration, result });
     });
 
     child.on('error', (err) => {
-      clearInterval(heartbeatInterval);
+      processExited = true;
+      cleanup(heartbeatInterval, livenessInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
       resolve({ exitCode: 1, duration, result });
@@ -640,6 +744,7 @@ async function main(): Promise<void> {
     runNum,
     logFile,
     repoRoot,
+    stateFile,
   );
 
   // Append metadata to log
