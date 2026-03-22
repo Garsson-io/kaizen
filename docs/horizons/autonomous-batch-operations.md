@@ -4,7 +4,7 @@
 
 ## Problem
 
-Today, kaizen improvement happens one session at a time, always with a human nearby. The overnight-dent script (`scripts/overnight-dent.sh`) is the first step toward unattended batch operations — but it's a bare loop with no memory, no reporting, no safety rails, and no strategic intelligence. It runs `/make-a-dent` repeatedly but doesn't know what happened, can't tell anyone, and has no circuit breakers.
+Today, kaizen improvement happens one session at a time, always with a human nearby. The auto-dent harness (`scripts/auto-dent.sh` trampoline + `scripts/auto-dent-run.ts` TypeScript runner) is the autonomous batch runner — it delegates to `/kaizen-deep-dive`, tracks artifacts, enforces safety rails, and provides real-time observability via `--output-format stream-json`. A companion control script (`scripts/auto-dent-ctl.ts`) provides status and halt commands.
 
 Without autonomous batch operations:
 - **Improvement velocity is human-gated** — agents only work when Aviad is awake and watching
@@ -20,7 +20,7 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 | Level | Name | What the system can do | Mechanism |
 |-------|------|------------------------|-----------|
 | **L0** | Manual | Human starts each session, watches it | Interactive `claude-wt` |
-| **L1** | Basic loop | Script loops `/make-a-dent` with guidance. Logs to files. | `overnight-dent.sh` (current state) |
+| **L1** | Basic loop | Script loops `/kaizen-deep-dive` with guidance. Logs to files. | `auto-dent.sh` (trampoline) |
 | **L2** | Tagged & tracked | Each run gets a unique tag. PRs, issues, and cases created are extracted and logged. Batch creates a summary issue. | Output parsing, `--output-format json`, GitHub issue per batch |
 | **L3** | Governed | Cost caps (per-run and total), consecutive failure detection, tight-loop prevention, graceful shutdown on signals. | Budget tracking, exit code analysis, cooldown escalation, SIGTERM handler |
 | **L4** | Reporting | Admin gets a structured report after each run and a batch summary. Telegram notification with PRs shipped, issues filed, money spent. | IPC messaging to admin channel, structured summaries |
@@ -30,24 +30,28 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 
 ## You Are Here
 
-**L3: Governed + Observable.** Trampoline/runner split: `overnight-dent.sh` (bash trampoline with `git pull` self-update between runs) delegates to `overnight-dent-run.ts` (TypeScript runner with `--output-format stream-json` real-time observability). Features: batch IDs, per-run tagging, output parsing, stream-json milestone display, heartbeat during silence, `OVERNIGHT_STOP:` loop control (agent can stop the batch), cross-run state in `state.json`, cumulative context. Safety: consecutive failure detection, fast-fail escalating cooldown, graceful SIGTERM/SIGINT shutdown. Not yet implemented: total budget enforcement, admin notifications, strategic planning.
+**L3: Governed + Observable.** Trampoline/runner split: `auto-dent.sh` (bash trampoline with `git pull` self-update between runs) delegates to `auto-dent-run.ts` (TypeScript runner with `--output-format stream-json` real-time observability). Features: batch IDs, per-run tagging, output parsing, stream-json milestone display, heartbeat during silence, `AUTO_DENT_STOP:` loop control (agent can stop the batch), cross-run state in `state.json`, cumulative context, batch progress issues (auto-created GitHub issue per batch with per-run comments), artifact labeling (`auto-dent` label on PRs/issues), safety-net auto-merge queuing. Safety: consecutive failure detection, fast-fail escalating cooldown, graceful SIGTERM/SIGINT shutdown, halt file mechanism for remote stop. Control plane: `auto-dent-ctl.ts` provides `--status` and `--halt` subcommands. Not yet implemented: total budget enforcement, admin notifications (Telegram), strategic planning.
+
+**Multi-axis maturity assessment** (from PRD `docs/prd-overnight-dent-horizon.md`): Runner capability is L3, but surrounding dimensions are lower — Lifecycle Completeness L1, Scope Safety L0-L1, Failure Recovery L1, Observability L1-L2, Throughput Efficiency L0, Quality Assurance L0-L1. Capability has outrun maturity.
 
 ## What Exists
 
 | Component | Level | Location |
 |-----------|-------|----------|
-| `overnight-dent.sh` | L3 (trampoline) | `scripts/overnight-dent.sh` |
-| `overnight-dent-run.sh` | L3 (wrapper) | `scripts/overnight-dent-run.sh` |
-| `overnight-dent-run.ts` | L3 (runner) | `scripts/overnight-dent-run.ts` |
-| `claude-wt.sh` | Foundation | `scripts/claude-wt.sh` |
-| `/make-a-dent` skill | Foundation | `.claude/skills/make-a-dent/SKILL.md` |
+| `auto-dent.sh` | L3 (trampoline) | `scripts/auto-dent.sh` |
+| `auto-dent-run.sh` | L3 (wrapper) | `scripts/auto-dent-run.sh` |
+| `auto-dent-run.ts` | L3 (runner) | `scripts/auto-dent-run.ts` |
+| `auto-dent-ctl.ts` | L3 (control plane) | `scripts/auto-dent-ctl.ts` |
+| `auto-dent-run.test.ts` | L3 (tests) | `scripts/auto-dent-run.test.ts` |
+| `/kaizen-deep-dive` skill | Foundation | `.claude/skills/kaizen-deep-dive/SKILL.md` |
 | `/kaizen-gaps` skill | Foundation (L5 prereq) | `.claude/skills/kaizen-gaps/SKILL.md` |
 | `--max-budget-usd` flag | L1 cost cap | Claude CLI |
 | `--output-format stream-json` | L3 enabler | Claude CLI |
-| IPC messaging | L4 enabler | `docs/ipc-messaging.md` |
+| Horizon PRD | Reference | `docs/prd-overnight-dent-horizon.md` |
+| Lifecycle PRD | Reference | `docs/prd-overnight-dent-lifecycle.md` |
 | Cost governance horizon | Related | `docs/horizons/cost-governance.md` |
 
-## L1→L2: Tagged & Tracked (next step)
+## L1→L2: Tagged & Tracked (DONE)
 
 **Problem L2 solves:** After a batch run, you open the log directory and see timestamped files with raw claude output. You have no idea which runs produced PRs, which filed issues, or which created cases. You have to grep through logs manually.
 
@@ -80,7 +84,7 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 
 **Signal to escalate to L3:** A batch run burns through budget without producing value (e.g., 5 runs, $25, zero PRs). Or a run crashes and the next run picks the same broken issue, creating a tight loop.
 
-## L2→L3: Governed (safety & cost)
+## L2→L3: Governed (DONE)
 
 **Problem L3 solves:** The batch runner has no immune system. A broken issue causes every run to crash. A misconfigured guidance prompt causes tight loops. There's no total budget across runs, only per-run caps.
 
@@ -100,22 +104,22 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 
 **Signal to escalate to L4:** The admin wakes up and has to dig through GitHub to find what happened overnight. Or a batch silently stopped at 2 AM and nobody knew until morning.
 
-## L3→L4: Reporting (admin notifications)
+## L3→L4: Reporting (next step)
 
-**Problem L4 solves:** The batch runs all night. The admin wakes up and has no idea what happened without checking logs and GitHub manually.
+**Problem L4 solves:** The batch runs all night. The admin wakes up and has no idea what happened without checking logs and GitHub manually. Batch progress issues exist (auto-created per batch with per-run comments), but there are no push notifications.
 
 **What L4 delivers:**
 
 1. **Per-run Telegram notification.** After each successful run (PR created), send a brief message to the admin channel:
    ```
-   [overnight-dent] Run #3 complete
+   [auto-dent] Run #3 complete
    PR: github.com/Garsson-io/kaizen/pull/234
    Case: k267-hook-gate-format | $2.14 | 4m23s
    ```
 
 2. **Batch summary notification.** When the batch finishes:
    ```
-   [overnight-dent] Batch complete: 7 runs, 5h12m, $18.40
+   [auto-dent] Batch complete: 7 runs, 5h12m, $18.40
    PRs shipped: #234, #236, #238
    Issues filed: #267, #269
    Issues closed: #251, #253, #258
@@ -124,7 +128,7 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 
 3. **Alert on anomaly.** If the batch stops due to consecutive failures or budget exhaustion, send an alert immediately (don't wait for morning):
    ```
-   [overnight-dent] STOPPED: 3 consecutive failures
+   [auto-dent] STOPPED: 3 consecutive failures
    Last error: case creation collision on #251
    Guidance: "focus on hooks reliability"
    Runs completed: 2/unlimited | $4.20 spent
