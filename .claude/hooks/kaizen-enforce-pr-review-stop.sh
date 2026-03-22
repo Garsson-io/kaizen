@@ -37,11 +37,8 @@ PR_URL=$(echo "$REVIEW_INFO" | cut -d'|' -f1)
 ROUND=$(echo "$REVIEW_INFO" | cut -d'|' -f2)
 
 # Block stop: agent must review the PR first.
-emit_stop_block "STOP BLOCKED: You have a pending PR review that must be completed before you can finish.
+REASON=$(render_prompt "pr-review-block.md" \
+  "PR_URL=$PR_URL" \
+  "ROUND=$ROUND")
 
-  PR: $PR_URL (round $ROUND)
-
-You MUST run \`gh pr diff $PR_URL\` now and complete the self-review checklist.
-Only after reviewing can you finish your response.
-
-This is a mandatory part of the PR creation workflow."
+emit_stop_block "$REASON"

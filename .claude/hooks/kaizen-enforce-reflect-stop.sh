@@ -44,20 +44,8 @@ else
 fi
 
 # Block stop: agent must complete kaizen reflection first.
-REASON="STOP BLOCKED: Kaizen reflection is incomplete.
+source "$(dirname "$0")/lib/hook-output.sh"
 
-${PR_HEADER}
+REASON=$(render_prompt "pr-kaizen-block.md" "PR_HEADER=$PR_HEADER")
 
-You MUST submit a KAIZEN_IMPEDIMENTS declaration before finishing:
-
-  echo 'KAIZEN_IMPEDIMENTS:' && cat <<'IMPEDIMENTS'
-  [{\"impediment\": \"description\", \"disposition\": \"filed\", \"ref\": \"#NNN\"}]
-  IMPEDIMENTS
-
-Or for no impediments: echo 'KAIZEN_IMPEDIMENTS: [] brief reason'
-
-This is mandatory — every PR must have a structured reflection."
-
-jq -n --arg reason "$REASON" '{ decision: "block", reason: $reason }'
-
-exit 0
+emit_stop_block "$REASON"
