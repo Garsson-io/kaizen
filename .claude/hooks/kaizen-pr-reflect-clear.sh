@@ -80,6 +80,12 @@ fi
 
 CMD_LINE=$(strip_heredoc_body "$COMMAND")
 
+# FAST PATH (kaizen #451): Only commands containing KAIZEN_IMPEDIMENTS or
+# KAIZEN_NO_ACTION can clear the gate. Skip state iteration for everything else.
+if ! echo "$COMMAND" | grep -qE 'KAIZEN_IMPEDIMENTS|KAIZEN_NO_ACTION'; then
+  exit 0
+fi
+
 # Check if there's an active PR kaizen gate to clear (kaizen #239, #327)
 # Use cross-branch lookup — the agent may submit the declaration from a
 # different worktree than where the PR was created.
