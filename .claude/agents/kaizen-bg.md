@@ -30,22 +30,60 @@ You will receive:
 - **Event type** — "create" or "merge"
 - **Branch** — the branch name
 - **Changed files** — list of files modified in the PR
+- **Session transcript** — path to the full session JSONL file (the uncompressed, complete record)
 - **Impediments** — friction points the main agent encountered (if provided)
 
 ## Your Task
 
-### 1. Gather context
+### 1. Analyze the session transcript (PRIMARY data source)
+
+**This is your most valuable input.** The transcript is the complete, uncompressed record of the session — the main agent's context may be compressed by the time it reports impediments, and it may self-rationalize away friction it caused. You are an independent auditor.
+
+Read the transcript file using the Read tool. It is a JSONL file where each line is a JSON object with a `type` field (`user`, `assistant`, `progress`, `system`).
+
+**Scan for these signals:**
+
+| Signal | What to look for in the transcript |
+|--------|------------------------------------|
+| **User corrections** | User messages containing pushback: "no don't", "that's wrong", "you're leaning wrong", "not what I asked", "I said...", "stop doing X" |
+| **Failed tool calls** | `tool_result` entries with `is_error: true` — especially repeated failures of the same tool |
+| **Hook denials** | Tool results containing "BLOCKED:", "enforce-*.sh", "pre-commit hook failed", "GATED until" |
+| **Retries** | Sequential `tool_use` calls to the same tool (especially Bash) with similar input after a failure |
+| **Repeated requests** | User messages referencing earlier requests: "I already asked", "I mentioned before", "again" |
+| **Self-rationalization** | The main agent dismissing friction: "that wasn't really a problem", "minor issue", "expected behavior" — these are the impediments it won't report |
+
+**How to read the transcript efficiently:**
+- `assistant` entries with `tool_use` content blocks show what tools were called and with what input
+- `user` entries with `tool_result` content blocks show results; check `is_error` field
+- `user` entries with `text` content blocks are human messages — scan these for corrections
+- Don't read the entire transcript line by line — use Grep on the file to find signals first:
+  ```bash
+  # Find failed tool calls
+  grep '"is_error":true' "$TRANSCRIPT_PATH" | head -20
+  # Find user corrections
+  grep -i '"text":".*\(no,\|don.t\|wrong\|not what\|stop\|I said\)' "$TRANSCRIPT_PATH" | head -20
+  # Find hook denials
+  grep -i 'BLOCKED:\|enforce-.*\.sh\|pre-commit hook failed' "$TRANSCRIPT_PATH" | head -20
+  ```
+
+### 2. Gather PR context
 - Read the PR diff: `gh pr diff {PR_URL}`
 - Read the PR description: `gh pr view {PR_URL}`
 - Check git log for recent commits on this branch
 
-### 2. Identify impediments
-For each piece of friction — things that slowed down the work, caused rework, or required workarounds:
+### 3. Identify impediments — combine transcript signals with PR context
+
+**Transcript signals are objective evidence.** The main agent's self-reported impediments are subjective. When they conflict, trust the transcript.
+
+For each piece of friction:
 - What was the root cause?
 - What level is the fix? L1 (instructions) → L2 (hooks) → L3 (mechanistic code)
 - Has this happened before?
+- Was this impediment reported by the main agent, or only visible in the transcript?
 
-### 3. Search for duplicates THOROUGHLY
+**Pay special attention to impediments the main agent did NOT report.** These are the highest-value findings — they reveal blind spots in the reflection process itself.
+
+### 4. Search for duplicates THOROUGHLY
 For EACH impediment, search existing kaizen issues with multiple query strategies:
 ```bash
 # Search by keywords
@@ -58,7 +96,7 @@ gh issue list --repo "$KAIZEN_REPO" --state open --label "epic" --json number,ti
 
 Finding an existing issue and adding an incident comment is MORE VALUABLE than filing a new issue. Duplicate issues fragment evidence and make prioritization harder.
 
-### 4. Take action
+### 5. Take action
 For each impediment:
 - **Match found** → Add an incident comment to the existing issue (THIS IS THE HIGHEST-VALUE ACTION):
   ```bash
@@ -77,7 +115,7 @@ For each impediment:
   Required labels: `kaizen` + level (`level-1`/`level-2`/`level-3`) + area (`area/hooks`, `area/skills`, `area/cases`, `area/deploy`, `area/testing`, `area/container`, `area/worktree`). Add `horizon/{name}` if it maps to a known horizon.
 - **Trivial / not worth filing** → Note the reason
 
-### 5. Report results
+### 6. Report results
 When done, output a structured summary that the main agent can use to clear the kaizen gate:
 
 ```
@@ -90,7 +128,7 @@ KAIZEN_BG_RESULTS:
 
 The main agent will use this to construct the KAIZEN_IMPEDIMENTS declaration and clear the gate.
 
-### 6. Verifiable meta-questions (aggregate health check)
+### 7. Verifiable meta-questions (aggregate health check)
 
 Before reporting results, run these aggregate queries and include the answers in your output. These turn vague introspection into data:
 

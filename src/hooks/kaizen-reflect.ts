@@ -147,11 +147,23 @@ function getPrTitle(prUrl: string): string {
   }
 }
 
+/** Build the transcript instruction line for subagent prompts. */
+function transcriptInstruction(transcriptPath?: string): string {
+  if (transcriptPath) {
+    return `  - Session transcript: ${transcriptPath}
+  - IMPORTANT: Read the transcript file to find signals the main agent may not report.
+    Scan for: user corrections/pushback, failed tool calls, hook denials, retries,
+    multiple attempts at the same thing, things the user had to ask for twice.`;
+  }
+  return '  - (no transcript path available — rely on impediments reported by main agent)';
+}
+
 /** Generate the reflection prompt for PR creation. */
 export function generateCreateReflection(
   prUrl: string,
   branch: string,
   changed: string,
+  transcriptPath?: string,
 ): string {
   return `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -168,6 +180,7 @@ Launch a background kaizen-bg subagent to handle reflection while you continue w
   - PR URL: ${prUrl}
   - Branch: ${branch}
   - Changed files: ${changed}
+${transcriptInstruction(transcriptPath)}
   - List any impediments/friction you encountered during this work
   - IMPORTANT: For each impediment, search existing kaizen issues FIRST.
     Recording an incident on an existing issue is MORE VALUABLE than filing new.
@@ -212,6 +225,7 @@ export function generateMergeReflection(
   branch: string,
   changed: string,
   mainCheckout: string,
+  transcriptPath?: string,
 ): string {
   return `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -229,6 +243,7 @@ with post-merge steps (deploy verification, main sync, case closure).
   - PR URL: ${prUrl}
   - Branch: ${branch}
   - Changed files: ${changed}
+${transcriptInstruction(transcriptPath)}
   - List any impediments/friction you encountered during this work
   - Ask it to also check if any open kaizen issues are now resolved by this merge
   - IMPORTANT: For each impediment, search existing kaizen issues FIRST.
@@ -331,13 +346,21 @@ export function processHookInput(
     BRANCH: branch,
   });
 
+  const transcriptPath = input.transcript_path;
+
   if (isCreate) {
-    return generateCreateReflection(prUrl, branch, changed);
+    return generateCreateReflection(prUrl, branch, changed, transcriptPath);
   }
 
   // Merge path
   const mainCheckout = options.mainCheckout ?? getMainCheckout();
-  const output = generateMergeReflection(prUrl, branch, changed, mainCheckout);
+  const output = generateMergeReflection(
+    prUrl,
+    branch,
+    changed,
+    mainCheckout,
+    transcriptPath,
+  );
 
   // Send Telegram notification for merges
   const prTitle = getPrTitle(prUrl);

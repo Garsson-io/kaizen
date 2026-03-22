@@ -13,7 +13,7 @@ description: Evaluate a kaizen case before implementation — gather incidents, 
 
 Before diving into implementation of a kaizen issue, run this skill to make sure we're solving the right problem, at the right scope, with the right evidence.
 
-Too many kaizen issues go from "abstract problem" to "big spec" to "never implemented." This skill forces concrete thinking: what actually happened, what's the smallest fix that proves value, what does the admin think, and what did we learn for next time.
+Too many kaizen issues go from "abstract problem" to "big spec" to "never implemented." This skill forces concrete thinking: what actually happened, what's the simplest correct implementation, what does the admin think, and what did we learn for next time. **Default to implementing the full solution.** Only split when the pieces are genuinely independent.
 
 ## When to use
 
@@ -117,20 +117,21 @@ Can you actually tell when this problem happens? If not, that might be the real 
 
 If the answer to most of these is "we can't tell," consider whether adding observability is the real low-hanging fruit, not the fix itself.
 
-### Phase 3: Find the low-hanging fruit
+### Phase 3: Assess the implementation as a whole
 
-Before looking at the spec's proposed solution, ask: what's the smallest change with provable, observable benefit?
+**Default to implementing the full deliverable set.** A PR must deliver value, be testable, and be tested — that's the bar. Don't split work into "low-hanging fruit now, rest later" unless the pieces are genuinely independent (different systems, different test suites, different areas of the codebase). "It's complex" is not a reason to split — it's a reason to plan well.
 
-**Criteria for a good low-hanging fruit:**
-- Implementable in under an hour
-- Testable — you can show before/after
-- Observable — the admin can see it working
-- Independent — doesn't require the full solution to deliver value
-- Reversible — if it's wrong, easy to undo
+**Assess the implementation by asking:**
+- What's the simplest correct implementation of the full solution?
+- Is this testable end-to-end? If not, building the test infrastructure is IN SCOPE.
+- What's the right order to build the pieces? (Tests first, then implementation, then integration.)
+- Are there genuinely independent sub-problems that would ship better as separate PRs?
 
-Often the best low-hanging fruit isn't in the spec at all. It emerges from looking at the incidents with fresh eyes.
+**When genuine splitting is warranted:** The pieces must each independently deliver value, have their own tests, and not require the other pieces to be useful. "Phase 1: add the config, Phase 2: add the feature that uses it" is NOT a valid split — the config alone delivers no value.
 
-**Diagnostic tests as low-hanging fruit:** A failing test that reproduces the reported problem is often the strongest evidence AND the clearest definition of done. If you can express the expected behavior as a test during evaluation, do so — it proves the problem exists, defines when it's fixed, and may reveal the actual bug surface is different than reported (see kaizen #120 where TDD revealed a second bug invisible during code reading).
+**Issue lifecycle when splitting:** If you split an epic/vague issue into a concrete deliverable, the deliverable is a **sub-issue** — not the main issue. The main issue stays open until its full scope is delivered. The PR should `Fixes #sub-issue`, not `Fixes #main-issue`. This prevents scope reduction from silently closing issues that still have undelivered work.
+
+**Diagnostic tests as an assessment tool:** A failing test that reproduces the reported problem is often the strongest evidence AND the clearest definition of done. If you can express the expected behavior as a test during evaluation, do so — it proves the problem exists, defines when it's fixed, and may reveal the actual bug surface is different than reported (see kaizen #120 where TDD revealed a second bug invisible during code reading).
 
 ### Phase 3.5: Form hypotheses — what are you assuming without testing?
 
@@ -243,7 +244,7 @@ Present your findings clearly so the admin can make a decision without reading t
 **Structure your questions as:**
 - "I found N incidents over M weeks. The pattern is X. Does this match your experience?"
 - "The spec proposes A, but the incidents suggest B would be more impactful. Which direction?"
-- "The simplest fix is X (30 min). The full solution is Y (2 days). Do you want X now and Y later, or Y directly?" *(If recommending "X now, Y later" — you must have passed the Scope Reduction Discipline gate: what signal will tell us when Y is needed?)*
+- "The full solution is Y. Here's the implementation plan: [concrete steps]. Any concerns before I proceed?"
 - "This problem overlaps with kaizen #N. Should we merge them or keep separate?"
 - "The spec's open question #K is actually the pivotal decision. My lean is Z because [reason]. Agree?"
 

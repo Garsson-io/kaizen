@@ -6,6 +6,8 @@
  */
 
 export interface HookInput {
+  session_id?: string;
+  transcript_path?: string;
   tool_name?: string;
   tool_input?: { command?: string; [key: string]: unknown };
   tool_response?: {
