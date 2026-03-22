@@ -20,3 +20,5 @@
 2026-03-21T20:19:15.439Z | branch=fix/complete-nanoclaw-migration | category=trivial-refactor | pr=https://github.com/Garsson-io/kaizen/pull/42 | reason=rename
 2026-03-21T20:19:21.052Z | branch=fix/complete-nanoclaw-migration | category=docs-only | pr=https://github.com/Garsson-io/kaizen/pull/99 | reason=updated README
 2026-03-21T20:19:21.546Z | branch=fix/complete-nanoclaw-migration | category=empty-array | pr=https://github.com/Garsson-io/kaizen/pull/99 | reason=simple fix
+2026-03-22T08:48:29Z | branch=worktree-k451-hook-performance | category=empty-array | pr=https://github.com/Garsson-io/smoke-test/pull/688310 | reason=test-triggered gate from smoke-test PR created by kaizen-reflect.test.ts
+2026-03-22T08:48:44Z | branch=worktree-k451-hook-performance | category=empty-array | pr=https://github.com/Garsson-io/smoke-test/pull/578763 | reason=test-triggered smoke-test PR gate — not real work
