@@ -23,6 +23,7 @@ source "$(dirname "$0")/test-helpers.sh"
 HOOKS_DIR="$(dirname "$0")/.."
 ENFORCE_PR_KAIZEN="$HOOKS_DIR/kaizen-enforce-pr-reflect.sh"
 PR_KAIZEN_CLEAR="$HOOKS_DIR/kaizen-pr-reflect-clear.sh"
+require_file "$PR_KAIZEN_CLEAR" "hook migrated to TS" || exit 0
 ENFORCE_PR_REVIEW="$HOOKS_DIR/kaizen-enforce-pr-review.sh"
 ENFORCE_PR_REVIEW_TOOLS="$HOOKS_DIR/kaizen-enforce-pr-review-tools.sh"
 PR_REVIEW_LOOP="$HOOKS_DIR/kaizen-pr-review-loop.sh"

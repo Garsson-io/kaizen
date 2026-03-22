@@ -126,12 +126,21 @@ Tests that don't override `STATE_DIR` will interact with real gates from other s
 ### 6. Silent Failures in Advisory Hooks
 PostToolUse hooks that set gates should log what they're doing. Silent gate creation leads to mysterious blocks later.
 
+### 7. Heavy Subprocesses in Accumulating Hooks (#474)
+Never spawn heavy subprocesses (vitest, tsc, npm test, npx) in hooks that can fire multiple times without blocking the AI. Stop hooks retry on exit 2, PostToolUse hooks fire on every tool call, advisory PreToolUse hooks don't block — all of these can accumulate unboundedly.
+
+**Safe:** PreToolUse hooks that deny (blocks AI, prevents re-invocation).
+**Unsafe:** Stop hooks, PostToolUse hooks, any hook that doesn't prevent further invocations.
+
+For unsafe positions, use the **marker pattern**: a skill or explicit tool call does the heavy work and writes a marker file. The hook only checks the marker.
+
 ## Lessons Learned
 
 | Incident | Lesson | Kaizen |
 |----------|--------|--------|
 | `--delete-branch` matched `branch` in regex | Always parenthesize regex alternation variables | #323 |
 | `--dangerously-skip-permissions` didn't bypass gates | Permissions and hooks are independent systems | #353 |
+| Stop hook ran vitest/tsc, OOM in 60s | No heavy subprocesses in hooks that can accumulate | #474 |
 | Gate re-fired 3x for same PR in one session | Per-PR reflection markers needed | #288 |
 | Cross-worktree gate clearing failed | Active declarations need `_any_branch` lookup | #239 |
 | `npm build && echo KAIZEN_IMPEDIMENTS:` bypassed gate | Segment-split before matching | #172 |

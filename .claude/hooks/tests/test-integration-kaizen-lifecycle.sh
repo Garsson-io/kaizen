@@ -29,6 +29,7 @@ export AUDIT_DIR
 export DEBUG_LOG="$HARNESS_TEMP/debug.log"
 
 KAIZEN_REFLECT="$HOOKS_DIR/kaizen-reflect.sh"
+require_file "$KAIZEN_REFLECT" "hook migrated to TS" || exit 0
 ENFORCE_PR_KAIZEN="$HOOKS_DIR/kaizen-enforce-pr-reflect.sh"
 ENFORCE_KAIZEN_STOP="$HOOKS_DIR/kaizen-enforce-reflect-stop.sh"
 PR_KAIZEN_CLEAR="$HOOKS_DIR/kaizen-pr-reflect-clear.sh"

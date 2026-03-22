@@ -29,6 +29,7 @@ export DEBUG_LOG="$HARNESS_TEMP/debug.log"
 REPO_AUDIT_LOG="$HOOKS_DIR/../audit/no-action.log"
 
 PR_KAIZEN_CLEAR="$HOOKS_DIR/kaizen-pr-reflect-clear.sh"
+require_file "$PR_KAIZEN_CLEAR" "hook migrated to TS" || exit 0
 
 # Mock gh to return OPEN for pr view
 INTEG_MOCK_DIR="$HARNESS_TEMP/mock-bin"

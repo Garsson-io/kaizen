@@ -468,7 +468,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const prUrl = "https://github.com/Garsson-io/test-project/pull/77";
 
       const result = runKaizenHook(
-        "kaizen-reflect.sh",
+        "kaizen-reflect-ts.sh",
         bashPost('gh pr create --title "test"', prUrl),
       );
       expect(result.exitCode).toBe(0);
@@ -507,7 +507,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const command = `echo 'KAIZEN_IMPEDIMENTS:' && echo '${impedimentsJson}'`;
       const stdout = `KAIZEN_IMPEDIMENTS:\n${impedimentsJson}`;
       const result = runKaizenHook(
-        "kaizen-pr-reflect-clear.sh",
+        "pr-kaizen-clear-ts.sh",
         bashPost(command, stdout),
       );
       expect(result.exitCode).toBe(0);
@@ -522,7 +522,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const command = `echo 'KAIZEN_IMPEDIMENTS:' && echo '${waivedJson}'`;
       const stdout = `KAIZEN_IMPEDIMENTS:\n${waivedJson}`;
       const result = runKaizenHook(
-        "kaizen-pr-reflect-clear.sh",
+        "pr-kaizen-clear-ts.sh",
         bashPost(command, stdout),
       );
       // Gate should still be active — waived is rejected
@@ -548,7 +548,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const command = "echo 'KAIZEN_NO_ACTION [docs-only]: documentation update'";
       const stdout = "KAIZEN_NO_ACTION [docs-only]: documentation update";
       const result = runKaizenHook(
-        "kaizen-pr-reflect-clear.sh",
+        "pr-kaizen-clear-ts.sh",
         bashPost(command, stdout),
       );
       expect(result.exitCode).toBe(0);
@@ -581,13 +581,13 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
 
       // review-loop sets review state
       const reviewLoopResult = runKaizenHook(
-        "kaizen-pr-review-loop.sh",
+        "pr-review-loop-ts.sh",
         bashPost('gh pr create --title "fix: something"', prUrl),
       );
 
       // reflect sets kaizen state
       const reflectResult = runKaizenHook(
-        "kaizen-reflect.sh",
+        "kaizen-reflect-ts.sh",
         bashPost('gh pr create --title "fix: something"', prUrl),
       );
       expect(reflectResult.stdout).toContain("KAIZEN");
@@ -623,7 +623,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const kaizenCommand = `echo 'KAIZEN_IMPEDIMENTS:' && echo '${impedimentsJson}'`;
       const kaizenStdout = `KAIZEN_IMPEDIMENTS:\n${impedimentsJson}`;
       runKaizenHook(
-        "kaizen-pr-reflect-clear.sh",
+        "pr-kaizen-clear-ts.sh",
         bashPost(kaizenCommand, kaizenStdout),
       );
       expect(stateDir.hasFile("pr-kaizen-"), "Kaizen gate should be cleared").toBe(false);

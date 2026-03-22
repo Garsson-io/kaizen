@@ -9,6 +9,7 @@
 source "$(dirname "$0")/test-helpers.sh"
 
 HOOK="$(dirname "$0")/../kaizen-reflect.sh"
+require_file "$HOOK" "hook migrated to TS" || exit 0
 setup_test_env
 
 # Override send_notification to no-op (avoid real Telegram calls)

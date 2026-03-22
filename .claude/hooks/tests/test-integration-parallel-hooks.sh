@@ -150,10 +150,16 @@ POST_INPUT=$(build_post_tool_use_input "Bash" \
   '{"command":"gh pr create --title test --body test"}' \
   "https://github.com/Garsson-io/kaizen/pull/99" "" "0")
 
-POST_HOOKS=(
-  "$HOOKS_DIR/kaizen-pr-review-loop.sh"
-  "$HOOKS_DIR/kaizen-reflect.sh"
-)
+POST_HOOKS=()
+for _h in "$HOOKS_DIR/kaizen-pr-review-loop.sh" "$HOOKS_DIR/kaizen-reflect.sh"; do
+  [ -f "$_h" ] && POST_HOOKS+=("$_h")
+done
+
+if [ ${#POST_HOOKS[@]} -eq 0 ]; then
+  echo "  SKIP: PostToolUse hooks migrated to TS (kaizen-pr-review-loop.sh, kaizen-reflect.sh not found)"
+  echo "Results: $PASS passed, $FAIL failed"
+  exit $FAIL
+fi
 
 post_outputs=()
 for hook in "${POST_HOOKS[@]}"; do
