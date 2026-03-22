@@ -273,6 +273,83 @@ MOCK_EOF
   chmod +x "$mock_dir/gh"
 }
 
+# Create a temp kaizen.config.json for hooks that use read-config.sh.
+# Sets MOCK_CONFIG_DIR. Pass extra jq fields to customize.
+# Usage: setup_mock_config '{"host":{"caseCli":"/path/to/cli"}}'
+# Cleanup: rm -rf "$MOCK_CONFIG_DIR"
+setup_mock_config() {
+  local extra="${1:-"{}"}"
+  MOCK_CONFIG_DIR=$(mktemp -d)
+  # Merge defaults with caller's overrides
+  jq -n --argjson extra "$extra" '{
+    "kaizen": { "repo": "Garsson-io/kaizen" },
+    "host": { "name": "test", "repo": "test/test" }
+  } * $extra' > "$MOCK_CONFIG_DIR/kaizen.config.json"
+}
+
+# Create a mock case CLI script that responds to case-by-branch.
+# Usage: setup_mock_case_cli "found"   → returns JSON case record
+#        setup_mock_case_cli "empty"   → returns empty (no case)
+#        setup_mock_case_cli "error"   → exits non-zero
+# Sets MOCK_CASE_CLI path. Cleanup: rm -rf "$(dirname "$MOCK_CASE_CLI")"
+setup_mock_case_cli() {
+  local mode="${1:-empty}"
+  local dir
+  dir=$(mktemp -d)
+  MOCK_CASE_CLI="$dir/mock-case-cli"
+
+  case "$mode" in
+    found)
+      cat > "$MOCK_CASE_CLI" << 'MOCK'
+#!/bin/bash
+if [ "$1" = "case-by-branch" ]; then
+  echo '{"id": 1, "branch": "'"$2"'", "status": "ACTIVE"}'
+  exit 0
+fi
+exit 1
+MOCK
+      ;;
+    empty)
+      cat > "$MOCK_CASE_CLI" << 'MOCK'
+#!/bin/bash
+if [ "$1" = "case-by-branch" ]; then
+  echo ""
+  exit 0
+fi
+exit 1
+MOCK
+      ;;
+    error)
+      cat > "$MOCK_CASE_CLI" << 'MOCK'
+#!/bin/bash
+exit 1
+MOCK
+      ;;
+  esac
+  chmod +x "$MOCK_CASE_CLI"
+}
+
+# Guard for tests that require a worktree environment.
+# Usage: if ! require_worktree; then skip_pass N; continue/return; fi
+# Returns 0 if in worktree, 1 if in main checkout (prints SKIP message).
+require_worktree() {
+  local git_dir git_common
+  git_dir=$(git rev-parse --git-dir 2>/dev/null)
+  git_common=$(git rev-parse --git-common-dir 2>/dev/null)
+  if [ -z "$git_dir" ] || [ -z "$git_common" ] || [ "$git_dir" = "$git_common" ]; then
+    echo "  SKIP: running in main checkout, can't test worktree behavior"
+    return 1
+  fi
+  return 0
+}
+
+# Pad PASS count when skipping multiple assertions.
+# Usage: skip_pass 3  → adds 3 to PASS counter
+skip_pass() {
+  local n="${1:-1}"
+  for ((i = 0; i < n; i++)); do ((PASS++)); done
+}
+
 # Print final results and exit with appropriate code
 print_results() {
   echo ""
