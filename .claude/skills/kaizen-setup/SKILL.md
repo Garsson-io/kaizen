@@ -51,7 +51,7 @@ Creates `.claude/kaizen/policies-local.md` if it doesn't exist. Skips if already
 
 ## Step 3: Set up symlinks (submodule only)
 
-**Skip for plugin installs.**
+**Automatically skipped for plugin installs** — the CLI detects plugin mode and returns `status: "skipped"`.
 
 ```bash
 npx tsx src/kaizen-setup.ts --step symlinks --kaizen-root <root>
@@ -63,7 +63,7 @@ Creates symlinks from host `.claude/skills/`, `.claude/agents/`, `.claude/kaizen
 
 ## Step 4: Merge hook registrations (submodule only)
 
-**Skip for plugin installs.**
+**Automatically skipped for plugin installs** — the CLI detects plugin mode and returns `status: "skipped"`. In plugin mode, hooks are registered via `plugin.json`, not `settings.json`.
 
 ```bash
 npx tsx src/kaizen-setup.ts --step hooks --kaizen-root <root>
@@ -80,7 +80,12 @@ This step is YOUR job — not a script. Read the kaizen CLAUDE.md fragment and i
 - For plugin installs, the fragment is at `${CLAUDE_PLUGIN_ROOT}/.claude/kaizen/claude-md-fragment.md`
 - For submodule installs, it's at `.kaizen/.claude/kaizen/claude-md-fragment.md`
 
-Read the fragment, then:
+Read the fragment, then **replace `{{KAIZEN_ROOT}}` placeholders** with the actual kaizen path:
+- For plugin installs: replace `{{KAIZEN_ROOT}}` with the plugin root path (ask user or use `${CLAUDE_PLUGIN_ROOT}`)
+- For submodule installs: replace `{{KAIZEN_ROOT}}` with `.kaizen`
+- For self-dogfood (kaizen repo itself): replace `{{KAIZEN_ROOT}}` with `.`
+
+Then inject:
 - **If CLAUDE.md doesn't exist:** Create it with the fragment.
 - **If CLAUDE.md has `<!-- BEGIN KAIZEN PLUGIN -->` ... `<!-- END KAIZEN PLUGIN -->`:** Replace that section.
 - **If CLAUDE.md exists but no kaizen section:** Append the fragment at an appropriate location.

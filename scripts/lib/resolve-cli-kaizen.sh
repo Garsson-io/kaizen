@@ -68,6 +68,19 @@ resolve_cli_kaizen_for_worktree() {
     return 0
   fi
 
+  # Fall back to plugin root (kaizen installed as Claude Code plugin)
+  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && resolve_cli_kaizen "$CLAUDE_PLUGIN_ROOT"; then
+    return 0
+  fi
+
+  # Fall back to script's own repo (hook calling from plugin cache)
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local script_root="$(cd "$script_dir/../.." 2>/dev/null && pwd)"
+  if [ -n "$script_root" ] && resolve_cli_kaizen "$script_root"; then
+    return 0
+  fi
+
   return 1
 }
 

@@ -28,6 +28,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-wip.sh",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-session-cleanup.sh",
+            "timeout": 15
           }
         ]
       }
@@ -79,11 +84,6 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-block-git-rebase.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-bump-plugin-version.sh",
             "timeout": 10
           }
         ]
@@ -182,6 +182,11 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-cleanup-on-stop.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-reflect-stop.sh",
             "timeout": 10
           }
         ]
