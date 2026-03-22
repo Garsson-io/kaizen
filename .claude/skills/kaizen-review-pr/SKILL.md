@@ -20,9 +20,13 @@ The `pr-review-loop.sh` hook enforces that this review happens. This skill defin
 
 ### Phase 2: Review Using Subagents
 
-Launch parallel review agents, each focused on one dimension from the criteria file. Each agent reads the diff and returns findings with confidence scores (0-100).
+Launch review agents, each focused on one dimension from the criteria file. Each agent reads the diff and returns findings with confidence scores (0-100).
 
-**Agent assignments:**
+**Execution modes:**
+- **Full review** (external/CI, or when invoked manually): Use parallel subagents for each dimension. Thorough but token-expensive.
+- **Self-review** (during `/kaizen-implement` task #4): Run as a single agent that checks all dimensions sequentially. Cheaper, still thorough — you're reviewing your own code so context is already loaded.
+
+**Agent assignments (for full review — in self-review, check all sequentially):**
 
 | Agent | Criteria Section | What to check |
 |-------|-----------------|---------------|
