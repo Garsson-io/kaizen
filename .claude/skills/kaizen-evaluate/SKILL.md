@@ -275,6 +275,31 @@ The kaizen cycle is WORK → REFLECT → IDENTIFY → CLASSIFY → IMPLEMENT →
 
 The mechanism for storing and surfacing this doesn't exist yet. That's a separate design problem — and one that should be informed by several rounds of running this skill first, so we have concrete examples of what kind of lessons emerge and how they'd be used. Don't design the system in the abstract; accumulate the data, then design around it.
 
+### Multi-PR Follow-Through Discipline — MANDATORY when splitting work
+
+When evaluation recommends splitting an epic into sub-issues (Phase 3), the split itself is not the risk — **dropping the follow-ups is.** The pattern: first PR ships, follow-up issues rot in the backlog for weeks, the epic delivers 30% of its value and is quietly forgotten.
+
+**Mechanism: file all sub-issues before starting any implementation.**
+
+When you decide to split work into multiple PRs:
+
+1. **File ALL sub-issues on GitHub immediately.** Not "we'll file the rest later" — all of them, now, with clear titles, definitions of done, and dependency links. This is the minimum viable mechanism: they exist in the backlog even if the current session ends unexpectedly.
+
+2. **Link them to the parent epic** with a comment listing all sub-issues and their dependency order. The epic is the dashboard — anyone (human or agent) can see what's done and what remains.
+
+3. **Use session tasks to track the full set.** Create tasks for ALL sub-issues in the current session, not just the first one. Even if you won't complete them all, the task list shows the commitment and makes it visible when you stop early.
+
+4. **After each PR, continue to the next sub-issue.** This is the critical behavior change. When PR 1 merges, do not stop and wait for a new session. Check the task list, pick up the next sub-issue, and keep going. The default is **continue**, not **stop**. Only stop if:
+   - The admin explicitly says to stop
+   - A blocker emerges that requires human input
+   - The session has been running for an unreasonable duration
+
+5. **If you must stop before completing all sub-issues**, update the epic with current progress and explicitly state what remains. The `/kaizen-implement` skill's "On sub-issue closure" section handles the mechanics.
+
+**Why this matters:** Filing sub-issues is necessary but not sufficient. Issues without momentum get deprioritized by `/kaizen-pick` in favor of fresher work. The follow-through happens in the same session because that's when context is hot and the implementation is cheapest. Splitting work into PRs should be a code organization choice, not an invitation to stop working.
+
+**Anti-pattern: "Ship and reflect."** The agent ships PR 1, runs reflection, encounters the post-merge gate, clears it, and considers the work done. The remaining sub-issues are technically in the backlog but have no champion. **The agent that split the work IS the champion** — continue until the epic is delivered or the admin redirects.
+
 ## Anti-patterns
 
 - **Skipping Phase 1.** Going straight from "kaizen #N exists" to "let's implement the spec" without checking if the spec matches reality.
@@ -283,12 +308,14 @@ The mechanism for storing and surfacing this doesn't exist yet. That's a separat
 - **Asking the admin obvious questions.** Respect their time. Only escalate decisions that genuinely need human judgment.
 - **Recording trivial lessons.** "We should test our code" is not a lesson. "Specs over 100 lines for problems with known solutions lead to spec-rot — implement instead" is.
 - **"Do X now, Y later" without a mechanism.** Reducing scope is fine — but only if you provide a signal (mechanistic tool, epic connection, or filed follow-up) that will trigger "later." Without a mechanism, "later" never arrives. See the Scope Reduction Discipline gate.
+- **Ship and stop.** Completing one sub-issue of a multi-PR split and stopping. The agent that split the work owns follow-through. See Multi-PR Follow-Through Discipline above.
 
 ## Integration with other skills
 
 - After accept-case, use `/kaizen-implement` to bridge spec to code (applies the five-step algorithm: question, delete, simplify, accelerate, automate)
 - If the case needs a spec first, use `/kaizen-prd` — but only if Phase 1-3 showed the problem is genuinely complex
 - If the case is ready for implementation, use `/kaizen-plan` to break it into PRs
+- When splitting into sub-issues, follow the Multi-PR Follow-Through Discipline — file all sub-issues upfront and continue working through them
 - Lessons learned feed back into future accept-case evaluations
 
 ## Recursive Kaizen

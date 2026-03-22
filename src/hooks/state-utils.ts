@@ -120,6 +120,33 @@ export function isStateForCurrentWorktree(
 }
 
 /**
+ * Prune stale state files from the state directory (kaizen #452).
+ * Removes files older than maxAge to prevent unbounded growth
+ * that caused 97-file iteration and 400-520ms hook times.
+ */
+export function pruneStaleStateFiles(
+  stateDir: string = DEFAULT_STATE_DIR,
+  maxAge: number = DEFAULT_MAX_STATE_AGE,
+): number {
+  if (!existsSync(stateDir)) return 0;
+  const now = Date.now() / 1000;
+  let pruned = 0;
+  for (const entry of readdirSync(stateDir)) {
+    const filepath = join(stateDir, entry);
+    try {
+      const mtime = statSync(filepath).mtimeMs / 1000;
+      if (now - mtime > maxAge) {
+        unlinkSync(filepath);
+        pruned++;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return pruned;
+}
+
+/**
  * List state files (non-stale, any branch).
  * For cross-branch lookups (e.g., active agent declarations).
  */
@@ -127,16 +154,13 @@ export function listStateFilesAnyBranch(
   stateDir: string = DEFAULT_STATE_DIR,
   maxAge: number = DEFAULT_MAX_STATE_AGE,
 ): string[] {
+  pruneStaleStateFiles(stateDir, maxAge); // kaizen #452
   if (!existsSync(stateDir)) return [];
-  const now = Date.now() / 1000;
   const files: string[] = [];
 
   for (const entry of readdirSync(stateDir)) {
     const filepath = join(stateDir, entry);
     try {
-      const mtime = statSync(filepath).mtimeMs / 1000;
-      if (now - mtime > maxAge) continue;
-
       const content = readFileSync(filepath, 'utf-8');
       const state = parseStateFile(content);
       if (!state.BRANCH) continue;
@@ -205,6 +229,7 @@ export function listStateFilesForCurrentWorktree(
   stateDir: string = DEFAULT_STATE_DIR,
   maxAge: number = DEFAULT_MAX_STATE_AGE,
 ): string[] {
+  pruneStaleStateFiles(stateDir, maxAge); // kaizen #452
   if (!existsSync(stateDir)) return [];
   const now = Date.now() / 1000;
   const files: string[] = [];

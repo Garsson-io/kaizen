@@ -25,6 +25,9 @@ const EXCLUSIONS: Record<string, string> = {
   // Requires `gh` CLI for PR state lookup + auto-clear — bash-only orchestration
   find_needs_review_state:
     'bash-only: requires gh CLI for merged/closed PR auto-clear',
+  // Lazy cleanup of merged/closed PR review states — bash-only (kaizen #452)
+  cleanup_merged_review_states:
+    'bash-only: requires gh CLI for PR state checks, called from SessionStart/Stop not hot path',
 
   // TS internal helpers with no bash equivalent (TS uses structured objects)
   parseStateFile: 'ts-only: internal helper, bash uses grep/cut inline',

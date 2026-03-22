@@ -10,8 +10,8 @@ export MAX_STATE_AGE
 
 source "$(dirname "$0")/../lib/state-utils.sh"
 
-setup() { reset_state; }
-teardown() { reset_state; }
+setup() { reset_state; _PRUNED_THIS_INVOCATION=false; }
+teardown() { reset_state; _PRUNED_THIS_INVOCATION=false; }
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
@@ -66,21 +66,23 @@ else
 fi
 
 echo ""
-echo "=== is_state_for_current_worktree: stale file ==="
+echo "=== prune_stale_state_files: deletes stale files (kaizen #452) ==="
 
 setup
 STATE_FILE="$STATE_DIR/test_stale"
 printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/4\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_FILE"
 backdate_file "$STATE_FILE" 3
 
-# INVARIANT: Stale files (>MAX_STATE_AGE) are rejected even if same branch
-# SUT: is_state_for_current_worktree staleness check
-if is_state_for_current_worktree "$STATE_FILE"; then
-  echo "  FAIL: stale file accepted"
-  ((FAIL++))
-else
-  echo "  PASS: stale file rejected"
+# INVARIANT: Stale files are pruned by prune_stale_state_files
+# SUT: prune_stale_state_files (kaizen #452 — staleness moved from inline check to upfront pruning)
+_PRUNED_THIS_INVOCATION=false
+prune_stale_state_files
+if [ ! -f "$STATE_FILE" ]; then
+  echo "  PASS: stale file pruned"
   ((PASS++))
+else
+  echo "  FAIL: stale file not pruned"
+  ((FAIL++))
 fi
 
 echo ""
@@ -180,11 +182,28 @@ else
 fi
 
 echo ""
-echo "=== find_needs_review_state: auto-clears merged PR state (kaizen #85, Fix A) ==="
+echo "=== find_needs_review_state: returns first needs_review without gh call (kaizen #452) ==="
+
+setup
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/99\nROUND=3\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_review_no_gh"
+
+# INVARIANT: find_needs_review_state returns the state without calling gh pr view
+# (kaizen #452 — gh pr view moved to cleanup_merged_review_states)
+REVIEW_INFO=$(find_needs_review_state)
+if [ $? -eq 0 ]; then
+  echo "  PASS: find_needs_review_state returns review without gh call"
+  ((PASS++))
+else
+  echo "  FAIL: find_needs_review_state returned failure"
+  ((FAIL++))
+fi
+assert_contains "returns correct PR URL" "kaizen/pull/99" "$REVIEW_INFO"
+
+echo ""
+echo "=== cleanup_merged_review_states: clears merged PR state (kaizen #85 → #452) ==="
 
 setup
 
-# Override default mock: return MERGED for pull/99, OPEN for anything else
 FIXA_MOCK_DIR=$(mktemp -d)
 cat > "$FIXA_MOCK_DIR/gh" << 'MOCK'
 #!/bin/bash
@@ -199,28 +218,18 @@ chmod +x "$FIXA_MOCK_DIR/gh"
 
 printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/99\nROUND=3\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_merged"
 
-# INVARIANT: find_needs_review_state auto-clears state for merged PRs
-# SUT: find_needs_review_state with gh returning MERGED
-REVIEW_INFO=$(PATH="$FIXA_MOCK_DIR:$PATH" find_needs_review_state)
-if [ $? -ne 0 ]; then
-  echo "  PASS: find_needs_review_state returns failure for merged PR"
-  ((PASS++))
-else
-  echo "  FAIL: find_needs_review_state returned success for merged PR"
-  ((FAIL++))
-fi
-
-# INVARIANT: The state file should be deleted after detecting merge
+# INVARIANT: cleanup_merged_review_states auto-clears state for merged PRs
+PATH="$FIXA_MOCK_DIR:$PATH" cleanup_merged_review_states
 if [ ! -f "$STATE_DIR/f_merged" ]; then
-  echo "  PASS: state file deleted after merge detection"
+  echo "  PASS: merged PR state file deleted by cleanup"
   ((PASS++))
 else
-  echo "  FAIL: state file still exists after merge detection"
+  echo "  FAIL: merged PR state file still exists after cleanup"
   ((FAIL++))
 fi
 
 echo ""
-echo "=== find_needs_review_state: auto-clears CLOSED PR state ==="
+echo "=== cleanup_merged_review_states: clears CLOSED PR state ==="
 
 setup
 cat > "$FIXA_MOCK_DIR/gh" << 'MOCK'
@@ -232,74 +241,41 @@ chmod +x "$FIXA_MOCK_DIR/gh"
 
 printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/50\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_closed"
 
-# INVARIANT: CLOSED PRs are also auto-cleared
-REVIEW_INFO=$(PATH="$FIXA_MOCK_DIR:$PATH" find_needs_review_state)
-if [ $? -ne 0 ] && [ ! -f "$STATE_DIR/f_closed" ]; then
-  echo "  PASS: CLOSED PR state auto-cleared"
+# INVARIANT: CLOSED PRs are also auto-cleared by cleanup
+PATH="$FIXA_MOCK_DIR:$PATH" cleanup_merged_review_states
+if [ ! -f "$STATE_DIR/f_closed" ]; then
+  echo "  PASS: CLOSED PR state auto-cleared by cleanup"
   ((PASS++))
 else
-  echo "  FAIL: CLOSED PR state not cleared"
+  echo "  FAIL: CLOSED PR state not cleared by cleanup"
   ((FAIL++))
 fi
 
 echo ""
-echo "=== find_needs_review_state: keeps OPEN PR state ==="
-
-setup
-# Default mock already returns OPEN
-
-printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/60\nROUND=2\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_open"
-
-# INVARIANT: OPEN PRs are NOT cleared — review gate stays active
-REVIEW_INFO=$(find_needs_review_state)
-if [ $? -eq 0 ] && [ -f "$STATE_DIR/f_open" ]; then
-  echo "  PASS: OPEN PR state preserved, review gate active"
-  ((PASS++))
-else
-  echo "  FAIL: OPEN PR state was incorrectly cleared"
-  ((FAIL++))
-fi
-assert_contains "returns correct PR URL for open PR" "kaizen/pull/60" "$REVIEW_INFO"
-
-echo ""
-echo "=== find_needs_review_state: clears merged, returns next open PR ==="
+echo "=== cleanup_merged_review_states: keeps OPEN PR state ==="
 
 setup
 cat > "$FIXA_MOCK_DIR/gh" << 'MOCK'
 #!/bin/bash
-if echo "$@" | grep -q "pull/70"; then
-  echo "MERGED"
-  exit 0
-fi
 echo "OPEN"
 exit 0
 MOCK
 chmod +x "$FIXA_MOCK_DIR/gh"
 
-printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/70\nROUND=3\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_merged2"
-printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/71\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_open2"
+printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/60\nROUND=2\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_open"
 
-# INVARIANT: Merged PRs are skipped, next open PR is returned
-REVIEW_INFO=$(PATH="$FIXA_MOCK_DIR:$PATH" find_needs_review_state)
-if [ $? -eq 0 ]; then
-  echo "  PASS: found an open PR after skipping merged one"
+# INVARIANT: OPEN PRs are NOT cleared by cleanup
+PATH="$FIXA_MOCK_DIR:$PATH" cleanup_merged_review_states
+if [ -f "$STATE_DIR/f_open" ]; then
+  echo "  PASS: OPEN PR state preserved by cleanup"
   ((PASS++))
 else
-  echo "  FAIL: no PR found after merged one (should have found open PR)"
-  ((FAIL++))
-fi
-assert_contains "returns open PR, not merged one" "kaizen/pull/71" "$REVIEW_INFO"
-
-if [ ! -f "$STATE_DIR/f_merged2" ]; then
-  echo "  PASS: merged PR state file was cleaned up"
-  ((PASS++))
-else
-  echo "  FAIL: merged PR state file still exists"
+  echo "  FAIL: OPEN PR state was incorrectly cleared by cleanup"
   ((FAIL++))
 fi
 
 echo ""
-echo "=== find_needs_review_state: handles gh failure gracefully ==="
+echo "=== cleanup_merged_review_states: handles gh failure gracefully ==="
 
 setup
 cat > "$FIXA_MOCK_DIR/gh" << 'MOCK'
@@ -310,9 +286,9 @@ chmod +x "$FIXA_MOCK_DIR/gh"
 
 printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/80\nROUND=1\nSTATUS=needs_review\nBRANCH=%s\n' "$CURRENT_BRANCH" > "$STATE_DIR/f_gh_fail"
 
-# INVARIANT: If gh fails (network error, etc), treat PR as still open (don't clear)
-REVIEW_INFO=$(PATH="$FIXA_MOCK_DIR:$PATH" find_needs_review_state)
-if [ $? -eq 0 ] && [ -f "$STATE_DIR/f_gh_fail" ]; then
+# INVARIANT: If gh fails, treat PR as still open (don't clear)
+PATH="$FIXA_MOCK_DIR:$PATH" cleanup_merged_review_states
+if [ -f "$STATE_DIR/f_gh_fail" ]; then
   echo "  PASS: gh failure treated as PR still open (safe default)"
   ((PASS++))
 else
