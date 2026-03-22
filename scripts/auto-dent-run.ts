@@ -105,7 +105,115 @@ function getRepoRoot(): string {
 
 // Prompt building
 
+/**
+ * Resolve the prompts directory. Checks repo-root/prompts first,
+ * then falls back to the directory relative to this script.
+ */
+export function resolvePromptsDir(): string {
+  try {
+    const gitCommonDir = execSync(
+      'git rev-parse --path-format=absolute --git-common-dir',
+      { encoding: 'utf8' },
+    ).trim();
+    const repoRoot = gitCommonDir.replace(/\/\.git$/, '');
+    const dir = resolve(repoRoot, 'prompts');
+    if (existsSync(dir)) return dir;
+  } catch {
+    // Fall through
+  }
+  return resolve(dirname(new URL(import.meta.url).pathname), '..', 'prompts');
+}
+
+/**
+ * Build template variables from batch state and run number.
+ * These are substituted into prompt templates via {{variable}} syntax.
+ */
+export function buildTemplateVars(
+  state: BatchState,
+  runNum: number,
+): Record<string, string> {
+  const runTag = `${state.batch_id}/run-${runNum}`;
+  const hostRepo = state.host_repo || state.kaizen_repo || 'unknown';
+  const now = new Date();
+
+  return {
+    guidance: state.guidance,
+    run_tag: runTag,
+    run_tag_slug: runTag.replace(/\//g, '-'),
+    run_num: String(runNum),
+    run_context: `${runNum}${state.max_runs > 0 ? ` of ${state.max_runs}` : ''}`,
+    host_repo: hostRepo,
+    kaizen_repo: state.kaizen_repo || 'unknown',
+    batch_id: state.batch_id,
+    timestamp: now.toISOString().replace(/[-:T]/g, '').slice(0, 14),
+    iso_now: now.toISOString(),
+    issues_closed: state.issues_closed.join(' '),
+    prs: state.prs.join(' '),
+  };
+}
+
+/**
+ * Render a Mustache-lite template string.
+ *
+ * Supports:
+ *   {{variable}}          — simple substitution
+ *   {{#variable}}...{{/variable}} — conditional section (rendered if variable is non-empty)
+ */
+export function renderTemplate(
+  template: string,
+  vars: Record<string, string>,
+): string {
+  // Process conditional sections: {{#key}}...{{/key}}
+  let result = template.replace(
+    /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g,
+    (_match, key: string, body: string) => {
+      return vars[key] ? body : '';
+    },
+  );
+
+  // Substitute variables: {{key}}
+  result = result.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => {
+    return vars[key] ?? `{{${key}}}`;
+  });
+
+  // Clean up blank lines left by removed conditional sections
+  result = result.replace(/\n{3,}/g, '\n\n');
+
+  return result.trim();
+}
+
+/**
+ * Load a prompt template from the prompts directory.
+ * Returns null if the file doesn't exist (caller should fall back to inline).
+ */
+export function loadPromptTemplate(templateName: string): string | null {
+  const promptsDir = resolvePromptsDir();
+  const templatePath = resolve(promptsDir, templateName);
+  try {
+    return readFileSync(templatePath, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 export function buildPrompt(state: BatchState, runNum: number): string {
+  const vars = buildTemplateVars(state, runNum);
+
+  // Try to load from external template file
+  const templateFile = state.test_task
+    ? 'test-task.md'
+    : 'deep-dive-default.md';
+  const template = loadPromptTemplate(templateFile);
+
+  if (template) {
+    return renderTemplate(template, vars);
+  }
+
+  // Inline fallback (kept for backward compatibility)
+  return buildPromptInline(state, runNum);
+}
+
+function buildPromptInline(state: BatchState, runNum: number): string {
   const runTag = `${state.batch_id}/run-${runNum}`;
   const kaizenRepo = state.kaizen_repo || 'unknown';
   const hostRepo = state.host_repo || kaizenRepo;
