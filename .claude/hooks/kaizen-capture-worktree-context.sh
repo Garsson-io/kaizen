@@ -22,6 +22,8 @@ if [ "$EXIT_CODE" != "0" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 CMD_LINE=$(strip_heredoc_body "$COMMAND")
 
 # Only trigger on gh pr create

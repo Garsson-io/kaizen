@@ -21,6 +21,8 @@ if [ -z "$CHANGED_TS" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Determine which projects have changes
 HARNESS_TS=$(echo "$CHANGED_TS" | grep -v '^container/agent-runner/' || true)
 AGENT_RUNNER_TS=$(echo "$CHANGED_TS" | grep '^container/agent-runner/' || true)
@@ -46,7 +48,7 @@ fi
 # Run harness tests if harness files changed
 if [ -n "$HARNESS_TS" ]; then
   if [ -f "vitest.config.ts" ] || [ -f "vitest.config.js" ]; then
-    if ! npx vitest run --reporter=verbose 2>&1; then
+    if ! npx vitest run --reporter=verbose --pool=forks --maxWorkers=2 2>&1; then
       echo "❌ Harness tests failed. Fix failing tests before finishing." >&2
       exit 2
     fi
@@ -55,7 +57,7 @@ fi
 
 # Run agent-runner tests if agent-runner files changed
 if [ -n "$AGENT_RUNNER_TS" ] && [ -f "container/agent-runner/vitest.config.ts" ]; then
-  if ! (cd container/agent-runner && npx vitest run --reporter=verbose) 2>&1; then
+  if ! (cd container/agent-runner && npx vitest run --reporter=verbose --pool=forks --maxWorkers=2) 2>&1; then
     echo "❌ Agent-runner tests failed. Fix failing tests before finishing." >&2
     exit 2
   fi

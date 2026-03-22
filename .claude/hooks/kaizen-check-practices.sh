@@ -19,6 +19,8 @@ if ! is_gh_pr_command "$CMD_LINE" "create"; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Resolve practices file relative to this hook's location
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 PRACTICES_FILE="$HOOK_DIR/../kaizen/practices.md"

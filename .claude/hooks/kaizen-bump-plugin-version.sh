@@ -37,6 +37,8 @@ if [ "$MAIN_VERSION" != "$CURRENT_VERSION" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Auto-bump patch
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"

@@ -30,6 +30,8 @@ if [ $? -ne 0 ] || [ -z "$ALL_STATES" ]; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Build PR list for the block message
 PR_COUNT=$(echo "$ALL_STATES" | wc -l | tr -d ' ')
 PR_LIST=""

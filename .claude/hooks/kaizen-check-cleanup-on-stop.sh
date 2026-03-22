@@ -7,6 +7,8 @@
 #
 # Exit 0 = allow stop (always)
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 
 # Check if we're in a worktree (not the main checkout)

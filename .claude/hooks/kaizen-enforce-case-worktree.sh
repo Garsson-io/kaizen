@@ -15,6 +15,8 @@ if ! echo "$COMMAND" | grep -qE '^\s*git\s+(commit|push)'; then
   exit 0
 fi
 
+source "$(dirname "$0")/lib/scope-guard.sh"
+
 # Allow if running inside a git worktree
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
 GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)

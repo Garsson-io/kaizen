@@ -5,5 +5,7 @@
 # Moved out of find_needs_review_state() hot path in kaizen #452 — was adding ~400ms
 # per PreToolUse call due to gh pr view HTTP roundtrip.
 
+
+source "$(dirname "$0")/lib/scope-guard.sh"
 source "$(dirname "$0")/lib/state-utils.sh"
 cleanup_merged_review_states
