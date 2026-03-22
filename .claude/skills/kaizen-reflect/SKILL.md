@@ -227,16 +227,32 @@ Positive findings (`type: "positive"`) may use `disposition: "no-action"` when t
 **"Waived" is not a valid disposition.** The agent doing the waiving is the same agent evaluating the waiver — adding guardrails doesn't fix motivated reasoning. A checkbox doesn't prevent rationalization.
 
 Instead, every impediment gets one of three dispositions:
+- `"fixed-in-pr"` — addressed in this PR **(preferred for small fixes)**
 - `"filed"` — real friction, filed as an issue (with `ref: "#NNN"`)
 - `"incident"` — recorded as an incident on an existing issue (with `ref: "#NNN"`)
-- `"fixed-in-pr"` — addressed in this PR
 
 If something is not actually friction, it's a positive finding:
 - `{"type": "positive", "disposition": "no-action", "reason": "why this is not friction"}`
 
 **The `pr-kaizen-clear.sh` hook enforces this at L2.** Any `disposition: "waived"` is rejected with guidance to file or reclassify.
 
-**Filing takes 2 minutes.** Filing an issue is not implementing the fix. The issue records the insight; implementation priority is a separate decision. If the observation is true, file it. Period.
+### Fix-first disposition policy (kaizen #441)
+
+**Before filing an impediment as a new issue, ask: "Can I fix this in under 10 minutes without changing the PR's scope?"** If yes, fix it now and use `disposition: "fixed-in-pr"`. Filing takes 2 minutes but creates a context-reload cost later. Fixing takes 5-10 minutes while you already have full context. The issue you file today becomes the multi-PR fix cycle you pay for tomorrow.
+
+**Fix in this PR when:**
+- The fix is < 10 minutes and < 30 lines of changes
+- The impediment is in files you're already touching
+- It's a config/infrastructure fix (gitignore, tsconfig, package.json)
+- Not fixing it would be ironic (e.g., DRY violation in a DRY detector)
+
+**File instead when:**
+- The fix touches code unrelated to this PR (increases scope and review burden)
+- It requires architectural decisions or user input
+- It would add > 30% to the PR's diff size
+- It needs its own test suite to verify
+
+**The compound benefit:** Each impediment fixed in-PR is one fewer issue in the backlog, one fewer context switch, one fewer PR in the fix cycle. Over 10 reflections, fixing 2 trivial impediments per session instead of filing them saves 20 future context-loads.
 
 > A mechanism you can't reach is a mechanism you don't have.
 > Existence is not availability. Availability is not accessibility.
