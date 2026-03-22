@@ -4,4 +4,5 @@ dist/
 .claude/audit/
 .claude/kaizen/audit/
 .worktree-context.json
+store/
 .claude/audit/
