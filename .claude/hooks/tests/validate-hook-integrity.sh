@@ -47,12 +47,16 @@ validate_file() {
       continue
     fi
 
-    if ! bash -n "$resolved" 2>/tmp/hook-syntax-err; then
+    local syntax_err
+    syntax_err=$(mktemp)
+    if ! bash -n "$resolved" 2>"$syntax_err"; then
       echo "::error::[$label] Syntax error in $cmd:"
-      cat /tmp/hook-syntax-err
+      cat "$syntax_err"
+      rm -f "$syntax_err"
       ((ERRORS++))
       continue
     fi
+    rm -f "$syntax_err"
 
     echo "  OK: $cmd"
   done <<< "$commands"
