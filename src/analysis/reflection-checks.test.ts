@@ -107,6 +107,57 @@ describe('FM3: detectReflectionGaming', () => {
     expect(trivialDetections.length).toBeGreaterThan(0);
   });
 
+  // --- Amplified disposition: positive findings with documentation target ---
+  it('does NOT flag all-amplified reflection as gaming (kaizen #349)', () => {
+    const impediments: Impediment[] = [
+      {
+        finding: 'TDD caught Buffer vs string mock mismatch in RED phase',
+        type: 'positive',
+        disposition: 'amplified',
+        reason: 'Documented in practices.md',
+      },
+      {
+        finding: 'Hypothesis framing produced a better PRD',
+        type: 'positive',
+        disposition: 'amplified',
+        reason: 'Documented in memory',
+      },
+    ];
+
+    const detections = detectReflectionGaming(impediments);
+    const allWaivedDetections = detections.filter((d) =>
+      d.detail.includes('zero filed'),
+    );
+    expect(allWaivedDetections).toHaveLength(0);
+  });
+
+  it('does NOT flag mix of amplified and filed as high-avoidance', () => {
+    const impediments: Impediment[] = [
+      {
+        finding: 'Hook test gap for new enforcement path',
+        disposition: 'filed',
+        ref: '#430',
+      },
+      {
+        finding: 'Pattern-first reflection caught shared root cause',
+        type: 'positive',
+        disposition: 'amplified',
+      },
+      {
+        finding: 'Already documented practice',
+        type: 'positive',
+        disposition: 'no-action',
+        reason: 'Already in practices.md',
+      },
+    ];
+
+    const detections = detectReflectionGaming(impediments);
+    const highConfDetections = detections.filter(
+      (d) => d.confidence >= 80,
+    );
+    expect(highConfDetections).toHaveLength(0);
+  });
+
   // --- Clean scenario: high-quality reflection ---
   it('does NOT flag well-structured reflection with real filings', () => {
     const impediments: Impediment[] = [
@@ -191,6 +242,24 @@ describe('classifyReflectionQuality', () => {
         { finding: 'b', disposition: 'no-action', type: 'positive' },
       ]),
     ).toBe('low');
+  });
+
+  it('returns "medium" for amplified positive findings (kaizen #349)', () => {
+    expect(
+      classifyReflectionQuality([
+        { finding: 'TDD validated in RED phase', disposition: 'amplified', type: 'positive' },
+        { finding: 'Pattern-first caught root cause', disposition: 'amplified', type: 'positive' },
+      ]),
+    ).toBe('medium');
+  });
+
+  it('returns "medium" for 1 amplified + 1 no-action', () => {
+    expect(
+      classifyReflectionQuality([
+        { finding: 'Novel practice documented', disposition: 'amplified', type: 'positive' },
+        { finding: 'Known pattern', disposition: 'no-action', type: 'positive' },
+      ]),
+    ).toBe('medium');
   });
 });
 

@@ -56,11 +56,14 @@ export function detectReflectionGaming(
   const actionable = impediments.filter(
     (i) => i.disposition === 'filed' || i.disposition === 'incident' || i.disposition === 'fixed-in-pr',
   );
+  const amplified = impediments.filter(
+    (i) => i.disposition === 'amplified',
+  );
   const avoided = impediments.filter(
     (i) => i.disposition === 'no-action',
   );
 
-  if (actionable.length === 0 && avoided.length > 0) {
+  if (actionable.length === 0 && amplified.length === 0 && avoided.length > 0) {
     detections.push({
       mode: FailureMode.REFLECTION_GAMING,
       confidence: 85,
@@ -69,7 +72,8 @@ export function detectReflectionGaming(
     });
   } else if (
     impediments.length >= 3 &&
-    avoided.length / impediments.length > 0.7
+    avoided.length / impediments.length > 0.7 &&
+    amplified.length === 0
   ) {
     detections.push({
       mode: FailureMode.REFLECTION_GAMING,
@@ -173,10 +177,14 @@ export function classifyReflectionQuality(
   const fixedInPr = impediments.filter(
     (i) => i.disposition === 'fixed-in-pr',
   ).length;
+  const amplifiedCount = impediments.filter(
+    (i) => i.disposition === 'amplified',
+  ).length;
   const actionable = filed + fixedInPr;
 
   if (actionable >= 2) return 'high';
-  if (actionable >= 1) return 'medium';
+  if (actionable >= 1 || amplifiedCount >= 2) return 'medium';
+  if (amplifiedCount >= 1) return 'medium';
   return 'low';
 }
 
