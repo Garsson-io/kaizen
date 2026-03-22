@@ -28,6 +28,9 @@ Put policy where intent meets action.
 The right level matters more than the right fix.
 A perfect fix at Level 1 will be forgotten. A rough fix at Level 3 will hold.
 
+A gate the actor can exit before is a gate that doesn't exist.
+Enforce at completion, not just continuation.
+
 Map the territory before you move through it.
 A good taxonomy of the problem outlasts any solution.
 
@@ -174,6 +177,24 @@ The wrong response is to prevent overlap. Deconfliction protocols, exclusive loc
 The right response is to detect supersession and resolve it gracefully. The first PR to merge wins. The rest auto-close with a comment linking to the merged PR. Issues closed by a merged PR don't need the other PRs. This is cheap, robust, and preserves full parallelism.
 
 The pattern generalizes beyond PRs. Any shared resource in a parallel autonomous system — issues, branches, worktrees, state files — will experience contention. The question is never "how do we prevent contention?" but "how do we detect and resolve it cheaply?" Prevention is sequential thinking applied to a parallel problem. Detection-and-resolution is the parallel-native approach.
+
+### Exit before enforcement — the half-gate anti-pattern
+
+A gate that fires *between* actions can be bypassed by ending the action loop. If the enforcement is "I'll stop you from doing the wrong thing *next*," and the actor's next action is to stop — the gate never fires. This is the exit-before-enforcement anti-pattern.
+
+This reveals two types of enforcement:
+
+**Continuation-dependent** enforcement blocks the next action. It requires the actor to *keep going* past the enforcement point. If the actor exits, the gate is never reached. All PreToolUse gates are continuation-dependent.
+
+**Completion-dependent** enforcement blocks the actor from *declaring done*. The actor can't exit cleanly without passing the gate. The kaizen reflection gate is completion-dependent — it fires when you try to move on, not when you try to act.
+
+The expanded taxonomy adds two levels that address this gap:
+
+**L1.5 — Expectations.** Structure the actor's definition of "done" through visible tasks and checklists. An agent with a visible incomplete task can't honestly consider itself finished. Stronger than instructions (which disappear into context) but weaker than gates (which block mechanistically). The agent cooperates because it *sees* the incompleteness.
+
+**L3.5 — Post-hoc correction.** The harness reviews the actor's output *after the actor exits* and fills gaps. Architecturally immune to exit-before-enforcement because it runs outside the actor's lifecycle entirely. The overnight-dent trampoline is the prototype: parse the session log, extract what the agent missed, run reflection as a separate step. The actor's cooperation is not needed.
+
+The full enforcement stack: L1 (instructions) → L1.5 (expectations) → L2 (gates) → L2.5 (tools) → L3 (architecture) → L3.5 (post-hoc correction). Each level catches what the level below misses. Each addresses a different bypass mode.
 
 ### The goal
 
