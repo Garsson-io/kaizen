@@ -575,7 +575,7 @@ export interface CliOptions {
   dryRun: boolean;
 }
 
-export function parseCliArgs(argv: string[]): CliOptions | "help" {
+export function parseCliArgs(argv: string[]): CliOptions | "help" | { error: string } {
   const opts: CliOptions = { mode: "analyze", fast: false, dryRun: false };
   for (const arg of argv) {
     switch (arg) {
@@ -587,8 +587,7 @@ export function parseCliArgs(argv: string[]): CliOptions | "help" {
       case "-h":
         return "help";
       default:
-        console.error(`Unknown arg: ${arg}`);
-        process.exit(1);
+        return { error: `Unknown arg: ${arg}` };
     }
   }
   return opts;
@@ -599,6 +598,10 @@ export function main(
   cwd: string = process.cwd(),
 ) {
   const opts = parseCliArgs(argv);
+  if (typeof opts === "object" && "error" in opts) {
+    console.error(opts.error);
+    process.exit(1);
+  }
   if (opts === "help") {
     console.log(`worktree-du — Disk usage analysis and cleanup
 

@@ -354,30 +354,26 @@ describe("cleanupWorktrees", () => {
 describe("parseCliArgs", () => {
   it("defaults to analyze mode", () => {
     const opts = parseCliArgs([]);
-    expect(opts).not.toBe("help");
-    if (opts === "help") return;
-    expect(opts.mode).toBe("analyze");
-    expect(opts.fast).toBe(false);
-    expect(opts.dryRun).toBe(false);
+    expect(opts).toEqual({ mode: "analyze", fast: false, dryRun: false });
   });
 
   it("parses cleanup mode", () => {
     const opts = parseCliArgs(["cleanup", "--dry-run"]);
-    expect(opts).not.toBe("help");
-    if (opts === "help") return;
-    expect(opts.mode).toBe("cleanup");
-    expect(opts.dryRun).toBe(true);
+    expect(opts).toEqual({ mode: "cleanup", fast: false, dryRun: true });
   });
 
   it("parses --fast", () => {
     const opts = parseCliArgs(["--fast"]);
-    expect(opts).not.toBe("help");
-    if (opts === "help") return;
-    expect(opts.fast).toBe(true);
+    expect(opts).toEqual({ mode: "analyze", fast: true, dryRun: false });
   });
 
   it("returns help", () => {
     expect(parseCliArgs(["--help"])).toBe("help");
     expect(parseCliArgs(["-h"])).toBe("help");
+  });
+
+  it("returns error for unknown args", () => {
+    const result = parseCliArgs(["--bogus"]);
+    expect(result).toEqual({ error: "Unknown arg: --bogus" });
   });
 });
