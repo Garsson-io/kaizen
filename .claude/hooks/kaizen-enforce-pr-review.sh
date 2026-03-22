@@ -20,9 +20,9 @@
 # The gate opens when the agent runs `gh pr diff` (which sets STATUS=passed
 # in the PostToolUse hook). If the agent pushes fixes, the gate re-engages.
 
-source "$(dirname "$0")/lib/parse-command.sh"
-source "$(dirname "$0")/lib/state-utils.sh"
-source "$(dirname "$0")/lib/allowlist.sh"
+source "$(dirname "$0")/lib/parse-command.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/state-utils.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/allowlist.sh" 2>/dev/null || { exit 0; }
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')

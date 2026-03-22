@@ -14,9 +14,9 @@
 #
 # Always exits 0 — this is a state management hook, not a gate.
 
-source "$(dirname "$0")/lib/state-utils.sh"
-source "$(dirname "$0")/lib/parse-command.sh"
-source "$(dirname "$0")/lib/resolve-main-checkout.sh"
+source "$(dirname "$0")/lib/state-utils.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/parse-command.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/resolve-main-checkout.sh" 2>/dev/null || { exit 0; }
 
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')

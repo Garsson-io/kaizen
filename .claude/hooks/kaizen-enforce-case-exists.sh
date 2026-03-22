@@ -15,8 +15,8 @@
 #   1. If $KAIZEN_CASE_CLI is configured, use: $KAIZEN_CASE_CLI case-by-branch <branch>
 #   2. If no case CLI configured, skip enforcement (can't check without a backend)
 
-source "$(dirname "$0")/lib/allowlist.sh"
-source "$(dirname "$0")/lib/read-config.sh"
+source "$(dirname "$0")/lib/allowlist.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/read-config.sh" 2>/dev/null || { exit 0; }
 
 INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')

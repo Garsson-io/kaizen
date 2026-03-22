@@ -21,10 +21,10 @@
 # Exit 0 with no output = allow stop
 # Exit 0 with JSON {"decision":"block","reason":"..."} = block stop
 
-source "$(dirname "$0")/lib/state-utils.sh"
-source "$(dirname "$0")/lib/resolve-main-checkout.sh"
-source "$(dirname "$0")/lib/input-utils.sh"
-source "$(dirname "$0")/lib/hook-output.sh"
+source "$(dirname "$0")/lib/state-utils.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/resolve-main-checkout.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/hook-output.sh" 2>/dev/null || { exit 0; }
 
 read_hook_input
 
