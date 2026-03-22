@@ -6,22 +6,7 @@
 
 import { type Impediment, type Detection, FailureMode } from './types.js';
 import { truncate } from './util.js';
-
-/** Waiver reasons that are generically useless (from real incidents) */
-const GENERIC_WAIVER_BLOCKLIST = [
-  'overengineering',
-  'over-engineering',
-  'low frequency',
-  'self-correcting',
-  'acceptable tradeoff',
-  'acceptable trade-off',
-  'not worth it',
-  'too complex',
-  'diminishing returns',
-  'edge case',
-  'minor issue',
-  'cosmetic',
-];
+import { GENERIC_WAIVER_BLOCKLIST } from '../lib/waiver-blocklist.js';
 
 /**
  * FM3: Detect low-quality reflections that game the gate.
