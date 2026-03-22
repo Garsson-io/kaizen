@@ -1,6 +1,6 @@
 # Hooks Design — Patterns, Anti-Patterns, and Lessons Learned
 
-This document captures hard-won knowledge about the Claude Code hooks system. It's the reference for anyone writing, debugging, or maintaining hooks.
+This document captures hard-won knowledge about the Claude Code hooks system. It's the reference for anyone writing, debugging, or maintaining hooks. Last verified: 2026-03-22.
 
 ## Architecture
 
