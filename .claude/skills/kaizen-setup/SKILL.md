@@ -6,109 +6,66 @@ user_invocable: true
 
 # /kaizen-setup — Install Kaizen Plugin
 
-Interactive setup for configuring kaizen in a host project after plugin installation.
-
-Kaizen is installed as a Claude Code plugin. Hooks, skills, and agents are registered automatically via `plugin.json`. This setup only creates 3 host-project files:
-
-1. `kaizen.config.json` — tells kaizen about the host project
-2. `.claude/kaizen/policies-local.md` — host-specific enforcement policies
-3. CLAUDE.md section — instructions for agents working in this repo
-
-No Node.js is required in the host project. You create these files directly using Claude Code tools.
+Configure kaizen for the current project. Plugin hooks, skills, and agents are registered automatically via `plugin.json`. This setup creates host-project config files.
 
 ## Step 0: Check installation
 
-Verify kaizen is installed as a plugin:
+Verify kaizen is installed:
 ```bash
-echo $CLAUDE_PLUGIN_ROOT
+echo "CLAUDE_PLUGIN_ROOT=$CLAUDE_PLUGIN_ROOT"
 ```
 
-If `CLAUDE_PLUGIN_ROOT` is set, kaizen is installed. If not, tell the user:
+If `CLAUDE_PLUGIN_ROOT` is empty, the plugin isn't installed. Tell the user:
 ```
 /plugin marketplace add Garsson-io/kaizen
 /plugin install kaizen@kaizen
 ```
-Then restart Claude Code.
+Then restart Claude Code and re-run `/kaizen-setup`.
 
 ## Step 1: Create kaizen.config.json
 
-Ask the user for:
-1. **Host project name** — short identifier (e.g., "my-project")
-2. **Host repo** — GitHub org/repo (e.g., "org/my-project")
-3. **Host description** — brief description
-4. **Kaizen repo** — where kaizen issues are filed (default: "Garsson-io/kaizen")
-5. **Notification channel** — "telegram", "slack", or "none" (default: "none")
+Ask the user for project name, repo (org/repo), and description. Then run:
 
-Then create `kaizen.config.json` in the project root using the Write tool:
-```json
-{
-  "host": {
-    "name": "<name>",
-    "repo": "<org/repo>",
-    "description": "<description>"
-  },
-  "kaizen": {
-    "repo": "<kaizen-repo>",
-    "issueLabel": "kaizen"
-  },
-  "taxonomy": {
-    "levels": ["level-1", "level-2", "level-3"],
-    "areas": [],
-    "areaPrefix": "area/",
-    "epicPrefix": "epic/",
-    "horizonPrefix": "horizon/"
-  },
-  "notifications": {
-    "channel": "<channel>"
-  }
-}
+```bash
+npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" \
+  --step config \
+  --name "<name>" \
+  --repo "<org/repo>" \
+  --description "<description>" \
+  --kaizen-repo "Garsson-io/kaizen" \
+  --channel "none"
 ```
+
+This creates `kaizen.config.json` in the current project root.
 
 ## Step 2: Scaffold policies
 
-Create `.claude/kaizen/policies-local.md` if it doesn't exist:
-
-```markdown
-# Host-Specific Kaizen Policies
-
-These policies extend the generic kaizen policies for this project.
-Add project-specific enforcement rules here.
+```bash
+npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" --step scaffold
 ```
 
-Skip if the file already exists (don't overwrite custom policies).
+Creates `.claude/kaizen/policies-local.md` if it doesn't exist.
 
 ## Step 3: Inject CLAUDE.md section
 
-Read the kaizen CLAUDE.md fragment from `${CLAUDE_PLUGIN_ROOT}/.claude/kaizen/claude-md-fragment.md`.
-
-Then inject:
-- **If CLAUDE.md doesn't exist:** Create it with the fragment.
-- **If CLAUDE.md has `<!-- BEGIN KAIZEN PLUGIN -->` ... `<!-- END KAIZEN PLUGIN -->`:** Replace that section.
-- **If CLAUDE.md exists but no kaizen section:** Append the fragment at an appropriate location.
-
-Use your judgment on placement — this is why it's not scripted.
+Read the fragment at `${CLAUDE_PLUGIN_ROOT}/.claude/kaizen/claude-md-fragment.md` and append it to CLAUDE.md. If CLAUDE.md doesn't exist, create it. If it already has a kaizen section, skip.
 
 ## Step 4: Verify
 
-Check that all required files exist and are valid:
-- [ ] `kaizen.config.json` exists, is valid JSON, has `host.name`, `host.repo`, `kaizen.repo`
-- [ ] `.claude/kaizen/policies-local.md` exists
-- [ ] `CLAUDE.md` exists and contains "kaizen" content
+```bash
+npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" --step verify
+```
 
-Report results to the user. Suggest fixes for any failures.
+Reports which checks pass/fail. Fix any failures.
 
 ## Workflow Tasks
-
-Create these tasks at skill start using TaskCreate:
 
 | # | Task | Description |
 |---|------|-------------|
 | 1 | Check installation | Verify CLAUDE_PLUGIN_ROOT is set |
-| 2 | Create config and policies | `kaizen.config.json` + `.claude/kaizen/policies-local.md` |
-| 3 | Inject CLAUDE.md and verify | Add kaizen section to CLAUDE.md. Check all files are correct. |
-
-**What comes next:** Nothing — standalone setup. Run `/kaizen-update` to pull future updates.
+| 2 | Create config and policies | Run CLI for config + scaffold steps |
+| 3 | Inject CLAUDE.md and verify | Append kaizen section, run verify |
 
 ## Idempotency
 
-This setup is idempotent — running it again updates config and re-applies settings without duplicating entries. Safe to re-run after `/kaizen-update`.
+Safe to re-run — config overwrites, scaffold skips if exists, verify re-checks.

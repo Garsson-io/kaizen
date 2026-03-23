@@ -1,20 +1,22 @@
 /**
  * kaizen-setup.ts — Setup operations for the kaizen plugin.
  *
- * Pure library — exported functions for creating host-project config files.
- * No CLI entry point. The /kaizen-setup skill creates files directly using
- * Claude Code's tools; these functions are used by tests and self-dogfood.
+ * Library + CLI. The /kaizen-setup skill calls this via:
+ *   npx --prefix $CLAUDE_PLUGIN_ROOT tsx $CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts --step <name> [args]
+ *
+ * The CLI runs from the HOST PROJECT directory (CWD = host project root).
+ * All file operations write to CWD, not to the plugin cache.
  *
  * Plugin mode only — submodule mode has been removed.
  * Hooks, skills, and agents are registered via plugin.json automatically.
- * Setup only needs to create 3 host-project files:
+ * Setup creates host-project config files:
  *   1. kaizen.config.json — tells kaizen about the host project
  *   2. .claude/kaizen/policies-local.md — host-specific policies
- *   3. CLAUDE.md section — instructions for agents (done by skill, not here)
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
+import { parseArgs } from "util";
 
 // ── Types ──
 
@@ -181,4 +183,58 @@ export function verifySetup(cwd: string): VerifyResult {
   const failed = checks.filter((c) => !c.ok).length;
 
   return { step: "verify", status: failed > 0 ? "failed" : "ok", checks, passed, failed };
+}
+
+// ── CLI ──
+// Called by the /kaizen-setup skill:
+//   npx --prefix $CLAUDE_PLUGIN_ROOT tsx $CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts --step <name> [args]
+// CWD must be the host project root.
+
+if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("kaizen-setup.js")) {
+  const { values } = parseArgs({
+    options: {
+      step: { type: "string" },
+      name: { type: "string" },
+      repo: { type: "string" },
+      description: { type: "string" },
+      "kaizen-repo": { type: "string" },
+      "case-cli": { type: "string" },
+      channel: { type: "string" },
+      method: { type: "string" },
+      cwd: { type: "string" },
+    },
+    strict: false,
+  }) as { values: Record<string, string | undefined> };
+
+  const cwd = values.cwd ?? process.cwd();
+
+  switch (values.step) {
+    case "detect":
+      console.log(JSON.stringify(detectInstall({ cwd })));
+      break;
+
+    case "config":
+      console.log(JSON.stringify(generateConfig({
+        name: values.name ?? "",
+        repo: values.repo ?? "",
+        description: values.description ?? "",
+        kaizenRepo: values["kaizen-repo"],
+        caseCli: values["case-cli"],
+        channel: values.channel,
+      }, cwd)));
+      break;
+
+    case "scaffold":
+      console.log(JSON.stringify(scaffoldPolicies(cwd)));
+      break;
+
+    case "verify":
+      console.log(JSON.stringify(verifySetup(cwd)));
+      break;
+
+    default:
+      console.error(`Unknown step: ${values.step}`);
+      console.error("Steps: detect, config, scaffold, verify");
+      process.exit(1);
+  }
 }
