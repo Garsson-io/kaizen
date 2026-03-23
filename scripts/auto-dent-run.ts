@@ -71,6 +71,10 @@ export interface RunMetrics {
   stop_requested: boolean;
   /** Cognitive mode used for this run (default: "exploit" for backward compat) */
   mode?: string;
+  /** Net lines removed (positive = deletion, 0 for older runs) */
+  lines_deleted?: number;
+  /** Issues closed as obsolete/duplicate (not-planned), not fixed */
+  issues_pruned?: number;
 }
 
 export interface RunResult {
@@ -82,6 +86,10 @@ export interface RunResult {
   toolCalls: number;
   stopRequested: boolean;
   stopReason?: string;
+  /** Net lines removed (positive = deletion) */
+  linesDeleted: number;
+  /** Issues closed as not-planned (pruned, not fixed) */
+  issuesPruned: number;
 }
 
 // State I/O
@@ -478,6 +486,22 @@ export function extractArtifacts(text: string, result: RunResult): void {
   }
   for (const m of text.matchAll(/case[:\s]+(\d{6}-\d{4}-[\w-]+)/g)) {
     if (!result.cases.includes(m[1])) result.cases.push(m[1]);
+  }
+  // Extract issues pruned (closed as not-planned/wontfix/duplicate)
+  for (const _m of text.matchAll(
+    /gh\s+issue\s+close\s+.*--reason\s+not-planned/g,
+  )) {
+    result.issuesPruned++;
+  }
+  // Extract net lines deleted from git diff --stat summaries
+  // Matches patterns like "5 files changed, 10 insertions(+), 50 deletions(-)"
+  for (const m of text.matchAll(
+    /(\d+)\s+insertion[s]?\(\+\).*?(\d+)\s+deletion[s]?\(-\)/g,
+  )) {
+    const insertions = parseInt(m[1], 10);
+    const deletions = parseInt(m[2], 10);
+    const net = deletions - insertions;
+    if (net > 0) result.linesDeleted += net;
   }
 }
 
@@ -1099,6 +1123,8 @@ async function runClaude(
     cost: 0,
     toolCalls: 0,
     stopRequested: false,
+    linesDeleted: 0,
+    issuesPruned: 0,
   };
 
   const ctx: StreamContext = {};
@@ -1403,6 +1429,8 @@ async function main(): Promise<void> {
     cases: result.cases,
     stop_requested: result.stopRequested,
     mode: 'exploit',
+    lines_deleted: result.linesDeleted,
+    issues_pruned: result.issuesPruned,
   };
   if (!freshState.run_history) freshState.run_history = [];
   freshState.run_history.push(runMetrics);

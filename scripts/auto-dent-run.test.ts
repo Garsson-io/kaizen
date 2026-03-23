@@ -62,6 +62,8 @@ function makeRunResult(overrides: Partial<RunResult> = {}): RunResult {
     cost: 0,
     toolCalls: 0,
     stopRequested: false,
+    linesDeleted: 0,
+    issuesPruned: 0,
     ...overrides,
   };
 }
@@ -377,6 +379,48 @@ describe('extractArtifacts', () => {
     expect(result.issuesFiled).toHaveLength(0);
     expect(result.issuesClosed).toHaveLength(0);
     expect(result.cases).toHaveLength(0);
+  });
+
+  it('counts issues pruned from gh issue close --reason not-planned', () => {
+    const result = makeRunResult();
+    extractArtifacts(
+      'gh issue close 123 --repo Garsson-io/kaizen --reason not-planned\ngh issue close 456 --repo Garsson-io/kaizen --reason not-planned',
+      result,
+    );
+    expect(result.issuesPruned).toBe(2);
+  });
+
+  it('does not count gh issue close without not-planned as pruned', () => {
+    const result = makeRunResult();
+    extractArtifacts('gh issue close 123 --repo Garsson-io/kaizen', result);
+    expect(result.issuesPruned).toBe(0);
+  });
+
+  it('extracts net lines deleted from git diff stat output', () => {
+    const result = makeRunResult();
+    extractArtifacts(
+      '5 files changed, 10 insertions(+), 60 deletions(-)',
+      result,
+    );
+    expect(result.linesDeleted).toBe(50);
+  });
+
+  it('does not count lines deleted when insertions exceed deletions', () => {
+    const result = makeRunResult();
+    extractArtifacts(
+      '3 files changed, 100 insertions(+), 20 deletions(-)',
+      result,
+    );
+    expect(result.linesDeleted).toBe(0);
+  });
+
+  it('accumulates lines deleted across multiple diff stats', () => {
+    const result = makeRunResult();
+    extractArtifacts(
+      '2 files changed, 5 insertions(+), 25 deletions(-)\n3 files changed, 10 insertions(+), 40 deletions(-)',
+      result,
+    );
+    expect(result.linesDeleted).toBe(50);
   });
 });
 
