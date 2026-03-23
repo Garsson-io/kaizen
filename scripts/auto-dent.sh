@@ -292,6 +292,8 @@ if [[ -f "$PLAN_SCRIPT" && "$TEST_TASK" != true && "$NO_PLAN" != true ]]; then
     if [[ -f "$LOG_DIR/plan.json" ]]; then
       PLAN_ITEMS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$LOG_DIR/plan.json','utf8')).items.length)")
       echo ">>> Plan ready: $PLAN_ITEMS items queued."
+      # Post plan summary to batch progress issue (#566)
+      npx tsx "$SCRIPT_DIR/auto-dent-run.ts" --post-plan "$STATE_FILE" 2>/dev/null || echo ">>> Plan posting skipped (non-fatal)."
     fi
   else
     echo ">>> Planning skipped (non-fatal). Runs will use discovery mode."
