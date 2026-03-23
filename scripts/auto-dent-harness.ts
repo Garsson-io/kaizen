@@ -320,6 +320,267 @@ export function phaseCount(capture: StreamCapture, phase: string): number {
   return capture.phases.filter(p => p.phase === phase).length;
 }
 
+// Lifecycle validation
+
+/**
+ * Expected phase ordering for auto-dent runs.
+ * Phases must appear in this relative order (gaps are OK, reversals are not).
+ * DECOMPOSE and STOP can appear at any point after EVALUATE.
+ */
+const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
+
+/** Phases that can appear at any position (after at least PICK) */
+const FLOATING_PHASES = new Set(['DECOMPOSE', 'STOP']);
+
+export interface LifecycleViolation {
+  /** The phase that appeared out of order */
+  phase: string;
+  /** The phase it appeared after (that should have come later) */
+  after: string;
+  /** 0-based indices within the captured phases array */
+  phaseIndex: number;
+  afterIndex: number;
+}
+
+export interface LifecycleValidation {
+  /** Whether all phases appeared in valid order */
+  valid: boolean;
+  /** Phases present in the capture, in order */
+  phasesPresent: string[];
+  /** Standard lifecycle phases that were missing */
+  phasesMissing: string[];
+  /** Ordering violations (if any) */
+  violations: LifecycleViolation[];
+}
+
+/**
+ * Validate that phases in a StreamCapture follow the expected lifecycle order.
+ * Floating phases (DECOMPOSE, STOP) are excluded from ordering checks.
+ */
+export function validateLifecycle(capture: StreamCapture): LifecycleValidation {
+  const phasesPresent = capture.phases.map(p => p.phase);
+  const orderedPhases = phasesPresent.filter(p => !FLOATING_PHASES.has(p));
+  const violations: LifecycleViolation[] = [];
+
+  for (let i = 1; i < orderedPhases.length; i++) {
+    const prevIdx = LIFECYCLE_ORDER.indexOf(orderedPhases[i - 1]);
+    const currIdx = LIFECYCLE_ORDER.indexOf(orderedPhases[i]);
+    if (prevIdx === -1 || currIdx === -1) continue; // Unknown phase, skip
+    if (currIdx < prevIdx) {
+      violations.push({
+        phase: orderedPhases[i],
+        after: orderedPhases[i - 1],
+        phaseIndex: i,
+        afterIndex: i - 1,
+      });
+    }
+  }
+
+  const presentSet = new Set(phasesPresent);
+  const phasesMissing = LIFECYCLE_ORDER.filter(p => !presentSet.has(p));
+
+  return {
+    valid: violations.length === 0,
+    phasesPresent,
+    phasesMissing,
+    violations,
+  };
+}
+
+/**
+ * Assert that phases follow valid lifecycle ordering. Throws on violations.
+ */
+export function expectValidLifecycle(capture: StreamCapture): void {
+  const validation = validateLifecycle(capture);
+  if (!validation.valid) {
+    const details = validation.violations.map(v =>
+      `  ${v.phase} appeared after ${v.after} (expected ${v.after} to come later)`
+    ).join('\n');
+    throw new Error(
+      `Lifecycle ordering violations:\n${details}\nPhases: ${validation.phasesPresent.join(' -> ')}`,
+    );
+  }
+}
+
+/**
+ * Assert that specific phases appear in the expected relative order.
+ * Only checks the listed phases — other phases may appear between them.
+ */
+export function expectPhaseOrder(capture: StreamCapture, expectedOrder: string[]): void {
+  const phasesPresent = capture.phases.map(p => p.phase);
+
+  // Find first occurrence of each expected phase
+  const positions: Array<{ phase: string; pos: number }> = [];
+  for (const phase of expectedOrder) {
+    const pos = phasesPresent.indexOf(phase);
+    if (pos === -1) {
+      throw new Error(
+        `Expected phase [${phase}] not found in output.\nPhases present: ${phasesPresent.join(', ')}`,
+      );
+    }
+    positions.push({ phase, pos });
+  }
+
+  for (let i = 1; i < positions.length; i++) {
+    if (positions[i].pos < positions[i - 1].pos) {
+      throw new Error(
+        `Phase [${positions[i].phase}] (pos ${positions[i].pos}) appeared before [${positions[i - 1].phase}] (pos ${positions[i - 1].pos}).\nExpected order: ${expectedOrder.join(' -> ')}\nActual: ${phasesPresent.join(' -> ')}`,
+      );
+    }
+  }
+}
+
+// Result assertions
+
+export interface ResultExpectation {
+  /** Minimum number of PRs created */
+  minPrs?: number;
+  /** Maximum number of PRs created */
+  maxPrs?: number;
+  /** Minimum number of issues filed */
+  minIssuesFiled?: number;
+  /** Minimum number of issues closed */
+  minIssuesClosed?: number;
+  /** Maximum cost in USD */
+  maxCost?: number;
+  /** Minimum cost in USD */
+  minCost?: number;
+  /** Whether a stop was requested */
+  stopRequested?: boolean;
+  /** Minimum number of tool calls */
+  minToolCalls?: number;
+  /** Maximum number of tool calls */
+  maxToolCalls?: number;
+}
+
+/**
+ * Assert properties of the accumulated RunResult.
+ * Only checks fields that are specified in the expectation.
+ */
+export function expectResult(capture: StreamCapture, expected: ResultExpectation): void {
+  const r = capture.result;
+  const failures: string[] = [];
+
+  if (expected.minPrs !== undefined && r.prs.length < expected.minPrs) {
+    failures.push(`PRs: expected >= ${expected.minPrs}, got ${r.prs.length}`);
+  }
+  if (expected.maxPrs !== undefined && r.prs.length > expected.maxPrs) {
+    failures.push(`PRs: expected <= ${expected.maxPrs}, got ${r.prs.length}`);
+  }
+  if (expected.minIssuesFiled !== undefined && r.issuesFiled.length < expected.minIssuesFiled) {
+    failures.push(`Issues filed: expected >= ${expected.minIssuesFiled}, got ${r.issuesFiled.length}`);
+  }
+  if (expected.minIssuesClosed !== undefined && r.issuesClosed.length < expected.minIssuesClosed) {
+    failures.push(`Issues closed: expected >= ${expected.minIssuesClosed}, got ${r.issuesClosed.length}`);
+  }
+  if (expected.maxCost !== undefined && r.cost > expected.maxCost) {
+    failures.push(`Cost: expected <= $${expected.maxCost}, got $${r.cost}`);
+  }
+  if (expected.minCost !== undefined && r.cost < expected.minCost) {
+    failures.push(`Cost: expected >= $${expected.minCost}, got $${r.cost}`);
+  }
+  if (expected.stopRequested !== undefined && r.stopRequested !== expected.stopRequested) {
+    failures.push(`stopRequested: expected ${expected.stopRequested}, got ${r.stopRequested}`);
+  }
+  if (expected.minToolCalls !== undefined && r.toolCalls < expected.minToolCalls) {
+    failures.push(`Tool calls: expected >= ${expected.minToolCalls}, got ${r.toolCalls}`);
+  }
+  if (expected.maxToolCalls !== undefined && r.toolCalls > expected.maxToolCalls) {
+    failures.push(`Tool calls: expected <= ${expected.maxToolCalls}, got ${r.toolCalls}`);
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Result assertion failures:\n  ${failures.join('\n  ')}`);
+  }
+}
+
+// Scenario builders — pre-built realistic message sequences
+
+export const scenarios = {
+  /** A successful run that picks an issue, implements, tests, creates a PR, and merges */
+  successfulRun: (opts: {
+    issue?: string;
+    title?: string;
+    prUrl?: string;
+    cost?: number;
+  } = {}) => [
+    msg.init(),
+    msg.phase('PICK', { issue: opts.issue ?? '#100', title: opts.title ?? 'test issue' }),
+    msg.phase('EVALUATE', { verdict: 'proceed', reason: 'clear scope' }),
+    msg.tool('Read', { file_path: '/src/example.ts' }),
+    msg.tool('Edit', { file_path: '/src/example.ts', old_string: 'old', new_string: 'new' }),
+    msg.phase('IMPLEMENT', { case: '260323-test', branch: 'feat/test' }),
+    msg.tool('Bash', { command: 'npm test' }),
+    msg.phase('TEST', { result: 'pass', count: '5' }),
+    msg.text(`Created PR: ${opts.prUrl ?? 'https://github.com/Garsson-io/kaizen/pull/999'}`),
+    msg.phase('PR', { url: opts.prUrl ?? 'https://github.com/Garsson-io/kaizen/pull/999' }),
+    msg.phase('MERGE', { url: opts.prUrl ?? 'https://github.com/Garsson-io/kaizen/pull/999', status: 'queued' }),
+    msg.phase('REFLECT', { issues_filed: '0', lessons: 'clean implementation' }),
+    msg.done(opts.cost ?? 1.5),
+  ],
+
+  /** A run that skips an issue after evaluation */
+  skippedRun: (opts: {
+    issue?: string;
+    reason?: string;
+    cost?: number;
+  } = {}) => [
+    msg.init(),
+    msg.phase('PICK', { issue: opts.issue ?? '#200', title: 'complex issue' }),
+    msg.phase('EVALUATE', { verdict: 'skip', reason: opts.reason ?? 'too risky for auto-dent' }),
+    msg.phase('REFLECT', { issues_filed: '0', lessons: 'skipped after evaluation' }),
+    msg.done(opts.cost ?? 0.2),
+  ],
+
+  /** A run that decomposes an epic into sub-issues */
+  decomposeRun: (opts: {
+    epic?: string;
+    issuesCreated?: string;
+    prUrl?: string;
+    cost?: number;
+  } = {}) => [
+    msg.init(),
+    msg.phase('PICK', { issue: opts.epic ?? '#500', title: 'epic decomposition' }),
+    msg.phase('EVALUATE', { verdict: 'proceed', reason: 'epic needs decomposition' }),
+    msg.phase('DECOMPOSE', { epic: opts.epic ?? '#500', issues_created: opts.issuesCreated ?? '#501,#502,#503' }),
+    msg.tool('Read', { file_path: '/docs/spec.md' }),
+    msg.tool('Edit', { file_path: '/src/impl.ts', old_string: 'old', new_string: 'new' }),
+    msg.phase('IMPLEMENT', { case: '260323-decompose', branch: 'feat/decompose' }),
+    msg.phase('TEST', { result: 'pass', count: '3' }),
+    msg.text(`Created PR: ${opts.prUrl ?? 'https://github.com/Garsson-io/kaizen/pull/998'}`),
+    msg.phase('PR', { url: opts.prUrl ?? 'https://github.com/Garsson-io/kaizen/pull/998' }),
+    msg.phase('REFLECT', { issues_filed: '3', lessons: 'decomposed epic into actionable work' }),
+    msg.done(opts.cost ?? 2.0),
+  ],
+
+  /** A run that exhausts the backlog and signals STOP */
+  stopRun: (opts: {
+    reason?: string;
+    cost?: number;
+  } = {}) => [
+    msg.init(),
+    msg.phase('PICK', { issue: 'none', title: 'backlog scan' }),
+    msg.phase('EVALUATE', { verdict: 'skip', reason: 'no matching issues' }),
+    msg.phase('STOP', { reason: opts.reason ?? 'backlog exhausted' }),
+    msg.done(opts.cost ?? 0.3),
+  ],
+
+  /** A run that errors out mid-implementation */
+  errorRun: (opts: {
+    issue?: string;
+    cost?: number;
+  } = {}) => [
+    msg.init(),
+    msg.phase('PICK', { issue: opts.issue ?? '#300', title: 'failing issue' }),
+    msg.phase('EVALUATE', { verdict: 'proceed', reason: 'seems straightforward' }),
+    msg.tool('Read', { file_path: '/src/broken.ts' }),
+    msg.phase('IMPLEMENT', { case: '260323-error', branch: 'feat/error' }),
+    msg.tool('Bash', { command: 'npm test' }),
+    msg.phase('TEST', { result: 'fail', count: '3' }),
+    msg.error(opts.cost ?? 0.8),
+  ],
+};
+
 // Smoke test prompt — designed to be fast, cheap, and exercise the protocol
 
 export const SMOKE_TEST_PROMPT = `You are running a pipeline smoke test. This must complete quickly.
