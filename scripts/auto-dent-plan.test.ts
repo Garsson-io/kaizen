@@ -19,13 +19,28 @@ function makePlan(overrides: Partial<BatchPlan> = {}): BatchPlan {
     created_at: '2026-03-23T00:00:00Z',
     guidance: 'improve hooks reliability',
     items: [
-      { issue: '#302', title: 'Planning pre-pass MVP', score: 8, approach: 'Add plan phase before loop', status: 'pending' },
-      { issue: '#451', title: 'Hook performance observability', score: 7, approach: 'Add timing instrumentation', status: 'pending' },
-      { issue: '#407', title: 'Engineering techniques', score: 6, approach: 'Apply patterns repo-wide', status: 'pending' },
+      { issue: '#302', title: 'Planning pre-pass MVP', score: 8, approach: 'Add plan phase before loop', status: 'pending', item_type: 'leaf' },
+      { issue: '#451', title: 'Hook performance observability', score: 7, approach: 'Add timing instrumentation', status: 'pending', item_type: 'leaf' },
+      { issue: '#407', title: 'Engineering techniques', score: 6, approach: 'Apply patterns repo-wide', status: 'pending', item_type: 'leaf' },
     ],
     wip_excluded: ['#374 (active case)'],
     epics_scanned: ['#506 Auto-Dent Experimentation Framework'],
     ...overrides,
+  };
+}
+
+function makePlanWithDecompose(): BatchPlan {
+  return {
+    created_at: '2026-03-23T00:00:00Z',
+    guidance: 'move forward on epics and observability',
+    items: [
+      { issue: '#302', title: 'Planning pre-pass MVP', score: 8, approach: 'Add plan phase before loop', status: 'pending', item_type: 'leaf' },
+      { issue: '#506', title: 'decompose: Auto-Dent Experimentation Framework', score: 7, approach: 'File 2 concrete issues from epic, implement first', status: 'pending', item_type: 'decompose', parent_epic: '#506' },
+      { issue: '#451', title: 'Hook performance observability', score: 6, approach: 'Add timing instrumentation', status: 'pending', item_type: 'leaf' },
+    ],
+    wip_excluded: [],
+    epics_scanned: ['#506 Auto-Dent Experimentation Framework', '#548 Cognitive Modes'],
+    decomposition_candidates: ['#506 Auto-Dent Experimentation Framework — no child issues filed'],
   };
 }
 
@@ -213,6 +228,93 @@ describe('formatPlanSummary', () => {
   });
 });
 
+describe('validatePlan with item_type', () => {
+  it('preserves item_type=decompose and parent_epic', () => {
+    const raw = {
+      items: [
+        { issue: '#506', title: 'decompose: Epic', score: 7, approach: 'break it down', item_type: 'decompose', parent_epic: '#506' },
+        { issue: '#302', title: 'Leaf issue', score: 8, approach: 'implement it', item_type: 'leaf' },
+      ],
+    };
+    const plan = validatePlan(raw);
+    expect(plan).not.toBeNull();
+    expect(plan!.items[0].item_type).toBe('decompose');
+    expect(plan!.items[0].parent_epic).toBe('#506');
+    expect(plan!.items[1].item_type).toBe('leaf');
+    expect(plan!.items[1].parent_epic).toBeUndefined();
+  });
+
+  it('defaults item_type to leaf when not specified', () => {
+    const raw = {
+      items: [{ issue: '#1', title: 'No type', score: 5 }],
+    };
+    const plan = validatePlan(raw);
+    expect(plan!.items[0].item_type).toBe('leaf');
+  });
+
+  it('preserves decomposition_candidates array', () => {
+    const raw = {
+      items: [{ issue: '#1', title: 'Test', score: 5 }],
+      decomposition_candidates: ['#506 Epic — no children'],
+    };
+    const plan = validatePlan(raw);
+    expect(plan!.decomposition_candidates).toEqual(['#506 Epic — no children']);
+  });
+
+  it('defaults decomposition_candidates to empty array', () => {
+    const raw = {
+      items: [{ issue: '#1', title: 'Test', score: 5 }],
+    };
+    const plan = validatePlan(raw);
+    expect(plan!.decomposition_candidates).toEqual([]);
+  });
+});
+
+describe('formatPlanSummary with decompose items', () => {
+  it('shows leaf and decompose counts', () => {
+    const plan = makePlanWithDecompose();
+    const summary = formatPlanSummary(plan);
+    expect(summary).toContain('2 leaf');
+    expect(summary).toContain('1 decompose');
+  });
+
+  it('tags decompose items with [DECOMPOSE]', () => {
+    const plan = makePlanWithDecompose();
+    const summary = formatPlanSummary(plan);
+    expect(summary).toContain('[DECOMPOSE]');
+  });
+
+  it('shows decomposition candidates count', () => {
+    const plan = makePlanWithDecompose();
+    const summary = formatPlanSummary(plan);
+    expect(summary).toContain('Decomposition candidates: 1');
+  });
+});
+
+describe('claimNextItem with decompose items', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'plan-decompose-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('claims decompose items and preserves item_type', () => {
+    const plan = makePlanWithDecompose();
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const first = claimNextItem(tmpDir);
+    expect(first!.item_type).toBe('leaf');
+
+    const second = claimNextItem(tmpDir);
+    expect(second!.item_type).toBe('decompose');
+    expect(second!.parent_epic).toBe('#506');
+  });
+});
+
 describe('buildPlanPrompt', () => {
   it('includes guidance in plan prompt', () => {
     const state = {
@@ -242,5 +344,35 @@ describe('buildPlanPrompt', () => {
     const prompt = buildPlanPrompt(state);
     expect(prompt).toContain('focus on observability');
     expect(prompt).toContain('Garsson-io/kaizen');
+  });
+
+  it('includes decomposition instructions in plan prompt', () => {
+    const state = {
+      batch_id: 'batch-test',
+      batch_start: 0,
+      guidance: 'move forward on epics',
+      max_runs: 10,
+      cooldown: 30,
+      budget: '3.00',
+      max_failures: 3,
+      kaizen_repo: 'Garsson-io/kaizen',
+      host_repo: 'Garsson-io/kaizen',
+      run: 0,
+      prs: [],
+      issues_filed: [],
+      issues_closed: [],
+      cases: [],
+      consecutive_failures: 0,
+      current_cooldown: 30,
+      stop_reason: '',
+      last_issue: '',
+      last_pr: '',
+      last_case: '',
+      last_branch: '',
+      last_worktree: '',
+    };
+    const prompt = buildPlanPrompt(state);
+    expect(prompt).toContain('decomposition');
+    expect(prompt).toContain('item_type');
   });
 });

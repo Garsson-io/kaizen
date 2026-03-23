@@ -17,6 +17,10 @@ import { execSync } from 'child_process';
 import {
   replayLog,
   runLiveProbe,
+  runStream,
+  msg,
+  expectPhase,
+  phaseCount,
   SMOKE_TEST_PROMPT,
 } from './auto-dent-harness.js';
 
@@ -125,6 +129,42 @@ describe('replay: edge cases', () => {
     const capture = replayLog(mixedLog);
     expect(capture.rawMessages).toHaveLength(2); // only JSON lines
     expect(capture.result.cost).toBe(0.5);
+  });
+});
+
+// Synthetic stream tests — verify phase marker extraction
+
+describe('synthetic: DECOMPOSE phase marker', () => {
+  it('recognizes DECOMPOSE as a known phase', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#506', title: 'experimentation framework' }),
+      msg.phase('DECOMPOSE', { epic: '#506', issues_created: '#560,#561,#562' }),
+      msg.phase('IMPLEMENT', { case: '260323-1200-k560', branch: 'case/260323-1200-k560' }),
+      msg.done(1.5),
+    ]);
+
+    expect(phaseCount(capture, 'DECOMPOSE')).toBe(1);
+    expectPhase(capture, 'DECOMPOSE');
+  });
+
+  it('DECOMPOSE phase coexists with other phases in a full flow', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#548', title: 'cognitive modes epic' }),
+      msg.phase('EVALUATE', { verdict: 'proceed', reason: 'epic needs decomposition' }),
+      msg.phase('DECOMPOSE', { epic: '#548', issues_created: '#570,#571' }),
+      msg.phase('IMPLEMENT', { case: '260323-test', branch: 'feat/test' }),
+      msg.phase('TEST', { result: 'pass', count: '5' }),
+      msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/999' }),
+      msg.phase('REFLECT', { issues_filed: '2', lessons: 'decomposed epic into concrete work' }),
+      msg.done(2.0),
+    ]);
+
+    expect(phaseCount(capture, 'DECOMPOSE')).toBe(1);
+    expect(phaseCount(capture, 'PICK')).toBe(1);
+    expect(phaseCount(capture, 'PR')).toBe(1);
+    expect(capture.result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/999');
   });
 });
 

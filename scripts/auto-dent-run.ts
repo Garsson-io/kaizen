@@ -146,12 +146,19 @@ export function buildTemplateVars(
   if (logDir) {
     const planItem = claimNextItem(logDir);
     if (planItem) {
-      planAssignment = [
+      const lines = [
         `- **Issue:** ${planItem.issue} — ${planItem.title}`,
         `- **Approach:** ${planItem.approach}`,
         `- **Score:** ${planItem.score}/10`,
-      ].join('\n');
-      console.log(`  [plan] assigned ${planItem.issue}: ${planItem.title}`);
+      ];
+      if (planItem.item_type === 'decompose') {
+        lines.push(`- **Type:** decompose — this is an epic/PRD that needs to be broken into concrete issues first`);
+        if (planItem.parent_epic) {
+          lines.push(`- **Parent epic:** ${planItem.parent_epic}`);
+        }
+      }
+      planAssignment = lines.join('\n');
+      console.log(`  [plan] assigned ${planItem.issue}: ${planItem.title}${planItem.item_type === 'decompose' ? ' [DECOMPOSE]' : ''}`);
     }
   }
 
@@ -439,6 +446,8 @@ export function formatPhaseMarker(marker: PhaseMarker): string {
   if (fields.count) parts.push(`${fields.count} tests`);
   if (fields.url) parts.push(fields.url);
   if (fields.status) parts.push(fields.status);
+  if (fields.epic) parts.push(`epic:${fields.epic}`);
+  if (fields.issues_created) parts.push(`created:${fields.issues_created}`);
   if (fields.issues_filed) parts.push(`${fields.issues_filed} issues filed`);
   if (fields.lessons) parts.push(fields.lessons);
 
