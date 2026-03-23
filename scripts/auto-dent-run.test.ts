@@ -285,6 +285,66 @@ describe('buildTemplateVars with reflection insights', () => {
   });
 });
 
+describe('buildTemplateVars with run_history', () => {
+  it('populates run_history_table and batch stats when run_history exists', () => {
+    const state = makeBatchState({
+      run_history: [
+        makeRunMetrics({ run: 1, cost_usd: 1.0, prs: ['pr1'], issues_closed: ['#10'], mode: 'exploit' }),
+        makeRunMetrics({ run: 2, cost_usd: 2.0, prs: ['pr2', 'pr3'], issues_closed: ['#20', '#30'], mode: 'explore' }),
+      ],
+      prs: ['https://github.com/Garsson-io/kaizen/pull/100', 'https://github.com/Garsson-io/kaizen/pull/101'],
+    });
+
+    const vars = buildTemplateVars(state, 3);
+
+    expect(vars.run_history_table).toContain('| Run | Mode | Cost | PRs | Issues | Duration | Status |');
+    expect(vars.run_history_table).toContain('exploit');
+    expect(vars.run_history_table).toContain('explore');
+    expect(vars.total_cost).toBe('3.00');
+    expect(vars.pr_count).toBe('3');
+    expect(vars.issues_closed_count).toBe('3');
+    expect(vars.run_count).toBe('2');
+    expect(vars.pr_merge_status).toContain('pull/100');
+    expect(vars.pr_merge_status).toContain('pull/101');
+  });
+
+  it('returns empty strings when no run_history exists', () => {
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 1);
+
+    expect(vars.run_history_table).toBe('');
+    expect(vars.total_cost).toBe('');
+    expect(vars.pr_count).toBe('');
+    expect(vars.issues_closed_count).toBe('');
+    expect(vars.run_count).toBe('');
+    expect(vars.pr_merge_status).toBe('');
+  });
+
+  it('returns empty pr_merge_status when no PRs in state', () => {
+    const state = makeBatchState({
+      run_history: [makeRunMetrics({ prs: ['pr1'] })],
+      prs: [],
+    });
+    const vars = buildTemplateVars(state, 2);
+
+    expect(vars.run_history_table).not.toBe('');
+    expect(vars.pr_merge_status).toBe('');
+  });
+
+  it('handles failed runs correctly in the history table', () => {
+    const state = makeBatchState({
+      run_history: [
+        makeRunMetrics({ run: 1, exit_code: 1, prs: [], cost_usd: 0.5, mode: 'exploit' }),
+      ],
+    });
+    const vars = buildTemplateVars(state, 2);
+
+    expect(vars.run_history_table).toContain('fail');
+    expect(vars.total_cost).toBe('0.50');
+    expect(vars.pr_count).toBe('0');
+  });
+});
+
 describe('renderTemplate', () => {
   it('substitutes simple variables', () => {
     const result = renderTemplate('Hello {{name}}!', { name: 'world' });

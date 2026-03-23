@@ -247,6 +247,35 @@ export function buildTemplateVars(
     }
   }
 
+  // Build run history table and batch-level stats for reflect/contemplate prompts
+  let runHistoryTable = '';
+  let totalCost = '';
+  let prCount = '';
+  let issuesClosedCount = '';
+  let runCount = '';
+  let prMergeStatus = '';
+  const history = state.run_history || [];
+  if (history.length > 0) {
+    const batchScore = scoreBatch(history);
+    runHistoryTable = [
+      '| Run | Mode | Cost | PRs | Issues | Duration | Status |',
+      '|-----|------|------|-----|--------|----------|--------|',
+      ...batchScore.runs.map((r, i) => {
+        const m = history[i];
+        return `| ${m?.run ?? i} | ${r.mode} | $${r.cost_usd.toFixed(2)} | ${r.pr_count} | ${r.issues_closed_count} | ${r.duration_seconds}s | ${r.success ? 'pass' : 'fail'} |`;
+      }),
+    ].join('\n');
+    totalCost = batchScore.total_cost_usd.toFixed(2);
+    prCount = String(batchScore.total_prs);
+    issuesClosedCount = String(batchScore.total_issues_closed);
+    runCount = String(batchScore.total_runs);
+
+    // Build PR merge status summary from state.prs
+    if (state.prs.length > 0) {
+      prMergeStatus = state.prs.map(url => `- ${url}`).join('\n');
+    }
+  }
+
   return {
     guidance: state.guidance,
     run_tag: runTag,
@@ -262,6 +291,12 @@ export function buildTemplateVars(
     prs: state.prs.join(' '),
     plan_assignment: planAssignment,
     reflection_insights: reflectionInsights,
+    run_history_table: runHistoryTable,
+    total_cost: totalCost,
+    pr_count: prCount,
+    issues_closed_count: issuesClosedCount,
+    run_count: runCount,
+    pr_merge_status: prMergeStatus,
   };
 }
 
