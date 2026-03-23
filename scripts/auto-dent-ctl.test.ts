@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   formatBatchStatus,
   formatLastState,
+  formatBatchScoreOutput,
   type BatchInfo,
 } from './auto-dent-ctl.js';
-import type { BatchState } from './auto-dent-run.js';
+import type { BatchState, RunMetrics } from './auto-dent-run.js';
 
 function makeBatchState(overrides: Partial<BatchState> = {}): BatchState {
   return {
@@ -190,5 +191,90 @@ describe('formatLastState', () => {
     });
     const output = formatLastState(state);
     expect(output).toContain('pull/500');
+  });
+});
+
+function makeRunMetrics(overrides: Partial<RunMetrics> = {}): RunMetrics {
+  return {
+    run: 1,
+    start_epoch: 1742680800,
+    duration_seconds: 300,
+    exit_code: 0,
+    cost_usd: 2.5,
+    tool_calls: 42,
+    prs: ['https://github.com/Garsson-io/kaizen/pull/500'],
+    issues_filed: [],
+    issues_closed: ['#451'],
+    cases: [],
+    stop_requested: false,
+    ...overrides,
+  };
+}
+
+describe('formatBatchScoreOutput', () => {
+  it('returns no-history message when run_history is empty', () => {
+    const batch = makeBatchInfo();
+    const output = formatBatchScoreOutput(batch);
+    expect(output).toContain('no run history to score');
+  });
+
+  it('shows batch score table for a batch with runs', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 2,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.5, prs: ['https://github.com/Garsson-io/kaizen/pull/500'] }),
+          makeRunMetrics({ run: 2, cost_usd: 3.0, prs: [], exit_code: 1 }),
+        ],
+      }),
+    });
+    const output = formatBatchScoreOutput(batch);
+    expect(output).toContain('batch-260322-2100-a1b2');
+    expect(output).toContain('Success rate');
+    expect(output).toContain('50%');
+    expect(output).toContain('Total cost');
+    expect(output).toContain('$5.50');
+    expect(output).toContain('Total PRs');
+  });
+
+  it('shows per-run score lines', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 2,
+        run_history: [
+          makeRunMetrics({ run: 1 }),
+          makeRunMetrics({ run: 2, cost_usd: 1.0, prs: [], exit_code: 0 }),
+        ],
+      }),
+    });
+    const output = formatBatchScoreOutput(batch);
+    expect(output).toContain('#1: pass');
+    expect(output).toContain('#2: fail');
+  });
+
+  it('shows efficiency metric for successful runs', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 1,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/500'] }),
+        ],
+      }),
+    });
+    const output = formatBatchScoreOutput(batch);
+    expect(output).toContain('Efficiency');
+    expect(output).toContain('PR/$');
+  });
+
+  it('does not include post-hoc section when postHoc=false', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 1,
+        prs: ['https://github.com/Garsson-io/kaizen/pull/500'],
+        run_history: [makeRunMetrics({ run: 1 })],
+      }),
+    });
+    const output = formatBatchScoreOutput(batch, false);
+    expect(output).not.toContain('Post-hoc merge status');
   });
 });

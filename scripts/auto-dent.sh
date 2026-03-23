@@ -59,6 +59,7 @@ auto-dent — Autonomous batch kaizen runner
 Usage: auto-dent.sh [options] <guidance>
        auto-dent.sh --status
        auto-dent.sh --halt [batch-id]
+       auto-dent.sh --score [--post-hoc] [batch-id]
 
 Options:
   --max-runs N         Stop after N iterations (default: unlimited)
@@ -71,6 +72,7 @@ Options:
   --experiment         Enable extra pipeline diagnostics
   --status             Show status of all batches (active and stopped)
   --halt [batch-id]    Halt a specific batch, or all active batches
+  --score [batch-id]   Score batch(es) — efficiency, success rate, cost-per-PR
   --help               Show this help
 
 Self-update: between runs, the trampoline pulls main so that merged
@@ -98,6 +100,11 @@ fi
 if [[ "${1:-}" = "--halt" ]]; then
   shift
   exec npx tsx "$CTL_SCRIPT" halt "$@"
+fi
+
+if [[ "${1:-}" = "--score" ]]; then
+  shift
+  exec npx tsx "$CTL_SCRIPT" score "$@"
 fi
 
 # Arg parsing
