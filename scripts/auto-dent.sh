@@ -47,7 +47,7 @@ COOLDOWN=30             # seconds between runs
 BUDGET=""               # per-run budget
 MAX_BUDGET=""           # total batch budget
 MAX_FAILURES=3          # consecutive failures before stopping
-MAX_RUN_SECONDS=2700    # 45 minutes per run (wall-time timeout)
+MAX_RUN_SECONDS=1200    # 20 minutes per run (wall-time timeout, #686)
 DRY_RUN=false
 TEST_TASK=false
 EXPERIMENT=false
@@ -70,7 +70,7 @@ Options:
   --budget N.NN        Max USD per run (passed to claude --max-budget-usd)
   --max-budget N.NN    Max USD for entire batch (stops when cumulative cost exceeds)
   --max-failures N     Stop after N consecutive failures (default: 3)
-  --max-run-seconds N  Wall-time timeout per run in seconds (default: 2700 = 45min)
+  --max-run-seconds N  Wall-time timeout per run in seconds (default: 1200 = 20min)
   --no-plan            Skip planning pre-pass (use discovery mode)
   --dry-run            Show what would run without executing
   --test-task          Use synthetic fast task instead of /kaizen-deep-dive
