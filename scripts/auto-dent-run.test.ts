@@ -490,6 +490,23 @@ describe('buildTemplateVars with contemplation_recommendations', () => {
     const vars = buildTemplateVars(state, 1);
     expect(vars.contemplation_recommendations).toBe('');
   });
+
+  it('deduplicates identical recommendations (#700)', () => {
+    const state = makeBatchState({
+      contemplation_recommendations: [
+        'Shift focus to testing gaps',
+        'Epic #548 needs decomposition',
+        'Shift focus to testing gaps',
+        'Epic #548 needs decomposition',
+        'Shift focus to testing gaps',
+        'Epic #548 needs decomposition',
+      ],
+    });
+    const vars = buildTemplateVars(state, 5);
+    expect(vars.contemplation_recommendations).toBe(
+      '1. Shift focus to testing gaps\n2. Epic #548 needs decomposition',
+    );
+  });
 });
 
 describe('renderTemplate', () => {

@@ -384,8 +384,8 @@ export function buildTemplateVars(
     }
   }
 
-  // Format contemplation recommendations for prompt injection
-  const contemplationRecs = (state.contemplation_recommendations || []);
+  // Format contemplation recommendations for prompt injection (dedup on read — #700)
+  const contemplationRecs = [...new Set(state.contemplation_recommendations || [])];
   const contemplationRecsText = contemplationRecs.length > 0
     ? contemplationRecs.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
@@ -1685,8 +1685,10 @@ async function main(): Promise<void> {
   // Store contemplation recommendations in batch state (#631)
   if (result.contemplationRecs && result.contemplationRecs.length > 0) {
     if (!freshState.contemplation_recommendations) freshState.contemplation_recommendations = [];
-    freshState.contemplation_recommendations.push(...result.contemplationRecs);
-    console.log(`  [contemplate] ${result.contemplationRecs.length} recommendation(s) stored in batch state`);
+    const existing = new Set(freshState.contemplation_recommendations);
+    const newRecs = result.contemplationRecs.filter(r => !existing.has(r));
+    freshState.contemplation_recommendations.push(...newRecs);
+    console.log(`  [contemplate] ${newRecs.length} new recommendation(s) stored (${result.contemplationRecs.length - newRecs.length} duplicates skipped)`);
     events.emit({
       type: 'batch.reflect',
       run_id: makeRunId(state.batch_id, runNum),
