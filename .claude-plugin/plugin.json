@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-ts.sh",
             "timeout": 10
           },
           {
@@ -63,12 +63,12 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-dirty-files.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-dirty-files-ts.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-reflect.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-reflect-ts.sh",
             "timeout": 10
           },
           {
@@ -171,13 +171,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-stop.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-post-merge-stop.sh",
-            "timeout": 10
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-stop-gate.sh",
+            "timeout": 15
           },
           {
             "type": "command",
@@ -187,11 +182,6 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-cleanup-on-stop.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-reflect-stop.sh",
             "timeout": 10
           }
         ]

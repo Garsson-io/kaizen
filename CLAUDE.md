@@ -19,6 +19,8 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `.claude/hooks/lib/` | Shared hook libraries |
 | `.claude/hooks/tests/` | Hook test infrastructure |
 | `src/hooks/` | TypeScript hooks |
+| `src/hooks/lib/gate-manager.ts` | Unified stop gate — read/format/clear all pending gates |
+| `src/hooks/stop-gate.ts` | Unified stop hook entry point (replaces 3 bash stop hooks) |
 | `.claude-plugin/plugin.json` | Plugin manifest with hook registrations |
 | `docs/hooks-design.md` | Hooks patterns, anti-patterns, regex traps, gate design, testing conventions |
 | `docs/hook-test-dry-spec.md` | DRY refactoring spec for hook test infrastructure |

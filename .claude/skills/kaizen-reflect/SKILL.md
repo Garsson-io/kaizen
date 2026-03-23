@@ -388,6 +388,10 @@ These questions are intentionally abstract. They produce value when they surface
 
 ## Current Enforcement Inventory
 
+See [`hook-catalog.md`](../../kaizen/docs/hook-catalog.md) for the complete hook inventory with event types, enforcement levels, and gate patterns.
+
+**Non-hook enforcement:**
+
 | Mechanism | Level | Location | What it enforces |
 |-----------|-------|----------|-----------------|
 | CLAUDE.md policies | 1 | Both repos | Direction, guidelines, decision frameworks |
@@ -395,21 +399,7 @@ These questions are intentionally abstract. They produce value when they surface
 | Prettier pre-commit | 2 | `.husky/pre-commit` | Code formatting |
 | Pre-commit main-checkout block | 2 | `.husky/pre-commit` | Blocks commits from main checkout |
 | Pre-push main-checkout block | 2 | `.husky/pre-push` | Blocks pushes from main checkout (defense-in-depth) |
-| `check-wip.sh` | 2 | SessionStart hook | Surface existing WIP at session start |
-| `enforce-case-worktree.sh` | 2 | PreToolUse(Bash) | Warn before commit/push outside worktree |
-| `enforce-worktree-writes.sh` | 2 | PreToolUse(Edit/Write) | Block source edits in main checkout |
-| `enforce-pr-review.sh` | 2 | PreToolUse(Bash) | Block non-review commands during PR review |
-| `enforce-pr-review-tools.sh` | 2 | PreToolUse(Edit/Write/Agent) | Block editing/agents during PR review |
-| `enforce-pr-review-stop.sh` | 2 | Stop hook | Block agent from stopping with pending review |
-| `pr-review-loop.sh` | 2 | PostToolUse(Bash) | Multi-round PR self-review state machine |
-| `check-test-coverage.sh` | 2 | PreToolUse(Bash) | Warn when source changes lack tests |
-| `check-verification.sh` | 2 | PreToolUse(Bash) | Warn about missing verification section |
-| `check-dirty-files.sh` | 2 | PreToolUse(Bash) | Block push/PR create with dirty files |
-| `warn-code-quality.sh` | 2 | PreToolUse(Bash) | Warn on commit/PR: >3 mocks, >500 line files, jscpd duplication |
-| `verify-before-stop.sh` | 2 | Stop hook | Run tsc/vitest before agent finishes |
-| `check-cleanup-on-stop.sh` | 2 | Stop hook | Warn about orphaned worktree state |
-| `kaizen-reflect.sh` | 2 | PostToolUse(Bash) | Trigger kaizen reflection at workflow boundaries |
-| CI: typecheck + unit tests | 2 | `.github/workflows/ci.yml` (ci job) | Typecheck, format, contract check, unit tests (harness + agent-runner) |
+| CI: typecheck + unit tests | 2 | `.github/workflows/ci.yml` (ci job) | Typecheck, format, contract check, unit tests |
 | CI: PR policy | 2 | `.github/workflows/ci.yml` (pr-policy job) | Test coverage for changed source files, verification section in PR body |
 | CI: E2E tests | 2 | `.github/workflows/ci.yml` (e2e job) | Container build + Tier 1 (MCP tool registration) + Tier 2 (IPC round-trip with stub API). BuildKit + GHA cache, path-filtered |
 | Branch protection | 2 | GitHub repo settings | `strict: true`, requires ci + pr-policy + e2e status checks to pass |

@@ -68,7 +68,7 @@ class TestDenySchema:
         mocks.add_git_mock(branch="wt/test", status_output=" M src/dirty.ts")
         harness.set_env("PATH", mocks.path_with_mocks)
 
-        result = harness.run_hook("kaizen-check-dirty-files.sh", PreToolUseInput.bash("gh pr create --title test --body test"))
+        result = harness.run_hook("kaizen-check-dirty-files-ts.sh", PreToolUseInput.bash("gh pr create --title test --body test"))
         assert result.denies(), f"Expected deny, got: exit={result.exit_code}, stdout={result.stdout[:200]}"
         assert result.has_valid_deny_json()
         assert result.exit_code == 0, "Deny must use JSON, not exit code"
@@ -88,10 +88,10 @@ class TestDenySchema:
     def test_pr_review_gate_denies_during_review(self, review_harness, state):
         state.create_state("https://github.com/Garsson-io/nanoclaw/pull/42", round_num=1, status="needs_review", branch="wt/test-branch")
 
-        result = review_harness.run_hook("kaizen-enforce-pr-review.sh", PreToolUseInput.bash("npm test"))
+        # npm test is now allowed as diagnostic (kaizen #775), use npm install instead
+        result = review_harness.run_hook("kaizen-enforce-pr-review-ts.sh", PreToolUseInput.bash("npm install lodash"))
         assert result.denies()
         assert "review" in result.deny_reason().lower()
-        assert "pull/42" in result.deny_reason()
 
     def test_deny_json_has_required_fields(self, harness, state, mocks):
         """Every deny output must have hookSpecificOutput.permissionDecision and permissionDecisionReason.
@@ -100,7 +100,7 @@ class TestDenySchema:
         harness.set_env("PATH", mocks.path_with_mocks)
         harness.set_env("STATE_DIR", str(state.state_dir))
 
-        result = harness.run_hook("kaizen-check-dirty-files.sh", PreToolUseInput.bash("gh pr create --title test --body test"))
+        result = harness.run_hook("kaizen-check-dirty-files-ts.sh", PreToolUseInput.bash("gh pr create --title test --body test"))
         data = json.loads(result.stdout)
         hso = data["hookSpecificOutput"]
         assert hso["permissionDecision"] == "deny"
@@ -113,7 +113,7 @@ class TestAllowSchema:
 
     def test_non_trigger_commands_allow(self, review_harness):
         for cmd in ["npm test", "ls -la", "echo hello", "node -e 'console.log(1)'"]:
-            result = review_harness.run_hook("kaizen-check-dirty-files.sh", PreToolUseInput.bash(cmd))
+            result = review_harness.run_hook("kaizen-check-dirty-files-ts.sh", PreToolUseInput.bash(cmd))
             assert result.allows(), f"'{cmd}' unexpectedly denied"
             assert result.exit_code == 0
 
@@ -121,7 +121,7 @@ class TestAllowSchema:
         mocks.add_git_mock(status_output="")
         harness.set_env("PATH", mocks.path_with_mocks)
 
-        result = harness.run_hook("kaizen-check-dirty-files.sh", PreToolUseInput.bash("gh pr create --title test --body test"))
+        result = harness.run_hook("kaizen-check-dirty-files-ts.sh", PreToolUseInput.bash("gh pr create --title test --body test"))
         assert result.allows()
 
 
@@ -139,7 +139,7 @@ class TestRealWorldCommands:
 
     def test_heredoc_body_no_false_positive(self, review_harness):
         """Text mentioning 'gh pr create' inside a heredoc body should NOT trigger hooks."""
-        result = review_harness.run_hook("kaizen-check-dirty-files.sh",
+        result = review_harness.run_hook("kaizen-check-dirty-files-ts.sh",
                                           PreToolUseInput.bash(REAL_COMMANDS["heredoc_with_gh_text"]))
         assert result.allows()
 
@@ -180,9 +180,9 @@ class TestEdgeCases:
     """INVARIANT: Hooks handle malformed/missing input without crashing."""
 
     @pytest.mark.parametrize("hook", [
-        "kaizen-enforce-pr-review.sh",
+        "kaizen-enforce-pr-review-ts.sh",
         "kaizen-enforce-case-worktree.sh",
-        "kaizen-check-dirty-files.sh",
+        "kaizen-check-dirty-files-ts.sh",
         "kaizen-check-verification.sh",
         "kaizen-check-test-coverage.sh",
     ])
@@ -191,9 +191,9 @@ class TestEdgeCases:
         assert result.exit_code == 0, f"{hook} crashed on empty command: exit={result.exit_code}, stderr={result.stderr[:200]}"
 
     @pytest.mark.parametrize("hook", [
-        "kaizen-enforce-pr-review.sh",
+        "kaizen-enforce-pr-review-ts.sh",
         "kaizen-enforce-case-worktree.sh",
-        "kaizen-check-dirty-files.sh",
+        "kaizen-check-dirty-files-ts.sh",
         "kaizen-check-verification.sh",
     ])
     def test_missing_tool_input(self, review_harness, hook):
@@ -203,9 +203,9 @@ class TestEdgeCases:
         assert result.exit_code == 0, f"{hook} crashed on missing tool_input: stderr={result.stderr[:200]}"
 
     @pytest.mark.parametrize("hook", [
-        "kaizen-enforce-pr-review.sh",
+        "kaizen-enforce-pr-review-ts.sh",
         "kaizen-enforce-case-worktree.sh",
-        "kaizen-check-dirty-files.sh",
+        "kaizen-check-dirty-files-ts.sh",
         "kaizen-check-verification.sh",
     ])
     def test_malformed_json(self, review_harness, hook):
@@ -236,7 +236,7 @@ class TestPRLifecycle:
         """End-to-end: create → gate → diff → open → push → re-gate → merge → cleanup."""
 
         # Phase 1: Before PR create — no gate
-        r = review_harness.run_hook("kaizen-enforce-pr-review.sh", PreToolUseInput.bash("npm test"))
+        r = review_harness.run_hook("kaizen-enforce-pr-review-ts.sh", PreToolUseInput.bash("npm test"))
         assert r.allows(), "Should allow before any PR"
 
         # Phase 2: PR create → gate activates
@@ -249,12 +249,12 @@ class TestPRLifecycle:
         assert s["STATUS"] == "needs_review"
         assert s["ROUND"] == "1"
 
-        # Gate should block non-review commands
-        r = review_harness.run_hook("kaizen-enforce-pr-review.sh", PreToolUseInput.bash("npm test"))
+        # Gate should block non-review commands (npm test is now allowed — kaizen #775)
+        r = review_harness.run_hook("kaizen-enforce-pr-review-ts.sh", PreToolUseInput.bash("npm install lodash"))
         assert r.denies(), "Should block during active review"
 
         # But allow review commands
-        r = review_harness.run_hook("kaizen-enforce-pr-review.sh", PreToolUseInput.bash("gh pr diff 55"))
+        r = review_harness.run_hook("kaizen-enforce-pr-review-ts.sh", PreToolUseInput.bash("gh pr diff 55"))
         assert r.allows(), "Should allow gh pr diff"
 
         # Phase 3: gh pr diff → review passed
@@ -263,7 +263,7 @@ class TestPRLifecycle:
         assert s["STATUS"] == "passed"
 
         # Gate should open
-        r = review_harness.run_hook("kaizen-enforce-pr-review.sh", PreToolUseInput.bash("npm test"))
+        r = review_harness.run_hook("kaizen-enforce-pr-review-ts.sh", PreToolUseInput.bash("npm test"))
         assert r.allows(), "Should allow after review passed"
 
         # Phase 4: git push → re-gate
@@ -315,11 +315,11 @@ class TestParallelExecution:
 
     def test_all_pretooluse_hooks_allow_harmless_command(self, review_harness):
         hooks = [
-            "kaizen-enforce-pr-review.sh",
+            "kaizen-enforce-pr-review-ts.sh",
             "kaizen-enforce-case-worktree.sh",
             "kaizen-check-test-coverage.sh",
             "kaizen-check-verification.sh",
-            "kaizen-check-dirty-files.sh",
+            "kaizen-check-dirty-files-ts.sh",
         ]
         for hook in hooks:
             result = review_harness.run_hook(hook, PreToolUseInput.bash("npm test"))
@@ -336,7 +336,7 @@ class TestParallelExecution:
         inp = PreToolUseInput.bash("gh pr create --title test --body test")
 
         denying = []
-        for hook in ["kaizen-enforce-pr-review.sh", "kaizen-check-dirty-files.sh", "kaizen-enforce-case-worktree.sh"]:
+        for hook in ["kaizen-enforce-pr-review-ts.sh", "kaizen-check-dirty-files-ts.sh", "kaizen-enforce-case-worktree.sh"]:
             result = harness.run_hook(hook, inp)
             if result.denies():
                 denying.append(hook)

@@ -13,17 +13,17 @@ Worktree Creation
   │  enforce-worktree-writes.sh blocks edits to main checkout
   ▼
 Development
-  │  check-dirty-files.sh tracks uncommitted changes
+  │  check-dirty-files.ts tracks uncommitted changes (push=warn, PR create=block)
   │  check-verification.sh enforces path tracing before fixes
   ▼
 Testing & Commit
   │  check-test-coverage.sh blocks merges without tests
-  │  verify-before-stop.sh blocks stop if TypeScript doesn't compile / tests fail
+  │  verify-before-stop.sh reminds about test/typecheck (advisory)
   ▼
 PR Creation (gh pr create)
-  │  pr-review-loop.sh (PostToolUse) writes STATUS=needs_review
-  │  enforce-pr-review-stop.sh (Stop) blocks agent from finishing
-  │  enforce-pr-review.sh (PreToolUse/Bash) blocks non-review commands
+  │  pr-review-loop.ts (PostToolUse) writes STATUS=needs_review
+  │  stop-gate.ts (Stop) — unified gate, blocks stop with ANY pending gate
+  │  enforce-pr-review.ts (PreToolUse/Bash) blocks non-review commands
   │  enforce-pr-review-tools.sh (PreToolUse/Edit|Write|Agent) blocks edits
   │  ─── agent is FORCED to run gh pr diff and complete review ───
   │  Up to 4 rounds of review. If issues remain → escalate to human.
@@ -52,7 +52,7 @@ Every arrow is enforced by hooks. The agent cannot skip steps — hooks block to
 | 0 | Claude's training | Unreliable | "Always review PRs" |
 | 1 | CLAUDE.md instructions | Fragile — agent can forget | "After gh pr create, run gh pr diff" |
 | 2 | PostToolUse hooks | Advisory — agent can ignore | pr-review-loop.sh outputs checklist |
-| 3 | PreToolUse + Stop hooks | Enforced — agent cannot bypass | enforce-pr-review-stop.sh blocks stopping |
+| 3 | PreToolUse + Stop hooks | Enforced — agent cannot bypass | stop-gate.ts blocks stopping with pending gates |
 
 **Level 3 is the only reliable enforcement.** Levels 0-2 are useful for context but must never be the sole mechanism for anything important. If an instruction matters, it must be backed by a Level 3 hook.
 
@@ -204,16 +204,16 @@ Plain text output on stdout. Gets appended to tool result. Exit 0 always.
 
 ## The PR Review Enforcement System
 
-Four hooks working together:
+Four hooks working together (see [`hook-catalog.md`](hook-catalog.md) for full inventory):
 
 | Hook | Event | Role |
 |------|-------|------|
-| `pr-review-loop.sh` | PostToolUse (Bash) | State management: creates/updates/cleans state files |
-| `enforce-pr-review.sh` | PreToolUse (Bash) | Blocks non-review Bash commands when `needs_review` |
+| `pr-review-loop.ts` | PostToolUse (Bash) | State management: creates/updates/cleans state files |
+| `enforce-pr-review.ts` | PreToolUse (Bash) | Blocks non-review Bash commands when `needs_review` |
 | `enforce-pr-review-tools.sh` | PreToolUse (Edit\|Write, Agent) | Blocks file edits and subagents when `needs_review` |
-| `enforce-pr-review-stop.sh` | Stop | Blocks Claude from finishing when `needs_review` |
+| `stop-gate.ts` | Stop | Unified gate — blocks stop with ANY pending gate (review, reflection, post-merge) |
 
-The Stop hook is the **keystone** — without it, Claude can simply respond with text and stop, never triggering any PreToolUse hooks.
+The Stop hook is the **keystone** — without it, Claude can simply respond with text and stop, never triggering any PreToolUse hooks. The unified stop gate (kaizen #775) replaced 3 separate stop hooks with one that shows all pending items in a single rich message, with `KAIZEN_UNFINISHED` as a deadlock-proof escape.
 
 ### Post-Review and Post-Merge Summaries
 

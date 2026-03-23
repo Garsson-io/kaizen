@@ -55,12 +55,12 @@ const DEFAULT_HOOKS = {
     "kaizen-session-cleanup.sh",
   ],
   PreToolUseBash: [
-    "kaizen-enforce-pr-review.sh",
+    "kaizen-enforce-pr-review-ts.sh",
     "kaizen-enforce-case-worktree.sh",
     "kaizen-check-test-coverage.sh",
     "kaizen-check-verification.sh",
-    "kaizen-check-dirty-files.sh",
-    "kaizen-enforce-pr-reflect.sh",
+    "kaizen-check-dirty-files-ts.sh",
+    "kaizen-enforce-pr-reflect-ts.sh",
     "kaizen-warn-code-quality.sh",
     "kaizen-check-practices.sh",
     "kaizen-block-git-rebase.sh",
@@ -77,11 +77,9 @@ const DEFAULT_HOOKS = {
     "kaizen-capture-worktree-context.sh",
   ],
   Stop: [
-    "kaizen-enforce-pr-review-stop.sh",
-    "kaizen-enforce-post-merge-stop.sh",
+    "kaizen-stop-gate.sh",
     "kaizen-verify-before-stop.sh",
     "kaizen-check-cleanup-on-stop.sh",
-    "kaizen-enforce-reflect-stop.sh",
   ],
 };
 

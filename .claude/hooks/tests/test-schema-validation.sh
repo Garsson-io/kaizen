@@ -31,13 +31,13 @@ echo "=== Deny JSON schema validation ==="
 # Collect deny outputs from hooks that should deny
 DENY_TESTS=(
   # hook_script:command:description
-  "$HOOKS_DIR/kaizen-check-dirty-files.sh:gh pr create --title test --body test:dirty files on pr create"
+  "$HOOKS_DIR/kaizen-check-dirty-files-ts.sh:gh pr create --title test --body test:dirty files on pr create"
 )
 
 # Set up state for enforce-pr-review (must include BRANCH field for state-utils isolation)
 # BRANCH must match what the mock git returns for rev-parse --abbrev-ref HEAD ("main")
 printf 'PR_URL=https://github.com/Garsson-io/kaizen/pull/42\nROUND=1\nSTATUS=needs_review\nBRANCH=main\n' > "$STATE_DIR/Garsson-io_kaizen_42"
-DENY_TESTS+=("$HOOKS_DIR/kaizen-enforce-pr-review.sh:npm test:blocked by review gate")
+DENY_TESTS+=("$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh:npm install lodash:blocked by review gate")
 
 # Mock gh to return OPEN for PR state checks (prevents auto-clear of state files)
 cat > "$MOCK_DIR/gh" << 'MOCK'
@@ -161,8 +161,8 @@ MOCK
 chmod +x "$MOCK_DIR/git"
 
 ALLOW_TESTS=(
-  "$HOOKS_DIR/kaizen-check-dirty-files.sh:npm test:non-trigger command"
-  "$HOOKS_DIR/kaizen-enforce-pr-review.sh:npm test:no active review"
+  "$HOOKS_DIR/kaizen-check-dirty-files-ts.sh:npm test:non-trigger command"
+  "$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh:npm test:no active review"
   "$HOOKS_DIR/kaizen-enforce-case-worktree.sh:npm test:non-git command"
   "$HOOKS_DIR/kaizen-check-verification.sh:npm test:non-pr command"
   "$HOOKS_DIR/kaizen-check-test-coverage.sh:npm test:non-pr command"

@@ -130,9 +130,9 @@ Create these tasks at skill start using TaskCreate:
 | 4 | Fix loop (max 3 rounds) | Fix each finding, commit+push, re-review from task #1. Repeat until clean or 3 rounds. If still unclean at round 3: escalate to human. |
 
 **Hooks enforcing review:**
-- `pr-review-loop.sh` — state machine tracking review rounds
-- `enforce-pr-review.sh` — blocks non-review commands during review
+- `pr-review-loop-ts.sh` — state machine tracking review rounds
+- `enforce-pr-review-ts.sh` → `enforce-pr-review.ts` — blocks non-review commands during review
 - `enforce-pr-review-tools.sh` — blocks edits during review phase
-- `enforce-pr-review-stop.sh` — blocks stop with pending review
+- `kaizen-stop-gate.sh` → `stop-gate.ts` — unified stop gate (blocks stop with any pending gate)
 
 **What comes next:** After review is clean → merge (squash). After merge → `/kaizen-reflect` is mandatory (stop hook blocks without it). See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

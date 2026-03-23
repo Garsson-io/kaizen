@@ -21,10 +21,10 @@
 source "$(dirname "$0")/test-helpers.sh"
 
 HOOKS_DIR="$(dirname "$0")/.."
-ENFORCE_PR_KAIZEN="$HOOKS_DIR/kaizen-enforce-pr-reflect.sh"
+ENFORCE_PR_KAIZEN="$HOOKS_DIR/kaizen-enforce-pr-reflect-ts.sh"
 PR_KAIZEN_CLEAR="$HOOKS_DIR/kaizen-pr-reflect-clear.sh"
 require_file "$PR_KAIZEN_CLEAR" "hook migrated to TS" || exit 0
-ENFORCE_PR_REVIEW="$HOOKS_DIR/kaizen-enforce-pr-review.sh"
+ENFORCE_PR_REVIEW="$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh"
 ENFORCE_PR_REVIEW_TOOLS="$HOOKS_DIR/kaizen-enforce-pr-review-tools.sh"
 PR_REVIEW_LOOP="$HOOKS_DIR/kaizen-pr-review-loop.sh"
 KAIZEN_REFLECT="$HOOKS_DIR/kaizen-reflect.sh"
@@ -87,7 +87,7 @@ run_posttool_bash() {
 
 # ================================================================
 # INTERACTION PAIR 1: enforce-pr-kaizen ↔ pr-kaizen-clear
-# Gate: kaizen-enforce-pr-reflect.sh (PreToolUse/Bash)
+# Gate: kaizen-enforce-pr-reflect-ts.sh (PreToolUse/Bash)
 # Clear: kaizen-pr-reflect-clear.sh (PostToolUse/Bash)
 # ================================================================
 
@@ -95,7 +95,7 @@ echo "=== PAIR 1: Kaizen gate ↔ Kaizen clear ==="
 echo ""
 
 echo "--- 1a: KAIZEN_NO_ACTION bracketed format consistency (#159) ---"
-# INVARIANT: The format kaizen-pr-reflect-clear.sh expects must pass through kaizen-enforce-pr-reflect.sh
+# INVARIANT: The format kaizen-pr-reflect-clear.sh expects must pass through kaizen-enforce-pr-reflect-ts.sh
 # This was the exact bug in #159: gate allowed KAIZEN_NO_ACTION: but clear expected [category]:
 
 setup
@@ -221,7 +221,7 @@ assert_eq "lifecycle: npm build allowed after gate cleared" "" "$OUTPUT"
 
 # ================================================================
 # INTERACTION PAIR 2: enforce-pr-review + enforce-pr-review-tools
-# Gate: kaizen-enforce-pr-review.sh (PreToolUse/Bash) + kaizen-enforce-pr-review-tools.sh (PreToolUse/Edit|Write|Agent)
+# Gate: kaizen-enforce-pr-review-ts.sh (PreToolUse/Bash) + kaizen-enforce-pr-review-tools.sh (PreToolUse/Edit|Write|Agent)
 # Clear: kaizen-pr-review-loop.sh (PostToolUse/Bash) via gh pr diff
 # ================================================================
 
