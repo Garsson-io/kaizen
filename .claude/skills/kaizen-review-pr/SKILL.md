@@ -1,3 +1,9 @@
+---
+name: kaizen-review-pr
+description: Review PR — Deep Code Review with Learnable Criteria
+user_invocable: true
+---
+
 # Review PR — Deep Code Review with Learnable Criteria
 
 Structured code review that reads the diff against concrete, modifiable criteria. The review criteria live in `.claude/kaizen/review-criteria.md` — a separate file that grows smarter as failure modes are discovered.
