@@ -58,6 +58,7 @@ is_readonly_monitoring_command() {
 #   data/             — sessions, IPC, case workspaces (runtime data)
 #   store/            — SQLite database (runtime data)
 #   logs/             — log files (runtime data)
+#   strategy/         — machine-written batch memory (kaizen #703)
 #
 # Note: .claude/worktrees/ is a subset of .claude/ and is included automatically.
 #
@@ -66,7 +67,7 @@ is_readonly_monitoring_command() {
 #   if is_allowed_runtime_dir "$REL_PATH"; then exit 0; fi
 is_allowed_runtime_dir() {
   local rel_path="$1"
-  if echo "$rel_path" | grep -qE "^(\.claude/|groups/|data/|store/|logs/)"; then
+  if echo "$rel_path" | grep -qE "^(\.claude/|groups/|data/|store/|logs/|strategy/)"; then
     return 0
   fi
   return 1
