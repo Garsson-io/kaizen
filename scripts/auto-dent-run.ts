@@ -72,6 +72,7 @@ import {
 import {
   color,
   processStreamMessage,
+  parsePhaseMarkers,
   postInFlightUpdate,
   formatHeartbeat,
   IN_FLIGHT_UPDATE_INTERVAL_MS,
@@ -139,6 +140,8 @@ export interface RunMetrics {
   prompt_hash?: string;
   /** Structured failure classification (populated post-run) */
   failure_class?: string;
+  /** Number of lifecycle ordering violations detected post-run */
+  lifecycle_violations?: number;
 }
 
 export interface RunResult {
@@ -1297,6 +1300,45 @@ function printRunSummary(
   console.log('');
 }
 
+// Lifecycle validation
+
+const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
+const FLOATING_PHASES = new Set(['DECOMPOSE', 'STOP']);
+
+export interface LifecycleValidation {
+  valid: boolean;
+  phasesPresent: string[];
+  phasesMissing: string[];
+  violations: Array<{ phase: string; after: string }>;
+}
+
+/**
+ * Validate lifecycle phase ordering from a run log file.
+ * Reads the log, extracts AUTO_DENT_PHASE markers, and checks ordering.
+ * Advisory only — violations are logged but don't block the batch.
+ */
+export function validateRunLifecycle(logFile: string): LifecycleValidation {
+  const logContent = readFileSync(logFile, 'utf8');
+  const markers = parsePhaseMarkers(logContent);
+  const phasesPresent = markers.map(m => m.phase);
+  const orderedPhases = phasesPresent.filter(p => !FLOATING_PHASES.has(p));
+  const violations: Array<{ phase: string; after: string }> = [];
+
+  for (let i = 1; i < orderedPhases.length; i++) {
+    const prevIdx = LIFECYCLE_ORDER.indexOf(orderedPhases[i - 1]);
+    const currIdx = LIFECYCLE_ORDER.indexOf(orderedPhases[i]);
+    if (prevIdx === -1 || currIdx === -1) continue;
+    if (currIdx < prevIdx) {
+      violations.push({ phase: orderedPhases[i], after: orderedPhases[i - 1] });
+    }
+  }
+
+  const presentSet = new Set(phasesPresent);
+  const phasesMissing = LIFECYCLE_ORDER.filter(p => !presentSet.has(p));
+
+  return { valid: violations.length === 0, phasesPresent, phasesMissing, violations };
+}
+
 // Main
 
 const MIN_RUN_SECONDS = 60;
@@ -1359,6 +1401,33 @@ async function main(): Promise<void> {
   );
 
   printRunSummary(runNum, exitCode, duration, result);
+
+  // Lifecycle validation (#639) — advisory, not blocking
+  let lifecycleViolationCount = 0;
+  try {
+    const lifecycle = validateRunLifecycle(logFile);
+    lifecycleViolationCount = lifecycle.violations.length;
+    if (!lifecycle.valid) {
+      const details = lifecycle.violations
+        .map(v => `${v.phase} appeared after ${v.after}`)
+        .join(', ');
+      console.log(
+        `  ${color.yellow('[lifecycle]')} ${lifecycle.violations.length} violation(s): ${details}`,
+      );
+      appendFileSync(logFile, `\nlifecycle_violations=${lifecycle.violations.length}: ${details}\n`);
+    } else {
+      console.log(
+        `  ${color.dim('[lifecycle]')} valid (${lifecycle.phasesPresent.join(' -> ')})`,
+      );
+    }
+    if (lifecycle.phasesMissing.length > 0) {
+      console.log(
+        `  ${color.dim('[lifecycle]')} missing phases: ${lifecycle.phasesMissing.join(', ')}`,
+      );
+    }
+  } catch {
+    // Log file unreadable — skip lifecycle check
+  }
 
   // Cost anomaly detection (#585)
   {
@@ -1451,6 +1520,7 @@ async function main(): Promise<void> {
     issues_pruned: result.issuesPruned,
     prompt_template: promptMeta.template,
     prompt_hash: promptMeta.hash,
+    lifecycle_violations: lifecycleViolationCount,
   };
   // Classify failure from metrics (log-based classification could be added later)
   runMetrics.failure_class = classifyFailure(runMetrics);
