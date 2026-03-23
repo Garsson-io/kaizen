@@ -21,7 +21,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine } from './auto-dent-score.js';
-import { claimNextItem, markItem, readPlan, type PlanItem } from './auto-dent-plan.js';
+import { claimNextItem } from './auto-dent-plan.js';
 
 // Types
 
