@@ -3,12 +3,15 @@ import {
   scoreRunMetrics,
   scoreRunResult,
   scoreBatch,
+  scoreModeBreakdown,
   formatRunScoreLine,
   formatBatchScoreTable,
+  formatModeBreakdown,
   postHocScoreBatch,
   formatPostHocLine,
   type RunScore,
   type BatchScore,
+  type ModeStats,
   type PostHocBatchResult,
 } from './auto-dent-score.js';
 import type { RunMetrics, RunResult } from './auto-dent-run.js';
@@ -355,6 +358,10 @@ describe('formatBatchScoreTable', () => {
         { success: true, cost_usd: 3, tool_calls: 15, pr_count: 2, issues_closed_count: 3, issues_filed_count: 0, duration_seconds: 400, efficiency: 0.67, cost_per_pr: 1.5, stop_requested: false, mode: 'exploit', lines_deleted: 40, issues_pruned: 1 },
         { success: false, cost_usd: 1, tool_calls: 5, pr_count: 0, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 50, efficiency: 0, cost_per_pr: Infinity, stop_requested: false, mode: 'explore', lines_deleted: 0, issues_pruned: 0 },
       ],
+      mode_breakdown: [
+        { mode: 'exploit', runs: 2, successes: 2, success_rate: 1, cost_usd: 5, prs: 3, avg_cost: 2.5, efficiency: 0.6, lines_deleted: 120, issues_pruned: 2 },
+        { mode: 'explore', runs: 1, successes: 0, success_rate: 0, cost_usd: 1, prs: 0, avg_cost: 1, efficiency: 0, lines_deleted: 0, issues_pruned: 0 },
+      ],
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Runs** | 3 (2 successful) |');
@@ -367,6 +374,7 @@ describe('formatBatchScoreTable', () => {
     expect(table).toContain('| **Avg cost/success** | $3.00 |');
     expect(table).toContain('| **Efficiency** | 0.50 PR/$ |');
     expect(table).toContain('| **Modes** | exploit:2, explore:1 |');
+    expect(table).toContain('Per-mode effectiveness');
   });
 
   it('shows N/A for avg cost when no successes', () => {
@@ -384,6 +392,7 @@ describe('formatBatchScoreTable', () => {
       avg_duration_seconds: 50,
       overall_efficiency: 0,
       runs: [],
+      mode_breakdown: [],
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Avg cost/success** | N/A |');
@@ -405,6 +414,7 @@ describe('formatBatchScoreTable', () => {
       avg_duration_seconds: 300,
       overall_efficiency: 1 / 3,
       runs: [],
+      mode_breakdown: [],
       post_hoc: {
         prs: [
           { url: 'https://github.com/org/repo/pull/1', status: 'merged' },
@@ -439,9 +449,155 @@ describe('formatBatchScoreTable', () => {
       avg_duration_seconds: 300,
       overall_efficiency: 1 / 3,
       runs: [],
+      mode_breakdown: [],
     };
     const table = formatBatchScoreTable(score);
     expect(table).not.toContain('merge rate');
+  });
+});
+
+function makeRunScore(overrides: Partial<RunScore> = {}): RunScore {
+  return {
+    success: true,
+    cost_usd: 2.5,
+    tool_calls: 42,
+    pr_count: 1,
+    issues_closed_count: 1,
+    issues_filed_count: 0,
+    duration_seconds: 300,
+    efficiency: 0.4,
+    cost_per_pr: 2.5,
+    stop_requested: false,
+    mode: 'exploit',
+    lines_deleted: 0,
+    issues_pruned: 0,
+    ...overrides,
+  };
+}
+
+describe('scoreModeBreakdown', () => {
+  it('groups runs by mode and computes per-mode stats', () => {
+    const runs: RunScore[] = [
+      makeRunScore({ mode: 'exploit', cost_usd: 2.0, pr_count: 1, success: true }),
+      makeRunScore({ mode: 'exploit', cost_usd: 3.0, pr_count: 2, success: true }),
+      makeRunScore({ mode: 'explore', cost_usd: 1.5, pr_count: 0, success: false }),
+      makeRunScore({ mode: 'reflect', cost_usd: 1.0, pr_count: 1, success: true }),
+    ];
+
+    const breakdown = scoreModeBreakdown(runs);
+    expect(breakdown).toHaveLength(3);
+
+    // Sorted by run count descending: exploit(2), explore(1), reflect(1)
+    const exploit = breakdown.find((m) => m.mode === 'exploit')!;
+    expect(exploit.runs).toBe(2);
+    expect(exploit.successes).toBe(2);
+    expect(exploit.success_rate).toBe(1.0);
+    expect(exploit.cost_usd).toBe(5.0);
+    expect(exploit.prs).toBe(3);
+    expect(exploit.avg_cost).toBe(2.5);
+    expect(exploit.efficiency).toBeCloseTo(3 / 5);
+
+    const explore = breakdown.find((m) => m.mode === 'explore')!;
+    expect(explore.runs).toBe(1);
+    expect(explore.successes).toBe(0);
+    expect(explore.success_rate).toBe(0);
+    expect(explore.prs).toBe(0);
+
+    const reflect = breakdown.find((m) => m.mode === 'reflect')!;
+    expect(reflect.runs).toBe(1);
+    expect(reflect.successes).toBe(1);
+  });
+
+  it('returns empty array for empty input', () => {
+    expect(scoreModeBreakdown([])).toEqual([]);
+  });
+
+  it('returns single entry when all runs use the same mode', () => {
+    const runs = [
+      makeRunScore({ mode: 'exploit' }),
+      makeRunScore({ mode: 'exploit' }),
+    ];
+    const breakdown = scoreModeBreakdown(runs);
+    expect(breakdown).toHaveLength(1);
+    expect(breakdown[0].mode).toBe('exploit');
+    expect(breakdown[0].runs).toBe(2);
+  });
+
+  it('tracks subtraction metrics per mode', () => {
+    const runs = [
+      makeRunScore({ mode: 'subtract', lines_deleted: 100, issues_pruned: 2 }),
+      makeRunScore({ mode: 'subtract', lines_deleted: 50, issues_pruned: 1 }),
+      makeRunScore({ mode: 'exploit', lines_deleted: 0, issues_pruned: 0 }),
+    ];
+    const breakdown = scoreModeBreakdown(runs);
+    const subtract = breakdown.find((m) => m.mode === 'subtract')!;
+    expect(subtract.lines_deleted).toBe(150);
+    expect(subtract.issues_pruned).toBe(3);
+  });
+});
+
+describe('formatModeBreakdown', () => {
+  it('returns empty string when only one mode exists', () => {
+    const stats: ModeStats[] = [
+      { mode: 'exploit', runs: 5, successes: 4, success_rate: 0.8, cost_usd: 10, prs: 4, avg_cost: 2, efficiency: 0.4, lines_deleted: 0, issues_pruned: 0 },
+    ];
+    expect(formatModeBreakdown(stats)).toBe('');
+  });
+
+  it('renders a markdown table for multiple modes', () => {
+    const stats: ModeStats[] = [
+      { mode: 'exploit', runs: 3, successes: 2, success_rate: 2 / 3, cost_usd: 6, prs: 3, avg_cost: 2, efficiency: 0.5, lines_deleted: 0, issues_pruned: 0 },
+      { mode: 'explore', runs: 1, successes: 0, success_rate: 0, cost_usd: 1, prs: 0, avg_cost: 1, efficiency: 0, lines_deleted: 0, issues_pruned: 0 },
+    ];
+    const output = formatModeBreakdown(stats);
+    expect(output).toContain('Per-mode effectiveness');
+    expect(output).toContain('| exploit | 3 | 67% | 3 | $6.00 | 0.50 PR/$ | - |');
+    expect(output).toContain('| explore | 1 | 0% | 0 | $1.00 | - | - |');
+  });
+
+  it('shows deletion counts for subtract mode', () => {
+    const stats: ModeStats[] = [
+      { mode: 'exploit', runs: 2, successes: 2, success_rate: 1, cost_usd: 4, prs: 2, avg_cost: 2, efficiency: 0.5, lines_deleted: 0, issues_pruned: 0 },
+      { mode: 'subtract', runs: 1, successes: 1, success_rate: 1, cost_usd: 1.5, prs: 1, avg_cost: 1.5, efficiency: 2 / 3, lines_deleted: 200, issues_pruned: 0 },
+    ];
+    const output = formatModeBreakdown(stats);
+    expect(output).toContain('| subtract | 1 | 100% | 1 | $1.50 |');
+    expect(output).toContain('-200');
+  });
+});
+
+describe('scoreBatch mode_breakdown integration', () => {
+  it('includes mode_breakdown in batch score', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, mode: 'exploit' }),
+      makeRunMetrics({ run: 2, mode: 'explore', prs: [], exit_code: 1 }),
+    ];
+    const score = scoreBatch(history);
+    expect(score.mode_breakdown).toHaveLength(2);
+    expect(score.mode_breakdown[0].mode).toBe('exploit');
+    expect(score.mode_breakdown[1].mode).toBe('explore');
+  });
+
+  it('includes mode breakdown in batch score table when multiple modes', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, mode: 'exploit' }),
+      makeRunMetrics({ run: 2, mode: 'explore', prs: [], exit_code: 1 }),
+    ];
+    const score = scoreBatch(history);
+    const table = formatBatchScoreTable(score);
+    expect(table).toContain('Per-mode effectiveness');
+    expect(table).toContain('exploit');
+    expect(table).toContain('explore');
+  });
+
+  it('omits mode breakdown in table when only one mode', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, mode: 'exploit' }),
+      makeRunMetrics({ run: 2, mode: 'exploit' }),
+    ];
+    const score = scoreBatch(history);
+    const table = formatBatchScoreTable(score);
+    expect(table).not.toContain('Per-mode effectiveness');
   });
 });
 
