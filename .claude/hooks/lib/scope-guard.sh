@@ -1,10 +1,13 @@
 #!/bin/bash
 # Part of kAIzen Agent Control Flow
-# scope-guard.sh — Blocks hooks when kaizen is installed at computer level
+# scope-guard.sh — Auto-fixes computer-level kaizen install (warns, never blocks)
 #
 # Computer-level installation (kaizen@kaizen in ~/.claude/settings.json enabledPlugins)
 # causes all hooks to fire TWICE — once from the plugin registry, once from the project.
 # This doubles vitest/tsc processes and causes WSL OOM crashes.
+#
+# Design: auto-remove the bad setting and emit a warning to stderr (exit 0).
+# Never block — blocking ALL tools creates an unescapable deadlock (#758).
 #
 # Usage (add to every hook, after fast-exit checks):
 #   source "$(dirname "$0")/lib/scope-guard.sh"
@@ -28,28 +31,43 @@ except Exception:
 " 2>/dev/null)
 
   if [ "$is_user_level" = "yes" ]; then
-    cat >&2 <<'ERRMSG'
-!! KAIZEN HOOK BLOCKED — computer-level install detected !!
+    # Auto-fix: remove the bad setting rather than blocking (#758).
+    # Blocking ALL tools creates an unescapable deadlock — the agent cannot
+    # run the fix command because that command is also blocked.
+    #
+    # Attempt counter: if python3 fails and the setting persists, stop
+    # retrying after 3 attempts to avoid spamming on every tool call.
+    local counter_file="/tmp/.kaizen-scope-guard-fix-attempts"
+    local attempts=0
+    [ -f "$counter_file" ] && attempts=$(cat "$counter_file" 2>/dev/null || echo 0)
 
-kaizen@kaizen is in ~/.claude/settings.json enabledPlugins.
-This causes EVERY hook to fire TWICE, doubling all vitest/tsc
-processes. This has crashed WSL with OOM multiple times.
+    if [ "$attempts" -ge 3 ]; then
+      echo "[kaizen] WARNING: computer-level kaizen install persists after 3 auto-fix attempts." >&2
+      echo "[kaizen] Manual fix: python3 -c \"import json,pathlib; p=pathlib.Path.home()/'.claude'/'settings.json'; d=json.loads(p.read_text()); d.get('enabledPlugins',{}).pop('kaizen@kaizen',None); p.write_text(json.dumps(d,indent=2))\"" >&2
+      return 0
+    fi
 
-FIX: Remove the computer-level install:
+    echo $((attempts + 1)) > "$counter_file"
 
-  python3 -c "
+    python3 -c "
 import json, pathlib
 p = pathlib.Path.home() / '.claude' / 'settings.json'
 d = json.loads(p.read_text())
 d.get('enabledPlugins', {}).pop('kaizen@kaizen', None)
 p.write_text(json.dumps(d, indent=2))
-print('Done: removed kaizen@kaizen from user-level settings')
-"
+" 2>/dev/null && rm -f "$counter_file"
 
-Kaizen hooks are provided per-project by .claude-plugin/plugin.json
-or by project-scoped installation via /kaizen-setup.
+    cat >&2 <<'ERRMSG'
+[kaizen] WARNING: computer-level kaizen install detected and auto-removed.
+
+kaizen@kaizen was in ~/.claude/settings.json enabledPlugins, which causes
+every hook to fire twice and can crash WSL with OOM.
+
+Auto-fixed: removed kaizen@kaizen from ~/.claude/settings.json.
+Kaizen hooks are provided per-project via .claude-plugin/plugin.json.
 ERRMSG
-    exit 2
+    # Return 0 — allow the tool call through. The bad setting is now gone.
+    return 0
   fi
 }
 

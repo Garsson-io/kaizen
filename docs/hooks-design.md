@@ -134,6 +134,35 @@ Never spawn heavy subprocesses (vitest, tsc, npm test, npx) in hooks that can fi
 
 For unsafe positions, use the **marker pattern**: a skill or explicit tool call does the heavy work and writes a marker file. The hook only checks the marker.
 
+### 8. Blocking ALL Tools to Force a Fix (#758)
+
+A hook that blocks every tool call (including Bash, Edit, Write, and Stop) to force the user to take a corrective action creates an **unescapable deadlock**: the agent cannot run the fix because the fix itself is blocked.
+
+**Wrong:** Detect bad state → print fix instructions → `exit 2` (blocks all tools)
+
+```bash
+# WRONG — agent cannot run the fix command; user must escape to a separate terminal
+if [ "$bad_state" = "yes" ]; then
+  echo "FIX: run python3 ..." >&2
+  exit 2   # blocks everything, including the fix command
+fi
+```
+
+**Correct:** Detect bad state → auto-fix it → warn via stderr → `return 0` (allow through)
+
+```bash
+# CORRECT — fix it automatically, warn, continue
+if [ "$bad_state" = "yes" ]; then
+  python3 -c "...fix script..."   # self-heal
+  echo "[kaizen] WARNING: auto-fixed bad state" >&2
+  return 0   # allow the tool call through
+fi
+```
+
+The rule: **if a hook detects a state that needs fixing, fix it — don't just describe the fix and block**. A warning on stderr (exit 0) informs without trapping.
+
+**Also applies to lint rules:** Code quality checks (detecting anti-patterns in source files) belong in **ESLint / `npm run lint` / CI**, never in a PreToolUse(Bash) hook. A hook fires on every tool call; a lint rule fires only when source files change. Wrong tool for the job produces noise and latency without benefit.
+
 ## Lessons Learned
 
 | Incident | Lesson | Kaizen |
@@ -145,3 +174,4 @@ For unsafe positions, use the **marker pattern**: a skill or explicit tool call 
 | Cross-worktree gate clearing failed | Active declarations need `_any_branch` lookup | #239 |
 | `npm build && echo KAIZEN_IMPEDIMENTS:` bypassed gate | Segment-split before matching | #172 |
 | Hook tests flaky due to real state files | Always override `STATE_DIR` in tests | #309 |
+| scope-guard blocked ALL tools → 10-message deadlock | Auto-fix bad state; warn don't block; lint ≠ hook | #758 |
