@@ -30,12 +30,24 @@ Without security governance:
 
 ## What Exists
 
-| Component | Level | Location |
-|-----------|-------|----------|
+### Host-project components (not in this repo)
+
+These security components are designed for host projects that use kaizen as a plugin. They exist in the host project's codebase, not in the kaizen plugin repo:
+
+| Component | Level | Purpose |
+|-----------|-------|---------|
 | `case-auth.ts` | L1 | Authorization gates (dev vs work, active vs suggested) |
-| `mount-security.ts` | L1-2 | Mount allowlist, blocked patterns, symlink check — 50 tests |
+| `mount-security.ts` | L1-2 | Mount allowlist, blocked patterns, symlink check |
 | `credential-proxy.ts` | L2 | Real credentials never enter containers |
 | `sender-allowlist.ts` | L1 | Per-group access control |
+
+### Plugin-level security (this repo)
+
+| Component | Level | Location |
+|-----------|-------|----------|
+| `docs/security/credential-inventory.md` | L2 | Credential audit — all tokens, scopes, usage locations |
+| `.claude/settings.local.json` | L1 | Claude Code permission grants (local, not committed) |
+| `gh` CLI auth | L1 | GitHub operations use user's `gh auth` token |
 | `SECURITY.md` | L1 | Trust model documentation |
 
 ## L2→L3: Input Sanitization (next step)
@@ -68,3 +80,10 @@ Beyond L6, security becomes adversarial testing: red-team agents that probe for 
 - **Security constrains Autonomous Kaizen L7** — auto-merge requires confidence agents weren't manipulated
 - **Observability enables Security L4+** — anomaly detection requires behavioral baselines
 - **State Integrity supports Security** — credential state must be consistent across stores
+
+## Related Issues
+
+- #200: Consider safe word + escalation config for garsson-insurance vertical
+- #660: Security audit — inventory all tokens, credentials, and permission scopes
+- #661: Auto-revoke worktree GitHub token scope on case completion
+- #662: Prompt injection defense — classify agent inputs as trusted vs untrusted

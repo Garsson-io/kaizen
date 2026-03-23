@@ -17,6 +17,10 @@ import { join } from 'node:path';
 import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
 import { stripHeredocBody } from './parse-command.js';
 import {
+  buildReflectionRecord,
+  persistReflection,
+} from './reflection-persistence.js';
+import {
   DEFAULT_AUDIT_DIR,
   DEFAULT_STATE_DIR,
   clearStateWithStatusAnyBranch,
@@ -516,6 +520,25 @@ export function processHookInput(
         isNoAction,
       );
       postComment(gatePrUrl, comment);
+    } catch {}
+
+    // Persist reflection to searchable JSONL (kaizen #272, best-effort)
+    try {
+      const clearType = isNoAction
+        ? 'no-action' as const
+        : validatedItems.length === 0
+          ? 'empty-array' as const
+          : 'impediments' as const;
+      const quality = classifyReflectionQuality(validatedItems);
+      const record = buildReflectionRecord({
+        prUrl: gatePrUrl,
+        branch: currentBranch(),
+        clearType,
+        clearReason,
+        quality,
+        impediments: validatedItems,
+      });
+      persistReflection(record);
     } catch {}
 
     // Auto-close kaizen issues (best-effort)
