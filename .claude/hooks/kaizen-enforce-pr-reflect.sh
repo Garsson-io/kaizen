@@ -32,6 +32,7 @@ if [ -z "$COMMAND" ]; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 CMD_LINE=$(strip_heredoc_body "$COMMAND")
 

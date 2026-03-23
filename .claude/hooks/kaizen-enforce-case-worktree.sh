@@ -16,6 +16,7 @@ if ! echo "$COMMAND" | grep -qE '^\s*git\s+(commit|push)'; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Allow if running inside a git worktree
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)

@@ -28,6 +28,7 @@ if ! $IS_COMMIT && ! $IS_PR; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Get changed files
 if $IS_COMMIT; then

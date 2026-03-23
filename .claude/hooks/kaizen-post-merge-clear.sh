@@ -43,6 +43,7 @@ EOF
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Trigger 2: Bash — detect gh pr view showing MERGED state (handles --auto timing, kaizen #93)
 if [ "$TOOL_NAME" = "Bash" ]; then

@@ -38,6 +38,7 @@ if [ "$MAIN_VERSION" != "$CURRENT_VERSION" ]; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Auto-bump patch
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"

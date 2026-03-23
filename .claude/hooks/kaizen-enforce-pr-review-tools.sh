@@ -25,6 +25,7 @@ if [ -z "$TOOL_NAME" ]; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Uses shared find_needs_review_state from state-utils.sh
 REVIEW_INFO=$(find_needs_review_state)
