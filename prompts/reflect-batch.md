@@ -25,6 +25,15 @@ performance and produce insights that will help subsequent runs be more effectiv
 {{pr_merge_status}}
 {{/pr_merge_status}}
 
+{{#prior_reflections}}
+## Prior Reflections
+
+Previous reflections in this batch produced the following insights.
+Review whether their recommendations were followed and what changed since.
+
+{{prior_reflections}}
+{{/prior_reflections}}
+
 ## Your Task
 
 Analyze the batch data above and produce a structured reflection. Focus on:
@@ -32,8 +41,9 @@ Analyze the batch data above and produce a structured reflection. Focus on:
 1. **Success patterns** — Which domains/issue types produced merged PRs? What approaches worked?
 2. **Failure patterns** — Were there repeated failures? Which runs had high cost but low output?
 3. **Efficiency** — What's the cost per merged PR? Are there runs that should have stopped earlier?
-4. **Recommendations** — What should future runs focus on or avoid?
-5. **Meta-kaizen** — Are there systemic improvements to the auto-dent harness itself?
+4. **Prior reflection follow-up** — If prior reflections exist, were their recommendations followed? What changed?
+5. **Recommendations** — What should future runs focus on or avoid?
+6. **Meta-kaizen** — Are there systemic improvements to the auto-dent harness itself?
 
 Output your reflection in this format:
 

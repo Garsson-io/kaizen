@@ -24,6 +24,12 @@ PRs created so far: {{prs}}
 {{reflection_insights}}
 {{/reflection_insights}}
 
+{{#prior_reflections}}
+## Prior Reflections History
+
+{{prior_reflections}}
+{{/prior_reflections}}
+
 ## Strategic Assessment Tasks
 
 Work through each of these assessments:

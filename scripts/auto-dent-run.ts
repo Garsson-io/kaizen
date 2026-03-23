@@ -206,6 +206,28 @@ export function loadReflectionInsights(logDir: string): { text: string; avoidIss
 }
 
 /**
+ * Load reflection history — all prior reflection entries in this batch.
+ * Used to give the reflect-batch prompt visibility into prior reflections.
+ */
+export function loadReflectionHistory(logDir: string): string {
+  const historyPath = resolve(logDir, 'reflection-history.json');
+  try {
+    if (!existsSync(historyPath)) return '';
+    const entries = JSON.parse(readFileSync(historyPath, 'utf8'));
+    if (!Array.isArray(entries) || entries.length === 0) return '';
+
+    return entries.map((entry: any, idx: number) => {
+      const insights = (entry.insights || [])
+        .map((i: any) => `  - **[${i.type}]** ${i.message}`)
+        .join('\n');
+      return `### Reflection ${idx + 1} (after run ${entry.runCount}, success: ${(entry.successRate * 100).toFixed(0)}%, cost/PR: $${entry.avgCostPerPr.toFixed(2)})\n${insights}`;
+    }).join('\n\n');
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Build template variables from batch state and run number.
  * These are substituted into prompt templates via {{variable}} syntax.
  */
@@ -221,6 +243,7 @@ export function buildTemplateVars(
   // Try to claim next item from plan (if a plan exists)
   let planAssignment = '';
   let reflectionInsights = '';
+  let priorReflections = '';
   if (logDir) {
     const planItem = claimNextItem(logDir);
     if (planItem) {
@@ -245,6 +268,9 @@ export function buildTemplateVars(
     if (reflection.avoidIssues.length > 0) {
       console.log(`  [reflect] loaded ${reflection.avoidIssues.length} issue(s) to avoid from reflection`);
     }
+
+    // Load reflection history for reflect/contemplate prompts (#611)
+    priorReflections = loadReflectionHistory(logDir);
   }
 
   // Build run history table and batch-level stats for reflect/contemplate prompts
@@ -305,6 +331,7 @@ export function buildTemplateVars(
     issues_closed_count: issuesClosedCount,
     run_count: runCount,
     pr_merge_status: prMergeStatus,
+    prior_reflections: priorReflections,
   };
 }
 
