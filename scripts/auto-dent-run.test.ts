@@ -11,6 +11,7 @@ import {
   renderTemplate,
   loadPromptTemplate,
   extractArtifacts,
+  extractContemplationRecommendations,
   parsePhaseMarkers,
   formatPhaseMarker,
   checkStopSignal,
@@ -435,6 +436,33 @@ describe('buildTemplateVars with run_history', () => {
   });
 });
 
+describe('buildTemplateVars with contemplation_recommendations', () => {
+  it('formats contemplation recommendations as numbered list', () => {
+    const state = makeBatchState({
+      contemplation_recommendations: [
+        'Shift focus to testing gaps',
+        'Epic #548 needs decomposition',
+      ],
+    });
+    const vars = buildTemplateVars(state, 5);
+    expect(vars.contemplation_recommendations).toBe(
+      '1. Shift focus to testing gaps\n2. Epic #548 needs decomposition',
+    );
+  });
+
+  it('returns empty string when no contemplation recommendations', () => {
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.contemplation_recommendations).toBe('');
+  });
+
+  it('returns empty string for empty array', () => {
+    const state = makeBatchState({ contemplation_recommendations: [] });
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.contemplation_recommendations).toBe('');
+  });
+});
+
 describe('renderTemplate', () => {
   it('substitutes simple variables', () => {
     const result = renderTemplate('Hello {{name}}!', { name: 'world' });
@@ -668,6 +696,42 @@ describe('extractArtifacts', () => {
       result,
     );
     expect(result.linesDeleted).toBe(50);
+  });
+});
+
+describe('extractContemplationRecommendations', () => {
+  it('extracts structured recommendations from contemplate output', () => {
+    const text = [
+      'Some analysis text...',
+      'CONTEMPLATION_REC: Shift focus from hooks to testing gaps',
+      'More analysis...',
+      'CONTEMPLATION_REC: Epic #548 is stalled — decompose next run',
+    ].join('\n');
+    const recs = extractContemplationRecommendations(text);
+    expect(recs).toEqual([
+      'Shift focus from hooks to testing gaps',
+      'Epic #548 is stalled — decompose next run',
+    ]);
+  });
+
+  it('returns empty array when no recommendations present', () => {
+    expect(extractContemplationRecommendations('just regular text')).toEqual([]);
+  });
+
+  it('trims whitespace from recommendations', () => {
+    const recs = extractContemplationRecommendations('CONTEMPLATION_REC:   padded text   ');
+    expect(recs).toEqual(['padded text']);
+  });
+
+  it('ignores empty recommendations', () => {
+    const text = ['CONTEMPLATION_REC:   ', 'CONTEMPLATION_REC: valid'].join('\n');
+    const recs = extractContemplationRecommendations(text);
+    expect(recs).toEqual(['valid']);
+  });
+
+  it('only matches at start of line', () => {
+    const recs = extractContemplationRecommendations('some text CONTEMPLATION_REC: not a rec');
+    expect(recs).toEqual([]);
   });
 });
 
