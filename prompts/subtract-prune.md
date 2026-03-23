@@ -16,6 +16,12 @@ Issues already addressed in previous runs (do not rework): {{issues_closed}}
 PRs already created in this batch (avoid overlapping work): {{prs}}
 {{/prs}}
 
+{{#reflection_insights}}
+## Batch Reflection Insights
+
+{{reflection_insights}}
+{{/reflection_insights}}
+
 ## Merge & Labeling Policy
 
 After creating a PR, you MUST queue it for auto-merge:

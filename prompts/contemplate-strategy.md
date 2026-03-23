@@ -18,6 +18,12 @@ Issues addressed so far: {{issues_closed}}
 PRs created so far: {{prs}}
 {{/prs}}
 
+{{#reflection_insights}}
+## Batch Reflection Insights
+
+{{reflection_insights}}
+{{/reflection_insights}}
+
 ## Strategic Assessment Tasks
 
 Work through each of these assessments:

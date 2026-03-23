@@ -13,6 +13,8 @@ import {
   formatBatchReflection,
   formatBatchReflectionComment,
   buildReflectionTemplateVars,
+  persistReflectionSummary,
+  type PersistedReflection,
   buildAggregateBatchRecord,
   appendBatchToAggregate,
   readAggregate,
@@ -749,6 +751,76 @@ describe('buildReflectionTemplateVars', () => {
     const reflection = buildBatchReflection(batch);
     const vars = buildReflectionTemplateVars(reflection, batch.state);
     expect(vars.pr_merge_status).toBe('');
+  });
+});
+
+// Reflection persistence tests (#603)
+
+describe('persistReflectionSummary', () => {
+  it('writes reflection-summary.json to the batch directory', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-persist-'));
+    const batch = makeBatchInfo({
+      dir: tmpDir,
+      state: makeBatchState({
+        run: 5,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+          makeRunMetrics({ run: 2, cost_usd: 3.0, prs: [] }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const path = persistReflectionSummary(batch, reflection);
+
+    expect(path).toBeTruthy();
+    expect(existsSync(path!)).toBe(true);
+
+    const data: PersistedReflection = JSON.parse(readFileSync(path!, 'utf8'));
+    expect(data.runCount).toBe(2);
+    expect(data.insights).toBeInstanceOf(Array);
+    expect(data.avoidIssues).toBeInstanceOf(Array);
+    expect(data.timestamp).toBeTruthy();
+  });
+
+  it('extracts issue numbers from failure insights into avoidIssues', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-avoid-'));
+    const batch = makeBatchInfo({
+      dir: tmpDir,
+      state: makeBatchState({
+        run: 5,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: [] }),
+          makeRunMetrics({ run: 2, cost_usd: 3.0, prs: [] }),
+          makeRunMetrics({ run: 3, cost_usd: 1.5, prs: [] }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    // Manually add an insight with issue references for test
+    reflection.insights.push({
+      type: 'recommendation',
+      message: 'Issues #42 and #99 keep failing — skip them',
+    });
+    const path = persistReflectionSummary(batch, reflection);
+    const data: PersistedReflection = JSON.parse(readFileSync(path!, 'utf8'));
+
+    expect(data.avoidIssues).toContain('42');
+    expect(data.avoidIssues).toContain('99');
+  });
+
+  it('deduplicates avoidIssues', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-dedup-'));
+    const batch = makeBatchInfo({ dir: tmpDir });
+    const reflection = buildBatchReflection(batch);
+    reflection.insights = [
+      { type: 'failure_pattern', message: 'Issue #42 fails repeatedly' },
+      { type: 'recommendation', message: 'Skip #42 and try #99' },
+    ];
+    const path = persistReflectionSummary(batch, reflection);
+    const data: PersistedReflection = JSON.parse(readFileSync(path!, 'utf8'));
+
+    const count42 = data.avoidIssues.filter((i) => i === '42').length;
+    expect(count42).toBe(1);
   });
 });
 

@@ -16,6 +16,12 @@ Issues already addressed in previous runs (do not rework): {{issues_closed}}
 PRs already created in this batch (avoid overlapping work): {{prs}}
 {{/prs}}
 
+{{#reflection_insights}}
+## Batch Reflection Insights
+
+{{reflection_insights}}
+{{/reflection_insights}}
+
 ## Exploration Tasks
 
 Pick the highest-value exploration from this list:

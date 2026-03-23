@@ -586,6 +586,61 @@ export function formatBatchReflection(reflection: BatchReflection): string {
 }
 
 /**
+ * Persisted reflection summary — written to {logDir}/reflection-summary.json
+ * and read by buildTemplateVars() to inject insights into subsequent run prompts.
+ */
+export interface PersistedReflection {
+  timestamp: string;
+  runCount: number;
+  successRate: number;
+  avgCostPerPr: number;
+  insights: ReflectionInsight[];
+  /** Issue numbers extracted from failure patterns that subsequent runs should avoid */
+  avoidIssues: string[];
+}
+
+/**
+ * Persist the batch reflection to the batch log directory so that
+ * subsequent runs can read it and incorporate insights into their prompts.
+ * Returns the path written, or null if persistence failed.
+ */
+export function persistReflectionSummary(
+  batch: BatchInfo,
+  reflection: BatchReflection,
+): string | null {
+  const summaryPath = join(batch.dir, 'reflection-summary.json');
+
+  // Extract issue numbers from failure/recommendation insights
+  const avoidIssues: string[] = [];
+  for (const insight of reflection.insights) {
+    if (insight.type === 'failure_pattern' || insight.type === 'recommendation') {
+      const issueMatches = insight.message.match(/#(\d+)/g);
+      if (issueMatches) {
+        avoidIssues.push(...issueMatches.map((m) => m.replace('#', '')));
+      }
+    }
+  }
+
+  const summary: PersistedReflection = {
+    timestamp: new Date().toISOString(),
+    runCount: reflection.runCount,
+    successRate: reflection.successRate,
+    avgCostPerPr: reflection.avgCostPerPr,
+    insights: reflection.insights,
+    avoidIssues: [...new Set(avoidIssues)],
+  };
+
+  try {
+    writeFileSync(summaryPath, JSON.stringify(summary, null, 2) + '\n');
+    console.log(`  [reflect] persisted reflection summary to ${summaryPath}`);
+    return summaryPath;
+  } catch (e: any) {
+    console.log(`  [reflect] warning: failed to persist reflection — ${e.message?.split('\n')[0] || 'failed'}`);
+    return null;
+  }
+}
+
+/**
  * Build template variables for the reflect-batch.md prompt.
  */
 export function buildReflectionTemplateVars(
@@ -1111,6 +1166,9 @@ Cross-batch learning (#586):
         } else {
           console.log(formatBatchReflection(reflection));
         }
+
+        // Always persist reflection to disk for intra-batch feedback (#603)
+        persistReflectionSummary(batch, reflection);
 
         if (postToIssue) {
           postBatchReflectionToProgressIssue(batch);
