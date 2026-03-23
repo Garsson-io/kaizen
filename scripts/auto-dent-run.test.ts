@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import { writeFileSync, unlinkSync, mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import {
   buildPrompt,
   buildTemplateVars,
@@ -15,6 +18,7 @@ import {
   cleanGuidanceForTitle,
   buildInFlightComment,
   extractLinkedIssue,
+  formatPlanAsMarkdown,
   type BatchState,
   type CleanupResult,
   type RunResult,
@@ -1346,5 +1350,68 @@ describe('extractLinkedIssue', () => {
   it('returns first match when multiple issues linked', () => {
     const body = 'Closes #100\nAlso fixes #200';
     expect(extractLinkedIssue(body)).toBe('100');
+  });
+});
+
+describe('formatPlanAsMarkdown', () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'kaizen-test-'));
+  const planPath = join(tmpDir, 'plan.json');
+  const cleanupFiles: string[] = [];
+
+  afterEach(() => {
+    for (const f of cleanupFiles) {
+      try { unlinkSync(f); } catch { /* ignore */ }
+    }
+    cleanupFiles.length = 0;
+  });
+
+  it('formats plan items as a markdown table', () => {
+    const plan = {
+      created_at: '2026-03-23T01:00:00Z',
+      guidance: 'improve hooks',
+      items: [
+        { issue: '#302', title: 'Planning pre-pass', score: 8, approach: 'add planner', status: 'pending', item_type: 'leaf' },
+        { issue: '#451', title: 'Hook performance', score: 6, approach: 'benchmark', status: 'pending', item_type: 'decompose' },
+      ],
+      wip_excluded: ['#500'],
+      epics_scanned: ['#275', '#295'],
+    };
+    const path = join(tmpDir, 'plan-test-1.json');
+    writeFileSync(path, JSON.stringify(plan));
+    cleanupFiles.push(path);
+
+    const md = formatPlanAsMarkdown(path);
+    expect(md).toContain('### Batch Plan (pre-pass)');
+    expect(md).toContain('| 1 | #302 | Planning pre-pass | 8 | leaf | pending |');
+    expect(md).toContain('| 2 | #451 | Hook performance | 6 | decompose | pending |');
+    expect(md).toContain('#500');
+    expect(md).toContain('#275');
+  });
+
+  it('returns empty string for non-existent file', () => {
+    expect(formatPlanAsMarkdown('/nonexistent/plan.json')).toBe('');
+  });
+
+  it('returns empty string for plan with no items', () => {
+    const plan = { created_at: '2026-03-23', guidance: 'test', items: [] };
+    const path = join(tmpDir, 'plan-test-2.json');
+    writeFileSync(path, JSON.stringify(plan));
+    cleanupFiles.push(path);
+
+    expect(formatPlanAsMarkdown(path)).toBe('');
+  });
+
+  it('defaults item_type to leaf when not specified', () => {
+    const plan = {
+      created_at: '2026-03-23',
+      guidance: 'test',
+      items: [{ issue: '#1', title: 'Test', score: 5, approach: 'do it', status: 'pending' }],
+    };
+    const path = join(tmpDir, 'plan-test-3.json');
+    writeFileSync(path, JSON.stringify(plan));
+    cleanupFiles.push(path);
+
+    const md = formatPlanAsMarkdown(path);
+    expect(md).toContain('| leaf |');
   });
 });
