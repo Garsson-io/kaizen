@@ -6,7 +6,8 @@
  *   status              List active batches with last-worked-on info
  *   halt [batch-id]     Halt a specific batch (or all active batches)
  *   score [batch-id]    Score batches — efficiency, success rate, cost-per-PR
- *   score --post-hoc    Include live merge status checks from GitHub
+ *   score --post-hoc    Include live merge status checks
+ *   cleanup [batch-id]  Close superseded PRs whose issues are already resolved from GitHub
  *
  * Usage:
  *   npx tsx scripts/auto-dent-ctl.ts status
@@ -18,7 +19,7 @@ import { readdirSync, readFileSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BatchState } from './auto-dent-run.js';
-import { checkMergeStatus } from './auto-dent-run.js';
+import { checkMergeStatus, cleanupSupersededPRs } from './auto-dent-run.js';
 import {
   scoreBatch,
   postHocScoreBatch,
@@ -217,7 +218,8 @@ Usage:
   auto-dent-ctl.ts halt [batch-id]     Halt specific batch (or all active)
   auto-dent-ctl.ts halt-state <file>   Print last-state from a state.json file
   auto-dent-ctl.ts score [batch-id]    Score batch(es) — efficiency, success rate, cost
-  auto-dent-ctl.ts score --post-hoc [batch-id]  Include live PR merge status checks`);
+  auto-dent-ctl.ts score --post-hoc [batch-id]  Include live PR merge status checks
+  auto-dent-ctl.ts cleanup [batch-id]  Close superseded PRs whose issues are already resolved`);
     process.exit(0);
   }
 
@@ -310,6 +312,61 @@ Usage:
       for (const batch of targets) {
         console.log(formatBatchScoreOutput(batch, postHoc));
         console.log('');
+      }
+      break;
+    }
+
+    case 'cleanup': {
+      const targetId = args[1];
+      const batches = discoverBatches(logsDir);
+
+      if (batches.length === 0) {
+        console.log('No auto-dent batches found.');
+        process.exit(0);
+      }
+
+      const targets = targetId
+        ? batches.filter((b) => b.batchId === targetId)
+        : batches.filter((b) => b.active);
+
+      if (targets.length === 0) {
+        if (targetId) {
+          console.error(`No batch found with ID: ${targetId}`);
+        } else {
+          console.log('No active batches to clean up.');
+        }
+        process.exit(0);
+      }
+
+      for (const batch of targets) {
+        const s = batch.state;
+        const repo = s.kaizen_repo || s.host_repo;
+        if (!repo) {
+          console.log(`  Batch ${batch.batchId}: no repo configured, skipping.`);
+          continue;
+        }
+
+        if (s.prs.length === 0) {
+          console.log(`  Batch ${batch.batchId}: no PRs to clean up.`);
+          continue;
+        }
+
+        console.log(`  Batch ${batch.batchId}: checking ${s.prs.length} PRs...`);
+        const results = cleanupSupersededPRs(s.prs, repo);
+
+        let closedCount = 0;
+        for (const r of results) {
+          if (r.action === 'closed') closedCount++;
+          if (r.action !== 'still_open' && r.action !== 'already_merged') {
+            console.log(`    ${r.pr} — ${r.action}${r.issue ? ` (${r.issue})` : ''}`);
+          }
+        }
+
+        if (closedCount === 0) {
+          console.log(`    No superseded PRs found.`);
+        } else {
+          console.log(`    Closed ${closedCount} superseded PR(s).`);
+        }
       }
       break;
     }

@@ -73,6 +73,7 @@ Options:
   --status             Show status of all batches (active and stopped)
   --halt [batch-id]    Halt a specific batch, or all active batches
   --score [batch-id]   Score batch(es) — efficiency, success rate, cost-per-PR
+  --cleanup [batch-id] Close superseded PRs whose issues are already resolved
   --help               Show this help
 
 Self-update: between runs, the trampoline pulls main so that merged
@@ -105,6 +106,11 @@ fi
 if [[ "${1:-}" = "--score" ]]; then
   shift
   exec npx tsx "$CTL_SCRIPT" score "$@"
+fi
+
+if [[ "${1:-}" = "--cleanup" ]]; then
+  shift
+  exec npx tsx "$CTL_SCRIPT" cleanup "$@"
 fi
 
 # Arg parsing
@@ -308,6 +314,12 @@ while true; do
     else
       echo ">>> [experiment] main UNCHANGED (no PR merged yet)"
     fi
+  fi
+
+  # Clean up superseded PRs between runs (issue #362)
+  if [[ "$NEXT_RUN" -gt 1 ]]; then
+    echo ">>> Cleaning up superseded PRs..."
+    npx tsx "$CTL_SCRIPT" cleanup "$BATCH_ID" 2>/dev/null || echo ">>> Cleanup skipped (non-fatal)."
   fi
 
   # Resolve runner (re-resolve after pull in case it was updated)
