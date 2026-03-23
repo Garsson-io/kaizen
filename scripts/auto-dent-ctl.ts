@@ -20,10 +20,11 @@
 import { readdirSync, readFileSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
-import type { BatchState } from './auto-dent-run.js';
-import { checkMergeStatus, cleanupSupersededPRs } from './auto-dent-run.js';
+import type { BatchState, RunMetrics } from './auto-dent-run.js';
+import { checkMergeStatus, cleanupSupersededPRs, loadPromptTemplate, renderTemplate } from './auto-dent-run.js';
 import {
   scoreBatch,
+  scoreRunMetrics,
   postHocScoreBatch,
   formatBatchScoreTable,
   formatRunScoreLine,
@@ -321,6 +322,210 @@ export function formatWatchdogResult(result: WatchdogResult): string {
   }
 }
 
+// Batch reflection — cross-run pattern analysis (#551)
+
+export interface ReflectionInsight {
+  type: 'success_pattern' | 'failure_pattern' | 'efficiency' | 'recommendation';
+  message: string;
+}
+
+export interface BatchReflection {
+  batchId: string;
+  runCount: number;
+  totalCost: number;
+  totalPrs: number;
+  issuesClosedCount: number;
+  successRate: number;
+  avgCostPerPr: number;
+  insights: ReflectionInsight[];
+  runHistoryTable: string;
+}
+
+/**
+ * Build a batch reflection from state data.
+ * Analyzes run history to find patterns, efficiency anomalies, and recommendations.
+ */
+export function buildBatchReflection(batch: BatchInfo): BatchReflection {
+  const s = batch.state;
+  const history = s.run_history || [];
+  const insights: ReflectionInsight[] = [];
+
+  const scores = history.map(scoreRunMetrics);
+  const totalCost = scores.reduce((sum, r) => sum + r.cost_usd, 0);
+  const totalPrs = scores.reduce((sum, r) => sum + r.pr_count, 0);
+  const totalIssuesClosed = scores.reduce((sum, r) => sum + r.issues_closed_count, 0);
+  const successfulRuns = scores.filter((r) => r.success);
+  const failedRuns = scores.filter((r) => !r.success);
+  const successRate = scores.length > 0 ? successfulRuns.length / scores.length : 0;
+  const avgCostPerPr = totalPrs > 0 ? totalCost / totalPrs : 0;
+
+  // Insight: overall success rate
+  if (scores.length >= 3) {
+    if (successRate >= 0.8) {
+      insights.push({
+        type: 'success_pattern',
+        message: `High success rate: ${(successRate * 100).toFixed(0)}% of runs produced PRs`,
+      });
+    } else if (successRate < 0.5) {
+      insights.push({
+        type: 'failure_pattern',
+        message: `Low success rate: only ${(successRate * 100).toFixed(0)}% of runs produced PRs — consider narrowing guidance`,
+      });
+    }
+  }
+
+  // Insight: expensive failures (runs that cost > avg but produced nothing)
+  if (scores.length >= 2) {
+    const avgCost = totalCost / scores.length;
+    const expensiveFailures = history.filter((r, i) => {
+      return !scores[i].success && scores[i].cost_usd > avgCost * 1.5;
+    });
+    if (expensiveFailures.length > 0) {
+      const runNums = expensiveFailures.map((r) => `#${r.run}`).join(', ');
+      insights.push({
+        type: 'efficiency',
+        message: `Expensive failures: runs ${runNums} cost >1.5x average but produced no PRs`,
+      });
+    }
+  }
+
+  // Insight: cost efficiency trend (are later runs more/less efficient?)
+  if (scores.length >= 4) {
+    const firstHalf = scores.slice(0, Math.floor(scores.length / 2));
+    const secondHalf = scores.slice(Math.floor(scores.length / 2));
+    const firstAvgCost = firstHalf.reduce((s, r) => s + r.cost_usd, 0) / firstHalf.length;
+    const secondAvgCost = secondHalf.reduce((s, r) => s + r.cost_usd, 0) / secondHalf.length;
+
+    if (secondAvgCost > firstAvgCost * 1.3) {
+      insights.push({
+        type: 'efficiency',
+        message: `Cost trending up: later runs average $${secondAvgCost.toFixed(2)} vs early $${firstAvgCost.toFixed(2)} — may be hitting diminishing returns`,
+      });
+    } else if (secondAvgCost < firstAvgCost * 0.7) {
+      insights.push({
+        type: 'success_pattern',
+        message: `Cost trending down: later runs average $${secondAvgCost.toFixed(2)} vs early $${firstAvgCost.toFixed(2)} — improving efficiency`,
+      });
+    }
+  }
+
+  // Insight: consecutive failures
+  let maxConsecFail = 0;
+  let currentStreak = 0;
+  for (const score of scores) {
+    if (!score.success) {
+      currentStreak++;
+      maxConsecFail = Math.max(maxConsecFail, currentStreak);
+    } else {
+      currentStreak = 0;
+    }
+  }
+  if (maxConsecFail >= 2) {
+    insights.push({
+      type: 'failure_pattern',
+      message: `Max ${maxConsecFail} consecutive failures detected — may indicate a systemic blocker`,
+    });
+  }
+
+  // Insight: stop signals
+  const stopRuns = history.filter((r) => r.stop_requested);
+  if (stopRuns.length > 0 && stopRuns.length < history.length) {
+    insights.push({
+      type: 'recommendation',
+      message: `${stopRuns.length} run(s) emitted stop signals — backlog may be exhausted for this guidance`,
+    });
+  }
+
+  // Insight: cost per PR benchmark
+  if (avgCostPerPr > 0) {
+    if (avgCostPerPr < 1.5) {
+      insights.push({
+        type: 'success_pattern',
+        message: `Efficient: $${avgCostPerPr.toFixed(2)}/PR is below the $1.50 target`,
+      });
+    } else if (avgCostPerPr > 3.0) {
+      insights.push({
+        type: 'recommendation',
+        message: `Expensive: $${avgCostPerPr.toFixed(2)}/PR is above the $3.00 threshold — consider simpler issues`,
+      });
+    }
+  }
+
+  // Build run history table
+  const tableLines: string[] = [
+    '| Run | Duration | Cost | PRs | Issues | Status |',
+    '|-----|----------|------|-----|--------|--------|',
+  ];
+  for (let i = 0; i < history.length; i++) {
+    const r = history[i];
+    const dur = `${Math.floor(r.duration_seconds / 60)}m${r.duration_seconds % 60}s`;
+    const status = r.exit_code === 0 ? (scores[i].success ? 'ok' : 'no-output') : `exit ${r.exit_code}`;
+    tableLines.push(
+      `| #${r.run} | ${dur} | $${r.cost_usd.toFixed(2)} | ${r.prs.length} | ${r.issues_closed.length} | ${status} |`,
+    );
+  }
+
+  return {
+    batchId: batch.batchId,
+    runCount: history.length,
+    totalCost,
+    totalPrs,
+    issuesClosedCount: totalIssuesClosed,
+    successRate,
+    avgCostPerPr,
+    insights,
+    runHistoryTable: tableLines.join('\n'),
+  };
+}
+
+/**
+ * Format a batch reflection for human-readable display.
+ */
+export function formatBatchReflection(reflection: BatchReflection): string {
+  const lines: string[] = [
+    `  Batch: ${reflection.batchId}`,
+    `  Runs: ${reflection.runCount} | Cost: $${reflection.totalCost.toFixed(2)} | PRs: ${reflection.totalPrs} | Issues closed: ${reflection.issuesClosedCount}`,
+    `  Success rate: ${(reflection.successRate * 100).toFixed(0)}% | Avg cost/PR: ${reflection.avgCostPerPr > 0 ? '$' + reflection.avgCostPerPr.toFixed(2) : 'N/A'}`,
+    '',
+  ];
+
+  if (reflection.insights.length > 0) {
+    lines.push('  Insights:');
+    for (const insight of reflection.insights) {
+      const icon = insight.type === 'success_pattern' ? '+' :
+                   insight.type === 'failure_pattern' ? '!' :
+                   insight.type === 'efficiency' ? '$' : '*';
+      lines.push(`    [${icon}] ${insight.message}`);
+    }
+  } else {
+    lines.push('  No significant patterns detected (too few runs or all runs similar).');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Build template variables for the reflect-batch.md prompt.
+ */
+export function buildReflectionTemplateVars(
+  reflection: BatchReflection,
+  state: BatchState,
+): Record<string, string> {
+  const insightLines = reflection.insights.map((i) => `- **[${i.type}]** ${i.message}`);
+
+  return {
+    batch_id: reflection.batchId,
+    guidance: state.guidance,
+    run_count: String(reflection.runCount),
+    total_cost: reflection.totalCost.toFixed(2),
+    pr_count: String(reflection.totalPrs),
+    issues_closed_count: String(reflection.issuesClosedCount),
+    run_history_table: reflection.runHistoryTable,
+    reflection_insights: insightLines.join('\n'),
+    pr_merge_status: state.prs.length > 0 ? state.prs.join('\n') : '',
+  };
+}
+
 function main(): void {
   const args = process.argv.slice(2);
   const subcommand = args[0];
@@ -335,6 +540,8 @@ Usage:
   auto-dent-ctl.ts score [batch-id]    Score batch(es) — efficiency, success rate, cost
   auto-dent-ctl.ts score --post-hoc [batch-id]  Include live PR merge status checks
   auto-dent-ctl.ts cleanup [batch-id]  Close superseded PRs whose issues are already resolved
+  auto-dent-ctl.ts reflect [batch-id]  Cross-run pattern analysis and learning (#551)
+  auto-dent-ctl.ts reflect --prompt [batch-id]  Output rendered prompt for Claude reflection
   auto-dent-ctl.ts watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)`);
     process.exit(0);
   }
@@ -507,6 +714,55 @@ Usage:
       if (staleCount > 0) {
         console.log(`\nWatchdog halted ${staleCount} stale batch(es).`);
         process.exit(1);
+      }
+      break;
+    }
+
+    case 'reflect': {
+      const showPrompt = args.includes('--prompt');
+      const reflectArgs = args.slice(1).filter((a) => a !== '--prompt');
+      const targetId = reflectArgs[0];
+      const batches = discoverBatches(logsDir);
+
+      if (batches.length === 0) {
+        console.log('No auto-dent batches found.');
+        process.exit(0);
+      }
+
+      // Default to most recent batch if no ID given
+      const targets = targetId
+        ? batches.filter((b) => b.batchId === targetId)
+        : [batches[batches.length - 1]];
+
+      if (targets.length === 0) {
+        console.error(`No batch found with ID: ${targetId}`);
+        const available = batches.map((b) => b.batchId);
+        console.error(`Available batches: ${available.join(', ')}`);
+        process.exit(1);
+      }
+
+      for (const batch of targets) {
+        const history = batch.state.run_history || [];
+        if (history.length === 0) {
+          console.log(`  Batch ${batch.batchId}: no run history to reflect on.`);
+          continue;
+        }
+
+        const reflection = buildBatchReflection(batch);
+
+        if (showPrompt) {
+          const vars = buildReflectionTemplateVars(reflection, batch.state);
+          const template = loadPromptTemplate('reflect-batch.md');
+          if (template) {
+            console.log(renderTemplate(template, vars));
+          } else {
+            console.error('Error: prompts/reflect-batch.md not found');
+            process.exit(1);
+          }
+        } else {
+          console.log(formatBatchReflection(reflection));
+        }
+        console.log('');
       }
       break;
     }

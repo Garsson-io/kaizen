@@ -77,6 +77,8 @@ Options:
   --halt [batch-id]    Halt a specific batch, or all active batches
   --score [batch-id]   Score batch(es) — efficiency, success rate, cost-per-PR
   --cleanup [batch-id] Close superseded PRs whose issues are already resolved
+  --reflect [batch-id] Cross-run pattern analysis and learning
+  --reflect --prompt [batch-id]  Output rendered reflection prompt for Claude
   --watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)
   --help               Show this help
 
@@ -115,6 +117,11 @@ fi
 if [[ "${1:-}" = "--cleanup" ]]; then
   shift
   exec npx tsx "$CTL_SCRIPT" cleanup "$@"
+fi
+
+if [[ "${1:-}" = "--reflect" ]]; then
+  shift
+  exec npx tsx "$CTL_SCRIPT" reflect "$@"
 fi
 
 if [[ "${1:-}" = "--watchdog" ]]; then
@@ -346,6 +353,16 @@ while true; do
   if [[ "$NEXT_RUN" -gt 1 ]]; then
     echo ">>> Cleaning up superseded PRs..."
     npx tsx "$CTL_SCRIPT" cleanup "$BATCH_ID" 2>/dev/null || echo ">>> Cleanup skipped (non-fatal)."
+  fi
+
+  # Cross-run reflection every 5 runs (issue #551)
+  if [[ "$NEXT_RUN" -gt 1 ]] && (( (NEXT_RUN - 1) % 5 == 0 )); then
+    echo ">>> Running cross-run reflection (every 5 runs)..."
+    if npx tsx "$CTL_SCRIPT" reflect "$BATCH_ID" 2>/dev/null; then
+      echo ">>> Reflection complete."
+    else
+      echo ">>> Reflection skipped (non-fatal)."
+    fi
   fi
 
   # Resolve runner (re-resolve after pull in case it was updated)
