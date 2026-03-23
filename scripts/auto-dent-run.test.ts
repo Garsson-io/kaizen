@@ -24,6 +24,8 @@ import {
   formatPlanAsMarkdown,
   selectMode,
   checkSignalOverrides,
+  computeAdaptiveWeights,
+  weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
   color,
@@ -1935,6 +1937,159 @@ describe('checkSignalOverrides', () => {
     const { mode, reason } = selectMode(state, 1);
     expect(mode).toBe('subtract');
     expect(reason).toBe('guidance');
+  });
+});
+
+describe('computeAdaptiveWeights', () => {
+  it('returns null when history has fewer than minRuns', () => {
+    const history = Array.from({ length: 9 }, (_, i) =>
+      makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr-1'] }),
+    );
+    expect(computeAdaptiveWeights(history, 10)).toBeNull();
+  });
+
+  it('returns null when no runs have mode data', () => {
+    const history = Array.from({ length: 15 }, (_, i) =>
+      makeRunMetrics({ run: i }),
+    );
+    // mode is undefined on all — filtered out
+    expect(computeAdaptiveWeights(history)).toBeNull();
+  });
+
+  it('returns weights that sum to 1.0 with sufficient data', () => {
+    const history: RunMetrics[] = [];
+    for (let i = 0; i < 12; i++) {
+      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: i < 8 ? ['pr'] : [], cost_usd: 1.5 }));
+    }
+    history.push(makeRunMetrics({ run: 12, mode: 'explore', prs: ['pr'], cost_usd: 2.0 }));
+    history.push(makeRunMetrics({ run: 13, mode: 'reflect', prs: [], cost_usd: 1.0 }));
+    history.push(makeRunMetrics({ run: 14, mode: 'subtract', prs: ['pr'], cost_usd: 0.5 }));
+
+    const weights = computeAdaptiveWeights(history, 10);
+    expect(weights).not.toBeNull();
+    const sum = Object.values(weights!).reduce((s, v) => s + v, 0);
+    expect(sum).toBeCloseTo(1.0, 5);
+  });
+
+  it('gives higher weight to modes with better success rates', () => {
+    const history: RunMetrics[] = [];
+    // exploit: 7 runs, 6 with PRs (high success)
+    for (let i = 0; i < 7; i++) {
+      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: i < 6 ? ['pr'] : [], cost_usd: 1.0 }));
+    }
+    // explore: 3 runs, 0 PRs (low success)
+    for (let i = 7; i < 10; i++) {
+      history.push(makeRunMetrics({ run: i, mode: 'explore', prs: [], cost_usd: 2.0 }));
+    }
+    // reflect and subtract: 1 run each
+    history.push(makeRunMetrics({ run: 10, mode: 'reflect', prs: ['pr'], cost_usd: 1.0 }));
+    history.push(makeRunMetrics({ run: 11, mode: 'subtract', prs: ['pr'], cost_usd: 0.5 }));
+
+    const weights = computeAdaptiveWeights(history, 10);
+    expect(weights).not.toBeNull();
+    // exploit should dominate since it has high base weight AND high success
+    expect(weights!.exploit).toBeGreaterThan(weights!.explore);
+  });
+
+  it('ensures every mode gets at least 5% of its base weight', () => {
+    const history: RunMetrics[] = [];
+    // exploit: 10 runs, all with PRs
+    for (let i = 0; i < 10; i++) {
+      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr'], cost_usd: 1.0 }));
+    }
+    // explore: 3 runs, 0 PRs, high cost
+    for (let i = 10; i < 13; i++) {
+      history.push(makeRunMetrics({ run: i, mode: 'explore', prs: [], cost_usd: 5.0 }));
+    }
+
+    const weights = computeAdaptiveWeights(history, 10);
+    expect(weights).not.toBeNull();
+    // explore should still have some weight (not zero)
+    expect(weights!.explore).toBeGreaterThan(0);
+  });
+
+  it('uses base weight for modes with no runs', () => {
+    const history: RunMetrics[] = [];
+    // Only exploit runs
+    for (let i = 0; i < 12; i++) {
+      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr'], cost_usd: 1.0 }));
+    }
+    const weights = computeAdaptiveWeights(history, 10);
+    expect(weights).not.toBeNull();
+    // Modes with no data should still get some weight
+    expect(weights!.explore).toBeGreaterThan(0);
+    expect(weights!.reflect).toBeGreaterThan(0);
+    expect(weights!.subtract).toBeGreaterThan(0);
+  });
+});
+
+describe('weightedModeSelect', () => {
+  it('is deterministic for the same runNum', () => {
+    const weights = { exploit: 0.7, explore: 0.1, reflect: 0.1, subtract: 0.1 };
+    const mode1 = weightedModeSelect(weights, 42);
+    const mode2 = weightedModeSelect(weights, 42);
+    expect(mode1).toBe(mode2);
+  });
+
+  it('produces different modes for different runNums', () => {
+    const weights = { exploit: 0.4, explore: 0.3, reflect: 0.2, subtract: 0.1 };
+    const modes = new Set<string>();
+    for (let i = 0; i < 100; i++) {
+      modes.add(weightedModeSelect(weights, i));
+    }
+    // With balanced weights and 100 runs, we should see at least 2 different modes
+    expect(modes.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('selects only mode with weight 1.0', () => {
+    const weights = { exploit: 1.0, explore: 0, reflect: 0, subtract: 0 };
+    for (let i = 0; i < 20; i++) {
+      expect(weightedModeSelect(weights, i)).toBe('exploit');
+    }
+  });
+});
+
+describe('selectMode adaptive integration', () => {
+  function makeVariedHistory(): RunMetrics[] {
+    // Mix of modes so signal overrides don't fire (avoids 4+ streak)
+    const modes = ['exploit', 'exploit', 'exploit', 'explore', 'exploit', 'exploit', 'exploit', 'reflect', 'exploit', 'exploit', 'subtract', 'exploit'];
+    return modes.map((mode, i) =>
+      makeRunMetrics({ run: i, mode, prs: ['pr'], cost_usd: 1.0 }),
+    );
+  }
+
+  it('uses adaptive selection when history is sufficient', () => {
+    const state = makeBatchState({ run_history: makeVariedHistory() });
+    const result = selectMode(state, 1);
+    expect(result.reason).toBe('adaptive');
+    expect(['exploit', 'explore', 'reflect', 'subtract']).toContain(result.mode);
+  });
+
+  it('falls back to fixed schedule when history is insufficient', () => {
+    const history = [
+      makeRunMetrics({ run: 0, mode: 'exploit', prs: ['pr'] }),
+    ];
+    const state = makeBatchState({ run_history: history });
+    const result = selectMode(state, 7);
+    expect(result.reason).toBe('schedule');
+    expect(result.mode).toBe('explore');
+  });
+
+  it('signal overrides take priority over adaptive selection', () => {
+    const state = makeBatchState({
+      run_history: makeVariedHistory(),
+      consecutive_failures: 5,
+    });
+    const result = selectMode(state, 1);
+    expect(result.reason).toBe('signal:consecutive-failures');
+    expect(result.mode).toBe('reflect');
+  });
+
+  it('contemplate overlay takes priority over adaptive selection', () => {
+    const state = makeBatchState({ run_history: makeVariedHistory() });
+    const result = selectMode(state, 14);
+    expect(result.mode).toBe('contemplate');
+    expect(result.reason).toBe('schedule');
   });
 });
 

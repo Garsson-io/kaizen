@@ -449,6 +449,98 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
 }
 
 /**
+ * Compute adaptive mode weights from run history.
+ *
+ * For each mode, computes an effectiveness score based on:
+ *   - Success rate (PRs produced per run)
+ *   - Cost efficiency (PRs per dollar)
+ *
+ * Returns weights normalized so they sum to 1.0, or null if insufficient data.
+ * Requires at least `minRuns` total runs with mode data to activate.
+ */
+export function computeAdaptiveWeights(
+  history: RunMetrics[],
+  minRuns: number = 10,
+): Record<string, number> | null {
+  // Only runs with mode data
+  const withMode = history.filter(r => r.mode);
+  if (withMode.length < minRuns) return null;
+
+  // Group by mode
+  const byMode = new Map<string, RunMetrics[]>();
+  for (const r of withMode) {
+    const group = byMode.get(r.mode!) || [];
+    group.push(r);
+    byMode.set(r.mode!, group);
+  }
+
+  // Default schedulable modes (contemplate has its own overlay)
+  const schedulableModes = ['exploit', 'explore', 'reflect', 'subtract'];
+
+  // Base weights (matching the fixed schedule proportions)
+  const baseWeights: Record<string, number> = {
+    exploit: 0.7,
+    explore: 0.1,
+    reflect: 0.1,
+    subtract: 0.1,
+  };
+
+  // Compute raw effectiveness scores
+  const scores: Record<string, number> = {};
+  for (const mode of schedulableModes) {
+    const runs = byMode.get(mode) || [];
+    if (runs.length === 0) {
+      // No data for this mode — use base weight as-is
+      scores[mode] = baseWeights[mode];
+      continue;
+    }
+
+    const totalPrs = runs.reduce((s, r) => s + r.prs.length, 0);
+    const totalCost = runs.reduce((s, r) => s + r.cost_usd, 0);
+    const successRate = totalPrs / runs.length; // PRs per run
+    const efficiency = totalCost > 0 ? totalPrs / totalCost : 0; // PRs per dollar
+
+    // Blend success rate and efficiency, then scale by base weight
+    // This preserves the general shape (exploit dominant) while rewarding performance
+    const rawScore = (successRate * 0.7 + efficiency * 0.3) * baseWeights[mode];
+    // Floor at 5% of base to ensure every mode gets some chance
+    scores[mode] = Math.max(rawScore, baseWeights[mode] * 0.05);
+  }
+
+  // Normalize to sum to 1.0
+  const total = Object.values(scores).reduce((s, v) => s + v, 0);
+  if (total === 0) return null;
+
+  const weights: Record<string, number> = {};
+  for (const mode of schedulableModes) {
+    weights[mode] = scores[mode] / total;
+  }
+  return weights;
+}
+
+/**
+ * Select a mode using weighted random selection.
+ * Uses runNum as a deterministic seed for reproducibility.
+ */
+export function weightedModeSelect(
+  weights: Record<string, number>,
+  runNum: number,
+): string {
+  // Deterministic pseudo-random from runNum
+  // Simple hash: multiply by large prime, take fractional part
+  const hash = ((runNum * 2654435761) >>> 0) / 4294967296;
+
+  const entries = Object.entries(weights).sort((a, b) => a[0].localeCompare(b[0]));
+  let cumulative = 0;
+  for (const [mode, weight] of entries) {
+    cumulative += weight;
+    if (hash < cumulative) return mode;
+  }
+  // Fallback (shouldn't happen with normalized weights)
+  return entries[entries.length - 1][0];
+}
+
+/**
  * Select the cognitive mode for a given run.
  *
  * Priority (highest first):
@@ -456,7 +548,8 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
  *   2. Test task: always exploit with test template
  *   3. Signal-driven: reactive to batch state (failures, stalls, streaks)
  *   4. Contemplate overlay: every 15th run for strategic assessment
- *   5. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
+ *   5. Adaptive selection: weighted by mode performance from run history
+ *   6. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
  */
 export function selectMode(state: BatchState, runNum: number): ModeSelection {
   // Force mode from guidance (e.g., "mode:explore")
@@ -484,6 +577,14 @@ export function selectMode(state: BatchState, runNum: number): ModeSelection {
     return { mode: 'contemplate', template: MODE_TEMPLATES.contemplate, reason: 'schedule' };
   }
 
+  // Adaptive selection: use performance data when available
+  const adaptiveWeights = computeAdaptiveWeights(state.run_history || []);
+  if (adaptiveWeights) {
+    const mode = weightedModeSelect(adaptiveWeights, runNum);
+    return { mode, template: MODE_TEMPLATES[mode] || MODE_TEMPLATES.exploit, reason: 'adaptive' };
+  }
+
+  // Fallback: fixed schedule (used for first N runs before enough data)
   const slot = runNum % 10;
   if (slot <= 6) return { mode: 'exploit', template: MODE_TEMPLATES.exploit, reason: 'schedule' };
   if (slot === 7) return { mode: 'explore', template: MODE_TEMPLATES.explore, reason: 'schedule' };
