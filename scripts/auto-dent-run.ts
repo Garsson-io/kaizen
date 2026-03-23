@@ -27,6 +27,7 @@ import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js';
+import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -43,6 +44,18 @@ export {
   type SweepResult,
   type CleanupResult,
 } from './auto-dent-github.js';
+
+export {
+  EventEmitter,
+  makeRunId,
+  type AutoDentEvent,
+  type RunStartEvent,
+  type RunIssuePickedEvent,
+  type RunPrCreatedEvent,
+  type RunCompleteEvent,
+  type BatchReflectEvent,
+  type EventEnvelope,
+} from './auto-dent-events.js';
 
 export {
   color,
@@ -1398,6 +1411,21 @@ async function main(): Promise<void> {
   console.log(`Tag: ${runTag}`);
   console.log(`Log: ${logFile}`);
 
+  // Structured telemetry (#647)
+  const events = new EventEmitter(logDir);
+  const modeSelection = selectMode(state, runNum);
+  const promptMeta0 = buildPromptWithMetadata(state, runNum, logDir);
+  events.emit({
+    type: 'run.start',
+    run_id: makeRunId(state.batch_id, runNum),
+    batch_id: state.batch_id,
+    run_num: runNum,
+    mode: modeSelection.mode,
+    mode_reason: modeSelection.reason,
+    prompt_template: promptMeta0.template,
+    prompt_hash: promptMeta0.hash,
+  });
+
   const runStartEpoch = Math.floor(Date.now() / 1000);
   const { exitCode, duration, result, mode: runMode, promptMeta } = await runClaude(
     state,
@@ -1430,6 +1458,36 @@ async function main(): Promise<void> {
   );
 
   printRunSummary(runNum, exitCode, duration, result);
+
+  // Emit per-artifact events from stream results (#647)
+  {
+    const runId = makeRunId(state.batch_id, runNum);
+    // Extract picked issue from log phase markers
+    try {
+      const logContent = readFileSync(logFile, 'utf8');
+      for (const marker of parsePhaseMarkers(logContent)) {
+        if (marker.phase === 'PICK' && marker.fields.issue) {
+          events.emit({
+            type: 'run.issue_picked',
+            run_id: runId,
+            batch_id: state.batch_id,
+            run_num: runNum,
+            issue: marker.fields.issue,
+            title: marker.fields.title || '',
+          });
+        }
+      }
+    } catch { /* best effort */ }
+    for (const prUrl of result.prs) {
+      events.emit({
+        type: 'run.pr_created',
+        run_id: runId,
+        batch_id: state.batch_id,
+        run_num: runNum,
+        pr_url: prUrl,
+      });
+    }
+  }
 
   // Lifecycle validation (#639) — advisory, not blocking
   let lifecycleViolationCount = 0;
@@ -1468,6 +1526,30 @@ async function main(): Promise<void> {
         `  ${color.yellow(`[cost-${tag.toLowerCase()}]`)} run #${runNum} cost $${anomaly.run_cost.toFixed(2)} is ${anomaly.cost_vs_avg.toFixed(1)}x the rolling avg ($${anomaly.rolling_avg.toFixed(2)})`,
       );
     }
+  }
+
+  // Emit run.complete telemetry event (#647)
+  {
+    const outcome = result.stopRequested ? 'stop' as const
+      : (exitCode === 0 && result.prs.length > 0) ? 'success' as const
+      : 'failure' as const;
+    events.emit({
+      type: 'run.complete',
+      run_id: makeRunId(state.batch_id, runNum),
+      batch_id: state.batch_id,
+      run_num: runNum,
+      duration_ms: duration * 1000,
+      exit_code: exitCode,
+      cost_usd: result.cost,
+      tool_calls: result.toolCalls,
+      prs_created: result.prs.length,
+      issues_filed: result.issuesFiled.length,
+      issues_closed: result.issuesClosed.length,
+      stop_requested: result.stopRequested,
+      failure_class: result.failureClass,
+      lifecycle_violations: lifecycleViolationCount,
+      outcome,
+    });
   }
 
   // Batch scoreboard (cumulative stats across all runs)
@@ -1576,6 +1658,13 @@ async function main(): Promise<void> {
     if (!freshState.contemplation_recommendations) freshState.contemplation_recommendations = [];
     freshState.contemplation_recommendations.push(...result.contemplationRecs);
     console.log(`  [contemplate] ${result.contemplationRecs.length} recommendation(s) stored in batch state`);
+    events.emit({
+      type: 'batch.reflect',
+      run_id: makeRunId(state.batch_id, runNum),
+      batch_id: state.batch_id,
+      run_num: runNum,
+      recommendations_count: result.contemplationRecs.length,
+    });
   }
 
   if (result.prs.length > 0) {
