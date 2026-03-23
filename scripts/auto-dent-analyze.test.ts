@@ -15,10 +15,13 @@ import {
   computeRunCompleteness,
   detectWastePatterns,
   generateRecommendations,
+  detectRunRegression,
+  detectBatchRegressions,
+  formatRegressionReports,
   formatRunAnalysis,
   formatBatchAnalysis,
 } from './auto-dent-analyze.js';
-import type { PhaseEvent, ToolEvent, RunAnalysis } from './auto-dent-analyze.js';
+import type { PhaseEvent, ToolEvent, RunAnalysis, RunCompleteness } from './auto-dent-analyze.js';
 
 // Synthetic log builders
 
@@ -566,5 +569,254 @@ describe('integration: completeness and waste in batch analysis', () => {
     const output = formatBatchAnalysis(result);
     expect(output).toContain('Run Completeness');
     expect(output).toContain('Waste Patterns');
+  });
+});
+
+// Regression detection tests
+
+function makeMinimalRunAnalysis(overrides: Partial<RunAnalysis> = {}): RunAnalysis {
+  return {
+    runFile: 'run-1.log',
+    coldStartSec: 30,
+    totalDurationSec: 300,
+    toolCalls: 50,
+    phaseDurations: {},
+    toolCategoryFractions: { discovery: 0.4, coding: 0.2, testing: 0.2, shipping: 0.1, other: 0.1 },
+    topPatterns: [],
+    toolEvents: [],
+    phaseEvents: [],
+    completeness: { score: 0.71, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR'], phasesMissing: ['MERGE', 'REFLECT'], orderedCorrectly: true },
+    wastePatterns: [],
+    totalWastedCalls: 0,
+    ...overrides,
+  };
+}
+
+describe('detectRunRegression', () => {
+  it('returns severity none when no signals triggered', () => {
+    const prior = [
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', totalDurationSec: 300 }),
+      makeMinimalRunAnalysis({ runFile: 'run-2.log', totalDurationSec: 350 }),
+    ];
+    const current = makeMinimalRunAnalysis({ runFile: 'run-3.log', totalDurationSec: 320 });
+
+    const result = detectRunRegression(2, current, prior);
+    expect(result.severity).toBe('none');
+    expect(result.signals).toHaveLength(0);
+  });
+
+  it('detects consecutive failures when 3+ runs have no PR/MERGE', () => {
+    const noPRCompleteness: RunCompleteness = {
+      score: 0.29,
+      phasesPresent: ['PICK', 'IMPLEMENT'],
+      phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'],
+      orderedCorrectly: true,
+    };
+    const prior = [
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', completeness: noPRCompleteness }),
+      makeMinimalRunAnalysis({ runFile: 'run-2.log', completeness: noPRCompleteness }),
+    ];
+    const current = makeMinimalRunAnalysis({ runFile: 'run-3.log', completeness: noPRCompleteness });
+
+    const result = detectRunRegression(2, current, prior);
+    expect(result.severity).not.toBe('none');
+    const failSignal = result.signals.find(s => s.metric === 'consecutive_failures');
+    expect(failSignal).toBeDefined();
+    expect(failSignal!.observed).toBe(3);
+  });
+
+  it('does not flag consecutive failures when recent run had PR', () => {
+    const noPRCompleteness: RunCompleteness = {
+      score: 0.29,
+      phasesPresent: ['PICK', 'IMPLEMENT'],
+      phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'],
+      orderedCorrectly: true,
+    };
+    const withPRCompleteness: RunCompleteness = {
+      score: 0.71,
+      phasesPresent: ['PICK', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'],
+      phasesMissing: ['EVALUATE', 'REFLECT'],
+      orderedCorrectly: true,
+    };
+    const prior = [
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', completeness: noPRCompleteness }),
+      makeMinimalRunAnalysis({ runFile: 'run-2.log', completeness: withPRCompleteness }),
+    ];
+    const current = makeMinimalRunAnalysis({ runFile: 'run-3.log', completeness: noPRCompleteness });
+
+    const result = detectRunRegression(2, current, prior);
+    const failSignal = result.signals.find(s => s.metric === 'consecutive_failures');
+    expect(failSignal).toBeUndefined();
+  });
+
+  it('detects duration regression when 3x rolling average', () => {
+    const prior = [
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', totalDurationSec: 300 }),
+      makeMinimalRunAnalysis({ runFile: 'run-2.log', totalDurationSec: 300 }),
+    ];
+    const current = makeMinimalRunAnalysis({ runFile: 'run-3.log', totalDurationSec: 1000 });
+
+    const result = detectRunRegression(2, current, prior);
+    const durSignal = result.signals.find(s => s.metric === 'duration');
+    expect(durSignal).toBeDefined();
+    expect(durSignal!.severity).toBe('warning');
+  });
+
+  it('flags duration as regression at 5x', () => {
+    const prior = [
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', totalDurationSec: 100 }),
+      makeMinimalRunAnalysis({ runFile: 'run-2.log', totalDurationSec: 100 }),
+    ];
+    const current = makeMinimalRunAnalysis({ runFile: 'run-3.log', totalDurationSec: 600 });
+
+    const result = detectRunRegression(2, current, prior);
+    const durSignal = result.signals.find(s => s.metric === 'duration');
+    expect(durSignal).toBeDefined();
+    expect(durSignal!.severity).toBe('regression');
+  });
+
+  it('detects completeness drop', () => {
+    const prior = [
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', completeness: { score: 0.86, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'], phasesMissing: ['REFLECT'], orderedCorrectly: true } }),
+      makeMinimalRunAnalysis({ runFile: 'run-2.log', completeness: { score: 0.86, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'], phasesMissing: ['REFLECT'], orderedCorrectly: true } }),
+    ];
+    const current = makeMinimalRunAnalysis({
+      runFile: 'run-3.log',
+      completeness: { score: 0.14, phasesPresent: ['PICK'], phasesMissing: ['EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'], orderedCorrectly: true },
+    });
+
+    const result = detectRunRegression(2, current, prior);
+    const compSignal = result.signals.find(s => s.metric === 'completeness');
+    expect(compSignal).toBeDefined();
+    expect(compSignal!.severity).toBe('regression');
+  });
+
+  it('detects high waste ratio', () => {
+    const current = makeMinimalRunAnalysis({
+      runFile: 'run-3.log',
+      toolCalls: 20,
+      totalWastedCalls: 12,
+    });
+
+    const result = detectRunRegression(2, current, []);
+    const wasteSignal = result.signals.find(s => s.metric === 'waste');
+    expect(wasteSignal).toBeDefined();
+    expect(wasteSignal!.severity).toBe('regression'); // 60% > 50%
+  });
+
+  it('does not flag waste for runs with very few tool calls', () => {
+    const current = makeMinimalRunAnalysis({
+      runFile: 'run-3.log',
+      toolCalls: 3,
+      totalWastedCalls: 2,
+    });
+
+    const result = detectRunRegression(0, current, []);
+    const wasteSignal = result.signals.find(s => s.metric === 'waste');
+    expect(wasteSignal).toBeUndefined();
+  });
+
+  it('needs at least 2 prior runs for rolling comparisons', () => {
+    const prior = [
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', totalDurationSec: 100 }),
+    ];
+    const current = makeMinimalRunAnalysis({ runFile: 'run-2.log', totalDurationSec: 1000 });
+
+    const result = detectRunRegression(1, current, prior);
+    const durSignal = result.signals.find(s => s.metric === 'duration');
+    expect(durSignal).toBeUndefined(); // Only 1 prior run, not enough
+  });
+});
+
+describe('detectBatchRegressions', () => {
+  it('returns only flagged runs', () => {
+    const runs = [
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', totalDurationSec: 300 }),
+      makeMinimalRunAnalysis({ runFile: 'run-2.log', totalDurationSec: 300 }),
+      makeMinimalRunAnalysis({ runFile: 'run-3.log', totalDurationSec: 2000 }), // 6.6x avg
+    ];
+
+    const reports = detectBatchRegressions(runs);
+    expect(reports.length).toBeGreaterThan(0);
+    expect(reports[0].runFile).toBe('run-3.log');
+  });
+
+  it('returns empty for healthy batch', () => {
+    const runs = [
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', totalDurationSec: 300 }),
+      makeMinimalRunAnalysis({ runFile: 'run-2.log', totalDurationSec: 320 }),
+      makeMinimalRunAnalysis({ runFile: 'run-3.log', totalDurationSec: 310 }),
+    ];
+
+    const reports = detectBatchRegressions(runs);
+    expect(reports).toHaveLength(0);
+  });
+});
+
+describe('formatRegressionReports', () => {
+  it('returns empty string for no regressions', () => {
+    expect(formatRegressionReports([])).toBe('');
+  });
+
+  it('formats regression reports as markdown', () => {
+    const reports = [{
+      runIndex: 2,
+      runFile: 'run-3.log',
+      severity: 'warning' as const,
+      signals: [{
+        metric: 'duration' as const,
+        severity: 'warning' as const,
+        message: 'Duration 3.5x the rolling average',
+        observed: 1050,
+        baseline: 300,
+      }],
+      summary: 'Duration 3.5x the rolling average',
+    }];
+
+    const output = formatRegressionReports(reports);
+    expect(output).toContain('Regression Detection');
+    expect(output).toContain('WARNING');
+    expect(output).toContain('run-3.log');
+  });
+});
+
+describe('integration: regression detection in batch analysis', () => {
+  it('includes regression field in batch analysis', () => {
+    const batchDir = createTmpBatch([
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantText('AUTO_DENT_PHASE: PICK | issue=#1'),
+        assistantToolUse('Edit', { file_path: '/a.ts' }),
+        userMsg('2026-03-22T22:01:00.000Z'),
+        assistantText('AUTO_DENT_PHASE: TEST | result=pass'),
+        assistantText('AUTO_DENT_PHASE: PR | url=https://github.com/test/pull/1'),
+        userMsg('2026-03-22T22:02:00.000Z'),
+      ],
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantText('AUTO_DENT_PHASE: PICK | issue=#2'),
+        assistantToolUse('Edit', { file_path: '/b.ts' }),
+        userMsg('2026-03-22T22:01:00.000Z'),
+        assistantText('AUTO_DENT_PHASE: TEST | result=pass'),
+        assistantText('AUTO_DENT_PHASE: PR | url=https://github.com/test/pull/2'),
+        userMsg('2026-03-22T22:02:00.000Z'),
+      ],
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantText('AUTO_DENT_PHASE: PICK | issue=#3'),
+        assistantToolUse('Edit', { file_path: '/c.ts' }),
+        userMsg('2026-03-22T22:01:00.000Z'),
+        assistantText('AUTO_DENT_PHASE: TEST | result=pass'),
+        assistantText('AUTO_DENT_PHASE: PR | url=https://github.com/test/pull/3'),
+        userMsg('2026-03-22T22:02:00.000Z'),
+      ],
+    ]);
+
+    const result = analyzeBatch(batchDir);
+    expect(result.regressions).toBeDefined();
+    expect(Array.isArray(result.regressions)).toBe(true);
   });
 });
