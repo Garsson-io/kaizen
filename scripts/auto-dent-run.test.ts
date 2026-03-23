@@ -20,6 +20,8 @@ import {
   extractLinkedIssue,
   formatPlanAsMarkdown,
   selectMode,
+  formatBatchFooter,
+  color,
   type BatchState,
   type CleanupResult,
   type RunResult,
@@ -593,58 +595,87 @@ describe('parsePhaseMarkers', () => {
 describe('formatPhaseMarker', () => {
   it('formats PICK with issue and title', () => {
     const result = formatPhaseMarker({ phase: 'PICK', fields: { issue: '#472', title: 'improve hook test DRY' } });
-    expect(result).toBe('[PICK] #472 improve hook test DRY');
+    expect(result).toContain('[PICK]');
+    expect(result).toContain('#472');
+    expect(result).toContain('improve hook test DRY');
   });
 
   it('formats EVALUATE with verdict and reason', () => {
     const result = formatPhaseMarker({ phase: 'EVALUATE', fields: { verdict: 'proceed', reason: 'clear spec' } });
-    expect(result).toBe('[EVALUATE] proceed (clear spec)');
+    expect(result).toContain('[EVALUATE]');
+    expect(result).toContain('proceed');
+    expect(result).toContain('(clear spec)');
   });
 
   it('formats IMPLEMENT with case and branch', () => {
     const result = formatPhaseMarker({ phase: 'IMPLEMENT', fields: { case: '260323-1200-k472', branch: 'case/260323-1200-k472' } });
-    expect(result).toBe('[IMPLEMENT] case:260323-1200-k472 branch:case/260323-1200-k472');
+    expect(result).toContain('[IMPLEMENT]');
+    expect(result).toContain('case:260323-1200-k472');
+    expect(result).toContain('branch:case/260323-1200-k472');
   });
 
   it('formats TEST with result and count', () => {
     const result = formatPhaseMarker({ phase: 'TEST', fields: { result: 'pass', count: '15' } });
-    expect(result).toBe('[TEST] pass 15 tests');
+    expect(result).toContain('[TEST]');
+    expect(result).toContain('pass');
+    expect(result).toContain('15 tests');
   });
 
   it('formats PR with url', () => {
     const result = formatPhaseMarker({ phase: 'PR', fields: { url: 'https://github.com/Garsson-io/kaizen/pull/500' } });
-    expect(result).toBe('[PR] https://github.com/Garsson-io/kaizen/pull/500');
+    expect(result).toContain('[PR]');
+    expect(result).toContain('https://github.com/Garsson-io/kaizen/pull/500');
   });
 
   it('formats MERGE with url and status', () => {
     const result = formatPhaseMarker({ phase: 'MERGE', fields: { url: 'https://github.com/Garsson-io/kaizen/pull/500', status: 'queued' } });
-    expect(result).toBe('[MERGE] https://github.com/Garsson-io/kaizen/pull/500 queued');
+    expect(result).toContain('[MERGE]');
+    expect(result).toContain('https://github.com/Garsson-io/kaizen/pull/500');
+    expect(result).toContain('queued');
   });
 
   it('formats REFLECT with issues_filed and lessons', () => {
     const result = formatPhaseMarker({ phase: 'REFLECT', fields: { issues_filed: '2', lessons: 'shared helpers reduce boilerplate' } });
-    expect(result).toBe('[REFLECT] 2 issues filed shared helpers reduce boilerplate');
+    expect(result).toContain('[REFLECT]');
+    expect(result).toContain('2 issues filed');
+    expect(result).toContain('shared helpers reduce boilerplate');
   });
 
   it('formats phase with no fields', () => {
     const result = formatPhaseMarker({ phase: 'REFLECT', fields: {} });
-    expect(result).toBe('[REFLECT]');
+    expect(result).toContain('[REFLECT]');
   });
 
   it('truncates very long output', () => {
     const longTitle = 'A'.repeat(200);
     const result = formatPhaseMarker({ phase: 'PICK', fields: { issue: '#1', title: longTitle } });
-    expect(result.length).toBeLessThanOrEqual(120);
+    // Allow for icon prefix (2 chars + space) in length check
+    expect(result.length).toBeLessThanOrEqual(125);
   });
 
   it('formats DECOMPOSE with epic and issues_created', () => {
     const result = formatPhaseMarker({ phase: 'DECOMPOSE', fields: { epic: '#506', issues_created: '#560,#561,#562' } });
-    expect(result).toBe('[DECOMPOSE] epic:#506 created:#560,#561,#562');
+    expect(result).toContain('[DECOMPOSE]');
+    expect(result).toContain('epic:#506');
+    expect(result).toContain('created:#560,#561,#562');
   });
 
   it('formats DECOMPOSE with epic only', () => {
     const result = formatPhaseMarker({ phase: 'DECOMPOSE', fields: { epic: '#548' } });
-    expect(result).toBe('[DECOMPOSE] epic:#548');
+    expect(result).toContain('[DECOMPOSE]');
+    expect(result).toContain('epic:#548');
+  });
+
+  it('includes phase icon prefix', () => {
+    const result = formatPhaseMarker({ phase: 'PICK', fields: {} });
+    // Should contain the ◉ icon
+    expect(result).toContain('\u25c9');
+  });
+
+  it('uses stop icon for STOP phase', () => {
+    const result = formatPhaseMarker({ phase: 'STOP', fields: { reason: 'done' } });
+    // Should contain the ● icon for STOP
+    expect(result).toContain('\u25cf');
   });
 });
 
@@ -1506,5 +1537,56 @@ describe('selectMode', () => {
     // Run 0 should not trigger contemplate even though 0 % 15 !== 14
     const { mode } = selectMode(makeBatchState(), 0);
     expect(mode).toBe('exploit');
+  });
+});
+
+describe('formatBatchFooter', () => {
+  it('shows run count and PR count', () => {
+    const state = makeBatchState({
+      run: 5,
+      prs: ['https://github.com/org/repo/pull/1', 'https://github.com/org/repo/pull/2'],
+      run_history: [
+        { run: 1, start_epoch: 0, duration_seconds: 60, exit_code: 0, cost_usd: 1.5, tool_calls: 10, prs: ['https://github.com/org/repo/pull/1'], issues_filed: [], issues_closed: [], cases: [], stop_requested: false },
+        { run: 2, start_epoch: 0, duration_seconds: 90, exit_code: 0, cost_usd: 2.0, tool_calls: 15, prs: ['https://github.com/org/repo/pull/2'], issues_filed: [], issues_closed: [], cases: [], stop_requested: false },
+      ],
+    });
+    const output = formatBatchFooter(state);
+    expect(output).toContain('Run 5');
+    expect(output).toContain('PRs: 2');
+    expect(output).toContain('$3.50');
+  });
+
+  it('shows 0% success when no PRs', () => {
+    const state = makeBatchState({ run: 1, prs: [], run_history: [] });
+    const output = formatBatchFooter(state);
+    expect(output).toContain('PRs: 0');
+    expect(output).toContain('0% success');
+  });
+
+  it('calculates success rate from run history', () => {
+    const state = makeBatchState({
+      run: 3,
+      prs: ['pr1', 'pr2'],
+      run_history: [
+        { run: 1, start_epoch: 0, duration_seconds: 60, exit_code: 0, cost_usd: 1.0, tool_calls: 10, prs: ['pr1'], issues_filed: [], issues_closed: [], cases: [], stop_requested: false },
+        { run: 2, start_epoch: 0, duration_seconds: 60, exit_code: 1, cost_usd: 1.0, tool_calls: 10, prs: [], issues_filed: [], issues_closed: [], cases: [], stop_requested: false },
+        { run: 3, start_epoch: 0, duration_seconds: 60, exit_code: 0, cost_usd: 1.0, tool_calls: 10, prs: ['pr2'], issues_filed: [], issues_closed: [], cases: [], stop_requested: false },
+      ],
+    });
+    const output = formatBatchFooter(state);
+    expect(output).toContain('100% success');
+  });
+});
+
+describe('color helpers', () => {
+  it('returns plain text in non-TTY environment', () => {
+    // Tests run in non-TTY, so color should be disabled
+    expect(color.green('hello')).toBe('hello');
+    expect(color.red('error')).toBe('error');
+    expect(color.bold('bold')).toBe('bold');
+    expect(color.dim('dim')).toBe('dim');
+    expect(color.cyan('cyan')).toBe('cyan');
+    expect(color.yellow('yellow')).toBe('yellow');
+    expect(color.magenta('magenta')).toBe('magenta');
   });
 });

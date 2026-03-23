@@ -23,6 +23,37 @@ import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine } from './auto-dent-score.js';
 import { claimNextItem } from './auto-dent-plan.js';
 
+// ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
+
+const colorEnabled = process.stdout.isTTY && !process.env.NO_COLOR;
+
+function ansi(code: string, text: string): string {
+  return colorEnabled ? `\x1b[${code}m${text}\x1b[0m` : text;
+}
+
+export const color = {
+  green: (t: string) => ansi('32', t),
+  yellow: (t: string) => ansi('33', t),
+  red: (t: string) => ansi('31', t),
+  dim: (t: string) => ansi('90', t),
+  cyan: (t: string) => ansi('36', t),
+  bold: (t: string) => ansi('1', t),
+  magenta: (t: string) => ansi('35', t),
+};
+
+// Phase status icons with color
+const PHASE_STYLE: Record<string, (t: string) => string> = {
+  PICK: color.cyan,
+  EVALUATE: color.yellow,
+  IMPLEMENT: color.magenta,
+  TEST: color.green,
+  PR: color.green,
+  MERGE: color.green,
+  DECOMPOSE: color.cyan,
+  REFLECT: color.yellow,
+  STOP: color.red,
+};
+
 // Types
 
 export interface BatchState {
@@ -490,7 +521,9 @@ export function parsePhaseMarkers(text: string): PhaseMarker[] {
 }
 
 export function formatPhaseMarker(marker: PhaseMarker): string {
-  const parts = [`[${marker.phase}]`];
+  const styleFn = PHASE_STYLE[marker.phase] || color.dim;
+  const icon = marker.phase === 'STOP' ? '\u25cf' : '\u25c9';
+  const parts = [styleFn(`${icon} [${marker.phase}]`)];
 
   // Show the most informative fields for each phase
   const { fields } = marker;
@@ -663,7 +696,7 @@ export function processStreamMessage(
     case 'system':
       if (msg.subtype === 'init') {
         console.log(
-          `  [${elapsed}]  Session ${(msg.session_id || '').slice(0, 8)}... | model: ${msg.model || 'default'}`,
+          `  ${color.dim(`[${elapsed}]`)}  ${color.bold('Session')} ${(msg.session_id || '').slice(0, 8)}... | model: ${msg.model || 'default'}`,
         );
       }
       break;
@@ -674,7 +707,7 @@ export function processStreamMessage(
           if (block.type === 'tool_use') {
             result.toolCalls++;
             const toolDesc = formatToolUse(block.name, block.input);
-            console.log(`  [${elapsed}]  ${toolDesc}`);
+            console.log(`  ${color.dim(`[${elapsed}]`)}  ${toolDesc}`);
             if (ctx) ctx.lastActivity = toolDesc;
           }
           if (block.type === 'text' && block.text) {
@@ -700,9 +733,14 @@ export function processStreamMessage(
         extractArtifacts(msg.result, result);
         checkStopSignal(msg.result, result);
       }
-      console.log(
-        `  [${elapsed}]  ${msg.subtype === 'success' ? 'done' : `error: ${msg.subtype}`} | $${result.cost?.toFixed(2) || '?'} | ${result.toolCalls} tool calls`,
-      );
+      {
+        const statusText = msg.subtype === 'success'
+          ? color.green('done')
+          : color.red(`error: ${msg.subtype}`);
+        console.log(
+          `  ${color.dim(`[${elapsed}]`)}  ${statusText} | $${result.cost?.toFixed(2) || '?'} | ${result.toolCalls} tool calls`,
+        );
+      }
       break;
   }
 }
@@ -1340,34 +1378,64 @@ async function runClaude(
 
 // Display
 
+/**
+ * Format a batch scoreboard footer showing cumulative stats.
+ * Shown after each run so the operator can see batch health at a glance.
+ */
+export function formatBatchFooter(state: BatchState): string {
+  const history = state.run_history || [];
+  const totalCost = history.reduce((s, r) => s + r.cost_usd, 0);
+  const totalPRs = state.prs.length;
+  const mergedCount = history.filter(
+    (r) => r.prs.length > 0 && r.exit_code === 0,
+  ).length;
+  const mergeRate =
+    totalPRs > 0 ? Math.round((mergedCount / totalPRs) * 100) : 0;
+
+  const bar = '\u2501'.repeat(54);
+  const line = [
+    `  Run ${state.run}`,
+    `PRs: ${totalPRs}`,
+    `$${totalCost.toFixed(2)}`,
+    `${mergeRate}% success`,
+  ].join(' \u2502 ');
+
+  return [
+    `  ${color.dim(bar)}`,
+    `  ${color.bold(line)}`,
+    `  ${color.dim(bar)}`,
+  ].join('\n');
+}
+
 function printRunSummary(
   runNum: number,
   exitCode: number,
   duration: number,
   result: RunResult,
 ): void {
-  const status = exitCode === 0 ? 'success' : `failed (exit ${exitCode})`;
+  const status =
+    exitCode === 0 ? color.green('success') : color.red(`failed (exit ${exitCode})`);
 
   console.log('');
   console.log(
-    `  \u250c\u2500 Run #${runNum} Summary \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`,
+    `  ${color.bold(`\u250c\u2500 Run #${runNum} Summary`)} ${'─'.repeat(30)}`,
   );
   console.log(`  \u2502 Status:   ${status}`);
   console.log(`  \u2502 Duration: ${duration}s`);
   console.log(`  \u2502 Cost:     $${result.cost.toFixed(2)}`);
   console.log(`  \u2502 Tools:    ${result.toolCalls} calls`);
 
-  for (const pr of result.prs) console.log(`  \u2502 PR:       ${pr}`);
+  for (const pr of result.prs) console.log(`  \u2502 ${color.green('PR:')}       ${pr}`);
   for (const issue of result.issuesFiled)
-    console.log(`  \u2502 Issue:    ${issue}`);
+    console.log(`  \u2502 ${color.cyan('Issue:')}    ${issue}`);
   if (result.issuesClosed.length > 0)
     console.log(`  \u2502 Closed:   ${result.issuesClosed.join(' ')}`);
   for (const c of result.cases) console.log(`  \u2502 Case:     ${c}`);
   if (result.stopRequested)
-    console.log(`  \u2502 STOP:     ${result.stopReason}`);
+    console.log(`  \u2502 ${color.red('STOP:')}     ${result.stopReason}`);
 
   console.log(
-    `  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`,
+    `  \u2514${'─'.repeat(54)}`,
   );
   console.log('');
 }
@@ -1426,6 +1494,19 @@ async function main(): Promise<void> {
   );
 
   printRunSummary(runNum, exitCode, duration, result);
+
+  // Batch scoreboard (cumulative stats across all runs)
+  {
+    const previewState = readState(stateFile);
+    // Include this run's PRs for an accurate footer
+    for (const pr of result.prs) {
+      if (!previewState.prs.includes(pr)) previewState.prs.push(pr);
+    }
+    previewState.run = runNum;
+    if (!previewState.run_history) previewState.run_history = [];
+    console.log(formatBatchFooter(previewState));
+    console.log('');
+  }
 
   // Post-run hygiene
   const progressIssue = ensureBatchProgressIssue(state, stateFile);
