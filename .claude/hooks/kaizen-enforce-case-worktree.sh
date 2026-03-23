@@ -26,6 +26,14 @@ if [ -n "$GIT_DIR" ] && [ -n "$GIT_COMMON" ] && [ "$GIT_DIR" != "$GIT_COMMON" ];
 fi
 
 # Advisory warning (git hooks will enforce the real block)
+# Allow strategy/ commits on main checkout (machine-written batch memory — kaizen #703)
+if echo "$COMMAND" | grep -qE '^\s*git\s+commit'; then
+  STAGED=$(git diff --cached --name-only 2>/dev/null)
+  if [ -n "$STAGED" ] && ! echo "$STAGED" | grep -qvE '^strategy/'; then
+    exit 0
+  fi
+fi
+
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 echo "⚠️  You're about to commit/push on '$BRANCH' in the main checkout." >&2
 echo "   Git pre-commit/pre-push hooks will block this." >&2
