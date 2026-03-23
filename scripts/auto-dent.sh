@@ -19,7 +19,7 @@
 #   ./scripts/auto-dent.sh --max-runs 5 --budget 5.00 "improve test coverage"
 #   ./scripts/auto-dent.sh --dry-run "test the prompt"
 #
-# Logs go to logs/auto-dent/<batch-id>/
+# Logs go to logs/auto-dent/<batch-name>/  (e.g. logs/auto-dent/brave-dolphin/)
 
 set -euo pipefail
 
@@ -178,8 +178,9 @@ if [[ -z "$GUIDANCE" && "$TEST_TASK" = true ]]; then
   GUIDANCE="synthetic pipeline test"
 fi
 
-# Batch identity
-BATCH_ID="batch-$(date +%y%m%d-%H%M)-$(printf '%04x' $RANDOM)"
+# Batch identity — human-readable names via unique-names-generator (#701)
+BATCH_NAME=$(node -e "const{uniqueNamesGenerator,adjectives,animals}=require('unique-names-generator');console.log(uniqueNamesGenerator({dictionaries:[adjectives,animals],separator:'-'}))")
+BATCH_ID="$BATCH_NAME"
 BATCH_START=$(date +%s)
 LOG_DIR="$REPO_ROOT/logs/auto-dent/$BATCH_ID"
 mkdir -p "$LOG_DIR"
