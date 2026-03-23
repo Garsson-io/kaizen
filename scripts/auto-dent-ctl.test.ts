@@ -9,6 +9,9 @@ import {
   checkBatchHealth,
   runWatchdog,
   formatWatchdogResult,
+  buildBatchReflection,
+  formatBatchReflection,
+  buildReflectionTemplateVars,
   DEFAULT_WATCHDOG_THRESHOLD_SEC,
   type BatchInfo,
   type WatchdogResult,
@@ -462,5 +465,204 @@ describe('formatWatchdogResult', () => {
     const output = formatWatchdogResult(r);
     expect(output).toContain('STALE');
     expect(output).toContain('already halted');
+  });
+});
+
+describe('buildBatchReflection', () => {
+  it('returns empty insights for batch with no run history', () => {
+    const batch = makeBatchInfo();
+    const reflection = buildBatchReflection(batch);
+    expect(reflection.runCount).toBe(0);
+    expect(reflection.insights).toEqual([]);
+  });
+
+  it('computes correct totals from run history', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'], issues_closed: ['#10'] }),
+          makeRunMetrics({ run: 2, cost_usd: 3.0, prs: ['https://github.com/Garsson-io/kaizen/pull/101'], issues_closed: ['#11', '#12'] }),
+          makeRunMetrics({ run: 3, cost_usd: 1.5, prs: [], exit_code: 1, issues_closed: [] }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    expect(reflection.runCount).toBe(3);
+    expect(reflection.totalCost).toBeCloseTo(6.5);
+    expect(reflection.totalPrs).toBe(2);
+    expect(reflection.issuesClosedCount).toBe(3);
+    expect(reflection.successRate).toBeCloseTo(2 / 3);
+    expect(reflection.avgCostPerPr).toBeCloseTo(3.25);
+  });
+
+  it('detects high success rate pattern', () => {
+    const runs = Array.from({ length: 5 }, (_, i) =>
+      makeRunMetrics({ run: i + 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/' + (100 + i)] }),
+    );
+    const batch = makeBatchInfo({
+      state: makeBatchState({ run: 5, run_history: runs }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const successInsight = reflection.insights.find((i) => i.type === 'success_pattern' && i.message.includes('success rate'));
+    expect(successInsight).toBeDefined();
+    expect(successInsight!.message).toContain('100%');
+  });
+
+  it('detects low success rate pattern', () => {
+    const runs = Array.from({ length: 4 }, (_, i) =>
+      makeRunMetrics({ run: i + 1, cost_usd: 2.0, prs: [], exit_code: 1 }),
+    );
+    const batch = makeBatchInfo({
+      state: makeBatchState({ run: 4, run_history: runs }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const failInsight = reflection.insights.find((i) => i.type === 'failure_pattern' && i.message.includes('success rate'));
+    expect(failInsight).toBeDefined();
+    expect(failInsight!.message).toContain('0%');
+  });
+
+  it('detects expensive failures', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 1.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+          makeRunMetrics({ run: 2, cost_usd: 1.0, prs: ['https://github.com/Garsson-io/kaizen/pull/101'] }),
+          makeRunMetrics({ run: 3, cost_usd: 5.0, prs: [], exit_code: 1 }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const effInsight = reflection.insights.find((i) => i.type === 'efficiency' && i.message.includes('Expensive failures'));
+    expect(effInsight).toBeDefined();
+    expect(effInsight!.message).toContain('#3');
+  });
+
+  it('detects consecutive failures', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 4,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+          makeRunMetrics({ run: 2, cost_usd: 2.0, prs: [], exit_code: 1 }),
+          makeRunMetrics({ run: 3, cost_usd: 2.0, prs: [], exit_code: 1 }),
+          makeRunMetrics({ run: 4, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/101'] }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const consecInsight = reflection.insights.find((i) => i.message.includes('consecutive failures'));
+    expect(consecInsight).toBeDefined();
+    expect(consecInsight!.message).toContain('2');
+  });
+
+  it('detects stop signal pattern', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'], stop_requested: false }),
+          makeRunMetrics({ run: 2, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/101'], stop_requested: true }),
+          makeRunMetrics({ run: 3, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/102'], stop_requested: false }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const stopInsight = reflection.insights.find((i) => i.message.includes('stop signals'));
+    expect(stopInsight).toBeDefined();
+  });
+
+  it('builds run history table', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 2,
+        run_history: [
+          makeRunMetrics({ run: 1, duration_seconds: 300, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+          makeRunMetrics({ run: 2, duration_seconds: 180, cost_usd: 1.5, prs: [], exit_code: 0 }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    expect(reflection.runHistoryTable).toContain('| Run |');
+    expect(reflection.runHistoryTable).toContain('| #1 |');
+    expect(reflection.runHistoryTable).toContain('| #2 |');
+    expect(reflection.runHistoryTable).toContain('5m0s');
+    expect(reflection.runHistoryTable).toContain('$2.00');
+  });
+});
+
+describe('formatBatchReflection', () => {
+  it('formats basic reflection output', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+          makeRunMetrics({ run: 2, cost_usd: 3.0, prs: ['https://github.com/Garsson-io/kaizen/pull/101'] }),
+          makeRunMetrics({ run: 3, cost_usd: 1.5, prs: [], exit_code: 1 }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const output = formatBatchReflection(reflection);
+    expect(output).toContain('Batch: batch-260322-2100-a1b2');
+    expect(output).toContain('Runs: 3');
+    expect(output).toContain('PRs: 2');
+    expect(output).toContain('Insights:');
+  });
+
+  it('shows no-patterns message when too few runs', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 1,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const output = formatBatchReflection(reflection);
+    expect(output).toContain('No significant patterns');
+  });
+});
+
+describe('buildReflectionTemplateVars', () => {
+  it('builds template variables from reflection and state', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        prs: ['https://github.com/Garsson-io/kaizen/pull/100', 'https://github.com/Garsson-io/kaizen/pull/101'],
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+          makeRunMetrics({ run: 2, cost_usd: 3.0, prs: ['https://github.com/Garsson-io/kaizen/pull/101'] }),
+          makeRunMetrics({ run: 3, cost_usd: 1.5, prs: [], exit_code: 1 }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const vars = buildReflectionTemplateVars(reflection, batch.state);
+
+    expect(vars.batch_id).toBe('batch-260322-2100-a1b2');
+    expect(vars.guidance).toBe('improve hooks reliability');
+    expect(vars.run_count).toBe('3');
+    expect(vars.total_cost).toContain('6.50');
+    expect(vars.pr_count).toBe('2');
+    expect(vars.run_history_table).toContain('| Run |');
+    expect(vars.pr_merge_status).toContain('pull/100');
+    expect(vars.reflection_insights).toContain('[');
+  });
+
+  it('returns empty pr_merge_status when no PRs', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 1,
+        prs: [],
+        run_history: [makeRunMetrics({ run: 1 })],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const vars = buildReflectionTemplateVars(reflection, batch.state);
+    expect(vars.pr_merge_status).toBe('');
   });
 });
