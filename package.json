@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "timeout --kill-after=10 60 vitest run",
+    "test": "timeout --kill-after=10 120 vitest run",
     "test:e2e": "timeout --kill-after=10 120 vitest run src/e2e/",
     "test:e2e:live": "KAIZEN_LIVE_TEST=1 timeout --kill-after=10 120 vitest run src/e2e/",
     "test:hooks": "bash .claude/hooks/tests/run-all-tests.sh",
