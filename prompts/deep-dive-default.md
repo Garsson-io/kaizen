@@ -17,6 +17,18 @@ Issues already addressed in previous runs (do not rework): {{issues_closed}}
 PRs already created in this batch (avoid overlapping work): {{prs}}
 {{/prs}}
 
+{{#plan_assignment}}
+## Assigned Work
+
+The batch planner has pre-selected this issue for you:
+
+{{plan_assignment}}
+
+Start with this issue. If you complete it and have capacity, proceed to
+the next item from the guidance. If the assigned issue is blocked or
+already resolved, skip it and pick from the backlog as usual.
+{{/plan_assignment}}
+
 ## Merge & Labeling Policy
 
 After creating a PR, you MUST queue it for auto-merge:

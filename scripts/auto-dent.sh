@@ -50,6 +50,7 @@ MAX_RUN_SECONDS=2700    # 45 minutes per run (wall-time timeout)
 DRY_RUN=false
 TEST_TASK=false
 EXPERIMENT=false
+NO_PLAN=false
 GUIDANCE=""
 
 usage() {
@@ -68,6 +69,7 @@ Options:
   --budget N.NN        Max USD per run (passed to claude --max-budget-usd)
   --max-failures N     Stop after N consecutive failures (default: 3)
   --max-run-seconds N  Wall-time timeout per run in seconds (default: 2700 = 45min)
+  --no-plan            Skip planning pre-pass (use discovery mode)
   --dry-run            Show what would run without executing
   --test-task          Use synthetic fast task instead of /kaizen-deep-dive
   --experiment         Enable extra pipeline diagnostics
@@ -131,6 +133,7 @@ while [[ $# -gt 0 ]]; do
     --max-run-seconds) MAX_RUN_SECONDS="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     --test-task) TEST_TASK=true; shift ;;
+    --no-plan) NO_PLAN=true; shift ;;
     --experiment) EXPERIMENT=true; shift ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *) GUIDANCE="$1"; shift ;;
@@ -271,6 +274,22 @@ if [[ "$DRY_RUN" = true ]]; then
   echo "[dry-run] State file:"
   cat "$STATE_FILE"
   exit 0
+fi
+
+# Planning pre-pass: scan backlog and produce plan.json before the loop.
+# Non-fatal: if planning fails, runs proceed in discovery mode.
+PLAN_SCRIPT="$SCRIPT_DIR/auto-dent-plan.ts"
+if [[ -f "$PLAN_SCRIPT" && "$TEST_TASK" != true && "$NO_PLAN" != true ]]; then
+  echo ">>> Running planning pre-pass..."
+  if npx tsx "$PLAN_SCRIPT" "$STATE_FILE" 2>&1; then
+    if [[ -f "$LOG_DIR/plan.json" ]]; then
+      PLAN_ITEMS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$LOG_DIR/plan.json','utf8')).items.length)")
+      echo ">>> Plan ready: $PLAN_ITEMS items queued."
+    fi
+  else
+    echo ">>> Planning skipped (non-fatal). Runs will use discovery mode."
+  fi
+  echo ""
 fi
 
 # Main loop (trampoline)
