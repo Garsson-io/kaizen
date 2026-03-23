@@ -65,6 +65,13 @@ The tower has three floors and a mirror on the ceiling.
 Improve along known dimensions. Discover unknown dimensions. Review whether your dimensions are complete.
 There is no fourth floor. The mirror is enough.
 
+Perfection is achieved not when there is nothing more to add,
+but when there is nothing left to take away.
+Every feature must continuously earn its place.
+
+A system that only looks inward will converge on a local optimum.
+Periodically, look outward. The next breakthrough may not be on any existing horizon.
+
 Parallel work produces overlap, not waste.
 The first to merge wins. The rest close gracefully.
 
@@ -151,6 +158,24 @@ The tower formalizes this into three levels:
 
 The set of horizons is finite and largely enumerable from established software engineering maturity models (DORA, SRE, OWASP SAMM, CMMI, FinOps). But the set is not static — Level B and Level C ensure it evolves as the system encounters novel friction that existing horizons don't cover.
 
+### Subtraction as a discipline
+
+Antoine de Saint-Exupery's principle — "perfection is achieved not when there is nothing more to add, but when there is nothing left to take away" — is the missing counterweight to continuous improvement. Without it, kaizen has an additive bias: every reflection produces something new (a hook, a skill, a doc, a process). Nothing ever gets removed.
+
+This principle was born from observing auto-dent batch runs that produced 20+ PRs in a night — all additions. The codebase grew. The hook count grew. The skill count grew. The cognitive load grew. But nobody asked: "which of these hooks is actually catching anything? Which skills are never invoked? Which docs are never read?"
+
+Subtraction requires courage that addition doesn't. Adding feels safe — you're making things better. Removing feels dangerous — what if we need it? The antidote is data: if a hook hasn't fired in 30 days, if a skill hasn't been invoked in 3 months, if a doc hasn't been read in a quarter — it's a candidate for removal. Not automatic removal (that would be its own form of recklessness), but a review: does this still earn its place?
+
+The deeper lesson: complexity is a cost, not an asset. Every line of code, every hook, every process step has a maintenance burden. The system that does more with less is stronger than the system that does more with more.
+
+### Looking outward
+
+A system that only improves itself through self-reflection will converge on a local optimum. It gets very good at the things it already knows about, but it can't discover what it doesn't know it doesn't know. This is the exploration/exploitation tradeoff from multi-armed bandit theory applied to process improvement.
+
+The fix is periodic outward-facing inquiry: What are other teams doing? What does the ecosystem offer that we haven't tried? What research exists on problems we're solving from scratch? A system that occasionally looks beyond its own borders will discover dimensions of improvement that pure self-reflection would never surface.
+
+This doesn't mean chasing every new tool or framework. It means maintaining curiosity as a practice — a scheduled, intentional counterweight to the inward focus of daily kaizen work.
+
 ### The escalation framework
 
 The core algorithm:
@@ -203,3 +228,37 @@ The goal of this system is fully automated development that gets better at fully
 We're not there yet. Today, humans are still in the loop for most decisions. But every kaizen issue that automates a previously-manual check, every hook that catches a previously-human-caught mistake, every mechanistic enforcement that replaces an instruction — each one moves the boundary. The human's role shifts from "catching mistakes" to "setting direction."
 
 That shift is the compound interest. Each improvement makes the next improvement cheaper. Each automation frees capacity for higher-level thinking. The system that improves itself improves faster over time. That's the bet.
+
+---
+
+## Provenance
+
+Each principle traces back to a specific observation, incident, or conversation.
+
+| Principle | Origin | Addresses |
+|-----------|--------|-----------|
+| *Compound interest / Small improvements compound* | Founding principle | The case for incremental over revolutionary change |
+| *Tsuyoku naritai* | Japanese martial arts philosophy | Direction over destination |
+| *It's kaizens all the way down* | Observing that process improvements need their own improvements | Recursive self-improvement |
+| *No promises without mechanisms* | Repeated "we'll do it later" that never happened | Deferred scope amnesia |
+| *Reflection without action is decoration* | Reflections that produced insights but no filed issues | The insight-to-action gap |
+| *Instructions are necessary but never sufficient* | L1 instructions being ignored repeatedly | The escalation imperative |
+| *Enforcement is love* | Agents making 2 AM mistakes that woke humans | The case for automation over vigilance |
+| *An enforcement point is worth a thousand instructions* | Multiple incidents where documented policy was bypassed | Policy placement |
+| *The right level matters more than the right fix* | Perfect L1 fixes that were forgotten within days | Level selection |
+| *A gate the actor can exit before...* | Exit-before-enforcement anti-pattern discovery | Half-gate problem |
+| *Map the territory* | Observing that taxonomies outlast solutions | Horizon philosophy |
+| *Specs are hypotheses. Incidents are data.* | Specs that predicted wrong outcomes | Empiricism over planning |
+| *Every failure is a gift* | Incidents that were suffered but never filed | Incident capture |
+| *The fix isn't done until verified* | "It should work" PRs that didn't work | Verification discipline |
+| *Humans should never wait on agent mistakes* | Agents producing errors that blocked human workflows | Human-impact escalation |
+| *Isolation prevents contamination* | Worktree state leaks between agents | Isolation architecture |
+| *Avoiding overengineering...* | Both over- and under-engineering observed in agent work | Calibrated effort |
+| *The most dangerous requirement...* | Long-standing assumptions that turned out wrong | Assumption review |
+| *When in doubt, escalate the level* | Agents adding more L1 instructions instead of L2 hooks | Level escalation |
+| *The horizon you can name...* | Unnamed quality dimensions causing repeated friction | Horizon discovery |
+| *The tower has three floors...* | Formalizing the horizon discovery process | Discovery architecture |
+| *Perfection is achieved not when...* | #560, #561 — auto-dent producing 20+ additive PRs with no removals | Additive bias, complexity debt |
+| *A system that only looks inward...* | #553, #561 — self-reflection converging on local optima | Exploration/exploitation balance |
+| *Parallel work produces overlap* | Multiple agents picking same issue | Parallel coordination |
+| *The goal is not to be done* | Founding principle | Infinite game orientation |
