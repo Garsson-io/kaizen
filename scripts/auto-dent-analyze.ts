@@ -346,10 +346,9 @@ export function generateRecommendations(
  *
  * Signals:
  * - consecutive_failures: N consecutive runs with no PRs (threshold: 3)
- * - cost: run cost >= 3x the rolling average of prior runs
- * - duration: run duration >= 3x the rolling average
+ * - duration: run duration >= 3x the rolling average (5x = regression)
  * - completeness: run completeness drops below 50% of prior average
- * - waste: wasted calls exceed 30% of total tool calls
+ * - waste: wasted calls exceed 30% of total tool calls (50% = regression)
  *
  * Returns a RegressionReport. severity='none' if no signals triggered.
  */
