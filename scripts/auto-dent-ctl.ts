@@ -31,6 +31,8 @@ import {
   formatBatchScoreTable,
   formatRunScoreLine,
   formatPostHocLine,
+  failureClassLabel,
+  formatFailureDistribution,
 } from './auto-dent-score.js';
 
 function getRepoRoot(): string {
@@ -429,6 +431,17 @@ export function buildBatchReflection(batch: BatchInfo): BatchReflection {
     });
   }
 
+  // Insight: failure class distribution
+  const failureClasses = scores.map(s => s.failure_class);
+  const nonSuccessClasses = failureClasses.filter(fc => fc !== 'success' && fc !== 'empty_success');
+  if (nonSuccessClasses.length >= 2) {
+    const dist = formatFailureDistribution(nonSuccessClasses);
+    insights.push({
+      type: 'failure_pattern',
+      message: `Failure root causes: ${dist}`,
+    });
+  }
+
   // Insight: stop signals
   const stopRuns = history.filter((r) => r.stop_requested);
   if (stopRuns.length > 0 && stopRuns.length < history.length) {
@@ -461,7 +474,7 @@ export function buildBatchReflection(batch: BatchInfo): BatchReflection {
   for (let i = 0; i < history.length; i++) {
     const r = history[i];
     const dur = `${Math.floor(r.duration_seconds / 60)}m${r.duration_seconds % 60}s`;
-    const status = r.exit_code === 0 ? (scores[i].success ? 'ok' : 'no-output') : `exit ${r.exit_code}`;
+    const status = scores[i].success ? 'ok' : failureClassLabel(scores[i].failure_class);
     tableLines.push(
       `| #${r.run} | ${dur} | $${r.cost_usd.toFixed(2)} | ${r.prs.length} | ${r.issues_closed.length} | ${status} |`,
     );

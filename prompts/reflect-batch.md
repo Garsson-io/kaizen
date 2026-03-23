@@ -19,6 +19,14 @@ performance and produce insights that will help subsequent runs be more effectiv
 {{reflection_insights}}
 {{/reflection_insights}}
 
+{{#failure_class_summary}}
+## Failure Class Breakdown
+
+Distribution: {{failure_class_summary}}
+
+Failure classes: success (produced artifacts), empty (exit 0, no output), hook (hook rejected), blocked (issue blocked), scope (scope overflow), timeout, crash (non-zero exit), infra (git/GitHub error).
+{{/failure_class_summary}}
+
 {{#pr_merge_status}}
 ## PR Merge Status
 

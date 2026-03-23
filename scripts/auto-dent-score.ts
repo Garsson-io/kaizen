@@ -9,6 +9,100 @@
 
 import type { RunMetrics, RunResult, MergeStatus } from './auto-dent-run.js';
 
+/**
+ * Structured failure taxonomy for auto-dent runs.
+ * Classifies why a run failed (or succeeded) to enable root-cause analysis.
+ */
+export type FailureClass =
+  | 'success'           // exit 0, produced artifacts (PRs or issues)
+  | 'empty_success'     // exit 0 but no PRs/issues (wasted run)
+  | 'hook_rejection'    // hook blocked the PR/commit
+  | 'issue_blocked'     // picked an issue that couldn't be resolved
+  | 'scope_overflow'    // attempted too much, ran out of budget
+  | 'timeout'           // exceeded time limit
+  | 'crash'             // unexpected process error (non-zero exit)
+  | 'infrastructure'    // git/GitHub/worktree failure
+  | 'unknown';          // unclassified failure
+
+/**
+ * Classify a run's failure mode from its metrics and optional log output.
+ *
+ * Classification priority:
+ *   1. exit 0 + artifacts → 'success'
+ *   2. exit 0 + no artifacts → 'empty_success'
+ *   3. Log-based heuristics (hook_rejection, infrastructure, timeout, scope_overflow, issue_blocked)
+ *   4. Fallback to 'crash' for non-zero exit, 'unknown' otherwise
+ */
+export function classifyFailure(
+  metrics: RunMetrics,
+  logOutput?: string,
+): FailureClass {
+  const hasArtifacts = metrics.prs.length > 0 || metrics.issues_filed.length > 0 || metrics.issues_closed.length > 0;
+
+  if (metrics.exit_code === 0 && hasArtifacts) return 'success';
+  if (metrics.exit_code === 0 && !hasArtifacts) return 'empty_success';
+
+  if (logOutput) {
+    const log = logOutput.toLowerCase();
+    if (log.includes('hook rejected') || log.includes('hook blocked') || log.includes('pre-commit hook') || log.includes('hook failed')) {
+      return 'hook_rejection';
+    }
+    if (log.includes('out of memory') || log.includes('oom') || log.includes('heap out of memory') || log.includes('javascript heap')) {
+      return 'crash'; // OOM is a crash subtype
+    }
+    if (log.includes('timeout') || log.includes('timed out') || log.includes('exceeded time limit')) {
+      return 'timeout';
+    }
+    if (log.includes('git error') || log.includes('worktree') || log.includes('github api') || log.includes('could not resolve') || log.includes('fatal: ')) {
+      return 'infrastructure';
+    }
+    if (log.includes('scope overflow') || log.includes('too many changes') || log.includes('budget exceeded') || log.includes('context limit')) {
+      return 'scope_overflow';
+    }
+    if (log.includes('issue blocked') || log.includes('already claimed') || log.includes('cannot be resolved') || log.includes('blocked by')) {
+      return 'issue_blocked';
+    }
+  }
+
+  if (metrics.exit_code !== 0) return 'crash';
+  return 'unknown';
+}
+
+/** Get a compact label for a failure class (for table display). */
+export function failureClassLabel(fc: FailureClass): string {
+  const labels: Record<FailureClass, string> = {
+    success: 'ok',
+    empty_success: 'empty',
+    hook_rejection: 'hook',
+    issue_blocked: 'blocked',
+    scope_overflow: 'scope',
+    timeout: 'timeout',
+    crash: 'crash',
+    infrastructure: 'infra',
+    unknown: '???',
+  };
+  return labels[fc];
+}
+
+/** Compute failure class distribution from an array of failure classes. */
+export function failureClassDistribution(classes: FailureClass[]): Record<FailureClass, number> {
+  const dist: Record<string, number> = {};
+  for (const fc of classes) {
+    dist[fc] = (dist[fc] || 0) + 1;
+  }
+  return dist as Record<FailureClass, number>;
+}
+
+/** Format failure class distribution as a compact summary string. */
+export function formatFailureDistribution(classes: FailureClass[]): string {
+  const dist = failureClassDistribution(classes);
+  return Object.entries(dist)
+    .filter(([, count]) => count > 0)
+    .sort(([, a], [, b]) => b - a)
+    .map(([cls, count]) => `${cls}:${count}`)
+    .join(', ');
+}
+
 export interface RunScore {
   /** Whether the run succeeded: exit code 0 AND at least one PR created */
   success: boolean;
@@ -38,6 +132,8 @@ export interface RunScore {
   issues_pruned: number;
   /** Cost relative to rolling average (e.g. 2.0 = 2x the avg). null if first run. */
   cost_vs_avg: number | null;
+  /** Structured failure classification for root-cause analysis */
+  failure_class: FailureClass;
 }
 
 export interface BatchScore {
@@ -155,6 +251,9 @@ export function scoreRunMetrics(
     costVsAvg = avgCost > 0 ? cost / avgCost : null;
   }
 
+  // Use stored failure_class if available, otherwise classify from metrics
+  const fc = (metrics.failure_class as FailureClass) ?? classifyFailure(metrics);
+
   return {
     success: metrics.exit_code === 0 && prCount > 0,
     cost_usd: cost,
@@ -170,6 +269,7 @@ export function scoreRunMetrics(
     lines_deleted: metrics.lines_deleted ?? 0,
     issues_pruned: metrics.issues_pruned ?? 0,
     cost_vs_avg: costVsAvg,
+    failure_class: fc,
   };
 }
 
@@ -191,6 +291,15 @@ export function scoreRunResult(
     costVsAvg = avgCost > 0 ? cost / avgCost : null;
   }
 
+  // Build a synthetic RunMetrics-like object for classification
+  const fc: FailureClass = (result.failureClass as FailureClass) ?? classifyFailure({
+    run: 0, start_epoch: 0, duration_seconds: durationSeconds,
+    exit_code: exitCode, cost_usd: cost, tool_calls: result.toolCalls,
+    prs: result.prs, issues_filed: result.issuesFiled,
+    issues_closed: result.issuesClosed, cases: result.cases,
+    stop_requested: result.stopRequested,
+  });
+
   return {
     success: exitCode === 0 && prCount > 0,
     cost_usd: cost,
@@ -206,6 +315,7 @@ export function scoreRunResult(
     lines_deleted: result.linesDeleted,
     issues_pruned: result.issuesPruned,
     cost_vs_avg: costVsAvg,
+    failure_class: fc,
   };
 }
 
@@ -305,7 +415,7 @@ export function detectCostAnomaly(
 
 /** Format a RunScore as a compact one-line summary. */
 export function formatRunScoreLine(score: RunScore): string {
-  const status = score.success ? 'pass' : 'fail';
+  const status = score.success ? 'pass' : failureClassLabel(score.failure_class);
   const parts = [
     status,
     score.mode,
@@ -356,6 +466,12 @@ export function formatBatchScoreTable(score: BatchScore): string {
   if (modeStr) {
     lines.push(`| **Modes** | ${modeStr} |`);
     lines.push(`| **Mode diversity** | ${(score.mode_diversity * 100).toFixed(0)}% |`);
+  }
+  // Failure class distribution (skip if all successes)
+  const failureClasses = score.runs.map((r) => r.failure_class);
+  const nonSuccess = failureClasses.filter((fc) => fc !== 'success');
+  if (nonSuccess.length > 0) {
+    lines.push(`| **Failure classes** | ${formatFailureDistribution(failureClasses)} |`);
   }
   if (score.cost_anomaly_count > 0) {
     lines.push(`| **Cost anomalies** | ${score.cost_anomaly_count} runs >= 2x avg |`);
