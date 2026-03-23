@@ -233,13 +233,54 @@ export function loadPromptTemplate(templateName: string): string | null {
   }
 }
 
+export interface ModeSelection {
+  mode: string;
+  template: string;
+}
+
+const MODE_TEMPLATES: Record<string, string> = {
+  exploit: 'deep-dive-default.md',
+  explore: 'explore-gaps.md',
+  reflect: 'reflect-batch.md',
+  subtract: 'subtract-prune.md',
+};
+
+/**
+ * Select the cognitive mode for a given run.
+ *
+ * Schedule (v1 fixed):
+ *   Run N mod 10: 0-6 exploit, 7 explore, 8 reflect, 9 subtract
+ *   ~70% exploitation, ~10% each for exploration/reflection/subtraction
+ *
+ * Override: guidance containing "mode:<name>" forces that mode.
+ */
+export function selectMode(state: BatchState, runNum: number): ModeSelection {
+  // Force mode from guidance (e.g., "mode:explore")
+  const modeOverride = state.guidance.match(/\bmode:(\w+)/i);
+  if (modeOverride) {
+    const forced = modeOverride[1].toLowerCase();
+    return {
+      mode: forced,
+      template: MODE_TEMPLATES[forced] || MODE_TEMPLATES.exploit,
+    };
+  }
+
+  // Test task always uses test template
+  if (state.test_task) {
+    return { mode: 'exploit', template: 'test-task.md' };
+  }
+
+  const slot = runNum % 10;
+  if (slot <= 6) return { mode: 'exploit', template: MODE_TEMPLATES.exploit };
+  if (slot === 7) return { mode: 'explore', template: MODE_TEMPLATES.explore };
+  if (slot === 8) return { mode: 'reflect', template: MODE_TEMPLATES.reflect };
+  return { mode: 'subtract', template: MODE_TEMPLATES.subtract };
+}
+
 export function buildPrompt(state: BatchState, runNum: number, logDir?: string): string {
   const vars = buildTemplateVars(state, runNum, logDir);
 
-  // Try to load from external template file
-  const templateFile = state.test_task
-    ? 'test-task.md'
-    : 'deep-dive-default.md';
+  const { template: templateFile } = selectMode(state, runNum);
   const template = loadPromptTemplate(templateFile);
 
   if (template) {
@@ -1114,7 +1155,7 @@ async function runClaude(
   logFile: string,
   repoRoot: string,
   stateFile: string,
-): Promise<{ exitCode: number; duration: number; result: RunResult }> {
+): Promise<{ exitCode: number; duration: number; result: RunResult; mode: string }> {
   const result: RunResult = {
     prs: [],
     issuesFiled: [],
@@ -1130,6 +1171,10 @@ async function runClaude(
   const ctx: StreamContext = {};
 
   const logDir = dirname(stateFile);
+  const modeSelection = selectMode(state, runNum);
+  if (modeSelection.mode !== 'exploit') {
+    console.log(`  [mode] run #${runNum}: ${modeSelection.mode} (template: ${modeSelection.template})`);
+  }
   const prompt = buildPrompt(state, runNum, logDir);
   const nonce = `${new Date()
     .toISOString()
@@ -1273,7 +1318,7 @@ async function runClaude(
       processExited = true;
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolve({ exitCode: code ?? 1, duration, result });
+      resolve({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode });
     });
 
     child.on('error', (err) => {
@@ -1281,7 +1326,7 @@ async function runClaude(
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolve({ exitCode: 1, duration, result });
+      resolve({ exitCode: 1, duration, result, mode: modeSelection.mode });
     });
   });
 }
@@ -1345,7 +1390,7 @@ async function main(): Promise<void> {
   console.log(`Log: ${logFile}`);
 
   const runStartEpoch = Math.floor(Date.now() / 1000);
-  const { exitCode, duration, result } = await runClaude(
+  const { exitCode, duration, result, mode: runMode } = await runClaude(
     state,
     runNum,
     logFile,
@@ -1428,7 +1473,7 @@ async function main(): Promise<void> {
     issues_closed: result.issuesClosed,
     cases: result.cases,
     stop_requested: result.stopRequested,
-    mode: 'exploit',
+    mode: runMode,
     lines_deleted: result.linesDeleted,
     issues_pruned: result.issuesPruned,
   };

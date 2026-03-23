@@ -19,6 +19,7 @@ import {
   buildInFlightComment,
   extractLinkedIssue,
   formatPlanAsMarkdown,
+  selectMode,
   type BatchState,
   type CleanupResult,
   type RunResult,
@@ -1413,5 +1414,66 @@ describe('formatPlanAsMarkdown', () => {
 
     const md = formatPlanAsMarkdown(path);
     expect(md).toContain('| leaf |');
+  });
+});
+
+describe('selectMode', () => {
+  it('selects exploit for runs 0-6 (mod 10)', () => {
+    for (const run of [1, 2, 3, 4, 5, 6, 10, 11, 16]) {
+      const { mode, template } = selectMode(makeBatchState(), run);
+      expect(mode).toBe('exploit');
+      expect(template).toBe('deep-dive-default.md');
+    }
+  });
+
+  it('selects explore for run 7 (mod 10)', () => {
+    const { mode, template } = selectMode(makeBatchState(), 7);
+    expect(mode).toBe('explore');
+    expect(template).toBe('explore-gaps.md');
+  });
+
+  it('selects reflect for run 8 (mod 10)', () => {
+    const { mode, template } = selectMode(makeBatchState(), 8);
+    expect(mode).toBe('reflect');
+    expect(template).toBe('reflect-batch.md');
+  });
+
+  it('selects subtract for run 9 (mod 10)', () => {
+    const { mode, template } = selectMode(makeBatchState(), 9);
+    expect(mode).toBe('subtract');
+    expect(template).toBe('subtract-prune.md');
+  });
+
+  it('cycles correctly for run 17, 18, 19', () => {
+    expect(selectMode(makeBatchState(), 17).mode).toBe('explore');
+    expect(selectMode(makeBatchState(), 18).mode).toBe('reflect');
+    expect(selectMode(makeBatchState(), 19).mode).toBe('subtract');
+  });
+
+  it('forces mode from guidance "mode:explore"', () => {
+    const state = makeBatchState({ guidance: 'fix bugs mode:explore' });
+    const { mode, template } = selectMode(state, 1);
+    expect(mode).toBe('explore');
+    expect(template).toBe('explore-gaps.md');
+  });
+
+  it('forces mode from guidance "mode:subtract" case-insensitive', () => {
+    const state = makeBatchState({ guidance: 'clean up mode:Subtract' });
+    const { mode } = selectMode(state, 1);
+    expect(mode).toBe('subtract');
+  });
+
+  it('falls back to exploit template for unknown forced mode', () => {
+    const state = makeBatchState({ guidance: 'mode:unknown' });
+    const { mode, template } = selectMode(state, 1);
+    expect(mode).toBe('unknown');
+    expect(template).toBe('deep-dive-default.md');
+  });
+
+  it('uses test-task template for test_task state', () => {
+    const state = makeBatchState({ test_task: true });
+    const { mode, template } = selectMode(state, 7);
+    expect(mode).toBe('exploit');
+    expect(template).toBe('test-task.md');
   });
 });
