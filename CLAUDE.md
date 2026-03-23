@@ -19,7 +19,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `.claude/hooks/lib/` | Shared hook libraries |
 | `.claude/hooks/tests/` | Hook test infrastructure |
 | `src/hooks/` | TypeScript hooks |
-| `.claude/settings-fragment.json` | Hook registrations for host projects |
+| `.claude-plugin/plugin.json` | Plugin manifest with hook registrations |
 | `docs/hooks-design.md` | Hooks patterns, anti-patterns, regex traps, gate design, testing conventions |
 | `docs/hook-test-dry-spec.md` | DRY refactoring spec for hook test infrastructure |
 | `docs/test-ladder-spec.md` | Test maturity levels and testing methodology |

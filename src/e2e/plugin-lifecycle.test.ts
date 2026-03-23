@@ -22,7 +22,6 @@ import { execSync } from "node:child_process";
 import {
   generateConfig,
   scaffoldPolicies,
-  mergeHooks,
   verifySetup,
 } from "../kaizen-setup.js";
 
@@ -48,7 +47,7 @@ import {
 const KAIZEN_ROOT = resolve(__dirname, "../..");
 const HOOKS_DIR = join(KAIZEN_ROOT, ".claude", "hooks");
 const SKILLS_DIR = join(KAIZEN_ROOT, ".claude", "skills");
-const FRAGMENT_PATH = join(KAIZEN_ROOT, ".claude", "settings-fragment.json");
+const PLUGIN_JSON_PATH = join(KAIZEN_ROOT, ".claude-plugin", "plugin.json");
 
 // ── Shared Test State ──
 
@@ -56,8 +55,8 @@ let hostProject: string;
 let mockDir: MockDir;
 let stateDir: StateDir;
 
-// Parse the settings fragment once for verification
-const settingsFragment = JSON.parse(readFileSync(FRAGMENT_PATH, "utf-8"));
+// Parse plugin.json for hook registration verification
+const pluginJson = JSON.parse(readFileSync(PLUGIN_JSON_PATH, "utf-8"));
 
 // ── Helpers ──
 
@@ -82,7 +81,7 @@ function runKaizenHook(name: string, event: Parameters<typeof runHook>[1]): Hook
 // ── Setup / Teardown ──
 
 beforeAll(() => {
-  // Create a simulated host project with kaizen installed as submodule
+  // Create a simulated host project with kaizen installed as plugin
   hostProject = mkdtempSync(join(tmpdir(), "kaizen-e2e-host-"));
 
   // Initialize git repo so hooks can use git commands
@@ -132,74 +131,19 @@ describe("Part 1: Setup produces correct configuration", () => {
     expect(existsSync(join(hostProject, ".claude", "kaizen", "policies-local.md"))).toBe(true);
   });
 
-  it("mergeHooks produces complete settings.json from fragment", () => {
-    // Create fake kaizen submodule structure pointing to real fragment
-    const fakeKaizen = join(hostProject, ".kaizen");
-    execSync(`mkdir -p "${join(fakeKaizen, ".claude")}"`, { stdio: "pipe" });
-    execSync(`cp "${FRAGMENT_PATH}" "${join(fakeKaizen, ".claude", "settings-fragment.json")}"`, { stdio: "pipe" });
-
-    const result = mergeHooks(hostProject, ".kaizen");
-    expect(result.status).toBe("ok");
-
-    const settings = JSON.parse(readFileSync(join(hostProject, ".claude", "settings.json"), "utf-8"));
-    expect(settings.hooks).toBeDefined();
-    expect(Object.keys(settings.hooks)).toEqual(
+  it("plugin.json registers hooks for all four event types", () => {
+    const hooks = pluginJson.hooks;
+    expect(hooks).toBeDefined();
+    expect(Object.keys(hooks)).toEqual(
       expect.arrayContaining(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]),
     );
   });
 
-  it("host project hook paths resolve when .kaizen/ submodule has hooks", () => {
-    // Simulate a host project with kaizen installed as submodule at .kaizen/
-    // Copy real hooks into the fake .kaizen/ submodule structure
-    const fakeKaizen = join(hostProject, ".kaizen");
-    execSync(`mkdir -p "${join(fakeKaizen, ".claude", "hooks")}"`, { stdio: "pipe" });
-    execSync(`cp "${FRAGMENT_PATH}" "${join(fakeKaizen, ".claude", "settings-fragment.json")}"`, { stdio: "pipe" });
-
-    // Copy all kaizen hooks into the fake submodule (kaizen-* plus TS wrapper shims)
-    execSync(`cp ${HOOKS_DIR}/kaizen-*.sh "${join(fakeKaizen, ".claude", "hooks")}/"`, { stdio: "pipe" });
-    execSync(`cp ${HOOKS_DIR}/pr-review-loop-ts.sh ${HOOKS_DIR}/pr-kaizen-clear-ts.sh ${HOOKS_DIR}/kaizen-reflect-ts.sh "${join(fakeKaizen, ".claude", "hooks")}/" 2>/dev/null || true`, { stdio: "pipe" });
-    // Copy hook libraries too
-    execSync(`cp -r ${HOOKS_DIR}/lib "${join(fakeKaizen, ".claude", "hooks")}/"`, { stdio: "pipe" });
-
-    // Run mergeHooks to generate host settings.json
-    mergeHooks(hostProject, ".kaizen");
-    const settings = JSON.parse(readFileSync(join(hostProject, ".claude", "settings.json"), "utf-8"));
-
-    // Every hook path in the generated settings.json must resolve relative to hostProject
-    const allCommands: string[] = [];
-    for (const eventEntries of Object.values(settings.hooks) as any[]) {
-      for (const entry of eventEntries) {
-        for (const hook of entry.hooks ?? []) {
-          if (hook.command) allCommands.push(hook.command);
-        }
-      }
-    }
-
-    expect(allCommands.length).toBeGreaterThanOrEqual(20);
-
-    const missing: string[] = [];
-    for (const cmd of allCommands) {
-      // Resolve ./ prefix relative to hostProject (how Claude Code resolves them)
-      const resolved = join(hostProject, cmd.replace(/^\.\//, ""));
-      if (!existsSync(resolved)) {
-        missing.push(`${cmd} → ${resolved}`);
-      }
-    }
-
-    expect(missing, `Hook paths that don't resolve in host project:\n${missing.join("\n")}`).toHaveLength(0);
-  });
-
   it("verifySetup passes for properly configured host", () => {
-    // Write a CLAUDE.md with kaizen section
     execSync(`echo "# Project\n\n## Kaizen\nkaizen plugin installed" > "${join(hostProject, "CLAUDE.md")}"`, { stdio: "pipe" });
 
-    const result = verifySetup(hostProject, "submodule");
-    // Some checks may fail (symlinks not present since we didn't run setupSymlinks with real paths)
-    // but the core checks (config, policies, CLAUDE.md) should pass
-    // Verify all core checks pass (config, policies, CLAUDE.md)
-    // The verify function uses { name, ok } — not { name, passed }
+    const result = verifySetup(hostProject);
     const passedNames = result.checks.filter((c) => c.ok).map((c) => c.name);
-    // When config exists and is valid, the check name is "config-valid" (not "config-exists")
     expect(passedNames).toContain("config-valid");
     expect(passedNames).toContain("policies-local");
     expect(passedNames).toContain("claudemd-kaizen");
@@ -211,9 +155,9 @@ describe("Part 1: Setup produces correct configuration", () => {
 // ════════════════════════════════════════════════════════════════════
 
 describe("Part 2: All hooks are registered and executable", () => {
-  // Extract all unique hook commands from the settings fragment
+  // Extract all unique hook commands from plugin.json
   const allHookCommands: string[] = [];
-  for (const eventEntries of Object.values(settingsFragment.hooks) as any[]) {
+  for (const eventEntries of Object.values(pluginJson.hooks) as any[]) {
     for (const entry of eventEntries) {
       for (const hook of entry.hooks ?? []) {
         if (hook.command && !allHookCommands.includes(hook.command)) {
@@ -238,8 +182,8 @@ describe("Part 2: All hooks are registered and executable", () => {
     });
   }
 
-  it("settings-fragment covers all four event types", () => {
-    const events = Object.keys(settingsFragment.hooks);
+  it("plugin.json covers all four event types", () => {
+    const events = Object.keys(pluginJson.hooks);
     expect(events).toContain("SessionStart");
     expect(events).toContain("PreToolUse");
     expect(events).toContain("PostToolUse");
@@ -247,7 +191,7 @@ describe("Part 2: All hooks are registered and executable", () => {
   });
 
   it("PreToolUse covers Bash, Edit|Write, and Agent matchers", () => {
-    const matchers = (settingsFragment.hooks.PreToolUse as any[]).map(
+    const matchers = (pluginJson.hooks.PreToolUse as any[]).map(
       (e: any) => e.matcher ?? "*",
     );
     expect(matchers).toContain("Bash");

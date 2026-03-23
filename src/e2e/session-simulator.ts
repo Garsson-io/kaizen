@@ -47,7 +47,7 @@ import {
 
 const KAIZEN_ROOT = resolve(__dirname, "../..");
 const HOOKS_DIR = join(KAIZEN_ROOT, ".claude", "hooks");
-// ── Hook Registry (matches settings-fragment.json) ──
+// ── Hook Registry (matches plugin.json) ──
 
 const DEFAULT_HOOKS = {
   SessionStart: [
