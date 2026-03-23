@@ -69,6 +69,17 @@ npm test             # Run TS tests
 npm run test:hooks   # Run shell hook tests
 ```
 
+## Testing — Behavioral vs Structural
+
+Some things CANNOT be tested with unit tests or grep patterns:
+- **SKILL.md / prompt changes** — the "code" runs inside Claude's context. The only real test is `claude -p` with the skill invoked in a `SyntheticProject`.
+- **Issue routing / config-dependent behavior** — must be tested in a realistic host project context where `KAIZEN_REPO != HOST_REPO`.
+- **Hook interaction flows** — must simulate the full event sequence, not just one hook in isolation.
+
+Use `Garsson-io/kaizen-test-fixture` as the host repo for E2E tests. Never test against real user repos. See `src/e2e/setup-live.test.ts` and `src/e2e/issue-routing.test.ts` for patterns.
+
+**Kaizen is a plugin for host projects.** Every skill, hook, and test must work when `KAIZEN_REPO != HOST_REPO` (host project mode), not just when they're equal (self-dogfood mode).
+
 ## The Three Levels
 
 - **L1 (Instructions):** CLAUDE.md, SKILL.md, docs. No enforcement.
