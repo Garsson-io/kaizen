@@ -17,6 +17,7 @@
  */
 
 import { spawn, execSync } from 'child_process';
+import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
@@ -106,6 +107,10 @@ export interface RunMetrics {
   lines_deleted?: number;
   /** Issues closed as obsolete/duplicate (not-planned), not fixed */
   issues_pruned?: number;
+  /** Prompt template file name used for this run */
+  prompt_template?: string;
+  /** SHA-256 hash of the prompt template content (first 12 chars) */
+  prompt_hash?: string;
 }
 
 export interface RunResult {
@@ -428,18 +433,40 @@ export function computeModeDistribution(history: RunMetrics[]): Record<string, n
   return dist;
 }
 
+export interface PromptMetadata {
+  /** The rendered prompt text */
+  prompt: string;
+  /** Template file name (e.g., "deep-dive-default.md"), or "inline" for fallback */
+  template: string;
+  /** SHA-256 hash of the raw template content (first 12 chars), or "none" for inline */
+  hash: string;
+}
+
 export function buildPrompt(state: BatchState, runNum: number, logDir?: string): string {
+  return buildPromptWithMetadata(state, runNum, logDir).prompt;
+}
+
+export function buildPromptWithMetadata(state: BatchState, runNum: number, logDir?: string): PromptMetadata {
   const vars = buildTemplateVars(state, runNum, logDir);
 
   const { template: templateFile } = selectMode(state, runNum);
-  const template = loadPromptTemplate(templateFile);
+  const templateContent = loadPromptTemplate(templateFile);
 
-  if (template) {
-    return renderTemplate(template, vars);
+  if (templateContent) {
+    const hash = createHash('sha256').update(templateContent).digest('hex').slice(0, 12);
+    return {
+      prompt: renderTemplate(templateContent, vars),
+      template: templateFile,
+      hash,
+    };
   }
 
   // Inline fallback (kept for backward compatibility)
-  return buildPromptInline(state, runNum);
+  return {
+    prompt: buildPromptInline(state, runNum),
+    template: 'inline',
+    hash: 'none',
+  };
 }
 
 function buildPromptInline(state: BatchState, runNum: number): string {
@@ -1313,7 +1340,7 @@ async function runClaude(
   logFile: string,
   repoRoot: string,
   stateFile: string,
-): Promise<{ exitCode: number; duration: number; result: RunResult; mode: string }> {
+): Promise<{ exitCode: number; duration: number; result: RunResult; mode: string; promptMeta: PromptMetadata }> {
   const result: RunResult = {
     prs: [],
     issuesFiled: [],
@@ -1333,7 +1360,13 @@ async function runClaude(
   if (modeSelection.mode !== 'exploit' || modeSelection.reason !== 'schedule') {
     console.log(`  [mode] run #${runNum}: ${modeSelection.mode} (${modeSelection.reason}, template: ${modeSelection.template})`);
   }
-  const prompt = buildPrompt(state, runNum, logDir);
+  const promptMeta = buildPromptWithMetadata(state, runNum, logDir);
+  const prompt = promptMeta.prompt;
+
+  // Save rendered prompt for observability (#602)
+  const promptFile = `${logDir}/run-${runNum}-prompt.md`;
+  writeFileSync(promptFile, prompt + '\n');
+
   const nonce = `${new Date()
     .toISOString()
     .replace(/[-:T]/g, '')
@@ -1476,7 +1509,7 @@ async function runClaude(
       processExited = true;
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolve({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode });
+      resolve({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode, promptMeta });
     });
 
     child.on('error', (err) => {
@@ -1484,7 +1517,7 @@ async function runClaude(
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolve({ exitCode: 1, duration, result, mode: modeSelection.mode });
+      resolve({ exitCode: 1, duration, result, mode: modeSelection.mode, promptMeta });
     });
   });
 }
@@ -1592,7 +1625,7 @@ async function main(): Promise<void> {
   console.log(`Log: ${logFile}`);
 
   const runStartEpoch = Math.floor(Date.now() / 1000);
-  const { exitCode, duration, result, mode: runMode } = await runClaude(
+  const { exitCode, duration, result, mode: runMode, promptMeta } = await runClaude(
     state,
     runNum,
     logFile,
@@ -1611,6 +1644,8 @@ async function main(): Promise<void> {
       `exit_code=${exitCode}`,
       `duration_seconds=${duration}`,
       `cost_usd=${result.cost.toFixed(2)}`,
+      `prompt_template=${promptMeta.template}`,
+      `prompt_hash=${promptMeta.hash}`,
       `prs=${result.prs.join(' ')}`,
       `issues_filed=${result.issuesFiled.join(' ')}`,
       `issues_closed=${result.issuesClosed.join(' ')}`,
@@ -1703,6 +1738,8 @@ async function main(): Promise<void> {
     mode: runMode,
     lines_deleted: result.linesDeleted,
     issues_pruned: result.issuesPruned,
+    prompt_template: promptMeta.template,
+    prompt_hash: promptMeta.hash,
   };
   if (!freshState.run_history) freshState.run_history = [];
   freshState.run_history.push(runMetrics);

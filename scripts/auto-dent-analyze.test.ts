@@ -322,6 +322,38 @@ describe('formatRunAnalysis', () => {
     expect(output).toContain('Tool category breakdown');
     expect(output).toContain('Top tool patterns');
   });
+
+  it('includes prompt template when present', () => {
+    const log = createTmpLog([
+      initMsg(),
+      userMsg('2026-03-22T22:00:00.000Z'),
+      assistantToolUse('Edit', { file_path: '/a.ts' }),
+      userMsg('2026-03-22T22:01:00.000Z'),
+    ]);
+
+    const analysis = analyzeRunLog(log);
+    analysis.promptTemplate = 'deep-dive-default.md';
+    analysis.promptHash = 'abc123def456';
+    const output = formatRunAnalysis(analysis);
+
+    expect(output).toContain('**Prompt**');
+    expect(output).toContain('deep-dive-default.md');
+    expect(output).toContain('abc123def456');
+  });
+
+  it('omits prompt row when not present', () => {
+    const log = createTmpLog([
+      initMsg(),
+      userMsg('2026-03-22T22:00:00.000Z'),
+      assistantToolUse('Edit', { file_path: '/a.ts' }),
+      userMsg('2026-03-22T22:01:00.000Z'),
+    ]);
+
+    const analysis = analyzeRunLog(log);
+    const output = formatRunAnalysis(analysis);
+
+    expect(output).not.toContain('**Prompt**');
+  });
 });
 
 describe('formatBatchAnalysis', () => {
@@ -818,5 +850,53 @@ describe('integration: regression detection in batch analysis', () => {
     const result = analyzeBatch(batchDir);
     expect(result.regressions).toBeDefined();
     expect(Array.isArray(result.regressions)).toBe(true);
+  });
+
+  it('enriches runs with prompt metadata from state.json run_history', () => {
+    const batchDir = createTmpBatch([
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantToolUse('Edit', { file_path: '/a.ts' }),
+        userMsg('2026-03-22T22:00:30.000Z'),
+      ],
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantToolUse('Edit', { file_path: '/b.ts' }),
+        userMsg('2026-03-22T22:00:30.000Z'),
+      ],
+    ]);
+
+    // Write state.json with run_history that includes prompt metadata
+    const state = {
+      batch_id: 'test-batch',
+      run_history: [
+        { run: 1, prompt_template: 'deep-dive-default.md', prompt_hash: 'abc123def456' },
+        { run: 2, prompt_template: 'explore-gaps.md', prompt_hash: '789abc012def' },
+      ],
+    };
+    writeFileSync(join(batchDir, 'state.json'), JSON.stringify(state));
+
+    const result = analyzeBatch(batchDir);
+    expect(result.runs[0].promptTemplate).toBe('deep-dive-default.md');
+    expect(result.runs[0].promptHash).toBe('abc123def456');
+    expect(result.runs[1].promptTemplate).toBe('explore-gaps.md');
+    expect(result.runs[1].promptHash).toBe('789abc012def');
+  });
+
+  it('handles missing state.json gracefully for prompt enrichment', () => {
+    const batchDir = createTmpBatch([
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantToolUse('Edit', { file_path: '/a.ts' }),
+        userMsg('2026-03-22T22:00:30.000Z'),
+      ],
+    ]);
+
+    const result = analyzeBatch(batchDir);
+    expect(result.runs[0].promptTemplate).toBeUndefined();
+    expect(result.runs[0].promptHash).toBeUndefined();
   });
 });

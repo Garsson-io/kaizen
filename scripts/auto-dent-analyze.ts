@@ -80,6 +80,10 @@ export interface RunAnalysis {
   wastePatterns: WastePattern[];
   /** Total tool calls attributable to waste */
   totalWastedCalls: number;
+  /** Prompt template file used for this run (from state.json run_history) */
+  promptTemplate?: string;
+  /** SHA-256 hash of the template content (first 12 chars) */
+  promptHash?: string;
 }
 
 export interface BatchAnalysis {
@@ -662,6 +666,27 @@ export function analyzeBatch(batchDir: string): BatchAnalysis {
 
   const runs = logFiles.map((f) => analyzeRunLog(join(batchDir, f)));
 
+  // Enrich runs with prompt metadata from state.json run_history (#602)
+  const stateFilePath = join(batchDir, 'state.json');
+  if (existsSync(stateFilePath)) {
+    try {
+      const stateData = JSON.parse(readFileSync(stateFilePath, 'utf8'));
+      const history: Array<{ run: number; prompt_template?: string; prompt_hash?: string }> = stateData.run_history || [];
+      for (const run of runs) {
+        // Extract run number from filename (e.g., "run-5-230323120000.log" → 5)
+        const runNumMatch = basename(run.runFile).match(/^run-(\d+)/);
+        if (runNumMatch) {
+          const runNum = parseInt(runNumMatch[1], 10);
+          const metrics = history.find(h => h.run === runNum);
+          if (metrics) {
+            run.promptTemplate = metrics.prompt_template;
+            run.promptHash = metrics.prompt_hash;
+          }
+        }
+      }
+    } catch { /* state.json may be malformed, skip enrichment */ }
+  }
+
   // Cold-start statistics
   const coldStarts = runs
     .map((r) => r.coldStartSec)
@@ -802,6 +827,7 @@ export function formatRunAnalysis(run: RunAnalysis): string {
     `|--------|-------|`,
     `| **Cold start** | ${isNaN(run.coldStartSec) ? 'N/A (no Edit/Write)' : `${run.coldStartSec.toFixed(0)}s`} |`,
     `| **Duration** | ${run.totalDurationSec.toFixed(0)}s |`,
+    ...(run.promptTemplate ? [`| **Prompt** | ${run.promptTemplate} (${run.promptHash || 'n/a'}) |`] : []),
     `| **Tool calls** | ${run.toolCalls} |`,
   ];
 
@@ -868,6 +894,24 @@ export function formatBatchAnalysis(batch: BatchAnalysis): string {
     `| **Min** | ${isNaN(batch.minColdStartSec) ? 'N/A' : `${batch.minColdStartSec.toFixed(0)}s`} |`,
     `| **Max** | ${isNaN(batch.maxColdStartSec) ? 'N/A' : `${batch.maxColdStartSec.toFixed(0)}s`} |`,
   ];
+
+  // Prompt template distribution
+  const promptDist = new Map<string, number>();
+  for (const run of batch.runs) {
+    if (run.promptTemplate) {
+      promptDist.set(run.promptTemplate, (promptDist.get(run.promptTemplate) || 0) + 1);
+    }
+  }
+  if (promptDist.size > 0) {
+    lines.push('', '### Prompt Templates Used', '');
+    lines.push('| Template | Runs | Hash |');
+    lines.push('|----------|------|------|');
+    const sortedTemplates = [...promptDist.entries()].sort((a, b) => b[1] - a[1]);
+    for (const [tmpl, count] of sortedTemplates) {
+      const hashExample = batch.runs.find(r => r.promptTemplate === tmpl)?.promptHash || 'n/a';
+      lines.push(`| ${tmpl} | ${count} | ${hashExample} |`);
+    }
+  }
 
   if (Object.keys(batch.globalPhaseFractions).length > 0) {
     lines.push('', '### Phase Breakdown (all runs)', '');
