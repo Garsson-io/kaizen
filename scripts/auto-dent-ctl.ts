@@ -8,6 +8,8 @@
  *   score [batch-id]    Score batches — efficiency, success rate, cost-per-PR
  *   score --post-hoc    Include live merge status checks
  *   cleanup [batch-id]  Close superseded PRs whose issues are already resolved from GitHub
+ *   reflect [batch-id]  Cross-run pattern analysis (#551)
+ *   reflect --post [batch-id]  Post reflection summary to progress issue (#571)
  *   watchdog [--threshold N]  Check active batches for stale heartbeats, halt if stuck
  *
  * Usage:
@@ -479,6 +481,85 @@ export function buildBatchReflection(batch: BatchInfo): BatchReflection {
 }
 
 /**
+ * Format a batch reflection as a GitHub issue comment (markdown).
+ * Designed to be posted to the batch progress issue every 5 runs.
+ */
+export function formatBatchReflectionComment(reflection: BatchReflection): string {
+  const lines: string[] = [
+    `### Mid-Batch Reflection (after run ${reflection.runCount})`,
+    '',
+    '| Metric | Value |',
+    '|--------|-------|',
+    `| **Success rate** | ${(reflection.successRate * 100).toFixed(0)}% (${Math.round(reflection.successRate * reflection.runCount)}/${reflection.runCount} runs) |`,
+    `| **Total cost** | $${reflection.totalCost.toFixed(2)} |`,
+    `| **Avg cost/run** | $${reflection.runCount > 0 ? (reflection.totalCost / reflection.runCount).toFixed(2) : '0.00'} |`,
+    `| **PRs created** | ${reflection.totalPrs} |`,
+    `| **Issues closed** | ${reflection.issuesClosedCount} |`,
+    `| **Avg cost/PR** | ${reflection.avgCostPerPr > 0 ? '$' + reflection.avgCostPerPr.toFixed(2) : 'N/A'} |`,
+    '',
+  ];
+
+  if (reflection.insights.length > 0) {
+    lines.push('**Insights:**');
+    for (const insight of reflection.insights) {
+      const icon = insight.type === 'success_pattern' ? ':white_check_mark:' :
+                   insight.type === 'failure_pattern' ? ':warning:' :
+                   insight.type === 'efficiency' ? ':chart_with_upwards_trend:' : ':bulb:';
+      lines.push(`- ${icon} ${insight.message}`);
+    }
+  } else {
+    lines.push('_No significant patterns detected yet._');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Post a mid-batch reflection summary to the batch progress issue.
+ * Non-fatal: returns false if posting fails.
+ */
+export function postBatchReflectionToProgressIssue(
+  batch: BatchInfo,
+): boolean {
+  const state = batch.state;
+  const progressIssue = state.progress_issue;
+  const repo = state.kaizen_repo || state.host_repo;
+
+  if (!progressIssue || !repo) {
+    console.log('  [reflect] no progress issue or repo configured — skipping post');
+    return false;
+  }
+
+  const m = progressIssue.match(/issues\/(\d+)/);
+  if (!m) {
+    console.log('  [reflect] could not parse issue number from progress_issue');
+    return false;
+  }
+  const issueNum = m[1];
+
+  const history = state.run_history || [];
+  if (history.length === 0) {
+    console.log('  [reflect] no run history to reflect on');
+    return false;
+  }
+
+  const reflection = buildBatchReflection(batch);
+  const comment = formatBatchReflectionComment(reflection);
+
+  try {
+    execSync(
+      `gh issue comment ${issueNum} --repo ${repo} --body ${JSON.stringify(comment)}`,
+      { encoding: 'utf8', timeout: 30_000 },
+    );
+    console.log(`  [reflect] posted mid-batch reflection to progress issue #${issueNum}`);
+    return true;
+  } catch (e: any) {
+    console.log(`  [reflect] warning: failed to post reflection — ${e.message?.split('\n')[0] || 'failed'}`);
+    return false;
+  }
+}
+
+/**
  * Format a batch reflection for human-readable display.
  */
 export function formatBatchReflection(reflection: BatchReflection): string {
@@ -541,6 +622,7 @@ Usage:
   auto-dent-ctl.ts score --post-hoc [batch-id]  Include live PR merge status checks
   auto-dent-ctl.ts cleanup [batch-id]  Close superseded PRs whose issues are already resolved
   auto-dent-ctl.ts reflect [batch-id]  Cross-run pattern analysis and learning (#551)
+  auto-dent-ctl.ts reflect --post [batch-id]  Post reflection summary to progress issue (#571)
   auto-dent-ctl.ts reflect --prompt [batch-id]  Output rendered prompt for Claude reflection
   auto-dent-ctl.ts watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)`);
     process.exit(0);
@@ -720,7 +802,8 @@ Usage:
 
     case 'reflect': {
       const showPrompt = args.includes('--prompt');
-      const reflectArgs = args.slice(1).filter((a) => a !== '--prompt');
+      const postToIssue = args.includes('--post');
+      const reflectArgs = args.slice(1).filter((a) => a !== '--prompt' && a !== '--post');
       const targetId = reflectArgs[0];
       const batches = discoverBatches(logsDir);
 
@@ -762,6 +845,11 @@ Usage:
         } else {
           console.log(formatBatchReflection(reflection));
         }
+
+        if (postToIssue) {
+          postBatchReflectionToProgressIssue(batch);
+        }
+
         console.log('');
       }
       break;

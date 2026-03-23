@@ -355,11 +355,11 @@ while true; do
     npx tsx "$CTL_SCRIPT" cleanup "$BATCH_ID" 2>/dev/null || echo ">>> Cleanup skipped (non-fatal)."
   fi
 
-  # Cross-run reflection every 5 runs (issue #551)
+  # Cross-run reflection every 5 runs (issue #551, #571)
   if [[ "$NEXT_RUN" -gt 1 ]] && (( (NEXT_RUN - 1) % 5 == 0 )); then
     echo ">>> Running cross-run reflection (every 5 runs)..."
-    if npx tsx "$CTL_SCRIPT" reflect "$BATCH_ID" 2>/dev/null; then
-      echo ">>> Reflection complete."
+    if npx tsx "$CTL_SCRIPT" reflect --post "$BATCH_ID" 2>/dev/null; then
+      echo ">>> Reflection complete (posted to progress issue)."
     else
       echo ">>> Reflection skipped (non-fatal)."
     fi
