@@ -71,7 +71,7 @@ Read the transcript file using the Read tool. It is a JSONL file where each line
 - Read the PR description: `gh pr view {PR_URL}`
 - Check git log for recent commits on this branch
 
-### 3. Identify impediments — combine transcript signals with PR context
+### 3. Identify impediments AND compound improvements — combine transcript signals with PR context
 
 **Transcript signals are objective evidence.** The main agent's self-reported impediments are subjective. When they conflict, trust the transcript.
 
@@ -82,6 +82,8 @@ For each piece of friction:
 - Was this impediment reported by the main agent, or only visible in the transcript?
 
 **Pay special attention to impediments the main agent did NOT report.** These are the highest-value findings — they reveal blind spots in the reflection process itself.
+
+**Compound improvements (kaizen #264):** Also identify what future improvements this work makes easier or possible. What's now cheaper to build because of this foundation? Record these as `type: "positive"` findings with `disposition: "no-action"`. This captures the compounding value of work — not just what was fixed, but what was unlocked.
 
 ### 4. Search for duplicates THOROUGHLY
 For EACH impediment, search existing kaizen issues with multiple query strategies:
