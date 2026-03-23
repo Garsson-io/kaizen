@@ -22,17 +22,17 @@ For the full framework design, see [`docs/horizons-framework-spec.md`](../horizo
 | # | Horizon | Current | Next Step | Doc |
 |---|---------|---------|-----------|-----|
 | 3 | **Testability** | L0-5 solid, L6+ gap | L6 host pipeline smoke | [test-ladder-spec.md](../test-ladder-spec.md) |
-| 4 | **Observability** | L1 (output logs) | L2 structured telemetry | [observability.md](observability.md) |
+| 4 | **Observability** | L2 (partial — per-run structured telemetry) | L2 complete: cross-batch analytics, decision tracing | [observability.md](observability.md) |
 | 5 | **State Integrity** | L1 (collision detection) | L2 freshness guarantees | [state-integrity.md](state-integrity.md) |
 
 ### Operational (how the system stays healthy)
 
 | # | Horizon | Current | Next Step | Doc |
 |---|---------|---------|-----------|-----|
-| 6 | **Resilience** | L1 (failure detection) | L2 state preservation | [resilience.md](resilience.md) |
-| 7 | **Cost Governance** | L1 (tracking) | L2 per-case budgets | [cost-governance.md](cost-governance.md) |
+| 6 | **Resilience** | L1-L2 (partial — heartbeat, watchdog, failure classification) | L2 complete: retry, recovery manifests | [resilience.md](resilience.md) |
+| 7 | **Cost Governance** | L1-L2 (partial — cost tracking, anomaly detection) | L2 complete: per-case budgets, cost-aware mode selection | [cost-governance.md](cost-governance.md) |
 | 8 | **Worktree-First Infrastructure** | L0→L1 (ad-hoc fixes) | L2 shared `git-paths.ts` resolver | [worktree-first-infrastructure.md](worktree-first-infrastructure.md) |
-| 9 | **Autonomous Batch Operations** | L2 (tagged + tracked) | L3 total budget enforcement | [autonomous-batch-operations.md](autonomous-batch-operations.md) |
+| 9 | **Autonomous Batch Operations** | L3 (governed + observable) | L3 complete: total budget enforcement, admin notifications | [autonomous-batch-operations.md](autonomous-batch-operations.md) |
 
 ### Trust (who can do what, who sees what)
 
