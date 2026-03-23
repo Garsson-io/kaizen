@@ -1,17 +1,363 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { execSync } from 'child_process';
 import {
+  ghExec,
+  fetchIssueLabels,
+  checkMergeStatus,
+  sweepBatchPRs,
+  labelArtifacts,
+  queueAutoMerge,
+  extractLinkedIssue,
+  isIssueClosed,
+  cleanupSupersededPRs,
   parseEpicChecklist,
   extractAllLinkedIssues,
   syncEpicChecklists,
   verifyIssuesClosed,
 } from './auto-dent-github.js';
+import { makeRunResult } from './auto-dent-test-helpers.js';
 
 vi.mock('child_process', () => ({
   execSync: vi.fn(),
 }));
 
 const mockExecSync = vi.mocked(execSync);
+
+describe('ghExec', () => {
+  beforeEach(() => {
+    mockExecSync.mockReset();
+  });
+
+  it('returns trimmed output on success', () => {
+    mockExecSync.mockReturnValue('  some output  \n');
+    expect(ghExec('gh issue list')).toBe('some output');
+  });
+
+  it('returns empty string on failure and does not throw', () => {
+    mockExecSync.mockImplementation(() => {
+      throw new Error('command failed');
+    });
+    expect(ghExec('gh issue list')).toBe('');
+  });
+});
+
+describe('fetchIssueLabels', () => {
+  beforeEach(() => {
+    mockExecSync.mockReset();
+  });
+
+  it('returns label names from gh output', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ labels: [{ name: 'bug' }, { name: 'kaizen' }] }),
+    );
+    expect(fetchIssueLabels('#42', 'owner/repo')).toEqual(['bug', 'kaizen']);
+  });
+
+  it('extracts issue number from various formats', () => {
+    mockExecSync.mockReturnValue(JSON.stringify({ labels: [] }));
+
+    fetchIssueLabels('42', 'owner/repo');
+    expect(String(mockExecSync.mock.calls[0][0])).toContain('42');
+
+    mockExecSync.mockClear();
+    fetchIssueLabels('#99', 'owner/repo');
+    expect(String(mockExecSync.mock.calls[0][0])).toContain('99');
+
+    mockExecSync.mockClear();
+    fetchIssueLabels('https://github.com/o/r/issues/123', 'owner/repo');
+    expect(String(mockExecSync.mock.calls[0][0])).toContain('123');
+  });
+
+  it('returns empty array for non-numeric input', () => {
+    expect(fetchIssueLabels('abc', 'owner/repo')).toEqual([]);
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+
+  it('returns empty array on gh failure', () => {
+    mockExecSync.mockImplementation(() => {
+      throw new Error('not found');
+    });
+    expect(fetchIssueLabels('#42', 'owner/repo')).toEqual([]);
+  });
+});
+
+describe('checkMergeStatus', () => {
+  beforeEach(() => {
+    mockExecSync.mockReset();
+  });
+
+  it('returns merged for MERGED state', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null }),
+    );
+    expect(checkMergeStatus('https://github.com/o/r/pull/1')).toBe('merged');
+  });
+
+  it('returns closed for CLOSED state', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ state: 'CLOSED', mergeStateStatus: null, autoMergeRequest: null }),
+    );
+    expect(checkMergeStatus('https://github.com/o/r/pull/1')).toBe('closed');
+  });
+
+  it('returns auto_queued when autoMergeRequest is set', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: { enabledAt: '2024-01-01' } }),
+    );
+    expect(checkMergeStatus('https://github.com/o/r/pull/1')).toBe('auto_queued');
+  });
+
+  it('returns open for OPEN state without auto-merge', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: null }),
+    );
+    expect(checkMergeStatus('https://github.com/o/r/pull/1')).toBe('open');
+  });
+
+  it('returns unknown for invalid URL', () => {
+    expect(checkMergeStatus('not-a-url')).toBe('unknown');
+  });
+
+  it('returns unknown on gh failure', () => {
+    mockExecSync.mockImplementation(() => {
+      throw new Error('failed');
+    });
+    expect(checkMergeStatus('https://github.com/o/r/pull/1')).toBe('unknown');
+  });
+});
+
+describe('sweepBatchPRs', () => {
+  beforeEach(() => {
+    mockExecSync.mockReset();
+  });
+
+  it('returns empty for empty input', () => {
+    expect(sweepBatchPRs([])).toEqual([]);
+  });
+
+  it('marks merged PRs as merged', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null }),
+    );
+    const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
+    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'merged' }]);
+  });
+
+  it('marks closed PRs as closed', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ state: 'CLOSED', mergeStateStatus: null, autoMergeRequest: null }),
+    );
+    const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
+    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'closed' }]);
+  });
+
+  it('updates BEHIND branches with auto-merge queued', () => {
+    mockExecSync.mockImplementation((cmd: string) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes('pr view')) {
+        return JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BEHIND', autoMergeRequest: { enabledAt: '2024' } });
+      }
+      if (cmdStr.includes('update-branch')) {
+        return 'ok';
+      }
+      return '';
+    });
+
+    const results = sweepBatchPRs(['https://github.com/o/r/pull/5']);
+    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/5', action: 'updated' }]);
+  });
+
+  it('marks already current PRs', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: { enabledAt: '2024' } }),
+    );
+    const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
+    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'already_current' }]);
+  });
+
+  it('skips invalid URLs', () => {
+    expect(sweepBatchPRs(['not-a-url'])).toEqual([]);
+  });
+
+  it('handles gh failure as failed', () => {
+    mockExecSync.mockImplementation(() => {
+      throw new Error('gh failed');
+    });
+    const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
+    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'failed' }]);
+  });
+});
+
+describe('labelArtifacts', () => {
+  beforeEach(() => {
+    mockExecSync.mockReset();
+  });
+
+  it('labels PRs and issues', () => {
+    mockExecSync.mockReturnValue('ok');
+    const result = makeRunResult({
+      prs: ['https://github.com/o/r/pull/1'],
+      issuesFiled: ['https://github.com/o/r/issues/10'],
+    });
+
+    labelArtifacts(result, 'auto-dent');
+
+    const calls = mockExecSync.mock.calls.map((c) => String(c[0]));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain('pr edit 1');
+    expect(calls[0]).toContain('--add-label auto-dent');
+    expect(calls[1]).toContain('issue edit 10');
+    expect(calls[1]).toContain('--add-label auto-dent');
+  });
+
+  it('does nothing for empty result', () => {
+    labelArtifacts(makeRunResult(), 'auto-dent');
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+});
+
+describe('queueAutoMerge', () => {
+  beforeEach(() => {
+    mockExecSync.mockReset();
+  });
+
+  it('queues auto-merge for each PR', () => {
+    mockExecSync.mockReturnValue('ok');
+    const result = makeRunResult({
+      prs: ['https://github.com/o/r/pull/1', 'https://github.com/o/r/pull/2'],
+    });
+
+    queueAutoMerge(result, 'o/r');
+
+    expect(mockExecSync).toHaveBeenCalledTimes(2);
+    const cmds = mockExecSync.mock.calls.map((c) => String(c[0]));
+    expect(cmds[0]).toContain('pr merge 1');
+    expect(cmds[0]).toContain('--squash --delete-branch --auto');
+    expect(cmds[1]).toContain('pr merge 2');
+  });
+});
+
+describe('extractLinkedIssue', () => {
+  it('extracts Closes #NNN', () => {
+    expect(extractLinkedIssue('Some text\nCloses #42\nmore')).toBe('42');
+  });
+
+  it('extracts Fixes #NNN', () => {
+    expect(extractLinkedIssue('Fixes #100')).toBe('100');
+  });
+
+  it('extracts Resolves #NNN', () => {
+    expect(extractLinkedIssue('Resolves #200')).toBe('200');
+  });
+
+  it('returns null when no match', () => {
+    expect(extractLinkedIssue('No issue reference here')).toBeNull();
+  });
+
+  it('is case insensitive', () => {
+    expect(extractLinkedIssue('closes #55')).toBe('55');
+  });
+});
+
+describe('isIssueClosed', () => {
+  beforeEach(() => {
+    mockExecSync.mockReset();
+  });
+
+  it('returns true for CLOSED state', () => {
+    mockExecSync.mockReturnValue(JSON.stringify({ state: 'CLOSED' }));
+    expect(isIssueClosed('42', 'owner/repo')).toBe(true);
+  });
+
+  it('returns false for OPEN state', () => {
+    mockExecSync.mockReturnValue(JSON.stringify({ state: 'OPEN' }));
+    expect(isIssueClosed('42', 'owner/repo')).toBe(false);
+  });
+
+  it('returns false on gh failure', () => {
+    mockExecSync.mockImplementation(() => {
+      throw new Error('failed');
+    });
+    expect(isIssueClosed('42', 'owner/repo')).toBe(false);
+  });
+});
+
+describe('cleanupSupersededPRs', () => {
+  beforeEach(() => {
+    mockExecSync.mockReset();
+  });
+
+  it('returns empty for empty input', () => {
+    expect(cleanupSupersededPRs([], 'o/r')).toEqual([]);
+  });
+
+  it('marks merged PRs as already_merged', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ state: 'MERGED', body: 'Closes #100' }),
+    );
+    const results = cleanupSupersededPRs(['https://github.com/o/r/pull/1'], 'o/r');
+    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'already_merged' }]);
+  });
+
+  it('marks closed PRs as already_closed', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ state: 'CLOSED', body: 'Closes #100' }),
+    );
+    const results = cleanupSupersededPRs(['https://github.com/o/r/pull/1'], 'o/r');
+    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'already_closed' }]);
+  });
+
+  it('marks PRs with no linked issue as no_issue', () => {
+    mockExecSync.mockReturnValue(
+      JSON.stringify({ state: 'OPEN', body: 'Just a regular PR' }),
+    );
+    const results = cleanupSupersededPRs(['https://github.com/o/r/pull/1'], 'o/r');
+    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'no_issue' }]);
+  });
+
+  it('closes superseded PRs whose issues are closed', () => {
+    mockExecSync.mockImplementation((cmd: string) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes('pr view')) {
+        return JSON.stringify({ state: 'OPEN', body: 'Closes #100' });
+      }
+      if (cmdStr.includes('issue view')) {
+        return JSON.stringify({ state: 'CLOSED' });
+      }
+      if (cmdStr.includes('pr close')) {
+        return 'ok';
+      }
+      return '';
+    });
+
+    const results = cleanupSupersededPRs(['https://github.com/o/r/pull/5'], 'o/r');
+    expect(results).toEqual([
+      { pr: 'https://github.com/o/r/pull/5', action: 'closed', issue: '#100' },
+    ]);
+  });
+
+  it('marks PRs as still_open when issue is open', () => {
+    mockExecSync.mockImplementation((cmd: string) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes('pr view')) {
+        return JSON.stringify({ state: 'OPEN', body: 'Closes #100' });
+      }
+      if (cmdStr.includes('issue view')) {
+        return JSON.stringify({ state: 'OPEN' });
+      }
+      return '';
+    });
+
+    const results = cleanupSupersededPRs(['https://github.com/o/r/pull/1'], 'o/r');
+    expect(results).toEqual([
+      { pr: 'https://github.com/o/r/pull/1', action: 'still_open', issue: '#100' },
+    ]);
+  });
+
+  it('skips invalid URLs', () => {
+    expect(cleanupSupersededPRs(['not-a-url'], 'o/r')).toEqual([]);
+  });
+});
 
 describe('parseEpicChecklist', () => {
   it('extracts unchecked and checked items', () => {
