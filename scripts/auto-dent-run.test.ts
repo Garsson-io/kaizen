@@ -204,6 +204,31 @@ describe('buildTemplateVars', () => {
     expect(vars.issues_closed).toBe('');
     expect(vars.prs).toBe('');
   });
+
+  it('sets claimed_plan_issue when plan exists with pending items', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'plan-claim-vars-'));
+    const plan = {
+      created_at: '2026-03-23T00:00:00Z',
+      guidance: 'test',
+      items: [
+        { issue: '#302', title: 'Test item', score: 8, approach: 'do it', status: 'pending' },
+      ],
+      wip_excluded: [],
+      epics_scanned: [],
+    };
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 1, tmpDir);
+    expect(vars.claimed_plan_issue).toBe('#302');
+  });
+
+  it('sets empty claimed_plan_issue when no plan exists', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'no-plan-vars-'));
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 1, tmpDir);
+    expect(vars.claimed_plan_issue).toBe('');
+  });
 });
 
 // Reflection feedback loop (#603)
@@ -2292,6 +2317,30 @@ describe('buildPromptWithMetadata', () => {
     const meta = buildPromptWithMetadata(state, 3);
     const prompt = buildPrompt(state, 3);
     expect(meta.prompt).toBe(prompt);
+  });
+
+  it('propagates claimedPlanIssue from plan', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'meta-plan-'));
+    const plan = {
+      created_at: '2026-03-23T00:00:00Z',
+      guidance: 'test',
+      items: [
+        { issue: '#451', title: 'Hook perf', score: 7, approach: 'instrument', status: 'pending' },
+      ],
+      wip_excluded: [],
+      epics_scanned: [],
+    };
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const state = makeBatchState();
+    const meta = buildPromptWithMetadata(state, 1, tmpDir);
+    expect(meta.claimedPlanIssue).toBe('#451');
+  });
+
+  it('claimedPlanIssue is undefined when no plan exists', () => {
+    const state = makeBatchState();
+    const meta = buildPromptWithMetadata(state, 1);
+    expect(meta.claimedPlanIssue).toBeUndefined();
   });
 });
 

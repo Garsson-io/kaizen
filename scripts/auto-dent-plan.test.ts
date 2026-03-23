@@ -8,6 +8,7 @@ import {
   readPlan,
   claimNextItem,
   markItem,
+  resetAssignedItems,
   formatPlanSummary,
   buildPlanPrompt,
   type BatchPlan,
@@ -312,6 +313,121 @@ describe('claimNextItem with decompose items', () => {
     const second = claimNextItem(tmpDir);
     expect(second!.item_type).toBe('decompose');
     expect(second!.parent_epic).toBe('#506');
+  });
+});
+
+describe('resetAssignedItems', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'plan-reset-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('resets assigned items to pending', () => {
+    const plan = makePlan();
+    plan.items[0].status = 'assigned';
+    plan.items[1].status = 'assigned';
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const count = resetAssignedItems(tmpDir);
+    expect(count).toBe(2);
+
+    const updated = readPlan(tmpDir);
+    expect(updated!.items[0].status).toBe('pending');
+    expect(updated!.items[1].status).toBe('pending');
+    expect(updated!.items[2].status).toBe('pending');
+  });
+
+  it('does not touch done or skipped items', () => {
+    const plan = makePlan();
+    plan.items[0].status = 'done';
+    plan.items[1].status = 'skipped';
+    plan.items[2].status = 'assigned';
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const count = resetAssignedItems(tmpDir);
+    expect(count).toBe(1);
+
+    const updated = readPlan(tmpDir);
+    expect(updated!.items[0].status).toBe('done');
+    expect(updated!.items[1].status).toBe('skipped');
+    expect(updated!.items[2].status).toBe('pending');
+  });
+
+  it('returns 0 when no assigned items exist', () => {
+    const plan = makePlan();
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const count = resetAssignedItems(tmpDir);
+    expect(count).toBe(0);
+  });
+
+  it('returns 0 when no plan exists', () => {
+    const count = resetAssignedItems(tmpDir);
+    expect(count).toBe(0);
+  });
+});
+
+describe('claim → mark lifecycle', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'plan-lifecycle-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('full lifecycle: claim, mark done, claim next', () => {
+    const plan = makePlan();
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    // Claim first item
+    const first = claimNextItem(tmpDir);
+    expect(first!.issue).toBe('#302');
+    expect(first!.status).toBe('assigned');
+
+    // Mark it done
+    markItem(tmpDir, '#302', 'done');
+    const afterDone = readPlan(tmpDir);
+    expect(afterDone!.items[0].status).toBe('done');
+
+    // Claim next — should get #451
+    const second = claimNextItem(tmpDir);
+    expect(second!.issue).toBe('#451');
+
+    // Mark it skipped
+    markItem(tmpDir, '#451', 'skipped');
+    const afterSkip = readPlan(tmpDir);
+    expect(afterSkip!.items[1].status).toBe('skipped');
+
+    // Claim next — should get #407
+    const third = claimNextItem(tmpDir);
+    expect(third!.issue).toBe('#407');
+  });
+
+  it('interrupted run: claim, crash, reset, re-claim same item', () => {
+    const plan = makePlan();
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    // Claim first item (simulating a run start)
+    claimNextItem(tmpDir);
+    const afterClaim = readPlan(tmpDir);
+    expect(afterClaim!.items[0].status).toBe('assigned');
+
+    // Simulate crash — item stays assigned
+    // On resume, reset assigned items
+    const resetCount = resetAssignedItems(tmpDir);
+    expect(resetCount).toBe(1);
+
+    // Re-claim — should get the same item again
+    const retried = claimNextItem(tmpDir);
+    expect(retried!.issue).toBe('#302');
   });
 });
 

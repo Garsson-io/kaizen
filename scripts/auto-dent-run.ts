@@ -26,7 +26,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, renameSync, co
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
-import { claimNextItem } from './auto-dent-plan.js';
+import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -293,11 +293,13 @@ export function buildTemplateVars(
 
   // Try to claim next item from plan (if a plan exists)
   let planAssignment = '';
+  let claimedPlanIssue = '';
   let reflectionInsights = '';
   let priorReflections = '';
   if (logDir) {
     const planItem = claimNextItem(logDir);
     if (planItem) {
+      claimedPlanIssue = planItem.issue;
       const lines = [
         `- **Issue:** ${planItem.issue} — ${planItem.title}`,
         `- **Approach:** ${planItem.approach}`,
@@ -384,6 +386,7 @@ export function buildTemplateVars(
     issues_closed: state.issues_closed.join(' '),
     prs: state.prs.join(' '),
     plan_assignment: planAssignment,
+    claimed_plan_issue: claimedPlanIssue,
     reflection_insights: reflectionInsights,
     run_history_table: runHistoryTable,
     total_cost: totalCost,
@@ -676,6 +679,8 @@ export interface PromptMetadata {
   template: string;
   /** SHA-256 hash of the raw template content (first 12 chars), or "none" for inline */
   hash: string;
+  /** Issue ref of the plan item claimed for this run (e.g., "#302"), if any */
+  claimedPlanIssue?: string;
 }
 
 export function buildPrompt(state: BatchState, runNum: number, logDir?: string): string {
@@ -684,6 +689,7 @@ export function buildPrompt(state: BatchState, runNum: number, logDir?: string):
 
 export function buildPromptWithMetadata(state: BatchState, runNum: number, logDir?: string): PromptMetadata {
   const vars = buildTemplateVars(state, runNum, logDir);
+  const claimedPlanIssue = vars.claimed_plan_issue || undefined;
 
   const { template: templateFile } = selectMode(state, runNum);
   const templateContent = loadPromptTemplate(templateFile);
@@ -694,6 +700,7 @@ export function buildPromptWithMetadata(state: BatchState, runNum: number, logDi
       prompt: renderTemplate(templateContent, vars),
       template: templateFile,
       hash,
+      claimedPlanIssue,
     };
   }
 
@@ -702,6 +709,7 @@ export function buildPromptWithMetadata(state: BatchState, runNum: number, logDi
     prompt: buildPromptInline(state, runNum),
     template: 'inline',
     hash: 'none',
+    claimedPlanIssue,
   };
 }
 
@@ -1295,6 +1303,12 @@ async function main(): Promise<void> {
   const runNum = state.run + 1;
   const runTag = `${state.batch_id}/run-${runNum}`;
 
+  // On first run or resume, reset any 'assigned' items from interrupted runs
+  const resetCount = resetAssignedItems(logDir);
+  if (resetCount > 0) {
+    console.log(`  [plan] reset ${resetCount} interrupted item(s) from 'assigned' to 'pending'`);
+  }
+
   const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(2, 14);
   const logFile = `${logDir}/run-${runNum}-${timestamp}.log`;
 
@@ -1357,6 +1371,14 @@ async function main(): Promise<void> {
     if (!previewState.run_history) previewState.run_history = [];
     console.log(formatBatchFooter(previewState));
     console.log('');
+  }
+
+  // Mark plan item done/skipped based on run outcome
+  if (promptMeta.claimedPlanIssue) {
+    const produced = result.prs.length > 0 || result.issuesFiled.length > 0 || result.issuesClosed.length > 0;
+    const planStatus = produced ? 'done' : 'skipped';
+    markItem(logDir, promptMeta.claimedPlanIssue, planStatus as 'done' | 'skipped');
+    console.log(`  [plan] marked ${promptMeta.claimedPlanIssue} as ${planStatus}`);
   }
 
   // Post-run hygiene
