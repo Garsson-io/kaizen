@@ -5,6 +5,7 @@ import { join } from 'path';
 import {
   buildPrompt,
   buildTemplateVars,
+  loadReflectionInsights,
   renderTemplate,
   loadPromptTemplate,
   extractArtifacts,
@@ -194,6 +195,91 @@ describe('buildTemplateVars', () => {
     const vars = buildTemplateVars(state, 1);
     expect(vars.issues_closed).toBe('');
     expect(vars.prs).toBe('');
+  });
+});
+
+// Reflection feedback loop (#603)
+
+describe('loadReflectionInsights', () => {
+  it('returns empty when no reflection-summary.json exists', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'no-reflect-'));
+    const result = loadReflectionInsights(tmpDir);
+    expect(result.text).toBe('');
+    expect(result.avoidIssues).toEqual([]);
+  });
+
+  it('loads and formats insights from persisted reflection', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-load-'));
+    const summary = {
+      timestamp: '2026-03-23T01:00:00Z',
+      runCount: 10,
+      successRate: 0.8,
+      avgCostPerPr: 1.5,
+      insights: [
+        { type: 'success_pattern', message: 'High success rate: 80%' },
+        { type: 'failure_pattern', message: 'Max 2 consecutive failures' },
+      ],
+      avoidIssues: ['42'],
+    };
+    writeFileSync(join(tmpDir, 'reflection-summary.json'), JSON.stringify(summary));
+
+    const result = loadReflectionInsights(tmpDir);
+    expect(result.text).toContain('success rate: 80%');
+    expect(result.text).toContain('High success rate');
+    expect(result.text).toContain('consecutive failures');
+    expect(result.avoidIssues).toEqual(['42']);
+  });
+
+  it('returns empty text when insights array is empty', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-empty-'));
+    const summary = {
+      timestamp: '2026-03-23T01:00:00Z',
+      runCount: 2,
+      successRate: 1.0,
+      avgCostPerPr: 0,
+      insights: [],
+      avoidIssues: [],
+    };
+    writeFileSync(join(tmpDir, 'reflection-summary.json'), JSON.stringify(summary));
+
+    const result = loadReflectionInsights(tmpDir);
+    expect(result.text).toBe('');
+  });
+
+  it('handles corrupt JSON gracefully', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-corrupt-'));
+    writeFileSync(join(tmpDir, 'reflection-summary.json'), 'not json');
+    const result = loadReflectionInsights(tmpDir);
+    expect(result.text).toBe('');
+    expect(result.avoidIssues).toEqual([]);
+  });
+});
+
+describe('buildTemplateVars with reflection insights', () => {
+  it('includes reflection_insights when reflection-summary.json exists in logDir', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-vars-'));
+    const summary = {
+      timestamp: '2026-03-23T01:00:00Z',
+      runCount: 5,
+      successRate: 0.6,
+      avgCostPerPr: 2.0,
+      insights: [
+        { type: 'recommendation', message: 'Consider simpler issues' },
+      ],
+      avoidIssues: [],
+    };
+    writeFileSync(join(tmpDir, 'reflection-summary.json'), JSON.stringify(summary));
+
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 6, tmpDir);
+    expect(vars.reflection_insights).toContain('Consider simpler issues');
+  });
+
+  it('sets empty reflection_insights when no reflection exists', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-none-'));
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 3, tmpDir);
+    expect(vars.reflection_insights).toBe('');
   });
 });
 

@@ -170,6 +170,36 @@ export function resolvePromptsDir(): string {
 }
 
 /**
+ * Load persisted reflection insights from the batch log directory.
+ * Returns formatted markdown string for prompt injection, or empty string if none.
+ * Also returns issue numbers that the reflection flagged to avoid.
+ */
+export function loadReflectionInsights(logDir: string): { text: string; avoidIssues: string[] } {
+  const summaryPath = resolve(logDir, 'reflection-summary.json');
+  try {
+    if (!existsSync(summaryPath)) return { text: '', avoidIssues: [] };
+    const raw = JSON.parse(readFileSync(summaryPath, 'utf8'));
+    const insights: Array<{ type: string; message: string }> = raw.insights || [];
+    if (insights.length === 0) return { text: '', avoidIssues: raw.avoidIssues || [] };
+
+    const lines = [
+      `_Mid-batch reflection (after run ${raw.runCount}, success rate: ${(raw.successRate * 100).toFixed(0)}%):_`,
+      '',
+    ];
+    for (const insight of insights) {
+      const icon = insight.type === 'success_pattern' ? '+' :
+                   insight.type === 'failure_pattern' ? '!' :
+                   insight.type === 'efficiency' ? '$' : '*';
+      lines.push(`- **[${icon}]** ${insight.message}`);
+    }
+
+    return { text: lines.join('\n'), avoidIssues: raw.avoidIssues || [] };
+  } catch {
+    return { text: '', avoidIssues: [] };
+  }
+}
+
+/**
  * Build template variables from batch state and run number.
  * These are substituted into prompt templates via {{variable}} syntax.
  */
@@ -184,6 +214,7 @@ export function buildTemplateVars(
 
   // Try to claim next item from plan (if a plan exists)
   let planAssignment = '';
+  let reflectionInsights = '';
   if (logDir) {
     const planItem = claimNextItem(logDir);
     if (planItem) {
@@ -201,6 +232,13 @@ export function buildTemplateVars(
       planAssignment = lines.join('\n');
       console.log(`  [plan] assigned ${planItem.issue}: ${planItem.title}${planItem.item_type === 'decompose' ? ' [DECOMPOSE]' : ''}`);
     }
+
+    // Load reflection insights from prior mid-batch reflection (#603)
+    const reflection = loadReflectionInsights(logDir);
+    reflectionInsights = reflection.text;
+    if (reflection.avoidIssues.length > 0) {
+      console.log(`  [reflect] loaded ${reflection.avoidIssues.length} issue(s) to avoid from reflection`);
+    }
   }
 
   return {
@@ -217,6 +255,7 @@ export function buildTemplateVars(
     issues_closed: state.issues_closed.join(' '),
     prs: state.prs.join(' '),
     plan_assignment: planAssignment,
+    reflection_insights: reflectionInsights,
   };
 }
 

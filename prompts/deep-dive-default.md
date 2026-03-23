@@ -17,6 +17,16 @@ Issues already addressed in previous runs (do not rework): {{issues_closed}}
 PRs already created in this batch (avoid overlapping work): {{prs}}
 {{/prs}}
 
+{{#reflection_insights}}
+## Batch Reflection Insights
+
+Prior mid-batch reflection produced these insights. Use them to guide your work:
+
+{{reflection_insights}}
+
+Factor these insights into your issue selection and approach.
+{{/reflection_insights}}
+
 {{#plan_assignment}}
 ## Assigned Work
 
