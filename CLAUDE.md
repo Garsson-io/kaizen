@@ -44,6 +44,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `/kaizen-prd` | Problem mapping — iterative discovery to spec |
 | `/kaizen-plan` | Break large work into sequenced PRs |
 | `/kaizen-review-pr` | Self-review checklist |
+| `/kaizen-file-issue` | Fast incident-to-issue capture (2 min) |
 | `/kaizen-zen` | Print the Zen of Kaizen |
 | `/kaizen-wip` | Show in-progress work |
 | `/kaizen-cleanup` | Disk usage analysis and safe cleanup |

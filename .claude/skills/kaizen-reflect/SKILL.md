@@ -270,6 +270,8 @@ Issue format:
   - Desired outcome and target level (not a specific mechanism — see discipline check above)
   - Verification: how to confirm the fix works
 
+**Fast path:** Use `/kaizen-file-issue` for quick incident-to-issue capture. It enforces the discipline checks above (failure mode framing, duplicate search, level classification) in a streamlined 2-minute flow.
+
 **Before filing a new issue:** Search for existing issues first (`gh issue list --repo "$KAIZEN_REPO" --search "<keywords>"`). If a match exists, add an incident comment instead of filing a duplicate. Incidents compound evidence; duplicates fragment it.
 
 ## PR Kaizen Section
