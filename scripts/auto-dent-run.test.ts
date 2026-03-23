@@ -41,6 +41,7 @@ import {
   type SweepAction,
   type SweepResult,
   type PromptMetadata,
+  validateRunLifecycle,
 } from './auto-dent-run.js';
 
 function makeBatchState(overrides: Partial<BatchState> = {}): BatchState {
@@ -2450,5 +2451,102 @@ describe('atomic state I/O', () => {
     expect(read.prs).toEqual(['https://example.com/pr/1']);
     expect(read.issues_filed).toEqual(['#100']);
     expect(read.stop_reason).toBe('budget exhausted');
+  });
+});
+
+describe('validateRunLifecycle', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'lifecycle-test-'));
+  });
+
+  it('returns valid for correct phase ordering', () => {
+    const logFile = join(tmpDir, 'valid.log');
+    writeFileSync(logFile, [
+      'AUTO_DENT_PHASE: PICK | issue=#1 | title=test',
+      'AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=ok',
+      'AUTO_DENT_PHASE: IMPLEMENT | case=test-case',
+      'AUTO_DENT_PHASE: TEST | result=pass | count=5',
+      'AUTO_DENT_PHASE: PR | url=https://example.com/pr/1',
+      'AUTO_DENT_PHASE: MERGE | url=https://example.com/pr/1 | status=queued',
+      'AUTO_DENT_PHASE: REFLECT | issues_filed=0',
+    ].join('\n'));
+
+    const result = validateRunLifecycle(logFile);
+    expect(result.valid).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.phasesMissing).toEqual([]);
+    expect(result.phasesPresent).toEqual(['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']);
+  });
+
+  it('detects ordering violations', () => {
+    const logFile = join(tmpDir, 'violation.log');
+    writeFileSync(logFile, [
+      'AUTO_DENT_PHASE: PICK | issue=#1',
+      'AUTO_DENT_PHASE: TEST | result=pass',
+      'AUTO_DENT_PHASE: EVALUATE | verdict=proceed',
+    ].join('\n'));
+
+    const result = validateRunLifecycle(logFile);
+    expect(result.valid).toBe(false);
+    expect(result.violations).toHaveLength(1);
+    expect(result.violations[0]).toEqual({ phase: 'EVALUATE', after: 'TEST' });
+  });
+
+  it('ignores floating phases (DECOMPOSE, STOP)', () => {
+    const logFile = join(tmpDir, 'floating.log');
+    writeFileSync(logFile, [
+      'AUTO_DENT_PHASE: PICK | issue=#1',
+      'AUTO_DENT_PHASE: EVALUATE | verdict=proceed',
+      'AUTO_DENT_PHASE: DECOMPOSE | epic=#100',
+      'AUTO_DENT_PHASE: STOP | reason=done',
+    ].join('\n'));
+
+    const result = validateRunLifecycle(logFile);
+    expect(result.valid).toBe(true);
+    expect(result.phasesPresent).toContain('DECOMPOSE');
+    expect(result.phasesPresent).toContain('STOP');
+  });
+
+  it('reports missing phases', () => {
+    const logFile = join(tmpDir, 'missing.log');
+    writeFileSync(logFile, [
+      'AUTO_DENT_PHASE: PICK | issue=#1',
+      'AUTO_DENT_PHASE: PR | url=https://example.com/pr/1',
+    ].join('\n'));
+
+    const result = validateRunLifecycle(logFile);
+    expect(result.valid).toBe(true);
+    expect(result.phasesMissing).toContain('EVALUATE');
+    expect(result.phasesMissing).toContain('REFLECT');
+  });
+
+  it('handles log with no phases', () => {
+    const logFile = join(tmpDir, 'empty.log');
+    writeFileSync(logFile, 'just some log output\nno phases here\n');
+
+    const result = validateRunLifecycle(logFile);
+    expect(result.valid).toBe(true);
+    expect(result.phasesPresent).toEqual([]);
+    expect(result.phasesMissing).toEqual(['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']);
+  });
+
+  it('handles phases mixed with JSON stream messages', () => {
+    const logFile = join(tmpDir, 'mixed.log');
+    writeFileSync(logFile, [
+      '{"type":"system","subtype":"init"}',
+      '{"type":"content_block_delta","delta":{"text":"AUTO_DENT_PHASE: PICK | issue=#1"}}',
+      'AUTO_DENT_PHASE: PICK | issue=#1',
+      '{"type":"content_block_delta","delta":{"text":"working..."}}',
+      'AUTO_DENT_PHASE: EVALUATE | verdict=proceed',
+      'AUTO_DENT_PHASE: IMPLEMENT | case=test',
+    ].join('\n'));
+
+    const result = validateRunLifecycle(logFile);
+    expect(result.valid).toBe(true);
+    expect(result.phasesPresent).toContain('PICK');
+    expect(result.phasesPresent).toContain('EVALUATE');
+    expect(result.phasesPresent).toContain('IMPLEMENT');
   });
 });
