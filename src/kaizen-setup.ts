@@ -1,22 +1,27 @@
 /**
- * kaizen-setup.ts — Mechanical setup operations for the kaizen plugin.
+ * kaizen-setup.ts — Setup operations for the kaizen plugin.
  *
- * Called by the /kaizen-setup skill:
- *   npx tsx src/kaizen-setup.ts --step <name> [args]
+ * Pure library — exported functions for creating host-project config files.
+ * No CLI entry point. The /kaizen-setup skill creates files directly using
+ * Claude Code's tools; these functions are used by tests and self-dogfood.
  *
- * Each step emits structured JSON to stdout. Claude reads and acts on it.
+ * Plugin mode only — submodule mode has been removed.
+ * Hooks, skills, and agents are registered via plugin.json automatically.
+ * Setup only needs to create 3 host-project files:
+ *   1. kaizen.config.json — tells kaizen about the host project
+ *   2. .claude/kaizen/policies-local.md — host-specific policies
+ *   3. CLAUDE.md section — instructions for agents (done by skill, not here)
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, lstatSync, readdirSync, unlinkSync } from "fs";
-import { join, resolve, dirname, basename } from "path";
-import { parseArgs } from "util";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
 
 // ── Types ──
 
 export interface DetectResult {
   step: "detect";
   status: "ok";
-  method: "plugin" | "submodule" | "none";
+  method: "plugin" | "none";
   root: string;
   needsInstall?: boolean;
 }
@@ -44,21 +49,6 @@ export interface ScaffoldResult {
   reason?: string;
 }
 
-export interface SymlinksResult {
-  step: "symlinks";
-  status: "ok" | "error";
-  created: number;
-  errors: string[];
-}
-
-export interface MergeHooksResult {
-  step: "hooks";
-  status: "ok" | "error";
-  settingsPath: string;
-  hookCount?: number;
-  error?: string;
-}
-
 export interface VerifyCheck {
   name: string;
   ok: boolean;
@@ -68,7 +58,6 @@ export interface VerifyCheck {
 export interface VerifyResult {
   step: "verify";
   status: "ok" | "failed";
-  method: string;
   checks: VerifyCheck[];
   passed: number;
   failed: number;
@@ -78,24 +67,19 @@ export interface VerifyResult {
 
 export function detectInstall(opts: { cwd: string; env?: Record<string, string | undefined> }): DetectResult {
   const env = opts.env ?? process.env;
-  const cwd = opts.cwd;
 
   if (env.CLAUDE_PLUGIN_ROOT) {
     const needsInstall = !existsSync(join(env.CLAUDE_PLUGIN_ROOT, "node_modules"));
     return { step: "detect", status: "ok", method: "plugin", root: env.CLAUDE_PLUGIN_ROOT, needsInstall };
   }
-  if (existsSync(join(cwd, ".kaizen", ".claude-plugin"))) {
-    const needsInstall = !existsSync(join(cwd, ".kaizen", "node_modules"));
-    return { step: "detect", status: "ok", method: "submodule", root: ".kaizen", needsInstall };
-  }
-  if (existsSync(join(cwd, ".kaizen", ".claude"))) {
-    const needsInstall = !existsSync(join(cwd, ".kaizen", "node_modules"));
-    return { step: "detect", status: "ok", method: "submodule", root: ".kaizen", needsInstall };
-  }
   return { step: "detect", status: "ok", method: "none", root: "" };
 }
 
 export function generateConfig(input: ConfigInput, cwd: string): ConfigResult {
+  if (!input.name || !input.repo || !input.description) {
+    return { step: "config", status: "error", error: "missing required fields: name, repo, description" };
+  }
+
   const config: Record<string, unknown> = {
     host: {
       name: input.name,
@@ -118,10 +102,6 @@ export function generateConfig(input: ConfigInput, cwd: string): ConfigResult {
       channel: input.channel ?? "none",
     },
   };
-
-  if (!input.name || !input.repo || !input.description) {
-    return { step: "config", status: "error", error: "missing required fields: name, repo, description" };
-  }
 
   const path = join(cwd, "kaizen.config.json");
   writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
@@ -154,128 +134,7 @@ Add project-specific enforcement rules here.
   return { step: "scaffold", status: "ok", path };
 }
 
-export function setupSymlinks(cwd: string, kaizenRoot: string): SymlinksResult {
-  const errors: string[] = [];
-  let created = 0;
-
-  const absKaizen = resolve(cwd, kaizenRoot);
-  const skillsSource = join(absKaizen, ".claude", "skills");
-  const skillsTarget = join(cwd, ".claude", "skills");
-  const agentsSource = join(absKaizen, ".claude", "agents");
-  const agentsTarget = join(cwd, ".claude", "agents");
-
-  if (!existsSync(skillsSource)) {
-    return { step: "symlinks", status: "error", created: 0, errors: [`${skillsSource} not found`] };
-  }
-
-  mkdirSync(skillsTarget, { recursive: true });
-  mkdirSync(agentsTarget, { recursive: true });
-
-  // Skills
-  for (const entry of readdirSync(skillsSource)) {
-    if (!entry.startsWith("kaizen-")) continue;
-    const target = join(skillsTarget, entry);
-    const source = join("..", "..", kaizenRoot, ".claude", "skills", entry);
-    try {
-      if (lstatSync(target).isSymbolicLink()) unlinkSync(target);
-    } catch { /* doesn't exist yet */ }
-    try {
-      symlinkSync(source, target);
-      created++;
-    } catch (e) {
-      errors.push(`symlink ${entry}: ${(e as Error).message}`);
-    }
-  }
-
-  // Kaizen docs
-  const kaizenDocsTarget = join(cwd, ".claude", "kaizen");
-  const kaizenDocsSource = join("..", "..", kaizenRoot, ".claude", "kaizen");
-  try {
-    if (lstatSync(kaizenDocsTarget).isSymbolicLink()) unlinkSync(kaizenDocsTarget);
-  } catch { /* doesn't exist */ }
-  try {
-    symlinkSync(kaizenDocsSource, kaizenDocsTarget);
-    created++;
-  } catch (e) {
-    errors.push(`symlink kaizen docs: ${(e as Error).message}`);
-  }
-
-  // Agents
-  if (existsSync(agentsSource)) {
-    for (const entry of readdirSync(agentsSource)) {
-      if (!entry.endsWith(".md")) continue;
-      const target = join(agentsTarget, entry);
-      const source = join("..", "..", kaizenRoot, ".claude", "agents", entry);
-      try {
-        if (lstatSync(target).isSymbolicLink()) unlinkSync(target);
-      } catch { /* doesn't exist */ }
-      try {
-        symlinkSync(source, target);
-        created++;
-      } catch (e) {
-        errors.push(`symlink ${entry}: ${(e as Error).message}`);
-      }
-    }
-  }
-
-  return {
-    step: "symlinks",
-    status: errors.length > 0 ? "error" : "ok",
-    created,
-    errors,
-  };
-}
-
-export function mergeHooks(cwd: string, kaizenRoot: string, settingsPath?: string): MergeHooksResult {
-  const resolvedSettings = settingsPath ?? join(cwd, ".claude", "settings.json");
-  const fragmentPath = join(resolve(cwd, kaizenRoot), ".claude", "settings-fragment.json");
-
-  if (!existsSync(fragmentPath)) {
-    return { step: "hooks", status: "error", settingsPath: resolvedSettings, error: `${fragmentPath} not found` };
-  }
-
-  const fragment = JSON.parse(readFileSync(fragmentPath, "utf-8"));
-  const fragmentPrefix = fragment._install_prefix ?? ".kaizen/.claude/hooks/";
-  const targetPrefix = kaizenRoot === "." ? ".claude/hooks/" : `${kaizenRoot}/.claude/hooks/`;
-  const rawHooks = JSON.stringify(fragment.hooks ?? {});
-  const rewrittenHooks = rawHooks.split(fragmentPrefix).join(targetPrefix);
-  const newHooks = JSON.parse(rewrittenHooks);
-
-  mkdirSync(dirname(resolvedSettings), { recursive: true });
-
-  let existing: Record<string, unknown> = {};
-  if (existsSync(resolvedSettings)) {
-    existing = JSON.parse(readFileSync(resolvedSettings, "utf-8"));
-  }
-
-  const existingHooks: Record<string, unknown[]> = (existing as { hooks?: Record<string, unknown[]> }).hooks ?? {};
-
-  // Merge each event type, deduplicate by command path
-  const merged: Record<string, unknown[]> = { ...existingHooks };
-  for (const [event, newEntries] of Object.entries(newHooks) as [string, unknown[]][]) {
-    const existingEntries = merged[event] ?? [];
-    const combined = [...existingEntries, ...newEntries];
-
-    // Deduplicate: use first hook's command as identity
-    const seen = new Set<string>();
-    merged[event] = combined.filter((entry: unknown) => {
-      const hooks = (entry as { hooks?: { command?: string }[] }).hooks;
-      const matcher = (entry as { matcher?: string }).matcher;
-      const key = hooks?.[0]?.command ?? matcher ?? JSON.stringify(entry);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
-
-  const result = { ...existing, hooks: merged };
-  writeFileSync(resolvedSettings, JSON.stringify(result, null, 2) + "\n");
-
-  const hookCount = Object.values(merged).reduce((sum, arr) => sum + arr.length, 0);
-  return { step: "hooks", status: "ok", settingsPath: resolvedSettings, hookCount };
-}
-
-export function verifySetup(cwd: string, method: string): VerifyResult {
+export function verifySetup(cwd: string): VerifyResult {
   const checks: VerifyCheck[] = [];
 
   // Config
@@ -297,143 +156,29 @@ export function verifySetup(cwd: string, method: string): VerifyResult {
     checks.push({ name: "config-exists", ok: false, detail: "not found" });
   }
 
-  // node_modules (needed for tsx hooks like cli-kaizen)
-  const detect = detectInstall({ cwd });
-  if (detect.method !== "none") {
-    const kaizenRoot = detect.root;
-    const nodeModulesPath = join(kaizenRoot, "node_modules");
-    const hasNodeModules = existsSync(nodeModulesPath);
-    checks.push({
-      name: "node-modules",
-      ok: hasNodeModules,
-      detail: hasNodeModules ? undefined : `run: npm --prefix ${kaizenRoot} install`,
-    });
-  }
-
   // Policies
+  const policiesPath = join(cwd, ".claude", "kaizen", "policies-local.md");
   checks.push({
     name: "policies-local",
-    ok: existsSync(join(cwd, ".claude", "kaizen", "policies-local.md")),
-    detail: existsSync(join(cwd, ".claude", "kaizen", "policies-local.md")) ? undefined : "not found",
+    ok: existsSync(policiesPath),
+    detail: existsSync(policiesPath) ? undefined : "not found",
   });
 
   // CLAUDE.md
   const claudeMdPath = join(cwd, "CLAUDE.md");
   if (existsSync(claudeMdPath)) {
     const content = readFileSync(claudeMdPath, "utf-8");
-    checks.push({ name: "claudemd-kaizen", ok: content.toLowerCase().includes("kaizen"), detail: content.toLowerCase().includes("kaizen") ? undefined : "no kaizen content" });
+    checks.push({
+      name: "claudemd-kaizen",
+      ok: content.toLowerCase().includes("kaizen"),
+      detail: content.toLowerCase().includes("kaizen") ? undefined : "no kaizen content",
+    });
   } else {
     checks.push({ name: "claudemd-exists", ok: false, detail: "not found" });
-  }
-
-  // Submodule-specific
-  if (method === "submodule") {
-    const skillLink = join(cwd, ".claude", "skills", "kaizen-reflect");
-    try {
-      const isLink = lstatSync(skillLink).isSymbolicLink();
-      const resolves = existsSync(join(skillLink, "SKILL.md"));
-      checks.push({ name: "skill-symlinks", ok: isLink && resolves, detail: !isLink ? "not a symlink" : !resolves ? "broken symlink" : undefined });
-    } catch {
-      checks.push({ name: "skill-symlinks", ok: false, detail: "not found" });
-    }
-
-    const settingsPath = join(cwd, ".claude", "settings.json");
-    if (existsSync(settingsPath)) {
-      try {
-        const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-        const hookCount = Object.values(settings.hooks ?? {}).reduce((sum: number, arr: unknown) => sum + (arr as unknown[]).length, 0);
-        checks.push({ name: "hooks-registered", ok: hookCount > 0, detail: `${hookCount} hook entries` });
-      } catch {
-        checks.push({ name: "hooks-registered", ok: false, detail: "invalid settings.json" });
-      }
-    } else {
-      checks.push({ name: "hooks-registered", ok: false, detail: "settings.json not found" });
-    }
   }
 
   const passed = checks.filter((c) => c.ok).length;
   const failed = checks.filter((c) => !c.ok).length;
 
-  return { step: "verify", status: failed > 0 ? "failed" : "ok", method, checks, passed, failed };
-}
-
-// ── CLI ──
-
-if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("kaizen-setup.js")) {
-  const { values } = parseArgs({
-    options: {
-      step: { type: "string" },
-      // config args
-      name: { type: "string" },
-      repo: { type: "string" },
-      description: { type: "string" },
-      "kaizen-repo": { type: "string" },
-      "case-cli": { type: "string" },
-      channel: { type: "string" },
-      // common
-      "kaizen-root": { type: "string" },
-      method: { type: "string" },
-      cwd: { type: "string" },
-    },
-    strict: false,
-  }) as { values: Record<string, string | undefined> };
-
-  const cwd = values.cwd ?? process.cwd();
-
-  switch (values.step) {
-    case "detect":
-      console.log(JSON.stringify(detectInstall({ cwd })));
-      break;
-
-    case "config":
-      console.log(
-        JSON.stringify(
-          generateConfig(
-            {
-              name: values.name ?? "",
-              repo: values.repo ?? "",
-              description: values.description ?? "",
-              kaizenRepo: values["kaizen-repo"],
-              caseCli: values["case-cli"],
-              channel: values.channel,
-            },
-            cwd
-          )
-        )
-      );
-      break;
-
-    case "scaffold":
-      console.log(JSON.stringify(scaffoldPolicies(cwd)));
-      break;
-
-    case "symlinks": {
-      const detect = detectInstall({ cwd });
-      if (detect.method === "plugin") {
-        console.log(JSON.stringify({ step: "symlinks", status: "skipped", reason: "plugin mode — symlinks not needed, plugin.json serves skills directly" }));
-      } else {
-        console.log(JSON.stringify(setupSymlinks(cwd, values["kaizen-root"] ?? ".kaizen")));
-      }
-      break;
-    }
-
-    case "hooks": {
-      const detect = detectInstall({ cwd });
-      if (detect.method === "plugin") {
-        console.log(JSON.stringify({ step: "hooks", status: "skipped", reason: "plugin mode — hooks registered via plugin.json, not settings.json", settingsPath: "" }));
-      } else {
-        console.log(JSON.stringify(mergeHooks(cwd, values["kaizen-root"] ?? ".kaizen")));
-      }
-      break;
-    }
-
-    case "verify":
-      console.log(JSON.stringify(verifySetup(cwd, values.method ?? "plugin")));
-      break;
-
-    default:
-      console.error(`Unknown step: ${values.step}`);
-      console.error("Usage: npx tsx src/kaizen-setup.ts --step <detect|config|scaffold|symlinks|hooks|verify> [args]");
-      process.exit(1);
-  }
+  return { step: "verify", status: failed > 0 ? "failed" : "ok", checks, passed, failed };
 }

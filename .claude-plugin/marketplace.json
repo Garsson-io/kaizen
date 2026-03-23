@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Continuous improvement plugin for Claude Code",
-    "version": "1.0.0"
+    "version": "1.0.64"
   },
   "plugins": [
     {
       "name": "kaizen",
       "description": "Enforcement hooks, reflection workflows, dev workflow skills, and recursive self-improvement",
-      "version": "1.0.0",
+      "version": "1.0.64",
       "source": "./",
       "author": { "name": "Garsson-io" },
       "homepage": "https://github.com/Garsson-io/kaizen",
