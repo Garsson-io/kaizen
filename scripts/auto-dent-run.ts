@@ -174,6 +174,8 @@ export interface RunResult {
   issuesPruned: number;
   /** Structured failure classification */
   failureClass?: string;
+  /** Whether the run was killed by the wall-clock timeout watchdog (#686) */
+  timedOut?: boolean;
   /** Contemplation recommendations extracted from contemplate run output */
   contemplationRecs?: string[];
 }
@@ -1071,8 +1073,8 @@ export function closeBatchProgressIssue(
 
 // Execute Claude
 
-// Default max wall time per run: 45 minutes
-const DEFAULT_MAX_RUN_SECONDS = 45 * 60;
+// Default max wall time per run: 20 minutes (#686)
+const DEFAULT_MAX_RUN_SECONDS = 20 * 60;
 // Grace period after result before SIGTERM
 const POST_RESULT_GRACE_MS = 60_000;
 // Grace period after SIGTERM before SIGKILL
@@ -1183,9 +1185,10 @@ async function runClaude(
         }, IN_FLIGHT_UPDATE_INTERVAL_MS)
       : undefined;
 
-    // Global wall-time timeout (#354)
+    // Global wall-time timeout (#354, #686)
     const wallTimer = setTimeout(() => {
       if (!processExited) {
+        result.timedOut = true;
         console.log(
           `  [watchdog] run exceeded ${maxRunMs / 1000}s wall time — SIGTERM`,
         );
@@ -1662,8 +1665,8 @@ async function main(): Promise<void> {
     prompt_hash: promptMeta.hash,
     lifecycle_violations: lifecycleViolationCount,
   };
-  // Classify failure from metrics (log-based classification could be added later)
-  runMetrics.failure_class = classifyFailure(runMetrics);
+  // Classify failure: wall-clock timeout is authoritative (#686), then heuristics
+  runMetrics.failure_class = result.timedOut ? 'timeout' : classifyFailure(runMetrics);
   if (!freshState.run_history) freshState.run_history = [];
   freshState.run_history.push(runMetrics);
 
