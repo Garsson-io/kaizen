@@ -79,6 +79,8 @@ Options:
   --cleanup [batch-id] Close superseded PRs whose issues are already resolved
   --reflect [batch-id] Cross-run pattern analysis and learning
   --reflect --prompt [batch-id]  Output rendered reflection prompt for Claude
+  --history            Cross-batch aggregate stats (all-time metrics)
+  --aggregate [batch-id]  Append batch(es) to aggregate.jsonl (backfill)
   --watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)
   --help               Show this help
 
@@ -127,6 +129,15 @@ fi
 if [[ "${1:-}" = "--watchdog" ]]; then
   shift
   exec npx tsx "$CTL_SCRIPT" watchdog "$@"
+fi
+
+if [[ "${1:-}" = "--history" ]]; then
+  exec npx tsx "$CTL_SCRIPT" history
+fi
+
+if [[ "${1:-}" = "--aggregate" ]]; then
+  shift
+  exec npx tsx "$CTL_SCRIPT" aggregate "$@"
 fi
 
 # Arg parsing
@@ -531,6 +542,10 @@ node -e "
   fs.writeFileSync(summaryPath, lines.join('\n') + '\n');
   console.log('Summary: ' + summaryPath);
 " "$STATE_FILE"
+
+# Append to cross-batch aggregate (#586)
+echo ">>> Appending batch to aggregate..."
+npx tsx "$CTL_SCRIPT" aggregate "$BATCH_ID" 2>/dev/null || echo ">>> Aggregate append skipped (non-fatal)."
 
 # Print last-worked-on state for easy resume
 print_last_state
