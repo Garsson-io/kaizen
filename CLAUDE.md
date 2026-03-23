@@ -19,7 +19,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `.claude/hooks/lib/` | Shared hook libraries |
 | `.claude/hooks/tests/` | Hook test infrastructure |
 | `src/hooks/` | TypeScript hooks |
-| `.claude/settings-fragment.json` | Hook registrations for host projects |
+| `.claude-plugin/plugin.json` | Plugin manifest with hook registrations |
 | `docs/hooks-design.md` | Hooks patterns, anti-patterns, regex traps, gate design, testing conventions |
 | `docs/hook-test-dry-spec.md` | DRY refactoring spec for hook test infrastructure |
 | `docs/test-ladder-spec.md` | Test maturity levels and testing methodology |
@@ -44,6 +44,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `/kaizen-prd` | Problem mapping — iterative discovery to spec |
 | `/kaizen-plan` | Break large work into sequenced PRs |
 | `/kaizen-review-pr` | Self-review checklist |
+| `/kaizen-file-issue` | Fast incident-to-issue capture (2 min) |
 | `/kaizen-zen` | Print the Zen of Kaizen |
 | `/kaizen-wip` | Show in-progress work |
 | `/kaizen-cleanup` | Disk usage analysis and safe cleanup |
@@ -67,6 +68,17 @@ npm run build        # Compile TypeScript
 npm test             # Run TS tests
 npm run test:hooks   # Run shell hook tests
 ```
+
+## Testing — Behavioral vs Structural
+
+Some things CANNOT be tested with unit tests or grep patterns:
+- **SKILL.md / prompt changes** — the "code" runs inside Claude's context. The only real test is `claude -p` with the skill invoked in a `SyntheticProject`.
+- **Issue routing / config-dependent behavior** — must be tested in a realistic host project context where `KAIZEN_REPO != HOST_REPO`.
+- **Hook interaction flows** — must simulate the full event sequence, not just one hook in isolation.
+
+Use `Garsson-io/kaizen-test-fixture` as the host repo for E2E tests. Never test against real user repos. See `src/e2e/setup-live.test.ts` and `src/e2e/issue-routing.test.ts` for patterns.
+
+**Kaizen is a plugin for host projects.** Every skill, hook, and test must work when `KAIZEN_REPO != HOST_REPO` (host project mode), not just when they're equal (self-dogfood mode).
 
 ## The Three Levels
 

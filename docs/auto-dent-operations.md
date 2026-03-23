@@ -91,7 +91,7 @@ Key variables: `{{guidance}}`, `{{run_tag}}`, `{{run_context}}`, `{{issues_close
 | `--budget N.NN` | none | Per-run budget (passed to `claude --max-budget-usd`) |
 | `--max-budget N.NN` | none | Total batch budget — halts when cumulative cost exceeds |
 | `--max-failures N` | 3 | Stop after N consecutive failures |
-| `--max-run-seconds N` | 2700 (45min) | Wall-time timeout per run |
+| `--max-run-seconds N` | 1200 (20min) | Wall-time timeout per run |
 | `--dry-run` | off | Show what would run |
 | `--test-task` | off | Use synthetic fast task |
 | `--experiment` | off | Enable extra pipeline diagnostics |

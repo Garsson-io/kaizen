@@ -12,6 +12,7 @@ import {
   loadPromptTemplate,
   extractArtifacts,
   extractContemplationRecommendations,
+  extractReflectionInsights,
   parsePhaseMarkers,
   formatPhaseMarker,
   checkStopSignal,
@@ -490,6 +491,23 @@ describe('buildTemplateVars with contemplation_recommendations', () => {
     const vars = buildTemplateVars(state, 1);
     expect(vars.contemplation_recommendations).toBe('');
   });
+
+  it('deduplicates identical recommendations (#700)', () => {
+    const state = makeBatchState({
+      contemplation_recommendations: [
+        'Shift focus to testing gaps',
+        'Epic #548 needs decomposition',
+        'Shift focus to testing gaps',
+        'Epic #548 needs decomposition',
+        'Shift focus to testing gaps',
+        'Epic #548 needs decomposition',
+      ],
+    });
+    const vars = buildTemplateVars(state, 5);
+    expect(vars.contemplation_recommendations).toBe(
+      '1. Shift focus to testing gaps\n2. Epic #548 needs decomposition',
+    );
+  });
 });
 
 describe('renderTemplate', () => {
@@ -761,6 +779,103 @@ describe('extractContemplationRecommendations', () => {
   it('only matches at start of line', () => {
     const recs = extractContemplationRecommendations('some text CONTEMPLATION_REC: not a rec');
     expect(recs).toEqual([]);
+  });
+});
+
+describe('extractReflectionInsights', () => {
+  it('extracts structured insights from reflect-mode output', () => {
+    const text = [
+      'Some analysis text...',
+      'REFLECTION_INSIGHT: Prioritize testing issues — 80% success rate',
+      'More analysis...',
+      'REFLECTION_INSIGHT: Avoid issue #472 — blocked on upstream merge',
+    ].join('\n');
+    const insights = extractReflectionInsights(text);
+    expect(insights).toEqual([
+      'Prioritize testing issues — 80% success rate',
+      'Avoid issue #472 — blocked on upstream merge',
+    ]);
+  });
+
+  it('returns empty array when no insights present', () => {
+    expect(extractReflectionInsights('just regular text')).toEqual([]);
+  });
+
+  it('trims whitespace from insights', () => {
+    const insights = extractReflectionInsights('REFLECTION_INSIGHT:   padded text   ');
+    expect(insights).toEqual(['padded text']);
+  });
+
+  it('ignores empty insights', () => {
+    const text = ['REFLECTION_INSIGHT:   ', 'REFLECTION_INSIGHT: valid'].join('\n');
+    const insights = extractReflectionInsights(text);
+    expect(insights).toEqual(['valid']);
+  });
+
+  it('only matches at start of line', () => {
+    const insights = extractReflectionInsights('some text REFLECTION_INSIGHT: not an insight');
+    expect(insights).toEqual([]);
+  });
+});
+
+describe('buildTemplateVars with reflection_insights from state', () => {
+  it('formats state reflection insights as numbered list', () => {
+    const state = makeBatchState({
+      reflection_insights: [
+        'Prioritize testing issues',
+        'Avoid blocked issues',
+      ],
+    });
+    const vars = buildTemplateVars(state, 5);
+    expect(vars.reflection_insights).toContain('1. Prioritize testing issues');
+    expect(vars.reflection_insights).toContain('2. Avoid blocked issues');
+  });
+
+  it('returns empty string when no state reflection insights and no logDir', () => {
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.reflection_insights).toBe('');
+  });
+
+  it('returns empty string for empty array', () => {
+    const state = makeBatchState({ reflection_insights: [] });
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.reflection_insights).toBe('');
+  });
+
+  it('deduplicates identical insights', () => {
+    const state = makeBatchState({
+      reflection_insights: [
+        'Prioritize testing issues',
+        'Avoid blocked issues',
+        'Prioritize testing issues',
+      ],
+    });
+    const vars = buildTemplateVars(state, 5);
+    expect(vars.reflection_insights).toContain('1. Prioritize testing issues');
+    expect(vars.reflection_insights).toContain('2. Avoid blocked issues');
+    expect(vars.reflection_insights).not.toContain('3.');
+  });
+
+  it('merges file-based and state-based insights when logDir has reflection-summary.json', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-merge-'));
+    const summary = {
+      timestamp: new Date().toISOString(),
+      runCount: 3,
+      successRate: 0.67,
+      avgCostPerPr: 2.50,
+      insights: [{ type: 'success_pattern', message: 'Testing hooks works well' }],
+      avoidIssues: [],
+    };
+    writeFileSync(join(tmpDir, 'reflection-summary.json'), JSON.stringify(summary));
+
+    const state = makeBatchState({
+      reflection_insights: ['Agent insight: focus on tests'],
+    });
+    const vars = buildTemplateVars(state, 5, tmpDir);
+    expect(vars.reflection_insights).toContain('Testing hooks works well');
+    expect(vars.reflection_insights).toContain('Agent Reflection Insights');
+    expect(vars.reflection_insights).toContain('1. Agent insight: focus on tests');
   });
 });
 
@@ -2611,5 +2726,52 @@ describe('validateRunLifecycle', () => {
     expect(result.phasesPresent).toContain('PICK');
     expect(result.phasesPresent).toContain('EVALUATE');
     expect(result.phasesPresent).toContain('IMPLEMENT');
+  });
+});
+
+// Static analysis: verify re-exported symbols used locally are also imported (#746)
+// Re-exports (export { X } from './mod') satisfy tsc but don't create local
+// runtime bindings. This test parses the source to catch that class of wiring bug.
+describe('module wiring: re-exported symbols used locally must be imported', () => {
+  it('every symbol called in the module body that comes from a re-export is also in a local import', () => {
+    const source = readFileSync(join(__dirname, 'auto-dent-run.ts'), 'utf-8');
+
+    // Extract re-exported symbols (export { X, Y } from './mod')
+    const reExportPattern = /^export\s*\{([^}]+)\}\s*from\s*['"][^'"]+['"]/gm;
+    const reExported = new Set<string>();
+    for (const m of source.matchAll(reExportPattern)) {
+      for (const sym of m[1].split(',')) {
+        const name = sym.replace(/\s*as\s+\w+/, '').replace(/type\s+/, '').trim();
+        if (name) reExported.add(name);
+      }
+    }
+
+    // Extract locally imported symbols (import { X, Y } from './mod')
+    const importPattern = /^import\s*\{([^}]+)\}\s*from\s*['"][^'"]+['"]/gm;
+    const imported = new Set<string>();
+    for (const m of source.matchAll(importPattern)) {
+      for (const sym of m[1].split(',')) {
+        const name = sym.replace(/\s*as\s+\w+/, '').replace(/type\s+/, '').trim();
+        if (name) imported.add(name);
+      }
+    }
+
+    // Find the main function body (everything after the imports/exports block)
+    // Look for symbols that are: (1) re-exported, (2) called as functions, (3) NOT imported
+    const bodyStart = source.lastIndexOf('from \'./auto-dent-stream.js\';');
+    const body = bodyStart > 0 ? source.slice(bodyStart) : source;
+
+    const missing: string[] = [];
+    for (const sym of reExported) {
+      // Skip type-only re-exports
+      if (sym.startsWith('type ')) continue;
+      // Check if symbol is used as a function call in the body (not in an export block)
+      const callPattern = new RegExp(`(?<!export[^;]*?)\\b${sym}\\s*\\(`, 'm');
+      if (callPattern.test(body) && !imported.has(sym)) {
+        missing.push(sym);
+      }
+    }
+
+    expect(missing).toEqual([]);
   });
 });

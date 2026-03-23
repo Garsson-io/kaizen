@@ -19,7 +19,7 @@
 #   ./scripts/auto-dent.sh --max-runs 5 --budget 5.00 "improve test coverage"
 #   ./scripts/auto-dent.sh --dry-run "test the prompt"
 #
-# Logs go to logs/auto-dent/<batch-id>/
+# Logs go to logs/auto-dent/<batch-name>/  (e.g. logs/auto-dent/brave-dolphin/)
 
 set -euo pipefail
 
@@ -29,6 +29,9 @@ REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-common-
 if [[ -z "$REPO_ROOT" ]]; then
   REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 fi
+
+# Source shared library (#595)
+source "$SCRIPT_DIR/auto-dent-lib.sh"
 
 # Read repo from kaizen.config.json
 CONFIG_FILE="$REPO_ROOT/kaizen.config.json"
@@ -47,7 +50,7 @@ COOLDOWN=30             # seconds between runs
 BUDGET=""               # per-run budget
 MAX_BUDGET=""           # total batch budget
 MAX_FAILURES=3          # consecutive failures before stopping
-MAX_RUN_SECONDS=2700    # 45 minutes per run (wall-time timeout)
+MAX_RUN_SECONDS=1200    # 20 minutes per run (wall-time timeout, #686)
 DRY_RUN=false
 TEST_TASK=false
 EXPERIMENT=false
@@ -70,7 +73,7 @@ Options:
   --budget N.NN        Max USD per run (passed to claude --max-budget-usd)
   --max-budget N.NN    Max USD for entire batch (stops when cumulative cost exceeds)
   --max-failures N     Stop after N consecutive failures (default: 3)
-  --max-run-seconds N  Wall-time timeout per run in seconds (default: 2700 = 45min)
+  --max-run-seconds N  Wall-time timeout per run in seconds (default: 1200 = 20min)
   --no-plan            Skip planning pre-pass (use discovery mode)
   --dry-run            Show what would run without executing
   --test-task          Use synthetic fast task instead of /kaizen-deep-dive
@@ -178,86 +181,28 @@ if [[ -z "$GUIDANCE" && "$TEST_TASK" = true ]]; then
   GUIDANCE="synthetic pipeline test"
 fi
 
-# Batch identity
-BATCH_ID="batch-$(date +%y%m%d-%H%M)-$(printf '%04x' $RANDOM)"
+# Batch identity — human-readable names via unique-names-generator (#701)
+BATCH_NAME=$(node -e "const{uniqueNamesGenerator,adjectives,animals}=require('unique-names-generator');console.log(uniqueNamesGenerator({dictionaries:[adjectives,animals],separator:'-'}))")
+BATCH_ID="$BATCH_NAME"
 BATCH_START=$(date +%s)
 LOG_DIR="$REPO_ROOT/logs/auto-dent/$BATCH_ID"
 mkdir -p "$LOG_DIR"
 HALT_FILE="$LOG_DIR/HALT"
 
-# Initialize state file
+# Initialize state file via library (#595 — safe JSON generation)
 STATE_FILE="$LOG_DIR/state.json"
+ad_init_state "$STATE_FILE" "$BATCH_ID" "$GUIDANCE" "$BATCH_START" \
+  "$MAX_RUNS" "$COOLDOWN" "$BUDGET" "$MAX_BUDGET" "$MAX_FAILURES" \
+  "${KAIZEN_REPO:-}" "${HOST_REPO:-}" "$TEST_TASK" "$EXPERIMENT" "$MAX_RUN_SECONDS"
 
-# JSON-escape guidance using node
-GUIDANCE_JSON=$(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" "$GUIDANCE")
-BUDGET_JSON=$(if [[ -n "$BUDGET" ]]; then echo "\"$BUDGET\""; else echo "null"; fi)
-MAX_BUDGET_JSON=$(if [[ -n "$MAX_BUDGET" ]]; then echo "\"$MAX_BUDGET\""; else echo "null"; fi)
-KAIZEN_REPO_JSON=$(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" "${KAIZEN_REPO:-}")
-HOST_REPO_JSON=$(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" "${HOST_REPO:-}")
-
-cat > "$STATE_FILE" << STATEOF
-{
-  "batch_id": "$BATCH_ID",
-  "guidance": $GUIDANCE_JSON,
-  "batch_start": $BATCH_START,
-  "max_runs": $MAX_RUNS,
-  "cooldown": $COOLDOWN,
-  "budget": $BUDGET_JSON,
-  "max_budget": $MAX_BUDGET_JSON,
-  "max_failures": $MAX_FAILURES,
-  "kaizen_repo": $KAIZEN_REPO_JSON,
-  "host_repo": $HOST_REPO_JSON,
-  "run": 0,
-  "consecutive_failures": 0,
-  "current_cooldown": $COOLDOWN,
-  "stop_reason": "",
-  "prs": [],
-  "issues_filed": [],
-  "issues_closed": [],
-  "cases": [],
-  "last_issue": "",
-  "last_pr": "",
-  "last_case": "",
-  "last_branch": "",
-  "last_worktree": "",
-  "progress_issue": "",
-  "test_task": $TEST_TASK,
-  "experiment": $EXPERIMENT,
-  "max_run_seconds": $MAX_RUN_SECONDS,
-  "last_heartbeat": 0
-}
-STATEOF
-
-# State helpers (using node)
+# State helpers — thin wrappers around auto-dent-lib.sh functions
+# These bind $STATE_FILE so callers don't need to pass it everywhere.
 read_state() {
-  node -e "
-    const s = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-    const v = s[process.argv[2]];
-    console.log(v === null || v === undefined ? '' : String(v));
-  " "$STATE_FILE" "$1"
+  ad_read_state "$STATE_FILE" "$1"
 }
 
 update_state() {
-  node -e "
-    const fs = require('fs');
-    const path = process.argv[1];
-    const key = process.argv[2];
-    const val = process.argv[3];
-    // Validate key is a simple identifier (no injection)
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
-      console.error('[state-io] Invalid state key: ' + key);
-      process.exit(1);
-    }
-    const s = JSON.parse(fs.readFileSync(path, 'utf8'));
-    s[key] = val;
-    const content = JSON.stringify(s, null, 2) + '\n';
-    // Validate round-trip
-    JSON.parse(content);
-    // Backup + atomic write
-    if (fs.existsSync(path)) fs.copyFileSync(path, path + '.bak');
-    fs.writeFileSync(path + '.tmp', content);
-    fs.renameSync(path + '.tmp', path);
-  " "$STATE_FILE" "$1" "$2"
+  ad_update_state "$STATE_FILE" "$1" "$2"
 }
 
 # Graceful shutdown
@@ -279,13 +224,7 @@ print_last_state() {
 }
 
 check_halt_file() {
-  if [[ -n "$HALT_FILE" && -f "$HALT_FILE" ]]; then
-    echo ">>> Halt file detected: $HALT_FILE"
-    update_state stop_reason "halt file (remote request)"
-    SHUTTING_DOWN=true
-    return 0
-  fi
-  return 1
+  ad_check_halt_file "$HALT_FILE" "$STATE_FILE"
 }
 
 # Banner

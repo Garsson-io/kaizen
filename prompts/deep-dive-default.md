@@ -75,19 +75,23 @@ Emit the DECOMPOSE phase marker when breaking down an epic:
 This is higher-value than stopping — advancing an epic by one concrete step
 moves the strategic layer forward.
 
-## Stopping the Loop
+## Scope: plan first, then execute
 
-If you determine there is no more meaningful work to do matching the guidance
-(backlog exhausted, all relevant issues claimed, remaining issues are
-blocked/too risky, AND no epics/PRDs can be decomposed), include this exact
-marker in your final response:
+**Before picking up any work, decide your scope for this run.** Look at the available issues and ask: are any of them the same root cause, same file, or naturally bundled? If yes, plan to handle them together in one PR or a small set of PRs — decide that now, upfront.
+
+Once you start executing, **do not expand scope**. Finishing a PR is not a trigger to pick more work. The harness will restart with fresh context and updated state for the next run. Casually grabbing additional issues after completing your planned work is the failure mode — it creates a blind loop where each completion just pulls in more scope with no deliberate decision.
+
+The right pattern:
+- **PLAN:** assess available issues, decide what this run covers (one issue, or a deliberate bundle), state it explicitly
+- **EXECUTE:** implement exactly what you planned
+- **STOP:** when your plan is done, stop — the harness restarts
+
+If all issues are genuinely exhausted (backlog empty, all remaining issues claimed or blocked, AND no epics/PRDs can be decomposed), include this marker in your final response:
 
 AUTO_DENT_PHASE: STOP | reason=<reason>
 
 For example: "AUTO_DENT_PHASE: STOP | reason=backlog exhausted — no more open issues matching 'hooks reliability'"
-This will gracefully stop the batch loop. Only use this when you've genuinely
-run out of work — not when a single run is complete. Before stopping, check
-whether there are epics or PRDs you could decompose instead.
+Only emit STOP when work is truly gone, not at the end of a normal run.
 
 When done, summarize what was accomplished. List all PRs created, issues filed,
 and issues closed with full URLs.

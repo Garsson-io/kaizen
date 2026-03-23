@@ -40,10 +40,14 @@ export {
   isIssueClosed,
   cleanupSupersededPRs,
   fetchIssueLabels,
+  syncEpicChecklists,
+  verifyIssuesClosed,
   type MergeStatus,
   type SweepAction,
   type SweepResult,
   type CleanupResult,
+  type EpicSyncResult,
+  type VerifyCloseResult,
 } from './auto-dent-github.js';
 
 export {
@@ -65,6 +69,7 @@ export {
   formatPhaseMarker,
   extractArtifacts,
   extractContemplationRecommendations,
+  extractReflectionInsights,
   checkStopSignal,
   processStreamMessage,
   buildInFlightComment,
@@ -83,6 +88,8 @@ import {
   labelArtifacts,
   queueAutoMerge,
   fetchIssueLabels,
+  verifyIssuesClosed,
+  syncEpicChecklists,
 } from './auto-dent-github.js';
 import {
   color,
@@ -129,6 +136,8 @@ export interface BatchState {
   run_history?: RunMetrics[];
   /** Recommendations from contemplation runs that feed back into subsequent runs */
   contemplation_recommendations?: string[];
+  /** Insights from reflect-mode runs that feed back into subsequent runs (#699) */
+  reflection_insights?: string[];
 }
 
 export interface RunMetrics {
@@ -174,8 +183,12 @@ export interface RunResult {
   issuesPruned: number;
   /** Structured failure classification */
   failureClass?: string;
+  /** Whether the run was killed by the wall-clock timeout watchdog (#686) */
+  timedOut?: boolean;
   /** Contemplation recommendations extracted from contemplate run output */
   contemplationRecs?: string[];
+  /** Reflection insights extracted from reflect-mode run output (#699) */
+  reflectionInsights?: string[];
 }
 
 // State I/O
@@ -344,6 +357,15 @@ export function buildTemplateVars(
     priorReflections = loadReflectionHistory(logDir);
   }
 
+  // Merge state-based reflection insights from REFLECTION_INSIGHT: markers (#699)
+  const stateInsights = [...new Set(state.reflection_insights || [])];
+  if (stateInsights.length > 0) {
+    const stateInsightsText = stateInsights.map((r, i) => `${i + 1}. ${r}`).join('\n');
+    reflectionInsights = reflectionInsights
+      ? `${reflectionInsights}\n\n### Agent Reflection Insights\n\n${stateInsightsText}`
+      : stateInsightsText;
+  }
+
   // Build run history table and batch-level stats for reflect/contemplate prompts
   let runHistoryTable = '';
   let totalCost = '';
@@ -384,8 +406,8 @@ export function buildTemplateVars(
     }
   }
 
-  // Format contemplation recommendations for prompt injection
-  const contemplationRecs = (state.contemplation_recommendations || []);
+  // Format contemplation recommendations for prompt injection (dedup on read — #700)
+  const contemplationRecs = [...new Set(state.contemplation_recommendations || [])];
   const contemplationRecsText = contemplationRecs.length > 0
     ? contemplationRecs.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
@@ -1071,8 +1093,8 @@ export function closeBatchProgressIssue(
 
 // Execute Claude
 
-// Default max wall time per run: 45 minutes
-const DEFAULT_MAX_RUN_SECONDS = 45 * 60;
+// Default max wall time per run: 20 minutes (#686)
+const DEFAULT_MAX_RUN_SECONDS = 20 * 60;
 // Grace period after result before SIGTERM
 const POST_RESULT_GRACE_MS = 60_000;
 // Grace period after SIGTERM before SIGKILL
@@ -1183,9 +1205,10 @@ async function runClaude(
         }, IN_FLIGHT_UPDATE_INTERVAL_MS)
       : undefined;
 
-    // Global wall-time timeout (#354)
+    // Global wall-time timeout (#354, #686)
     const wallTimer = setTimeout(() => {
       if (!processExited) {
+        result.timedOut = true;
         console.log(
           `  [watchdog] run exceeded ${maxRunMs / 1000}s wall time — SIGTERM`,
         );
@@ -1629,6 +1652,40 @@ async function main(): Promise<void> {
     }
   }
 
+  // Verify issues claimed by merged PRs are actually closed (#730, Gap 2)
+  // Must run before epic sync so force-closed issues are included
+  const allBatchPRsForVerify = [...new Set([...state.prs, ...result.prs])];
+  if (allBatchPRsForVerify.length > 0) {
+    const verifyResults = verifyIssuesClosed(allBatchPRsForVerify, state.kaizen_repo);
+    const forceClosed = verifyResults.flatMap((r) => r.forceClosed);
+    if (forceClosed.length > 0) {
+      console.log(`  [verify-close] force-closed ${forceClosed.length} issue(s): ${forceClosed.join(', ')}`);
+      // Add force-closed issues to the result so they're tracked in state
+      for (const issue of forceClosed) {
+        const num = issue.replace('#', '');
+        const url = `https://github.com/${state.kaizen_repo}/issues/${num}`;
+        if (!result.issuesClosed.includes(url) && !result.issuesClosed.includes(issue)) {
+          result.issuesClosed.push(url);
+        }
+      }
+    }
+  }
+
+  // Sync epic checklists for all closed issues in this batch (#730, Gap 1)
+  const allClosedNums = [...new Set([
+    ...state.issues_closed,
+    ...result.issuesClosed,
+  ])].map((ref) => {
+    const m = ref.match(/(\d+)/);
+    return m ? m[1] : '';
+  }).filter(Boolean);
+  if (allClosedNums.length > 0) {
+    const epicResults = syncEpicChecklists(allClosedNums, state.kaizen_repo);
+    for (const er of epicResults) {
+      console.log(`  [epic-sync] ${er.epic}: ${er.issuesChecked.length} newly checked, ${er.alreadyChecked.length} already checked`);
+    }
+  }
+
   updateBatchProgressIssue(
     progressIssue,
     state.kaizen_repo,
@@ -1662,8 +1719,8 @@ async function main(): Promise<void> {
     prompt_hash: promptMeta.hash,
     lifecycle_violations: lifecycleViolationCount,
   };
-  // Classify failure from metrics (log-based classification could be added later)
-  runMetrics.failure_class = classifyFailure(runMetrics);
+  // Classify failure: wall-clock timeout is authoritative (#686), then heuristics
+  runMetrics.failure_class = result.timedOut ? 'timeout' : classifyFailure(runMetrics);
   if (!freshState.run_history) freshState.run_history = [];
   freshState.run_history.push(runMetrics);
 
@@ -1685,8 +1742,10 @@ async function main(): Promise<void> {
   // Store contemplation recommendations in batch state (#631)
   if (result.contemplationRecs && result.contemplationRecs.length > 0) {
     if (!freshState.contemplation_recommendations) freshState.contemplation_recommendations = [];
-    freshState.contemplation_recommendations.push(...result.contemplationRecs);
-    console.log(`  [contemplate] ${result.contemplationRecs.length} recommendation(s) stored in batch state`);
+    const existing = new Set(freshState.contemplation_recommendations);
+    const newRecs = result.contemplationRecs.filter(r => !existing.has(r));
+    freshState.contemplation_recommendations.push(...newRecs);
+    console.log(`  [contemplate] ${newRecs.length} new recommendation(s) stored (${result.contemplationRecs.length - newRecs.length} duplicates skipped)`);
     events.emit({
       type: 'batch.reflect',
       run_id: makeRunId(state.batch_id, runNum),
@@ -1694,6 +1753,15 @@ async function main(): Promise<void> {
       run_num: runNum,
       recommendations_count: result.contemplationRecs.length,
     });
+  }
+
+  // Store reflection insights in batch state (#699)
+  if (result.reflectionInsights && result.reflectionInsights.length > 0) {
+    if (!freshState.reflection_insights) freshState.reflection_insights = [];
+    const existing = new Set(freshState.reflection_insights);
+    const newInsights = result.reflectionInsights.filter(r => !existing.has(r));
+    freshState.reflection_insights.push(...newInsights);
+    console.log(`  [reflect] ${newInsights.length} new insight(s) stored (${result.reflectionInsights.length - newInsights.length} duplicates skipped)`);
   }
 
   if (result.prs.length > 0) {

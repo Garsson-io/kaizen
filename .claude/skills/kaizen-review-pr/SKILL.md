@@ -1,3 +1,9 @@
+---
+name: kaizen-review-pr
+description: Review PR — Deep Code Review with Learnable Criteria
+user_invocable: true
+---
+
 # Review PR — Deep Code Review with Learnable Criteria
 
 Structured code review that reads the diff against concrete, modifiable criteria. The review criteria live in `.claude/kaizen/review-criteria.md` — a separate file that grows smarter as failure modes are discovered.
@@ -15,7 +21,7 @@ The `pr-review-loop.sh` hook enforces that this review happens. This skill defin
 
 1. **Read the review criteria:** Load `.claude/kaizen/review-criteria.md` — this is the rubric.
 2. **Read the diff:** `gh pr diff <pr-url>` — read every file, not just a summary.
-3. **Read linked issues:** Check PR body, branch name, commits for `#N` or `kaizen#N`. If found, `gh issue view` to understand requirements.
+3. **Read linked issues:** Check PR body, branch name, commits for `#N` or `kaizen#N`. If found, `gh issue view --repo "$ISSUES_REPO"` to understand requirements.
 4. **Scan recent failure modes:** Check the "Learned Failure Modes" section of the criteria file. These are patterns from past incidents — watch for them specifically in this diff.
 
 ### Phase 2: Review Using Subagents

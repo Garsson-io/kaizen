@@ -17,6 +17,10 @@ import { join } from 'node:path';
 import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
 import { stripHeredocBody } from './parse-command.js';
 import {
+  buildReflectionRecord,
+  persistReflection,
+} from './reflection-persistence.js';
+import {
   DEFAULT_AUDIT_DIR,
   DEFAULT_STATE_DIR,
   clearStateWithStatusAnyBranch,
@@ -379,6 +383,47 @@ function defaultPostComment(prUrl: string, comment: string): void {
   });
 }
 
+// ── PRD detection (kaizen #694) ───────────────────────────────────────
+
+/** List changed files in a PR (best-effort). */
+function defaultGetPrFiles(prUrl: string): string[] {
+  const prNum = prUrl.match(/(\d+)$/)?.[1];
+  const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
+  if (!prNum || !repo) return [];
+  try {
+    const out = execSync(
+      `gh pr diff ${prNum} --repo "${repo}" --name-only`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 15000 },
+    ).trim();
+    return out ? out.split('\n').map(f => f.trim()).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Check if PR contains new PRD files. */
+export function hasPrdFiles(files: string[]): boolean {
+  return files.some(f => /^docs\/prd[/-].*\.md$/i.test(f));
+}
+
+/** Block gate clearing when a PRD is created but no issues were filed (kaizen #683). */
+export function detectPrdWithoutFiledIssues(
+  files: string[],
+  items: Impediment[],
+  isNoAction: boolean,
+): string | null {
+  if (!hasPrdFiles(files)) return null;
+  const filedCount = items.filter(
+    i => i.disposition === 'filed' || i.disposition === 'incident',
+  ).length;
+  if (!isNoAction && filedCount > 0) return null;
+  return (
+    'BLOCKED: You created a PRD but filed no actionable issues. ' +
+    'PRDs without filed issues are "reflection without action" (kaizen #683). ' +
+    'File at least one P0/P1 item as a GitHub issue, then resubmit your reflection with it as a "filed" disposition.'
+  );
+}
+
 // ── Core logic (extracted for testability) ───────────────────────────
 
 export function processHookInput(
@@ -386,6 +431,7 @@ export function processHookInput(
   options: {
     stateDir?: string;
     postComment?: (prUrl: string, comment: string) => void;
+    getPrFiles?: (prUrl: string) => string[];
   } = {},
 ): string | null {
   if (input.tool_name !== 'Bash') return null;
@@ -499,6 +545,18 @@ export function processHookInput(
       }
     }
 
+    // PRD-without-issues BLOCKING check (kaizen #683, upgraded from #694 advisory)
+    const getPrFiles = options.getPrFiles ?? defaultGetPrFiles;
+    try {
+      const files = getPrFiles(gatePrUrl);
+      const prdBlock = detectPrdWithoutFiledIssues(
+        files,
+        validatedItems,
+        isNoAction,
+      );
+      if (prdBlock) return `\n${prdBlock}\n`;
+    } catch {}
+
     clearStateWithStatusAnyBranch(
       'needs_pr_kaizen',
       stateDir,
@@ -516,6 +574,25 @@ export function processHookInput(
         isNoAction,
       );
       postComment(gatePrUrl, comment);
+    } catch {}
+
+    // Persist reflection to searchable JSONL (kaizen #272, best-effort)
+    try {
+      const clearType = isNoAction
+        ? 'no-action' as const
+        : validatedItems.length === 0
+          ? 'empty-array' as const
+          : 'impediments' as const;
+      const quality = classifyReflectionQuality(validatedItems);
+      const record = buildReflectionRecord({
+        prUrl: gatePrUrl,
+        branch: currentBranch(),
+        clearType,
+        clearReason,
+        quality,
+        impediments: validatedItems,
+      });
+      persistReflection(record);
     } catch {}
 
     // Auto-close kaizen issues (best-effort)

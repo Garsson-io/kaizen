@@ -26,7 +26,7 @@ Before touching any source code, verify a case exists. The `enforce-case-exists.
 **Checklist:**
 1. **Issue still open?** Before entering a worktree or creating a case, verify the issue isn't already fixed:
    ```bash
-   gh issue view {N} --repo "$KAIZEN_REPO" --json state
+   gh issue view {N} --repo "$ISSUES_REPO" --json state
    git log --oneline --all --grep="#{N}" | head -5
    ```
    If closed or a commit references it, STOP — report to admin before proceeding.
@@ -63,7 +63,7 @@ For kaizen issues, always pass `--github-issue` to link the case to the existing
 4. **Self-review: invoke `/kaizen-review-pr`** — This invokes the review skill which has its own 4-task workflow: (1) load review criteria from `.claude/kaizen/review-criteria.md`, read full diff, scan failure modes FM-1 through FM-12; (2) review using subagents — small PR (≤50 lines): sequential, medium (50-300): 2-3 agents, large (>300): 5 parallel agents covering DRY, testability, tooling, security, and horizons; (3) filter findings — drop confidence < 75, classify MUST-FIX (≥90) and SHOULD-FIX (75-89); (4) fix loop below.
 5. **Review fix loop** — Fix all MUST-FIX and SHOULD-FIX findings from the review. Commit + push fixes. Re-run `/kaizen-review-pr` from step (1). Repeat until clean or max 3 rounds. If still unclean at round 3: escalate to human with `gh pr comment`. Hooks `pr-review-loop.sh` and `enforce-pr-review-stop.sh` enforce this — you cannot stop with pending review.
 6. **Commit + push** — Stage changes, commit with descriptive message, push to remote branch.
-7. **Create PR** — `gh pr create` with `Fixes Garsson-io/kaizen#N` in body (cross-repo prefix required for auto-close). Add `status:has-pr` label to kaizen issue. Add PR link as comment.
+7. **Create PR** — `gh pr create` with `Fixes $ISSUES_REPO#N` in body (cross-repo prefix required for auto-close). Add `status:has-pr` label to kaizen issue. Add PR link as comment.
 8. **Wait for CI** — Run `gh pr checks` to watch for CI failures. If checks fail, read the failure, fix, commit, push, and re-check. Do not merge with failing checks.
 9. **Merge (squash)** — Verify no merge conflicts. Squash merge. Verify merge completed cleanly (check PR state is "merged"). If conflicts: merge main into branch, resolve, push, re-check CI, then merge.
 10. **Kaizen reflection (subagent)** — The kaizen-bg subagent handles reflection in the background. It reads the full session transcript (uncompressed — it sees what you may have forgotten), scans for signals (user corrections, failed tool calls, hook denials, retries), and files incidents/issues independently. You launch it via the Agent tool when the hook fires, then wait for its results to clear the gate. Note any impediments you noticed during the session to pass along.
@@ -104,6 +104,8 @@ Every requirement in the spec was added by someone smart at some point. That doe
 This step is about **accuracy** — is the spec still true? — not about **scope** — can we do less? Scope was decided in `/kaizen-evaluate`.
 
 If re-examination reveals something significant has changed (e.g., half the spec was already built by another PR, or a key assumption is wrong), **don't unilaterally skip it**. Flag it to the admin: "The spec assumed X but Y is now true — should we adjust scope?" That's an accept-case decision, not an implementation decision.
+
+**Solution fitness check (kaizen #714):** If during re-examination you realize the spec's proposed solution may address the wrong failure mode or use an unnecessarily complex mechanism, halt and surface the concern before implementing. A correct implementation of the wrong spec wastes more time than pausing to validate. See `/kaizen-evaluate` Phase 4 "Solution evaluation" for the 5-question check.
 
 **The spec was written to be complete. Implementation should match the problem.** Not everything in the spec needs to be built right now — but what you do build should be built well. *"Avoiding overengineering is not a license to underengineer."*
 
@@ -157,12 +159,12 @@ The L3 enforcement in `ipc-cases.ts` will:
 After creating a PR, link it to the kaizen issue and ensure auto-closure on merge:
 ```bash
 # Add has-pr label
-gh issue edit {N} --repo "$KAIZEN_REPO" --add-label "status:has-pr"
+gh issue edit {N} --repo "$ISSUES_REPO" --add-label "status:has-pr"
 # Add PR link as comment
-gh issue comment {N} --repo "$KAIZEN_REPO" --body "PR: {pr_url}"
+gh issue comment {N} --repo "$ISSUES_REPO" --body "PR: {pr_url}"
 ```
 
-**CRITICAL: The PR description body MUST include `Fixes Garsson-io/kaizen#{N}`** (with the cross-repo prefix). This tells GitHub to auto-close the kaizen issue when the PR merges. Without this, issues stay open after PRs merge and epic progress tracking breaks.
+**CRITICAL: The PR description body MUST include `Fixes $ISSUES_REPO#{N}`** (with the full `owner/repo` prefix). This tells GitHub to auto-close the kaizen issue when the PR merges. Without this, issues stay open after PRs merge and epic progress tracking breaks. When `$ISSUES_REPO == $HOST_REPO` (same repo), `Fixes #{N}` also works.
 
 ### On case completion
 
@@ -182,9 +184,9 @@ When a sub-issue is closed (either by PR merge or case completion), **update the
 
 ```bash
 # Find the parent epic — look for task list references to this issue
-gh issue list --repo "$KAIZEN_REPO" --state open --label "kaizen" --search "#{N}" --json number,title
+gh issue list --repo "$ISSUES_REPO" --state open --label "kaizen" --search "#{N}" --json number,title
 # Then edit the epic body with updated progress
-gh issue edit {EPIC} --repo "$KAIZEN_REPO" --body "$(cat <<'BODY'
+gh issue edit {EPIC} --repo "$ISSUES_REPO" --body "$(cat <<'BODY'
 ... updated body with checked items, current state, next step ...
 BODY
 )"
@@ -413,6 +415,24 @@ After implementation, **reproduce the original problem and verify it's actually 
 
 The flow is usually: `write-prd → accept-case → implement-spec → kaizen`. But it's not always linear — `implement-spec` may loop back to `write-prd` when it discovers the spec needs more detail for the current level, or to `accept-case` when implementation reveals the problem is different than expected.
 
+## Dual Failure Mode Check — MANDATORY for behavioral constraints (kaizen #722)
+
+When implementing a behavioral constraint (prompt change, stop condition, scope rule, enforcement rule), you must name both failure modes before shipping:
+
+1. **If this rule is absent — what goes wrong?** (the original bug that motivated the rule)
+2. **If this rule is present — what valid behavior does it prevent?** (the over-correction risk)
+
+**If you can't answer both, the constraint isn't fully specified.** Going from one failure mode to the other without naming both is a predictable pattern — the agent focuses on eliminating the original problem and doesn't ask "what valid behavior does this rule prevent?"
+
+**Example — PR #718 (the incident that motivated this):** Fixed auto-dent's blind-loop problem with "one issue per run." The constraint was too restrictive — it prevented intentional bundling that `/kaizen-deep-dive` already handles deliberately. Required a second PR (#720) to correct it. Naming both failure modes upfront would have caught the over-correction.
+
+**How to apply:**
+- State both failure modes explicitly in the PR description
+- If the constraint is a prompt/SKILL.md change, include an "Exceptions" or "When this rule does NOT apply" section
+- If you can't identify the over-correction risk, ask: "What is the most sophisticated valid use case this rule would block?"
+
+This check applies to: SKILL.md prompt additions, hook rules, scope constraints, stop conditions, enforcement policies. It does NOT apply to: bug fixes, feature code, test additions, documentation.
+
 ## Anti-patterns
 
 - **Spec-as-checklist.** Grinding through every spec section in order, implementing what it says regardless of whether the world has changed. The spec is a map, not a contract.
@@ -420,6 +440,7 @@ The flow is usually: `write-prd → accept-case → implement-spec → kaizen`. 
 - **Skipping re-examination.** Jumping straight to coding without questioning whether the requirements are still valid. This is how you implement solutions to problems that no longer exist. *"The most dangerous requirement is the one nobody re-examined."*
 - **Gold-plating.** Adding capabilities the spec mentions as "future work" because you're already in the code. Future work is future work. Ship the current step.
 - **Ignoring new information.** Something you discovered during implementation contradicts the spec. Instead of updating the spec and adjusting, you forge ahead with the original plan. *"Specs are hypotheses. Incidents are data."*
+- **Over-correcting constraints.** Shipping a behavioral rule that fixes the original bug but blocks valid behavior. Name both failure modes (absent vs present) before shipping — see Dual Failure Mode Check above.
 - **Big-bang implementation.** "I'll implement the whole spec in one PR." No. Find the smallest valuable step. Ship it. Loop.
 
 ## Recursive Kaizen — Improving the Improvement Process

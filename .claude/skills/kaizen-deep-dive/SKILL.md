@@ -44,8 +44,8 @@ AVAILABLE: CI quality, kaizen skills, testing infra, case routing, security, obs
 
 **Priority override:** Before choosing a domain, check for `priority:critical` and `priority:high` issues:
 ```bash
-gh issue list --repo "$KAIZEN_REPO" --state open --label "priority:critical" --json number,title,labels
-gh issue list --repo "$KAIZEN_REPO" --state open --label "priority:high" --json number,title,labels
+gh issue list --repo "$ISSUES_REPO" --state open --label "priority:critical" --json number,title,labels
+gh issue list --repo "$ISSUES_REPO" --state open --label "priority:high" --json number,title,labels
 ```
 If critical/high-priority issues exist in an AVAILABLE domain, prefer that domain — the priority labels represent concrete urgency from human or system needs.
 
@@ -56,10 +56,10 @@ Launch **parallel research agents** to build a complete picture of the target do
 **Agent A — Issue Archaeology:**
 ```bash
 # All open issues in the target domain
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 100 --json number,title,labels,body,comments
+gh issue list --repo "$ISSUES_REPO" --state open --limit 100 --json number,title,labels,body,comments
 
 # Closed issues for pattern history
-gh issue list --repo "$KAIZEN_REPO" --state closed --limit 50 --json number,title,labels,body,closedAt
+gh issue list --repo "$ISSUES_REPO" --state closed --limit 50 --json number,title,labels,body,closedAt
 ```
 
 Classify each issue: is it a **symptom** (one-off bug) or a **root cause** (category-level problem)?

@@ -70,3 +70,13 @@ Output your reflection in this format:
 ```
 
 Be specific and data-driven. Reference run numbers and PR URLs when possible.
+
+After your markdown reflection, emit structured insight markers so the harness can
+extract and inject your recommendations into subsequent runs. One per line, at the
+start of the line:
+
+REFLECTION_INSIGHT: <one-sentence actionable insight>
+
+Example:
+REFLECTION_INSIGHT: Prioritize testing issues — they have 80% success rate vs 40% for refactors
+REFLECTION_INSIGHT: Avoid issue #472 — blocked on upstream merge, two runs wasted on it

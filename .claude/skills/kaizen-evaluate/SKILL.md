@@ -35,7 +35,7 @@ This is a conversation, not a checklist. The phases overlap. Use judgment about 
 1. **Already fixed?** Check if the issue was already resolved by a merged PR or commit:
    ```bash
    # Check if issue is closed
-   gh issue view {N} --repo "$KAIZEN_REPO" --json state
+   gh issue view {N} --repo "$ISSUES_REPO" --json state
    # Search git log for commits referencing this issue
    git log --oneline --all --grep="#{N}" | head -5
    # Search for PRs that fixed this issue
@@ -45,7 +45,7 @@ This is a conversation, not a checklist. The phases overlap. Use judgment about 
 
 2. **GitHub labels:** Does the kaizen issue have `status:active`, `status:backlog`, or `status:blocked` labels?
    ```bash
-   gh issue view {N} --repo "$KAIZEN_REPO" --json labels,state
+   gh issue view {N} --repo "$ISSUES_REPO" --json labels,state
    ```
 
 3. **Active cases in database:** Is there a case linked to this issue?
@@ -69,8 +69,8 @@ This is a conversation, not a checklist. The phases overlap. Use judgment about 
 
 **On approval (end of Phase 5):** When the admin approves this case for implementation, label the kaizen issue as claimed:
 ```bash
-gh issue edit {N} --repo "$KAIZEN_REPO" --add-label "status:backlog"
-gh issue comment {N} --repo "$KAIZEN_REPO" --body "Claimed for evaluation by accept-case at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+gh issue edit {N} --repo "$ISSUES_REPO" --add-label "status:backlog"
+gh issue comment {N} --repo "$ISSUES_REPO" --body "Claimed for evaluation by accept-case at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
 This labeling is defense-in-depth on top of the L3 enforcement in `ipc-cases.ts` (which blocks duplicate case creation for the same kaizen issue). The label makes the claim visible to other agents checking `gh issue list` before they even reach the code-level check.
@@ -81,9 +81,9 @@ Before doing deep analysis, check if a detailed spec already exists for this iss
 
 ```bash
 # Check for linked spec documents
-gh issue view {N} --repo "$KAIZEN_REPO" --json body --jq '.body' | grep -oE 'docs/[a-z0-9-]+-spec\.md'
+gh issue view {N} --repo "$ISSUES_REPO" --json body --jq '.body' | grep -oE 'docs/[a-z0-9-]+-spec\.md'
 # Check issue body length (>100 lines suggests a detailed spec)
-gh issue view {N} --repo "$KAIZEN_REPO" --json body --jq '.body' | wc -l
+gh issue view {N} --repo "$ISSUES_REPO" --json body --jq '.body' | wc -l
 ```
 
 **If a detailed spec exists (>100 lines or links to a `docs/*-spec.md`):**
@@ -226,6 +226,20 @@ Read the spec with the incidents in hand. Evaluate:
 - **What's over-specified?** Options that are clearly wrong shouldn't take up space.
 - **Is the most important question buried?** Specs sometimes bury the pivotal decision as an "open question" instead of resolving it first.
 - **Is there a simpler framing?** Sometimes the spec is solving the wrong problem at the right scope, or the right problem at the wrong scope.
+
+#### Solution evaluation — is this the right fix? (kaizen #714)
+
+Scope evaluation asks "should we do this?" Solution evaluation asks "is this the right thing to do?" Both are required. Before accepting a spec's proposed solution, answer:
+
+1. **What failure mode does this spec address? Is that the right failure mode?** The spec may describe a symptom while the root cause is elsewhere.
+2. **Is the proposed mechanism the simplest one that addresses it? What alternatives exist?** A lint hook, a test, a SKILL.md update, and an architectural change all address "bad code gets committed" — but at very different costs.
+3. **Would a simpler fix (one level lower: L3→L2→L1) address the same failure mode?** Don't build L2 enforcement when L1 instructions would suffice. Don't build L3 architecture when L2 hooks would work.
+4. **Is this failure mode expected to recur? If not, is prevention worth the overhead?** A one-time incident doesn't necessarily justify a permanent mechanism.
+5. **What is the cost of the proposed mechanism?** Maintenance burden, false positives, performance impact, cognitive load on agents. Every mechanism has ongoing cost.
+
+**If any answer raises doubt, surface it before implementing.** Do not ship a correct implementation of the wrong spec. The goal is to catch #685-style mistakes (perfect implementation, wrong solution) before they consume implementation time.
+
+**Red flag:** The spec's solution section reads like a task list ("add hook X, modify file Y, create test Z") instead of describing the desired outcome. That's a sign the solution was the first idea, not the best one.
 
 **If this case is one phase of a larger spec**, also assess the spec's progressive detail:
 - Is the current phase detailed enough to implement without guessing?

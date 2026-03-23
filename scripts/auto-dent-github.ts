@@ -8,14 +8,75 @@
  * (logging warnings rather than throwing).
  */
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import type { RunResult } from './auto-dent-run.js';
 
 // GitHub CLI wrapper (tolerant of failures)
 
+/**
+ * Parse a shell-style command string into an array of arguments.
+ * Handles double-quoted strings (with JSON/shell escape sequences) and
+ * single-quoted strings. Does NOT interpret backticks or $() substitutions —
+ * that is exactly the point: user-controlled data (e.g. markdown backtick
+ * code-spans in --body) never reaches a shell.
+ */
+export function parseShellArgs(cmd: string): string[] {
+  const args: string[] = [];
+  let current = '';
+  let i = 0;
+  while (i < cmd.length) {
+    const c = cmd[i];
+    if (c === ' ' || c === '\t') {
+      if (current !== '') { args.push(current); current = ''; }
+      i++;
+    } else if (c === '"') {
+      i++;
+      while (i < cmd.length && cmd[i] !== '"') {
+        if (cmd[i] === '\\' && i + 1 < cmd.length) {
+          const esc = cmd[i + 1];
+          if (esc === '"' || esc === '\\' || esc === '/') { current += esc; i += 2; }
+          else if (esc === 'n') { current += '\n'; i += 2; }
+          else if (esc === 'r') { current += '\r'; i += 2; }
+          else if (esc === 't') { current += '\t'; i += 2; }
+          else { current += '\\'; current += esc; i += 2; }
+        } else {
+          current += cmd[i]; i++;
+        }
+      }
+      i++;
+    } else if (c === "'") {
+      i++;
+      while (i < cmd.length && cmd[i] !== "'") { current += cmd[i]; i++; }
+      i++;
+    } else {
+      current += c; i++;
+    }
+  }
+  if (current !== '') args.push(current);
+  return args;
+}
+
+/**
+ * Execute a gh CLI command without going through a shell.
+ * Parses the command string into args, then uses spawnSync so that
+ * user-controlled data (markdown backticks, dollar signs, etc.) in
+ * --body/--title values is never interpreted as shell syntax.
+ */
 export function ghExec(cmd: string): string {
+  const args = parseShellArgs(cmd);
+  const [bin, ...rest] = args;
   try {
-    return execSync(cmd, { encoding: 'utf8', timeout: 30_000 }).trim();
+    const result = spawnSync(bin, rest, {
+      encoding: 'utf8',
+      timeout: 30_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      const detail = (result.stderr || '').split('\n')[0] || `exit ${result.status}`;
+      throw new Error(detail);
+    }
+    return (result.stdout || '').trim();
   } catch (e: any) {
     console.log(
       `  [hygiene] warning: ${cmd.slice(0, 80)}... -> ${e.message?.split('\n')[0] || 'failed'}`,
@@ -129,7 +190,7 @@ export function sweepBatchPRs(allPrUrls: string[]): SweepResult[] {
         data.autoMergeRequest
       ) {
         const updateOut = ghExec(
-          `gh api repos/${repo}/pulls/${prNum}/update-branch -X PUT -f expected_head_sha="" 2>&1`,
+          `gh api repos/${repo}/pulls/${prNum}/update-branch -X PUT -f expected_head_sha=""`,
         );
         if (updateOut && !updateOut.includes('error')) {
           console.log(`  [sweep] updated stale branch for PR #${prNum}`);
@@ -280,6 +341,176 @@ export function cleanupSupersededPRs(
       }
     } catch {
       results.push({ pr: prUrl, action: 'failed' });
+    }
+  }
+
+  return results;
+}
+
+// Epic checklist sync (#730)
+
+export interface EpicSyncResult {
+  epic: string;
+  issuesChecked: string[];
+  alreadyChecked: string[];
+}
+
+/**
+ * Extract issue numbers from an epic body's checklist.
+ * Matches `- [ ] #NNN` and `- [x] #NNN` patterns.
+ */
+export function parseEpicChecklist(body: string): Array<{ issue: string; checked: boolean }> {
+  const items: Array<{ issue: string; checked: boolean }> = [];
+  const regex = /- \[([ x])\] #(\d+)/g;
+  let match;
+  while ((match = regex.exec(body)) !== null) {
+    items.push({ issue: match[2], checked: match[1] === 'x' });
+  }
+  return items;
+}
+
+/**
+ * Sync epic checklists — for each closed issue, find open epics that reference
+ * it in their checklist and check off the corresponding `- [ ] #NNN` entry.
+ *
+ * Scans all open issues with the `epic` label in the given repo.
+ * Returns results per epic that was modified.
+ */
+export function syncEpicChecklists(
+  closedIssueNums: string[],
+  repo: string,
+): EpicSyncResult[] {
+  if (closedIssueNums.length === 0) return [];
+
+  const closedSet = new Set(closedIssueNums);
+  const results: EpicSyncResult[] = [];
+
+  // Get all open epics
+  const epicListJson = ghExec(
+    `gh issue list --repo ${repo} --label epic --state open --json number,body --limit 50`,
+  );
+  if (!epicListJson) return [];
+
+  let epics: Array<{ number: number; body: string }>;
+  try {
+    epics = JSON.parse(epicListJson);
+  } catch {
+    return [];
+  }
+
+  for (const epic of epics) {
+    const checklistItems = parseEpicChecklist(epic.body);
+    const toCheck = checklistItems.filter(
+      (item) => !item.checked && closedSet.has(item.issue),
+    );
+    const alreadyChecked = checklistItems.filter(
+      (item) => item.checked && closedSet.has(item.issue),
+    );
+
+    if (toCheck.length === 0) continue;
+
+    // Build updated body
+    let updatedBody = epic.body;
+    for (const item of toCheck) {
+      updatedBody = updatedBody.replace(
+        new RegExp(`- \\[ \\] #${item.issue}\\b`),
+        `- [x] #${item.issue}`,
+      );
+    }
+
+    // Update the epic body via gh
+    ghExec(
+      `gh issue edit ${epic.number} --repo ${repo} --body ${JSON.stringify(updatedBody)}`,
+    );
+    console.log(
+      `  [epic-sync] #${epic.number}: checked off ${toCheck.map((i) => '#' + i.issue).join(', ')}`,
+    );
+
+    results.push({
+      epic: `#${epic.number}`,
+      issuesChecked: toCheck.map((i) => '#' + i.issue),
+      alreadyChecked: alreadyChecked.map((i) => '#' + i.issue),
+    });
+  }
+
+  return results;
+}
+
+// Squash-merge auto-close verification (#730)
+
+export interface VerifyCloseResult {
+  pr: string;
+  verified: string[];
+  forceClosed: string[];
+}
+
+/**
+ * Extract all issue numbers referenced by close keywords in a PR body.
+ * Matches: Closes #NNN, Fixes #NNN, Resolves #NNN (case-insensitive, multiple).
+ */
+export function extractAllLinkedIssues(prBody: string): string[] {
+  const issues: string[] = [];
+  const regex = /(?:closes?|fix(?:es|ed)?|resolves?)\s+#(\d+)/gi;
+  let match;
+  while ((match = regex.exec(prBody)) !== null) {
+    issues.push(match[1]);
+  }
+  return [...new Set(issues)];
+}
+
+/**
+ * After PRs are merged, verify that issues they claimed to close are actually
+ * closed on GitHub. If any are still open, close them explicitly.
+ *
+ * This guards against a known GitHub edge case where squash-merge doesn't
+ * always fire the auto-close mechanism.
+ */
+export function verifyIssuesClosed(
+  prUrls: string[],
+  repo: string,
+): VerifyCloseResult[] {
+  const results: VerifyCloseResult[] = [];
+
+  for (const prUrl of prUrls) {
+    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+    if (!m) continue;
+    const [, prRepo, prNum] = m;
+
+    try {
+      const json = ghExec(
+        `gh pr view ${prNum} --repo ${prRepo} --json state,body`,
+      );
+      if (!json) continue;
+
+      const data = JSON.parse(json);
+      if (data.state !== 'MERGED') continue;
+
+      const linkedIssues = extractAllLinkedIssues(data.body || '');
+      if (linkedIssues.length === 0) continue;
+
+      const verified: string[] = [];
+      const forceClosed: string[] = [];
+
+      for (const issueNum of linkedIssues) {
+        if (isIssueClosed(issueNum, repo)) {
+          verified.push(`#${issueNum}`);
+        } else {
+          // Force-close the issue
+          ghExec(
+            `gh issue close ${issueNum} --repo ${repo} --comment "Auto-closed: PR #${prNum} was merged but GitHub did not auto-close this issue (squash-merge edge case)."`,
+          );
+          console.log(
+            `  [verify-close] force-closed #${issueNum} (PR #${prNum} merged but issue remained open)`,
+          );
+          forceClosed.push(`#${issueNum}`);
+        }
+      }
+
+      if (verified.length > 0 || forceClosed.length > 0) {
+        results.push({ pr: prUrl, verified, forceClosed });
+      }
+    } catch {
+      // Best effort — continue to next PR
     }
   }
 
