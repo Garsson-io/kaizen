@@ -8,11 +8,13 @@
  *   score [batch-id]    Score batches — efficiency, success rate, cost-per-PR
  *   score --post-hoc    Include live merge status checks
  *   cleanup [batch-id]  Close superseded PRs whose issues are already resolved from GitHub
+ *   watchdog [--threshold N]  Check active batches for stale heartbeats, halt if stuck
  *
  * Usage:
  *   npx tsx scripts/auto-dent-ctl.ts status
  *   npx tsx scripts/auto-dent-ctl.ts halt
  *   npx tsx scripts/auto-dent-ctl.ts halt batch-260321-0136-a1b2
+ *   npx tsx scripts/auto-dent-ctl.ts watchdog --threshold 600
  */
 
 import { readdirSync, readFileSync, existsSync, writeFileSync } from 'fs';
@@ -206,6 +208,119 @@ export function haltBatch(batchDir: string): void {
   writeFileSync(haltFile, `halted at ${new Date().toISOString()}\n`);
 }
 
+// Watchdog — detect stalled batches via heartbeat staleness
+
+/** Default staleness threshold in seconds (10 minutes). */
+export const DEFAULT_WATCHDOG_THRESHOLD_SEC = 600;
+
+export interface WatchdogResult {
+  batchId: string;
+  heartbeatAge: number;
+  stale: boolean;
+  halted: boolean;
+  action: 'halt_created' | 'already_halted' | 'healthy' | 'no_heartbeat';
+}
+
+/**
+ * Check a single batch for heartbeat staleness.
+ *
+ * A batch is stale when:
+ *   - It has a non-zero last_heartbeat AND
+ *   - (now - last_heartbeat) > thresholdSec
+ *
+ * If the heartbeat is 0 (never set — batch hasn't started its first run
+ * or is using an older runner), we report 'no_heartbeat' but don't halt.
+ */
+export function checkBatchHealth(
+  batch: BatchInfo,
+  thresholdSec: number,
+  nowEpoch: number = Math.floor(Date.now() / 1000),
+): WatchdogResult {
+  const heartbeat = batch.state.last_heartbeat || 0;
+
+  if (heartbeat === 0) {
+    return {
+      batchId: batch.batchId,
+      heartbeatAge: 0,
+      stale: false,
+      halted: batch.halted,
+      action: 'no_heartbeat',
+    };
+  }
+
+  const age = nowEpoch - heartbeat;
+  const stale = age > thresholdSec;
+
+  if (stale && !batch.halted) {
+    return {
+      batchId: batch.batchId,
+      heartbeatAge: age,
+      stale: true,
+      halted: false,
+      action: 'halt_created',
+    };
+  }
+
+  if (stale && batch.halted) {
+    return {
+      batchId: batch.batchId,
+      heartbeatAge: age,
+      stale: true,
+      halted: true,
+      action: 'already_halted',
+    };
+  }
+
+  return {
+    batchId: batch.batchId,
+    heartbeatAge: age,
+    stale: false,
+    halted: batch.halted,
+    action: 'healthy',
+  };
+}
+
+/**
+ * Run the watchdog across all active batches.
+ * Returns results for each batch checked. Creates HALT files for stale batches.
+ */
+export function runWatchdog(
+  logsDir: string,
+  thresholdSec: number = DEFAULT_WATCHDOG_THRESHOLD_SEC,
+  nowEpoch: number = Math.floor(Date.now() / 1000),
+): WatchdogResult[] {
+  const batches = discoverBatches(logsDir);
+  const active = batches.filter((b) => b.active);
+  const results: WatchdogResult[] = [];
+
+  for (const batch of active) {
+    const result = checkBatchHealth(batch, thresholdSec, nowEpoch);
+    if (result.action === 'halt_created') {
+      haltBatch(batch.dir);
+    }
+    results.push(result);
+  }
+
+  return results;
+}
+
+export function formatWatchdogResult(result: WatchdogResult): string {
+  const ageStr = result.heartbeatAge > 0
+    ? `${Math.floor(result.heartbeatAge / 60)}m${result.heartbeatAge % 60}s`
+    : 'N/A';
+
+  switch (result.action) {
+    case 'halt_created':
+      return `  STALE ${result.batchId} — heartbeat ${ageStr} ago — HALT file created`;
+    case 'already_halted':
+      return `  STALE ${result.batchId} — heartbeat ${ageStr} ago — already halted`;
+    case 'no_heartbeat':
+      return `  SKIP  ${result.batchId} — no heartbeat recorded`;
+    case 'healthy':
+      return `  OK    ${result.batchId} — heartbeat ${ageStr} ago`;
+  }
+}
+
 function main(): void {
   const args = process.argv.slice(2);
   const subcommand = args[0];
@@ -219,7 +334,8 @@ Usage:
   auto-dent-ctl.ts halt-state <file>   Print last-state from a state.json file
   auto-dent-ctl.ts score [batch-id]    Score batch(es) — efficiency, success rate, cost
   auto-dent-ctl.ts score --post-hoc [batch-id]  Include live PR merge status checks
-  auto-dent-ctl.ts cleanup [batch-id]  Close superseded PRs whose issues are already resolved`);
+  auto-dent-ctl.ts cleanup [batch-id]  Close superseded PRs whose issues are already resolved
+  auto-dent-ctl.ts watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)`);
     process.exit(0);
   }
 
@@ -367,6 +483,30 @@ Usage:
         } else {
           console.log(`    Closed ${closedCount} superseded PR(s).`);
         }
+      }
+      break;
+    }
+
+    case 'watchdog': {
+      const thresholdIdx = args.indexOf('--threshold');
+      const threshold = thresholdIdx >= 0 && args[thresholdIdx + 1]
+        ? parseInt(args[thresholdIdx + 1], 10)
+        : DEFAULT_WATCHDOG_THRESHOLD_SEC;
+
+      const results = runWatchdog(logsDir, threshold);
+      if (results.length === 0) {
+        console.log('No active batches to monitor.');
+        process.exit(0);
+      }
+
+      for (const r of results) {
+        console.log(formatWatchdogResult(r));
+      }
+
+      const staleCount = results.filter((r) => r.action === 'halt_created').length;
+      if (staleCount > 0) {
+        console.log(`\nWatchdog halted ${staleCount} stale batch(es).`);
+        process.exit(1);
       }
       break;
     }
