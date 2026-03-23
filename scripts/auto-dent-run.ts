@@ -88,6 +88,8 @@ export interface BatchState {
   last_heartbeat?: number;
   max_run_seconds?: number;
   run_history?: RunMetrics[];
+  /** Recommendations from contemplation runs that feed back into subsequent runs */
+  contemplation_recommendations?: string[];
 }
 
 export interface RunMetrics {
@@ -131,6 +133,8 @@ export interface RunResult {
   issuesPruned: number;
   /** Structured failure classification */
   failureClass?: string;
+  /** Contemplation recommendations extracted from contemplate run output */
+  contemplationRecs?: string[];
 }
 
 // State I/O
@@ -317,6 +321,12 @@ export function buildTemplateVars(
     }
   }
 
+  // Format contemplation recommendations for prompt injection
+  const contemplationRecs = (state.contemplation_recommendations || []);
+  const contemplationRecsText = contemplationRecs.length > 0
+    ? contemplationRecs.map((r, i) => `${i + 1}. ${r}`).join('\n')
+    : '';
+
   return {
     guidance: state.guidance,
     run_tag: runTag,
@@ -340,6 +350,7 @@ export function buildTemplateVars(
     pr_merge_status: prMergeStatus,
     prior_reflections: priorReflections,
     failure_class_summary: failureClassSummary,
+    contemplation_recommendations: contemplationRecsText,
   };
 }
 
@@ -906,6 +917,22 @@ export function extractArtifacts(text: string, result: RunResult): void {
   }
 }
 
+/**
+ * Extract structured contemplation recommendations from run output.
+ *
+ * Parses lines matching: CONTEMPLATION_REC: <recommendation text>
+ * These are emitted by contemplate-strategy.md runs to feed back
+ * strategic insights into subsequent batch runs (#631).
+ */
+export function extractContemplationRecommendations(text: string): string[] {
+  const recs: string[] = [];
+  for (const match of text.matchAll(/^CONTEMPLATION_REC:[^\S\n]*(.+)$/gm)) {
+    const rec = match[1].trim();
+    if (rec) recs.push(rec);
+  }
+  return recs;
+}
+
 export function checkStopSignal(text: string, result: RunResult): void {
   // Primary: structured phase marker format (preferred, avoids in-band ambiguity).
   // AUTO_DENT_PHASE: STOP | reason=<text>
@@ -1033,6 +1060,12 @@ export function processStreamMessage(
           if (block.type === 'text' && block.text) {
             extractArtifacts(block.text, result);
             checkStopSignal(block.text, result);
+            // Extract contemplation recommendations (#631)
+            const recs = extractContemplationRecommendations(block.text);
+            if (recs.length > 0) {
+              if (!result.contemplationRecs) result.contemplationRecs = [];
+              result.contemplationRecs.push(...recs);
+            }
             for (const marker of parsePhaseMarkers(block.text)) {
               console.log(`  [${elapsed}]  ${formatPhaseMarker(marker)}`);
               if (ctx) ctx.lastPhase = formatPhaseMarker(marker);
@@ -1052,6 +1085,11 @@ export function processStreamMessage(
       if (msg.result) {
         extractArtifacts(msg.result, result);
         checkStopSignal(msg.result, result);
+        const recs = extractContemplationRecommendations(msg.result);
+        if (recs.length > 0) {
+          if (!result.contemplationRecs) result.contemplationRecs = [];
+          result.contemplationRecs.push(...recs);
+        }
       }
       {
         const statusText = msg.subtype === 'success'
@@ -1940,6 +1978,13 @@ async function main(): Promise<void> {
   }
   for (const caseName of result.cases) {
     if (!freshState.cases.includes(caseName)) freshState.cases.push(caseName);
+  }
+
+  // Store contemplation recommendations in batch state (#631)
+  if (result.contemplationRecs && result.contemplationRecs.length > 0) {
+    if (!freshState.contemplation_recommendations) freshState.contemplation_recommendations = [];
+    freshState.contemplation_recommendations.push(...result.contemplationRecs);
+    console.log(`  [contemplate] ${result.contemplationRecs.length} recommendation(s) stored in batch state`);
   }
 
   if (result.prs.length > 0) {

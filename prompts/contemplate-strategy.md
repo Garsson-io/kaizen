@@ -112,6 +112,25 @@ For each finding, take one concrete action:
 - **System problem?** File a kaizen issue
 - **Philosophical gap?** File a `zen-evolution` issue proposing an amendment
 
+## Structured Recommendations
+
+After your assessment, emit recommendations that feed back into subsequent runs.
+Each recommendation MUST be on its own line with this exact prefix:
+
+```
+CONTEMPLATION_REC: <recommendation text>
+```
+
+Examples:
+```
+CONTEMPLATION_REC: Guidance is exhausted for hooks reliability — shift focus to testing gaps and observability
+CONTEMPLATION_REC: Epic #548 (cognitive modes) is stalled — decompose into concrete issues next run
+CONTEMPLATION_REC: Horizon autonomous-kaizen has zero recent activity — prioritize it
+```
+
+These recommendations will be visible to subsequent runs in the batch, steering
+future work based on your strategic assessment. Emit at least one recommendation.
+
 ## Progress Markers
 
 AUTO_DENT_PHASE: PICK | issue=strategic-assessment | title=batch contemplation

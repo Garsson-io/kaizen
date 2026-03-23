@@ -1231,6 +1231,24 @@ describe('classifyFailure', () => {
       'issue blocked by dependency',
     )).toBe('issue_blocked');
   });
+
+  it('classifies contemplate run with no artifacts as success (#631)', () => {
+    expect(classifyFailure(
+      makeRunMetrics({ exit_code: 0, prs: [], issues_filed: [], issues_closed: [], mode: 'contemplate' }),
+    )).toBe('success');
+  });
+
+  it('classifies reflect run with no artifacts as success (#631)', () => {
+    expect(classifyFailure(
+      makeRunMetrics({ exit_code: 0, prs: [], issues_filed: [], issues_closed: [], mode: 'reflect' }),
+    )).toBe('success');
+  });
+
+  it('still classifies non-zero contemplate run as crash', () => {
+    expect(classifyFailure(
+      makeRunMetrics({ exit_code: 1, prs: [], mode: 'contemplate' }),
+    )).toBe('crash');
+  });
 });
 
 describe('failureClassLabel', () => {

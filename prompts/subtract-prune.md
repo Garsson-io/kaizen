@@ -22,6 +22,12 @@ PRs already created in this batch (avoid overlapping work): {{prs}}
 {{reflection_insights}}
 {{/reflection_insights}}
 
+{{#contemplation_recommendations}}
+## Strategic Recommendations (from contemplation)
+
+{{contemplation_recommendations}}
+{{/contemplation_recommendations}}
+
 ## Merge & Labeling Policy
 
 After creating a PR, you MUST queue it for auto-merge:

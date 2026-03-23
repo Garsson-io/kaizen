@@ -40,6 +40,8 @@ export function classifyFailure(
   const hasArtifacts = metrics.prs.length > 0 || metrics.issues_filed.length > 0 || metrics.issues_closed.length > 0;
 
   if (metrics.exit_code === 0 && hasArtifacts) return 'success';
+  // Contemplate/reflect runs are strategic — they don't produce PRs by design (#631)
+  if (metrics.exit_code === 0 && !hasArtifacts && (metrics.mode === 'contemplate' || metrics.mode === 'reflect')) return 'success';
   if (metrics.exit_code === 0 && !hasArtifacts) return 'empty_success';
 
   if (logOutput) {

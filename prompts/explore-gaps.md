@@ -22,6 +22,12 @@ PRs already created in this batch (avoid overlapping work): {{prs}}
 {{reflection_insights}}
 {{/reflection_insights}}
 
+{{#contemplation_recommendations}}
+## Strategic Recommendations (from contemplation)
+
+{{contemplation_recommendations}}
+{{/contemplation_recommendations}}
+
 ## Exploration Tasks
 
 Pick the highest-value exploration from this list:

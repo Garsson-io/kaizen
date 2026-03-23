@@ -27,6 +27,16 @@ Prior mid-batch reflection produced these insights. Use them to guide your work:
 Factor these insights into your issue selection and approach.
 {{/reflection_insights}}
 
+{{#contemplation_recommendations}}
+## Strategic Recommendations (from contemplation)
+
+A prior contemplation run assessed this batch strategically and recommends:
+
+{{contemplation_recommendations}}
+
+Weight these recommendations when choosing what to work on.
+{{/contemplation_recommendations}}
+
 {{#plan_assignment}}
 ## Assigned Work
 
