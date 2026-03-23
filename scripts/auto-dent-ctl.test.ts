@@ -737,6 +737,8 @@ describe('buildReflectionTemplateVars', () => {
     expect(vars.pr_count).toBe('2');
     expect(vars.run_history_table).toContain('| Run |');
     expect(vars.pr_merge_status).toContain('pull/100');
+    // PR merge status should include status labels
+    expect(vars.pr_merge_status).toMatch(/— \*\*(merged|open|closed)\*\*|— unknown/);
     expect(vars.reflection_insights).toContain('[');
   });
 
