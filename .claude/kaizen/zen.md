@@ -78,6 +78,9 @@ The first to merge wins. The rest close gracefully.
 The framework that can't evolve becomes the ceiling.
 The tool you can't question is the tool that will fail you.
 
+Productivity without strategic diversity is local optimization.
+Twenty PRs in the wrong direction is worse than two in the right one.
+
 The goal is not to be done. The goal is to be better at not being done.
 ```
 
@@ -189,6 +192,14 @@ The fix is to apply kaizen to kaizen's own philosophy. The principles in this do
 
 The recursion terminates at the human. Philosophical changes are too important for autonomous execution. The system proposes, the human disposes. But the system must propose — waiting for a human to notice a philosophical gap recreates the bottleneck that the horizon discovery tower was designed to eliminate.
 
+### Strategic diversity over raw throughput
+
+An auto-dent batch that produces thirty exploit PRs in one domain feels productive. The PR count is high. The issues-closed count is high. The cost-per-PR looks efficient. But if all thirty PRs push the same dimension forward while five other dimensions stagnate, the batch optimized locally. It made one part of the system very good while the whole system stayed the same.
+
+This is the cognitive modes insight: a healthy batch needs diversity of *kind*, not just diversity of *topic*. Exploit, explore, reflect, subtract, contemplate — each mode serves a different strategic function. A batch that never explores will miss new horizons. A batch that never subtracts will accumulate complexity. A batch that never contemplates will lose strategic direction. Raw throughput in one mode is a symptom of tunnel vision, not a sign of effectiveness.
+
+The principle applies beyond auto-dent. Any improvement system with a single optimization target will converge on the easiest interpretation of that target. If the target is "PRs merged," you'll get many small, safe PRs. If the target is "issues closed," you'll get issues closed as duplicates. The fix is multi-dimensional assessment: not "how many?" but "how diverse? how strategic? how balanced?"
+
 ### The escalation framework
 
 The core algorithm:
@@ -275,4 +286,5 @@ Each principle traces back to a specific observation, incident, or conversation.
 | *A system that only looks inward...* | #553, #561 — self-reflection converging on local optima | Exploration/exploitation balance |
 | *Parallel work produces overlap* | Multiple agents picking same issue | Parallel coordination |
 | *The framework that can't evolve becomes the ceiling* | #559, #561 — the improvement framework itself must be evolvable | Recursive self-improvement, philosophical evolution |
+| *Productivity without strategic diversity is local optimization* | #548, #561 — auto-dent batches producing many PRs in one mode without cognitive diversity | Tunnel vision, mode balance |
 | *The goal is not to be done* | Founding principle | Infinite game orientation |
