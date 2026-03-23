@@ -140,6 +140,8 @@ describe('summarizeEvents', () => {
     expect(summary.label_distribution).toEqual({});
     expect(summary.horizon_distribution).toEqual({});
     expect(summary.area_distribution).toEqual({});
+    expect(summary.mode_distribution).toEqual({});
+    expect(summary.mode_outcomes).toEqual({});
   });
 
   it('computes cost_per_pr correctly', () => {
@@ -190,6 +192,62 @@ describe('summarizeEvents', () => {
       'area/hooks': 2,
       'area/skills': 1,
     });
+  });
+
+  it('computes mode distribution from run.complete events', () => {
+    const events = [
+      makeCompleteEvent({ run_num: 1, mode: 'exploit', outcome: 'success', prs_created: 1, cost_usd: 1.00 }),
+      makeCompleteEvent({ run_num: 2, mode: 'exploit', outcome: 'success', prs_created: 1, cost_usd: 1.50 }),
+      makeCompleteEvent({ run_num: 3, mode: 'explore', outcome: 'empty_success', prs_created: 0, cost_usd: 2.00 }),
+      makeCompleteEvent({ run_num: 4, mode: 'reflect', outcome: 'success', prs_created: 1, cost_usd: 1.00 }),
+      makeCompleteEvent({ run_num: 5, mode: 'contemplate', outcome: 'failure', prs_created: 0, cost_usd: 0.50 }),
+    ];
+
+    const summary = summarizeEvents(events);
+    expect(summary.mode_distribution).toEqual({
+      exploit: 2,
+      explore: 1,
+      reflect: 1,
+      contemplate: 1,
+    });
+  });
+
+  it('computes mode outcomes with per-mode success/failure/cost/prs', () => {
+    const events = [
+      makeCompleteEvent({ run_num: 1, mode: 'exploit', outcome: 'success', prs_created: 2, cost_usd: 1.00 }),
+      makeCompleteEvent({ run_num: 2, mode: 'exploit', outcome: 'failure', prs_created: 0, cost_usd: 1.50 }),
+      makeCompleteEvent({ run_num: 3, mode: 'explore', outcome: 'empty_success', prs_created: 0, cost_usd: 2.00 }),
+    ];
+
+    const summary = summarizeEvents(events);
+    expect(summary.mode_outcomes.exploit).toEqual({
+      runs: 2,
+      success: 1,
+      empty_success: 0,
+      failure: 1,
+      stop: 0,
+      prs: 2,
+      cost_usd: 2.50,
+    });
+    expect(summary.mode_outcomes.explore).toEqual({
+      runs: 1,
+      success: 0,
+      empty_success: 1,
+      failure: 0,
+      stop: 0,
+      prs: 0,
+      cost_usd: 2.00,
+    });
+  });
+
+  it('defaults mode to exploit when not specified', () => {
+    const events = [
+      makeCompleteEvent({ run_num: 1, outcome: 'success' }),
+    ];
+
+    const summary = summarizeEvents(events);
+    expect(summary.mode_distribution).toEqual({ exploit: 1 });
+    expect(summary.mode_outcomes.exploit.runs).toBe(1);
   });
 
   it('handles issue_picked events without labels', () => {
@@ -286,5 +344,41 @@ describe('formatPlainLanguage', () => {
     ]);
     const text = formatPlainLanguage(summary);
     expect(text).not.toContain('### Domain Distribution');
+  });
+
+  it('shows cognitive mode distribution table', () => {
+    const events = [
+      makeCompleteEvent({ run_num: 1, mode: 'exploit', outcome: 'success', prs_created: 1, cost_usd: 1.00 }),
+      makeCompleteEvent({ run_num: 2, mode: 'explore', outcome: 'empty_success', prs_created: 0, cost_usd: 2.00 }),
+      makeCompleteEvent({ run_num: 3, mode: 'exploit', outcome: 'failure', prs_created: 0, cost_usd: 1.50 }),
+    ];
+    const summary = summarizeEvents(events);
+    const text = formatPlainLanguage(summary);
+
+    expect(text).toContain('### Cognitive Mode Distribution');
+    expect(text).toContain('exploit');
+    expect(text).toContain('explore');
+  });
+
+  it('shows single-mode advisory when only one mode used', () => {
+    const events = [
+      makeCompleteEvent({ run_num: 1, mode: 'exploit', outcome: 'success' }),
+      makeCompleteEvent({ run_num: 2, mode: 'exploit', outcome: 'success' }),
+    ];
+    const summary = summarizeEvents(events);
+    const text = formatPlainLanguage(summary);
+
+    expect(text).toContain('Single-mode batch');
+  });
+
+  it('does not show single-mode advisory when multiple modes used', () => {
+    const events = [
+      makeCompleteEvent({ run_num: 1, mode: 'exploit', outcome: 'success' }),
+      makeCompleteEvent({ run_num: 2, mode: 'explore', outcome: 'success' }),
+    ];
+    const summary = summarizeEvents(events);
+    const text = formatPlainLanguage(summary);
+
+    expect(text).not.toContain('Single-mode batch');
   });
 });

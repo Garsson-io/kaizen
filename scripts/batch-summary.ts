@@ -43,6 +43,20 @@ export interface BatchSummary {
   horizon_distribution: Record<string, number>;
   /** Area labels (area/*) grouped for quick visibility */
   area_distribution: Record<string, number>;
+  /** Cognitive mode distribution — how many runs used each mode */
+  mode_distribution: Record<string, number>;
+  /** Outcome breakdown by cognitive mode — which modes produce PRs vs failures */
+  mode_outcomes: Record<string, ModeOutcome>;
+}
+
+export interface ModeOutcome {
+  runs: number;
+  success: number;
+  empty_success: number;
+  failure: number;
+  stop: number;
+  prs: number;
+  cost_usd: number;
 }
 
 /**
@@ -119,6 +133,26 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     }
   }
 
+  // Compute cognitive mode distribution and mode-outcome matrix
+  const modeDistribution: Record<string, number> = {};
+  const modeOutcomes: Record<string, ModeOutcome> = {};
+  for (const e of completeEvents) {
+    const mode = e.event.mode || 'exploit';
+    modeDistribution[mode] = (modeDistribution[mode] ?? 0) + 1;
+
+    if (!modeOutcomes[mode]) {
+      modeOutcomes[mode] = { runs: 0, success: 0, empty_success: 0, failure: 0, stop: 0, prs: 0, cost_usd: 0 };
+    }
+    const mo = modeOutcomes[mode];
+    mo.runs++;
+    mo.cost_usd = Math.round((mo.cost_usd + e.event.cost_usd) * 100) / 100;
+    mo.prs += e.event.prs_created;
+    if (e.event.outcome === 'success') mo.success++;
+    else if (e.event.outcome === 'empty_success') mo.empty_success++;
+    else if (e.event.outcome === 'failure') mo.failure++;
+    else if (e.event.outcome === 'stop') mo.stop++;
+  }
+
   const runCount = completeEvents.length || 1;
   const totalDurationMinutes = Math.round(totalDurationMs / 60000 * 10) / 10;
 
@@ -145,6 +179,8 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     label_distribution: labelDistribution,
     horizon_distribution: horizonDistribution,
     area_distribution: areaDistribution,
+    mode_distribution: modeDistribution,
+    mode_outcomes: modeOutcomes,
   };
 }
 
@@ -213,6 +249,26 @@ export function formatPlainLanguage(summary: BatchSummary): string {
       for (const [label, count] of areaEntries.sort((a, b) => b[1] - a[1])) {
         lines.push(`- ${label}: ${count} issue${count > 1 ? 's' : ''}`);
       }
+    }
+  }
+
+  // Cognitive mode analysis
+  const modeEntries = Object.entries(summary.mode_distribution);
+  if (modeEntries.length > 0) {
+    lines.push('');
+    lines.push('### Cognitive Mode Distribution');
+    lines.push('| Mode | Runs | PRs | Success | Empty | Failed | Cost |');
+    lines.push('|------|------|-----|---------|-------|--------|------|');
+    for (const [mode] of modeEntries.sort((a, b) => b[1] - a[1])) {
+      const mo = summary.mode_outcomes[mode];
+      if (!mo) continue;
+      lines.push(`| ${mode} | ${mo.runs} | ${mo.prs} | ${mo.success} | ${mo.empty_success} | ${mo.failure} | $${mo.cost_usd.toFixed(2)} |`);
+    }
+
+    // Strategic diversity indicator
+    if (modeEntries.length === 1) {
+      lines.push('');
+      lines.push('*Single-mode batch — consider enabling mode diversity for strategic balance.*');
     }
   }
 

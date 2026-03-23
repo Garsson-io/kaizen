@@ -33,6 +33,7 @@ export interface BatchDataPoint {
   failure_classes: Record<string, number>;
   horizon_distribution: Record<string, number>;
   area_distribution: Record<string, number>;
+  mode_distribution: Record<string, number>;
 }
 
 export interface TrendReport {
@@ -44,6 +45,7 @@ export interface TrendReport {
     success_rate: TrendDirection;
     avg_duration: TrendDirection;
     lifecycle_violations: TrendDirection;
+    mode_diversity: TrendDirection;
   };
   totals: {
     total_runs: number;
@@ -109,6 +111,7 @@ export function toDataPoint(summary: BatchSummary, timestamp: string): BatchData
     failure_classes: summary.failure_classes,
     horizon_distribution: summary.horizon_distribution,
     area_distribution: summary.area_distribution,
+    mode_distribution: summary.mode_distribution,
   };
 }
 
@@ -182,6 +185,7 @@ export function analyzeTrends(batchDirs: string[]): TrendReport {
     success_rate: computeTrend(datapoints.map(d => d.success_rate), false),
     avg_duration: computeTrend(datapoints.map(d => d.avg_run_duration_minutes), true),
     lifecycle_violations: computeTrend(datapoints.map(d => d.total_lifecycle_violations), true),
+    mode_diversity: computeTrend(datapoints.map(d => Object.keys(d.mode_distribution).length), false),
   };
 
   const totals = {
@@ -219,6 +223,7 @@ export function formatTrendReport(report: TrendReport): string {
   lines.push(formatTrendLine('Success rate', report.trends.success_rate, '%'));
   lines.push(formatTrendLine('Avg duration', report.trends.avg_duration, 'm'));
   lines.push(formatTrendLine('Lifecycle violations', report.trends.lifecycle_violations, ''));
+  lines.push(formatTrendLine('Mode diversity', report.trends.mode_diversity, ' modes'));
   lines.push('');
 
   // Per-batch table
