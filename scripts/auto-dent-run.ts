@@ -586,16 +586,28 @@ export function computeAdaptiveWeights(
 }
 
 /**
+ * Hash a string into a 32-bit integer for seed mixing.
+ */
+function hashString(s: string): number {
+  let h = 0;
+  for (const c of s) h = ((h << 5) - h + c.charCodeAt(0)) | 0;
+  return h;
+}
+
+/**
  * Select a mode using weighted random selection.
- * Uses runNum as a deterministic seed for reproducibility.
+ * Uses runNum and optional batchId as a deterministic seed for reproducibility.
+ * Including batchId ensures parallel batches explore different mode sequences.
  */
 export function weightedModeSelect(
   weights: Record<string, number>,
   runNum: number,
+  batchId?: string,
 ): string {
-  // Deterministic pseudo-random from runNum
-  // Simple hash: multiply by large prime, take fractional part
-  const hash = ((runNum * 2654435761) >>> 0) / 4294967296;
+  // Deterministic pseudo-random from runNum + batchId
+  // Mix batch_id into seed so parallel batches diverge
+  const batchHash = batchId ? hashString(batchId) : 0;
+  const hash = (((runNum * 2654435761 + batchHash) >>> 0) / 4294967296);
 
   const entries = Object.entries(weights).sort((a, b) => a[0].localeCompare(b[0]));
   let cumulative = 0;
@@ -647,7 +659,7 @@ export function selectMode(state: BatchState, runNum: number): ModeSelection {
   // Adaptive selection: use performance data when available
   const adaptiveWeights = computeAdaptiveWeights(state.run_history || []);
   if (adaptiveWeights) {
-    const mode = weightedModeSelect(adaptiveWeights, runNum);
+    const mode = weightedModeSelect(adaptiveWeights, runNum, state.batch_id);
     return { mode, template: MODE_TEMPLATES[mode] || MODE_TEMPLATES.exploit, reason: 'adaptive' };
   }
 

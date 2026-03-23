@@ -2138,6 +2138,34 @@ describe('weightedModeSelect', () => {
       expect(weightedModeSelect(weights, i)).toBe('exploit');
     }
   });
+
+  it('is deterministic for same runNum and batchId', () => {
+    const weights = { exploit: 0.4, explore: 0.3, reflect: 0.2, subtract: 0.1 };
+    const mode1 = weightedModeSelect(weights, 42, 'batch-abc');
+    const mode2 = weightedModeSelect(weights, 42, 'batch-abc');
+    expect(mode1).toBe(mode2);
+  });
+
+  it('produces different sequences for different batchIds', () => {
+    const weights = { exploit: 0.4, explore: 0.3, reflect: 0.2, subtract: 0.1 };
+    let differ = false;
+    for (let i = 0; i < 100; i++) {
+      const modeA = weightedModeSelect(weights, i, 'batch-alpha');
+      const modeB = weightedModeSelect(weights, i, 'batch-beta');
+      if (modeA !== modeB) {
+        differ = true;
+        break;
+      }
+    }
+    expect(differ).toBe(true);
+  });
+
+  it('without batchId behaves like legacy (backward compatible)', () => {
+    const weights = { exploit: 0.7, explore: 0.1, reflect: 0.1, subtract: 0.1 };
+    const mode1 = weightedModeSelect(weights, 42);
+    const mode2 = weightedModeSelect(weights, 42, undefined);
+    expect(mode1).toBe(mode2);
+  });
 });
 
 describe('selectMode adaptive integration', () => {
