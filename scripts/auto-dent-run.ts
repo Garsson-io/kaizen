@@ -1082,7 +1082,7 @@ async function runClaude(
   logFile: string,
   repoRoot: string,
   stateFile: string,
-): Promise<{ exitCode: number; duration: number; result: RunResult; mode: string; promptMeta: PromptMetadata }> {
+): Promise<{ exitCode: number; duration: number; result: RunResult; mode: string; modeReason: string; promptMeta: PromptMetadata }> {
   const result: RunResult = {
     prs: [],
     issuesFiled: [],
@@ -1251,7 +1251,7 @@ async function runClaude(
       processExited = true;
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolvePromise({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode, promptMeta });
+      resolvePromise({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, promptMeta });
     });
 
     child.on('error', (err) => {
@@ -1411,29 +1411,30 @@ async function main(): Promise<void> {
   console.log(`Tag: ${runTag}`);
   console.log(`Log: ${logFile}`);
 
-  // Structured telemetry (#647)
+  // Structured telemetry (#647) — emitter created early, start event emitted after runClaude
+  // (selectMode/buildPromptWithMetadata have side effects, so we use runClaude's returned metadata)
   const events = new EventEmitter(logDir);
-  const modeSelection = selectMode(state, runNum);
-  const promptMeta0 = buildPromptWithMetadata(state, runNum, logDir);
-  events.emit({
-    type: 'run.start',
-    run_id: makeRunId(state.batch_id, runNum),
-    batch_id: state.batch_id,
-    run_num: runNum,
-    mode: modeSelection.mode,
-    mode_reason: modeSelection.reason,
-    prompt_template: promptMeta0.template,
-    prompt_hash: promptMeta0.hash,
-  });
 
   const runStartEpoch = Math.floor(Date.now() / 1000);
-  const { exitCode, duration, result, mode: runMode, promptMeta } = await runClaude(
+  const { exitCode, duration, result, mode: runMode, modeReason: runModeReason, promptMeta } = await runClaude(
     state,
     runNum,
     logFile,
     repoRoot,
     stateFile,
   );
+
+  // Emit run.start telemetry using actual metadata from runClaude (#647)
+  events.emit({
+    type: 'run.start',
+    run_id: makeRunId(state.batch_id, runNum),
+    batch_id: state.batch_id,
+    run_num: runNum,
+    mode: runMode,
+    mode_reason: runModeReason,
+    prompt_template: promptMeta.template,
+    prompt_hash: promptMeta.hash,
+  });
 
   // Append metadata to log
   appendFileSync(
