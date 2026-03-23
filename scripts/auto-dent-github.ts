@@ -285,3 +285,173 @@ export function cleanupSupersededPRs(
 
   return results;
 }
+
+// Epic checklist sync (#730)
+
+export interface EpicSyncResult {
+  epic: string;
+  issuesChecked: string[];
+  alreadyChecked: string[];
+}
+
+/**
+ * Extract issue numbers from an epic body's checklist.
+ * Matches `- [ ] #NNN` and `- [x] #NNN` patterns.
+ */
+export function parseEpicChecklist(body: string): Array<{ issue: string; checked: boolean }> {
+  const items: Array<{ issue: string; checked: boolean }> = [];
+  const regex = /- \[([ x])\] #(\d+)/g;
+  let match;
+  while ((match = regex.exec(body)) !== null) {
+    items.push({ issue: match[2], checked: match[1] === 'x' });
+  }
+  return items;
+}
+
+/**
+ * Sync epic checklists — for each closed issue, find open epics that reference
+ * it in their checklist and check off the corresponding `- [ ] #NNN` entry.
+ *
+ * Scans all open issues with the `epic` label in the given repo.
+ * Returns results per epic that was modified.
+ */
+export function syncEpicChecklists(
+  closedIssueNums: string[],
+  repo: string,
+): EpicSyncResult[] {
+  if (closedIssueNums.length === 0) return [];
+
+  const closedSet = new Set(closedIssueNums);
+  const results: EpicSyncResult[] = [];
+
+  // Get all open epics
+  const epicListJson = ghExec(
+    `gh issue list --repo ${repo} --label epic --state open --json number,body --limit 50`,
+  );
+  if (!epicListJson) return [];
+
+  let epics: Array<{ number: number; body: string }>;
+  try {
+    epics = JSON.parse(epicListJson);
+  } catch {
+    return [];
+  }
+
+  for (const epic of epics) {
+    const checklistItems = parseEpicChecklist(epic.body);
+    const toCheck = checklistItems.filter(
+      (item) => !item.checked && closedSet.has(item.issue),
+    );
+    const alreadyChecked = checklistItems.filter(
+      (item) => item.checked && closedSet.has(item.issue),
+    );
+
+    if (toCheck.length === 0) continue;
+
+    // Build updated body
+    let updatedBody = epic.body;
+    for (const item of toCheck) {
+      updatedBody = updatedBody.replace(
+        new RegExp(`- \\[ \\] #${item.issue}\\b`),
+        `- [x] #${item.issue}`,
+      );
+    }
+
+    // Update the epic body via gh
+    ghExec(
+      `gh issue edit ${epic.number} --repo ${repo} --body ${JSON.stringify(updatedBody)}`,
+    );
+    console.log(
+      `  [epic-sync] #${epic.number}: checked off ${toCheck.map((i) => '#' + i.issue).join(', ')}`,
+    );
+
+    results.push({
+      epic: `#${epic.number}`,
+      issuesChecked: toCheck.map((i) => '#' + i.issue),
+      alreadyChecked: alreadyChecked.map((i) => '#' + i.issue),
+    });
+  }
+
+  return results;
+}
+
+// Squash-merge auto-close verification (#730)
+
+export interface VerifyCloseResult {
+  pr: string;
+  verified: string[];
+  forceClosed: string[];
+}
+
+/**
+ * Extract all issue numbers referenced by close keywords in a PR body.
+ * Matches: Closes #NNN, Fixes #NNN, Resolves #NNN (case-insensitive, multiple).
+ */
+export function extractAllLinkedIssues(prBody: string): string[] {
+  const issues: string[] = [];
+  const regex = /(?:closes?|fix(?:es|ed)?|resolves?)\s+#(\d+)/gi;
+  let match;
+  while ((match = regex.exec(prBody)) !== null) {
+    issues.push(match[1]);
+  }
+  return [...new Set(issues)];
+}
+
+/**
+ * After PRs are merged, verify that issues they claimed to close are actually
+ * closed on GitHub. If any are still open, close them explicitly.
+ *
+ * This guards against a known GitHub edge case where squash-merge doesn't
+ * always fire the auto-close mechanism.
+ */
+export function verifyIssuesClosed(
+  prUrls: string[],
+  repo: string,
+): VerifyCloseResult[] {
+  const results: VerifyCloseResult[] = [];
+
+  for (const prUrl of prUrls) {
+    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+    if (!m) continue;
+    const [, prRepo, prNum] = m;
+
+    try {
+      const json = ghExec(
+        `gh pr view ${prNum} --repo ${prRepo} --json state,body`,
+      );
+      if (!json) continue;
+
+      const data = JSON.parse(json);
+      if (data.state !== 'MERGED') continue;
+
+      const linkedIssues = extractAllLinkedIssues(data.body || '');
+      if (linkedIssues.length === 0) continue;
+
+      const verified: string[] = [];
+      const forceClosed: string[] = [];
+
+      for (const issueNum of linkedIssues) {
+        if (isIssueClosed(issueNum, repo)) {
+          verified.push(`#${issueNum}`);
+        } else {
+          // Force-close the issue
+          ghExec(
+            `gh issue close ${issueNum} --repo ${repo} --comment "Auto-closed: PR #${prNum} was merged but GitHub did not auto-close this issue (squash-merge edge case)."`,
+          );
+          console.log(
+            `  [verify-close] force-closed #${issueNum} (PR #${prNum} merged but issue remained open)`,
+          );
+          forceClosed.push(`#${issueNum}`);
+        }
+      }
+
+      if (verified.length > 0 || forceClosed.length > 0) {
+        results.push({ pr: prUrl, verified, forceClosed });
+      }
+    } catch {
+      // Best effort — continue to next PR
+    }
+  }
+
+  return results;
+}
