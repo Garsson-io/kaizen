@@ -54,7 +54,14 @@ When the spec introduces new operational processes (scripts to run, cleanup poli
 
 Mark these in Section 7 ("Needs Building") alongside the code deliverables. The implementor (`/kaizen-implement`) will produce them — the spec just ensures they're not forgotten. See `/kaizen-implement` section 4b for the full policy.
 
-**Issue-only PRDs:** When the full PRD lives in a GitHub issue rather than a `docs/*-spec.md` file, the issue body should explicitly note: "Implementation must produce `docs/{feature}.md` capturing what was built, operating policy, design decisions, and future vision." GitHub issues get closed and buried — the knowledge about what was built and where it's heading must live in the repo, not just in the issue. The repo doc is not the plan (that's the issue) — it's the lasting record of the outcome.
+**Issue-only PRDs:** When the full PRD lives in a GitHub issue rather than a `docs/*-spec.md` file, the issue body **must** include the following instruction at the top (before the spec content):
+
+> **Implementing Agent: Read This First**
+> Your first action is to commit this PRD to `docs/prd-{name}.md` in a standalone PR before writing any implementation code. Copy the spec body from this issue into that file. GitHub issues get closed and buried — the spec must live in the repo where future agents can read it. Only after that file is committed should you proceed with implementation.
+
+GitHub issues are ephemeral — they get closed, buried, and forgotten. The spec must live in the repo. The repo file is not the plan (that's the issue) — it's the lasting record that survives issue closure. This applies even for small-to-medium PRDs: the overhead of one extra file is negligible compared to the cost of losing the reasoning when the issue closes.
+
+Additionally, the issue body should note: "Implementation must produce `docs/{feature}.md` capturing what was built, operating policy, design decisions, and future vision."
 
 ## Phase 1: Understand the Initiative
 
@@ -416,6 +423,8 @@ Things this skill is NOT for:
 
 When you're the future agent picking up a spec created by this skill:
 
+0. **Commit the spec to `docs/prd-{name}.md` first.** Before writing a single line of implementation code, copy the spec from the GitHub issue body into a repo file and open a standalone PR for it. The issue will be closed when you're done — the spec must outlive it. This is not optional.
+
 1. **Read the whole spec before starting.** Don't jump to "Needs Building" — the reasoning in earlier sections will save you from wrong turns.
 2. **Check the Open Questions section.** Some may have been resolved since the spec was written. Some may block your work until answered.
 3. **The spec is a starting point, not a contract.** Implementation will reveal things the spec didn't anticipate. Update the spec as you go (new PRs, not edits to the original).
@@ -441,8 +450,16 @@ Create these tasks at skill start using TaskCreate:
 | 1 | Understand initiative | Ask about problem space, solution space, constraints, threat models |
 | 2 | Iterative discovery | State understanding, ask pointed questions, repeat until model stable |
 | 3 | Write spec document | 9-section spec in `docs/{name}-spec.md` or issue body |
-| 4 | Create epic + sub-issues | Epic anchor with 3-5 practical + 2-4 aspirational sub-issues |
+| 4 | Create epic + sub-issues | Epic anchor with 3-5 practical + 2-4 aspirational sub-issues; include "Implementing Agent: Read This First" block for issue-only PRDs |
 | 5 | Create docs-only PR | Branch + spec file + commit + PR (skip for issue-only PRDs) |
+
+**For implementors picking up an issue-only PRD:**
+
+| # | Task | Description |
+|---|------|-------------|
+| 0 | Commit spec to repo | Copy PRD from issue body → `docs/prd-{name}.md`, open standalone PR, merge before any implementation work |
+| 1 | Read full spec | Understand reasoning before touching code |
+| 2 | Implement | Work through the spec phases |
 
 ## What Comes Next
 
