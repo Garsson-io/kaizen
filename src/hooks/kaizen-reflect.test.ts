@@ -230,6 +230,13 @@ describe('generateCreateReflection', () => {
     expect(output).toContain('trivial-refactor');
   });
 
+  it('includes compound improvement prompt (#264)', () => {
+    const output = generateCreateReflection('url', 'branch', 'files');
+    expect(output).toContain('Compound improvements');
+    expect(output).toContain('type: "positive"');
+    expect(output).toContain('compound improvement unlocked');
+  });
+
   it('includes transcript_path when provided', () => {
     const output = generateCreateReflection(
       'url',
@@ -255,6 +262,13 @@ describe('generateMergeReflection', () => {
     expect(output).toContain('post-merge steps');
     expect(output).toContain('Sync main');
     expect(output).toContain('/main');
+  });
+
+  it('includes compound improvement prompt (#264)', () => {
+    const output = generateMergeReflection('url', 'branch', 'files', '/main');
+    expect(output).toContain('Compound improvements');
+    expect(output).toContain('type: "positive"');
+    expect(output).toContain('compound improvement unlocked');
   });
 
   it('includes transcript_path when provided', () => {

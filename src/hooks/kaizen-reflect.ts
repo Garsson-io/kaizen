@@ -204,6 +204,9 @@ Launch a background kaizen-bg subagent to handle reflection while you continue w
   - Changed files: ${changed}
 ${transcriptInstruction(transcriptPath)}
   - List any impediments/friction you encountered during this work
+  - **Compound improvements (kaizen #264):** Also identify what future improvements
+    this work makes easier or possible. What's now cheaper to build because of this
+    foundation? Record these as type: "positive" findings.
   - IMPORTANT: For each impediment, search existing kaizen issues FIRST.
     Recording an incident on an existing issue is MORE VALUABLE than filing new.
     New issues MUST have labels: kaizen + level-N + area/{subsystem}.
@@ -219,7 +222,8 @@ echo 'KAIZEN_IMPEDIMENTS:' && cat <<'IMPEDIMENTS'
 [
   {"impediment": "description", "disposition": "filed", "ref": "#NNN"},
   {"impediment": "description", "disposition": "incident", "ref": "#NNN"},
-  {"impediment": "description", "disposition": "fixed-in-pr"}
+  {"impediment": "description", "disposition": "fixed-in-pr"},
+  {"finding": "description of unlocked improvement", "type": "positive", "disposition": "no-action", "reason": "compound improvement unlocked by this work"}
 ]
 IMPEDIMENTS
 \`\`\`
@@ -267,6 +271,9 @@ with post-merge steps (deploy verification, main sync, case closure).
   - Changed files: ${changed}
 ${transcriptInstruction(transcriptPath)}
   - List any impediments/friction you encountered during this work
+  - **Compound improvements (kaizen #264):** Also identify what future improvements
+    this work makes easier or possible. What's now cheaper to build because of this
+    foundation? Record these as type: "positive" findings.
   - Ask it to also check if any open kaizen issues are now resolved by this merge
   - IMPORTANT: For each impediment, search existing kaizen issues FIRST.
     Recording an incident on an existing issue is MORE VALUABLE than filing new.
@@ -283,7 +290,8 @@ echo 'KAIZEN_IMPEDIMENTS:' && cat <<'IMPEDIMENTS'
 [
   {"impediment": "description", "disposition": "filed", "ref": "#NNN"},
   {"impediment": "description", "disposition": "incident", "ref": "#NNN"},
-  {"impediment": "description", "disposition": "fixed-in-pr"}
+  {"impediment": "description", "disposition": "fixed-in-pr"},
+  {"finding": "description of unlocked improvement", "type": "positive", "disposition": "no-action", "reason": "compound improvement unlocked by this work"}
 ]
 IMPEDIMENTS
 \`\`\`
