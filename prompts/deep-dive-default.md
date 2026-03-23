@@ -75,18 +75,23 @@ Emit the DECOMPOSE phase marker when breaking down an epic:
 This is higher-value than stopping — advancing an epic by one concrete step
 moves the strategic layer forward.
 
-## Stopping the Loop
+## Scope: plan first, then execute
 
-**One issue per run.** Complete one issue, create one PR, queue it for merge, then stop. The harness will restart with fresh context for the next issue. Do not pick additional issues after your first PR is queued — stopping is correct behavior, not a failure.
+**Before picking up any work, decide your scope for this run.** Look at the available issues and ask: are any of them the same root cause, same file, or naturally bundled? If yes, plan to handle them together in one PR or a small set of PRs — decide that now, upfront.
 
-The only exception: if your assigned issue is blocked or already resolved, skip it, pick one replacement, and stop after that PR.
+Once you start executing, **do not expand scope**. Finishing a PR is not a trigger to pick more work. The harness will restart with fresh context and updated state for the next run. Casually grabbing additional issues after completing your planned work is the failure mode — it creates a blind loop where each completion just pulls in more scope with no deliberate decision.
+
+The right pattern:
+- **PLAN:** assess available issues, decide what this run covers (one issue, or a deliberate bundle), state it explicitly
+- **EXECUTE:** implement exactly what you planned
+- **STOP:** when your plan is done, stop — the harness restarts
 
 If all issues are genuinely exhausted (backlog empty, all remaining issues claimed or blocked, AND no epics/PRDs can be decomposed), include this marker in your final response:
 
 AUTO_DENT_PHASE: STOP | reason=<reason>
 
 For example: "AUTO_DENT_PHASE: STOP | reason=backlog exhausted — no more open issues matching 'hooks reliability'"
-Only emit STOP when work is truly gone. Do not emit STOP after a normal single-issue run — just finish and let the harness restart.
+Only emit STOP when work is truly gone, not at the end of a normal run.
 
 When done, summarize what was accomplished. List all PRs created, issues filed,
 and issues closed with full URLs.
