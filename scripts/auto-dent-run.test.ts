@@ -14,7 +14,9 @@ import {
   truncateAtWord,
   cleanGuidanceForTitle,
   buildInFlightComment,
+  extractLinkedIssue,
   type BatchState,
+  type CleanupResult,
   type RunResult,
   type PhaseMarker,
   type RunMetrics,
@@ -1255,5 +1257,40 @@ describe('processStreamMessage populates context', () => {
     processStreamMessage(msg, result, Date.now(), ctx);
     expect(ctx.lastPhase).toContain('[PICK]');
     expect(ctx.lastPhase).toContain('#472');
+  });
+});
+
+describe('extractLinkedIssue', () => {
+  it('extracts issue from "Closes #NNN"', () => {
+    expect(extractLinkedIssue('This PR\n\nCloses #451')).toBe('451');
+  });
+
+  it('extracts issue from "Fixes #NNN"', () => {
+    expect(extractLinkedIssue('Fixes #123 — some description')).toBe('123');
+  });
+
+  it('extracts issue from "Resolves #NNN"', () => {
+    expect(extractLinkedIssue('Resolves #999')).toBe('999');
+  });
+
+  it('extracts issue from "closes #NNN" (lowercase)', () => {
+    expect(extractLinkedIssue('closes #42')).toBe('42');
+  });
+
+  it('extracts issue from "Fixed #NNN"', () => {
+    expect(extractLinkedIssue('Fixed #77 after investigation')).toBe('77');
+  });
+
+  it('returns null when no linked issue', () => {
+    expect(extractLinkedIssue('Just a PR with no issue link')).toBeNull();
+  });
+
+  it('returns null for empty body', () => {
+    expect(extractLinkedIssue('')).toBeNull();
+  });
+
+  it('returns first match when multiple issues linked', () => {
+    const body = 'Closes #100\nAlso fixes #200';
+    expect(extractLinkedIssue(body)).toBe('100');
   });
 });
