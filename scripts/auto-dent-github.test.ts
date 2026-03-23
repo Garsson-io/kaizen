@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import {
   ghExec,
+  parseShellArgs,
   fetchIssueLabels,
   checkMergeStatus,
   sweepBatchPRs,
@@ -18,98 +19,183 @@ import {
 import { makeRunResult } from './auto-dent-test-helpers.js';
 
 vi.mock('child_process', () => ({
-  execSync: vi.fn(),
+  spawnSync: vi.fn(),
 }));
 
-const mockExecSync = vi.mocked(execSync);
+const mockSpawnSync = vi.mocked(spawnSync);
+
+// Return a spawnSync success result with the given stdout
+function ok(stdout: string) {
+  return { stdout, stderr: '', status: 0, pid: 0, signal: null, output: [], error: undefined };
+}
+
+// Return a spawnSync result where the command exited non-zero
+function fail(stderr = 'command failed') {
+  return { stdout: '', stderr, status: 1, pid: 0, signal: null, output: [], error: undefined };
+}
+
+// Reconstruct a command string from spawnSync args for assertion convenience.
+// With spawnSync, args are passed as separate strings so user data is NOT
+// shell-interpolated — but we can still join them for substring matching.
+function joinArgs(call: Parameters<typeof spawnSync>): string {
+  return [call[0] as string, ...(call[1] as string[])].join(' ');
+}
+
+describe('parseShellArgs', () => {
+  it('splits simple command', () => {
+    expect(parseShellArgs('gh issue list')).toEqual(['gh', 'issue', 'list']);
+  });
+
+  it('handles double-quoted strings', () => {
+    expect(parseShellArgs('gh issue create --title "My Title"')).toEqual([
+      'gh', 'issue', 'create', '--title', 'My Title',
+    ]);
+  });
+
+  it('handles double-quoted strings with JSON escape sequences', () => {
+    expect(parseShellArgs('gh issue create --body "line1\\nline2"')).toEqual([
+      'gh', 'issue', 'create', '--body', 'line1\nline2',
+    ]);
+  });
+
+  it('does NOT execute backticks inside double-quoted strings', () => {
+    // This is the core fix: backticks in user-controlled data (e.g. markdown
+    // code spans like `worried-fish`) must be parsed as literal characters,
+    // not as shell command substitutions.
+    const cmd = 'gh issue create --body "see `worried-fish` for details"';
+    const args = parseShellArgs(cmd);
+    expect(args).toEqual([
+      'gh', 'issue', 'create', '--body', 'see `worried-fish` for details',
+    ]);
+  });
+
+  it('handles single-quoted strings', () => {
+    expect(parseShellArgs("gh issue create --title 'My Title'")).toEqual([
+      'gh', 'issue', 'create', '--title', 'My Title',
+    ]);
+  });
+
+  it('handles escaped quotes inside double quotes', () => {
+    expect(parseShellArgs('gh issue create --body "say \\"hello\\""')).toEqual([
+      'gh', 'issue', 'create', '--body', 'say "hello"',
+    ]);
+  });
+
+  it('handles multiple spaces between args', () => {
+    expect(parseShellArgs('gh  issue  list')).toEqual(['gh', 'issue', 'list']);
+  });
+
+  it('handles empty string', () => {
+    expect(parseShellArgs('')).toEqual([]);
+  });
+
+  it('does NOT interpret $() substitutions', () => {
+    const cmd = 'gh issue create --body "cost: $(echo hack)"';
+    const args = parseShellArgs(cmd);
+    expect(args).toEqual([
+      'gh', 'issue', 'create', '--body', 'cost: $(echo hack)',
+    ]);
+  });
+});
 
 describe('ghExec', () => {
   beforeEach(() => {
-    mockExecSync.mockReset();
+    mockSpawnSync.mockReset();
   });
 
-  it('returns trimmed output on success', () => {
-    mockExecSync.mockReturnValue('  some output  \n');
+  it('returns trimmed stdout on success', () => {
+    mockSpawnSync.mockReturnValue(ok('  some output  \n') as any);
     expect(ghExec('gh issue list')).toBe('some output');
   });
 
-  it('returns empty string on failure and does not throw', () => {
-    mockExecSync.mockImplementation(() => {
-      throw new Error('command failed');
-    });
+  it('returns empty string on non-zero exit and does not throw', () => {
+    mockSpawnSync.mockReturnValue(fail('gh error') as any);
     expect(ghExec('gh issue list')).toBe('');
+  });
+
+  it('returns empty string on spawn error and does not throw', () => {
+    mockSpawnSync.mockReturnValue({ ...fail(), error: new Error('spawn failed') } as any);
+    expect(ghExec('gh issue list')).toBe('');
+  });
+
+  it('passes args as array (no shell interpretation)', () => {
+    mockSpawnSync.mockReturnValue(ok('') as any);
+    ghExec('gh issue create --body "has `backtick` inside"');
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      'gh',
+      ['issue', 'create', '--body', 'has `backtick` inside'],
+      expect.objectContaining({ encoding: 'utf8' }),
+    );
   });
 });
 
 describe('fetchIssueLabels', () => {
   beforeEach(() => {
-    mockExecSync.mockReset();
+    mockSpawnSync.mockReset();
   });
 
   it('returns label names from gh output', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ labels: [{ name: 'bug' }, { name: 'kaizen' }] }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ labels: [{ name: 'bug' }, { name: 'kaizen' }] })) as any,
     );
     expect(fetchIssueLabels('#42', 'owner/repo')).toEqual(['bug', 'kaizen']);
   });
 
   it('extracts issue number from various formats', () => {
-    mockExecSync.mockReturnValue(JSON.stringify({ labels: [] }));
+    mockSpawnSync.mockReturnValue(ok(JSON.stringify({ labels: [] })) as any);
 
     fetchIssueLabels('42', 'owner/repo');
-    expect(String(mockExecSync.mock.calls[0][0])).toContain('42');
+    expect(joinArgs(mockSpawnSync.mock.calls[0] as any)).toContain('42');
 
-    mockExecSync.mockClear();
+    mockSpawnSync.mockClear();
     fetchIssueLabels('#99', 'owner/repo');
-    expect(String(mockExecSync.mock.calls[0][0])).toContain('99');
+    expect(joinArgs(mockSpawnSync.mock.calls[0] as any)).toContain('99');
 
-    mockExecSync.mockClear();
+    mockSpawnSync.mockClear();
     fetchIssueLabels('https://github.com/o/r/issues/123', 'owner/repo');
-    expect(String(mockExecSync.mock.calls[0][0])).toContain('123');
+    expect(joinArgs(mockSpawnSync.mock.calls[0] as any)).toContain('123');
   });
 
   it('returns empty array for non-numeric input', () => {
     expect(fetchIssueLabels('abc', 'owner/repo')).toEqual([]);
-    expect(mockExecSync).not.toHaveBeenCalled();
+    expect(mockSpawnSync).not.toHaveBeenCalled();
   });
 
   it('returns empty array on gh failure', () => {
-    mockExecSync.mockImplementation(() => {
-      throw new Error('not found');
-    });
+    mockSpawnSync.mockReturnValue(fail() as any);
     expect(fetchIssueLabels('#42', 'owner/repo')).toEqual([]);
   });
 });
 
 describe('checkMergeStatus', () => {
   beforeEach(() => {
-    mockExecSync.mockReset();
+    mockSpawnSync.mockReset();
   });
 
   it('returns merged for MERGED state', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null })) as any,
     );
     expect(checkMergeStatus('https://github.com/o/r/pull/1')).toBe('merged');
   });
 
   it('returns closed for CLOSED state', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ state: 'CLOSED', mergeStateStatus: null, autoMergeRequest: null }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ state: 'CLOSED', mergeStateStatus: null, autoMergeRequest: null })) as any,
     );
     expect(checkMergeStatus('https://github.com/o/r/pull/1')).toBe('closed');
   });
 
   it('returns auto_queued when autoMergeRequest is set', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: { enabledAt: '2024-01-01' } }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: { enabledAt: '2024-01-01' } })) as any,
     );
     expect(checkMergeStatus('https://github.com/o/r/pull/1')).toBe('auto_queued');
   });
 
   it('returns open for OPEN state without auto-merge', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: null }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: null })) as any,
     );
     expect(checkMergeStatus('https://github.com/o/r/pull/1')).toBe('open');
   });
@@ -119,16 +205,14 @@ describe('checkMergeStatus', () => {
   });
 
   it('returns unknown on gh failure', () => {
-    mockExecSync.mockImplementation(() => {
-      throw new Error('failed');
-    });
+    mockSpawnSync.mockReturnValue(fail() as any);
     expect(checkMergeStatus('https://github.com/o/r/pull/1')).toBe('unknown');
   });
 });
 
 describe('sweepBatchPRs', () => {
   beforeEach(() => {
-    mockExecSync.mockReset();
+    mockSpawnSync.mockReset();
   });
 
   it('returns empty for empty input', () => {
@@ -136,40 +220,40 @@ describe('sweepBatchPRs', () => {
   });
 
   it('marks merged PRs as merged', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null })) as any,
     );
     const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
     expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'merged' }]);
   });
 
   it('marks closed PRs as closed', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ state: 'CLOSED', mergeStateStatus: null, autoMergeRequest: null }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ state: 'CLOSED', mergeStateStatus: null, autoMergeRequest: null })) as any,
     );
     const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
     expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'closed' }]);
   });
 
   it('updates BEHIND branches with auto-merge queued', () => {
-    mockExecSync.mockImplementation((cmd: string) => {
-      const cmdStr = String(cmd);
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
       if (cmdStr.includes('pr view')) {
-        return JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BEHIND', autoMergeRequest: { enabledAt: '2024' } });
+        return ok(JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BEHIND', autoMergeRequest: { enabledAt: '2024' } }));
       }
       if (cmdStr.includes('update-branch')) {
-        return 'ok';
+        return ok('ok');
       }
-      return '';
-    });
+      return ok('');
+    }) as any);
 
     const results = sweepBatchPRs(['https://github.com/o/r/pull/5']);
     expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/5', action: 'updated' }]);
   });
 
   it('marks already current PRs', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: { enabledAt: '2024' } }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: { enabledAt: '2024' } })) as any,
     );
     const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
     expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'already_current' }]);
@@ -180,9 +264,7 @@ describe('sweepBatchPRs', () => {
   });
 
   it('handles gh failure as failed', () => {
-    mockExecSync.mockImplementation(() => {
-      throw new Error('gh failed');
-    });
+    mockSpawnSync.mockReturnValue(fail() as any);
     const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
     expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'failed' }]);
   });
@@ -190,11 +272,11 @@ describe('sweepBatchPRs', () => {
 
 describe('labelArtifacts', () => {
   beforeEach(() => {
-    mockExecSync.mockReset();
+    mockSpawnSync.mockReset();
   });
 
   it('labels PRs and issues', () => {
-    mockExecSync.mockReturnValue('ok');
+    mockSpawnSync.mockReturnValue(ok('ok') as any);
     const result = makeRunResult({
       prs: ['https://github.com/o/r/pull/1'],
       issuesFiled: ['https://github.com/o/r/issues/10'],
@@ -202,7 +284,7 @@ describe('labelArtifacts', () => {
 
     labelArtifacts(result, 'auto-dent');
 
-    const calls = mockExecSync.mock.calls.map((c) => String(c[0]));
+    const calls = mockSpawnSync.mock.calls.map((c) => joinArgs(c as any));
     expect(calls).toHaveLength(2);
     expect(calls[0]).toContain('pr edit 1');
     expect(calls[0]).toContain('--add-label auto-dent');
@@ -212,25 +294,25 @@ describe('labelArtifacts', () => {
 
   it('does nothing for empty result', () => {
     labelArtifacts(makeRunResult(), 'auto-dent');
-    expect(mockExecSync).not.toHaveBeenCalled();
+    expect(mockSpawnSync).not.toHaveBeenCalled();
   });
 });
 
 describe('queueAutoMerge', () => {
   beforeEach(() => {
-    mockExecSync.mockReset();
+    mockSpawnSync.mockReset();
   });
 
   it('queues auto-merge for each PR', () => {
-    mockExecSync.mockReturnValue('ok');
+    mockSpawnSync.mockReturnValue(ok('ok') as any);
     const result = makeRunResult({
       prs: ['https://github.com/o/r/pull/1', 'https://github.com/o/r/pull/2'],
     });
 
     queueAutoMerge(result, 'o/r');
 
-    expect(mockExecSync).toHaveBeenCalledTimes(2);
-    const cmds = mockExecSync.mock.calls.map((c) => String(c[0]));
+    expect(mockSpawnSync).toHaveBeenCalledTimes(2);
+    const cmds = mockSpawnSync.mock.calls.map((c) => joinArgs(c as any));
     expect(cmds[0]).toContain('pr merge 1');
     expect(cmds[0]).toContain('--squash --delete-branch --auto');
     expect(cmds[1]).toContain('pr merge 2');
@@ -261,30 +343,28 @@ describe('extractLinkedIssue', () => {
 
 describe('isIssueClosed', () => {
   beforeEach(() => {
-    mockExecSync.mockReset();
+    mockSpawnSync.mockReset();
   });
 
   it('returns true for CLOSED state', () => {
-    mockExecSync.mockReturnValue(JSON.stringify({ state: 'CLOSED' }));
+    mockSpawnSync.mockReturnValue(ok(JSON.stringify({ state: 'CLOSED' })) as any);
     expect(isIssueClosed('42', 'owner/repo')).toBe(true);
   });
 
   it('returns false for OPEN state', () => {
-    mockExecSync.mockReturnValue(JSON.stringify({ state: 'OPEN' }));
+    mockSpawnSync.mockReturnValue(ok(JSON.stringify({ state: 'OPEN' })) as any);
     expect(isIssueClosed('42', 'owner/repo')).toBe(false);
   });
 
   it('returns false on gh failure', () => {
-    mockExecSync.mockImplementation(() => {
-      throw new Error('failed');
-    });
+    mockSpawnSync.mockReturnValue(fail() as any);
     expect(isIssueClosed('42', 'owner/repo')).toBe(false);
   });
 });
 
 describe('cleanupSupersededPRs', () => {
   beforeEach(() => {
-    mockExecSync.mockReset();
+    mockSpawnSync.mockReset();
   });
 
   it('returns empty for empty input', () => {
@@ -292,43 +372,43 @@ describe('cleanupSupersededPRs', () => {
   });
 
   it('marks merged PRs as already_merged', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ state: 'MERGED', body: 'Closes #100' }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ state: 'MERGED', body: 'Closes #100' })) as any,
     );
     const results = cleanupSupersededPRs(['https://github.com/o/r/pull/1'], 'o/r');
     expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'already_merged' }]);
   });
 
   it('marks closed PRs as already_closed', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ state: 'CLOSED', body: 'Closes #100' }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ state: 'CLOSED', body: 'Closes #100' })) as any,
     );
     const results = cleanupSupersededPRs(['https://github.com/o/r/pull/1'], 'o/r');
     expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'already_closed' }]);
   });
 
   it('marks PRs with no linked issue as no_issue', () => {
-    mockExecSync.mockReturnValue(
-      JSON.stringify({ state: 'OPEN', body: 'Just a regular PR' }),
+    mockSpawnSync.mockReturnValue(
+      ok(JSON.stringify({ state: 'OPEN', body: 'Just a regular PR' })) as any,
     );
     const results = cleanupSupersededPRs(['https://github.com/o/r/pull/1'], 'o/r');
     expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'no_issue' }]);
   });
 
   it('closes superseded PRs whose issues are closed', () => {
-    mockExecSync.mockImplementation((cmd: string) => {
-      const cmdStr = String(cmd);
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
       if (cmdStr.includes('pr view')) {
-        return JSON.stringify({ state: 'OPEN', body: 'Closes #100' });
+        return ok(JSON.stringify({ state: 'OPEN', body: 'Closes #100' }));
       }
       if (cmdStr.includes('issue view')) {
-        return JSON.stringify({ state: 'CLOSED' });
+        return ok(JSON.stringify({ state: 'CLOSED' }));
       }
       if (cmdStr.includes('pr close')) {
-        return 'ok';
+        return ok('ok');
       }
-      return '';
-    });
+      return ok('');
+    }) as any);
 
     const results = cleanupSupersededPRs(['https://github.com/o/r/pull/5'], 'o/r');
     expect(results).toEqual([
@@ -337,16 +417,16 @@ describe('cleanupSupersededPRs', () => {
   });
 
   it('marks PRs as still_open when issue is open', () => {
-    mockExecSync.mockImplementation((cmd: string) => {
-      const cmdStr = String(cmd);
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
       if (cmdStr.includes('pr view')) {
-        return JSON.stringify({ state: 'OPEN', body: 'Closes #100' });
+        return ok(JSON.stringify({ state: 'OPEN', body: 'Closes #100' }));
       }
       if (cmdStr.includes('issue view')) {
-        return JSON.stringify({ state: 'OPEN' });
+        return ok(JSON.stringify({ state: 'OPEN' }));
       }
-      return '';
-    });
+      return ok('');
+    }) as any);
 
     const results = cleanupSupersededPRs(['https://github.com/o/r/pull/1'], 'o/r');
     expect(results).toEqual([
@@ -416,7 +496,7 @@ describe('extractAllLinkedIssues', () => {
 
 describe('syncEpicChecklists', () => {
   beforeEach(() => {
-    mockExecSync.mockReset();
+    mockSpawnSync.mockReset();
   });
 
   it('returns empty when no closed issues', () => {
@@ -426,16 +506,16 @@ describe('syncEpicChecklists', () => {
   it('checks off issues in epic body', () => {
     const epicBody = '- [ ] #699 Wire\n- [x] #700 Dedup\n- [ ] #701 Names';
 
-    mockExecSync.mockImplementation((cmd: string) => {
-      const cmdStr = String(cmd);
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
       if (cmdStr.includes('issue list') && cmdStr.includes('--label epic')) {
-        return JSON.stringify([{ number: 698, body: epicBody }]);
+        return ok(JSON.stringify([{ number: 698, body: epicBody }]));
       }
       if (cmdStr.includes('issue edit')) {
-        return 'ok';
+        return ok('ok');
       }
-      return '';
-    });
+      return ok('');
+    }) as any);
 
     const results = syncEpicChecklists(['699', '701'], 'owner/repo');
 
@@ -444,29 +524,32 @@ describe('syncEpicChecklists', () => {
     expect(results[0].issuesChecked).toEqual(['#699', '#701']);
     expect(results[0].alreadyChecked).toEqual([]);
 
-    // Verify edit was called with updated body
-    const editCall = mockExecSync.mock.calls.find(
-      (c) => String(c[0]).includes('issue edit'),
+    // Verify edit was called with updated body containing checked items
+    const editCall = mockSpawnSync.mock.calls.find(
+      (c) => (c[1] as string[]).join(' ').includes('issue edit'),
     );
     expect(editCall).toBeDefined();
-    const editCmd = String(editCall![0]);
-    expect(editCmd).toContain('- [x] #699');
-    expect(editCmd).toContain('- [x] #701');
+    // The body is passed as a plain string arg (after --body flag)
+    const editArgs = editCall![1] as string[];
+    const bodyIdx = editArgs.indexOf('--body');
+    const updatedBody = editArgs[bodyIdx + 1];
+    expect(updatedBody).toContain('- [x] #699');
+    expect(updatedBody).toContain('- [x] #701');
   });
 
   it('reports already-checked items', () => {
     const epicBody = '- [x] #699 Already done\n- [ ] #701 Pending';
 
-    mockExecSync.mockImplementation((cmd: string) => {
-      const cmdStr = String(cmd);
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
       if (cmdStr.includes('issue list') && cmdStr.includes('--label epic')) {
-        return JSON.stringify([{ number: 698, body: epicBody }]);
+        return ok(JSON.stringify([{ number: 698, body: epicBody }]));
       }
       if (cmdStr.includes('issue edit')) {
-        return 'ok';
+        return ok('ok');
       }
-      return '';
-    });
+      return ok('');
+    }) as any);
 
     const results = syncEpicChecklists(['699', '701'], 'owner/repo');
     expect(results).toHaveLength(1);
@@ -477,29 +560,26 @@ describe('syncEpicChecklists', () => {
   it('skips epics with no matching unchecked items', () => {
     const epicBody = '- [x] #699 Already done\n- [ ] #800 Unrelated';
 
-    mockExecSync.mockImplementation((cmd: string) => {
-      const cmdStr = String(cmd);
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
       if (cmdStr.includes('issue list')) {
-        return JSON.stringify([{ number: 698, body: epicBody }]);
+        return ok(JSON.stringify([{ number: 698, body: epicBody }]));
       }
-      return '';
-    });
+      return ok('');
+    }) as any);
 
     const results = syncEpicChecklists(['699'], 'owner/repo');
     expect(results).toHaveLength(0);
 
     // Should not have called edit
-    const editCalls = mockExecSync.mock.calls.filter(
-      (c) => String(c[0]).includes('issue edit'),
+    const editCalls = mockSpawnSync.mock.calls.filter(
+      (c) => (c[1] as string[]).join(' ').includes('issue edit'),
     );
     expect(editCalls).toHaveLength(0);
   });
 
   it('handles gh failure gracefully', () => {
-    mockExecSync.mockImplementation(() => {
-      throw new Error('gh failed');
-    });
-
+    mockSpawnSync.mockReturnValue(fail() as any);
     const results = syncEpicChecklists(['699'], 'owner/repo');
     expect(results).toEqual([]);
   });
@@ -507,7 +587,7 @@ describe('syncEpicChecklists', () => {
 
 describe('verifyIssuesClosed', () => {
   beforeEach(() => {
-    mockExecSync.mockReset();
+    mockSpawnSync.mockReset();
   });
 
   it('returns empty for no PRs', () => {
@@ -515,13 +595,13 @@ describe('verifyIssuesClosed', () => {
   });
 
   it('skips non-merged PRs', () => {
-    mockExecSync.mockImplementation((cmd: string) => {
-      const cmdStr = String(cmd);
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
       if (cmdStr.includes('pr view')) {
-        return JSON.stringify({ state: 'OPEN', body: 'Closes #100' });
+        return ok(JSON.stringify({ state: 'OPEN', body: 'Closes #100' }));
       }
-      return '';
-    });
+      return ok('');
+    }) as any);
 
     const results = verifyIssuesClosed(
       ['https://github.com/owner/repo/pull/1'],
@@ -531,16 +611,16 @@ describe('verifyIssuesClosed', () => {
   });
 
   it('verifies already-closed issues without force-closing', () => {
-    mockExecSync.mockImplementation((cmd: string) => {
-      const cmdStr = String(cmd);
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
       if (cmdStr.includes('pr view')) {
-        return JSON.stringify({ state: 'MERGED', body: 'Closes #100' });
+        return ok(JSON.stringify({ state: 'MERGED', body: 'Closes #100' }));
       }
       if (cmdStr.includes('issue view')) {
-        return JSON.stringify({ state: 'CLOSED' });
+        return ok(JSON.stringify({ state: 'CLOSED' }));
       }
-      return '';
-    });
+      return ok('');
+    }) as any);
 
     const results = verifyIssuesClosed(
       ['https://github.com/owner/repo/pull/1'],
@@ -552,22 +632,22 @@ describe('verifyIssuesClosed', () => {
   });
 
   it('force-closes issues that GitHub did not auto-close', () => {
-    mockExecSync.mockImplementation((cmd: string) => {
-      const cmdStr = String(cmd);
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
       if (cmdStr.includes('pr view')) {
-        return JSON.stringify({ state: 'MERGED', body: 'Closes #100\nFixes #200' });
+        return ok(JSON.stringify({ state: 'MERGED', body: 'Closes #100\nFixes #200' }));
       }
       if (cmdStr.includes('issue view 100')) {
-        return JSON.stringify({ state: 'CLOSED' });
+        return ok(JSON.stringify({ state: 'CLOSED' }));
       }
       if (cmdStr.includes('issue view 200')) {
-        return JSON.stringify({ state: 'OPEN' });
+        return ok(JSON.stringify({ state: 'OPEN' }));
       }
       if (cmdStr.includes('issue close')) {
-        return 'ok';
+        return ok('ok');
       }
-      return '';
-    });
+      return ok('');
+    }) as any);
 
     const results = verifyIssuesClosed(
       ['https://github.com/owner/repo/pull/1'],
@@ -577,22 +657,22 @@ describe('verifyIssuesClosed', () => {
     expect(results[0].verified).toEqual(['#100']);
     expect(results[0].forceClosed).toEqual(['#200']);
 
-    // Verify the close command was called
-    const closeCalls = mockExecSync.mock.calls.filter(
-      (c) => String(c[0]).includes('issue close'),
+    // Verify the close command was called for issue 200
+    const closeCalls = mockSpawnSync.mock.calls.filter(
+      (c) => (c[1] as string[]).join(' ').includes('issue close'),
     );
     expect(closeCalls).toHaveLength(1);
-    expect(String(closeCalls[0][0])).toContain('200');
+    expect((closeCalls[0][1] as string[]).join(' ')).toContain('200');
   });
 
   it('skips PRs with no close keywords in body', () => {
-    mockExecSync.mockImplementation((cmd: string) => {
-      const cmdStr = String(cmd);
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
       if (cmdStr.includes('pr view')) {
-        return JSON.stringify({ state: 'MERGED', body: 'Just a regular PR' });
+        return ok(JSON.stringify({ state: 'MERGED', body: 'Just a regular PR' }));
       }
-      return '';
-    });
+      return ok('');
+    }) as any);
 
     const results = verifyIssuesClosed(
       ['https://github.com/owner/repo/pull/1'],
