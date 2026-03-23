@@ -234,9 +234,23 @@ read_state() {
 update_state() {
   node -e "
     const fs = require('fs');
-    const s = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
-    s[process.argv[2]] = process.argv[3];
-    fs.writeFileSync(process.argv[1], JSON.stringify(s, null, 2) + '\n');
+    const path = process.argv[1];
+    const key = process.argv[2];
+    const val = process.argv[3];
+    // Validate key is a simple identifier (no injection)
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+      console.error('[state-io] Invalid state key: ' + key);
+      process.exit(1);
+    }
+    const s = JSON.parse(fs.readFileSync(path, 'utf8'));
+    s[key] = val;
+    const content = JSON.stringify(s, null, 2) + '\n';
+    // Validate round-trip
+    JSON.parse(content);
+    // Backup + atomic write
+    if (fs.existsSync(path)) fs.copyFileSync(path, path + '.bak');
+    fs.writeFileSync(path + '.tmp', content);
+    fs.renameSync(path + '.tmp', path);
   " "$STATE_FILE" "$1" "$2"
 }
 
@@ -542,7 +556,10 @@ node -e "
   // Finalize state
   if (!s.stop_reason) s.stop_reason = 'completed';
   s.batch_end = Math.floor(Date.now() / 1000);
-  fs.writeFileSync(process.argv[1], JSON.stringify(s, null, 2) + '\n');
+  var content = JSON.stringify(s, null, 2) + '\n';
+  if (fs.existsSync(process.argv[1])) fs.copyFileSync(process.argv[1], process.argv[1] + '.bak');
+  fs.writeFileSync(process.argv[1] + '.tmp', content);
+  fs.renameSync(process.argv[1] + '.tmp', process.argv[1]);
   console.log('State: ' + process.argv[1]);
 
   const summaryPath = process.argv[1].replace('state.json', 'batch-summary.txt');
