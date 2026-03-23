@@ -20,6 +20,8 @@ import {
   extractLinkedIssue,
   formatPlanAsMarkdown,
   selectMode,
+  checkSignalOverrides,
+  computeModeDistribution,
   formatBatchFooter,
   color,
   type BatchState,
@@ -1540,6 +1542,190 @@ describe('selectMode', () => {
   });
 });
 
+function makeRunMetrics(overrides: Partial<RunMetrics> = {}): RunMetrics {
+  return {
+    run: 1,
+    start_epoch: 0,
+    duration_seconds: 60,
+    exit_code: 0,
+    cost_usd: 1.0,
+    tool_calls: 10,
+    prs: [],
+    issues_filed: [],
+    issues_closed: [],
+    cases: [],
+    stop_requested: false,
+    ...overrides,
+  };
+}
+
+describe('checkSignalOverrides', () => {
+  it('returns null when history is too short', () => {
+    const state = makeBatchState({ run_history: [makeRunMetrics(), makeRunMetrics()] });
+    expect(checkSignalOverrides(state)).toBeNull();
+  });
+
+  it('returns null when no signals fire', () => {
+    const state = makeBatchState({
+      consecutive_failures: 0,
+      run_history: [
+        makeRunMetrics({ prs: ['pr1'], mode: 'exploit' }),
+        makeRunMetrics({ prs: ['pr2'], mode: 'explore' }),
+        makeRunMetrics({ prs: ['pr3'], mode: 'exploit' }),
+      ],
+    });
+    expect(checkSignalOverrides(state)).toBeNull();
+  });
+
+  it('forces reflect on 3+ consecutive failures', () => {
+    const state = makeBatchState({
+      consecutive_failures: 3,
+      run_history: [
+        makeRunMetrics({ exit_code: 1 }),
+        makeRunMetrics({ exit_code: 1 }),
+        makeRunMetrics({ exit_code: 1 }),
+      ],
+    });
+    const result = checkSignalOverrides(state);
+    expect(result).not.toBeNull();
+    expect(result!.mode).toBe('reflect');
+    expect(result!.reason).toBe('signal:consecutive-failures');
+  });
+
+  it('forces explore when no PRs in last 5 runs', () => {
+    const state = makeBatchState({
+      consecutive_failures: 0,
+      run_history: [
+        makeRunMetrics({ prs: [] }),
+        makeRunMetrics({ prs: [] }),
+        makeRunMetrics({ prs: [] }),
+        makeRunMetrics({ prs: [] }),
+        makeRunMetrics({ prs: [] }),
+      ],
+    });
+    const result = checkSignalOverrides(state);
+    expect(result).not.toBeNull();
+    expect(result!.mode).toBe('explore');
+    expect(result!.reason).toBe('signal:no-recent-prs');
+  });
+
+  it('does not force explore when PRs exist in last 5 runs', () => {
+    const state = makeBatchState({
+      consecutive_failures: 0,
+      run_history: [
+        makeRunMetrics({ prs: [], mode: 'exploit' }),
+        makeRunMetrics({ prs: [], mode: 'explore' }),
+        makeRunMetrics({ prs: ['pr1'], mode: 'exploit' }),
+        makeRunMetrics({ prs: [], mode: 'reflect' }),
+        makeRunMetrics({ prs: [], mode: 'exploit' }),
+      ],
+    });
+    expect(checkSignalOverrides(state)).toBeNull();
+  });
+
+  it('breaks mode streak after 4 consecutive same-mode runs', () => {
+    const state = makeBatchState({
+      consecutive_failures: 0,
+      run_history: [
+        makeRunMetrics({ prs: ['pr1'], mode: 'exploit' }),
+        makeRunMetrics({ prs: ['pr2'], mode: 'exploit' }),
+        makeRunMetrics({ prs: ['pr3'], mode: 'exploit' }),
+        makeRunMetrics({ prs: ['pr4'], mode: 'exploit' }),
+      ],
+    });
+    const result = checkSignalOverrides(state);
+    expect(result).not.toBeNull();
+    expect(result!.mode).toBe('explore');
+    expect(result!.reason).toBe('signal:mode-streak-exploit');
+  });
+
+  it('breaks non-exploit mode streak with contemplate', () => {
+    const state = makeBatchState({
+      consecutive_failures: 0,
+      run_history: [
+        makeRunMetrics({ prs: ['pr1'], mode: 'explore' }),
+        makeRunMetrics({ prs: ['pr2'], mode: 'explore' }),
+        makeRunMetrics({ prs: ['pr3'], mode: 'explore' }),
+        makeRunMetrics({ prs: ['pr4'], mode: 'explore' }),
+      ],
+    });
+    const result = checkSignalOverrides(state);
+    expect(result).not.toBeNull();
+    expect(result!.mode).toBe('contemplate');
+    expect(result!.reason).toBe('signal:mode-streak-explore');
+  });
+
+  it('consecutive failures takes priority over no-prs signal', () => {
+    const state = makeBatchState({
+      consecutive_failures: 3,
+      run_history: [
+        makeRunMetrics({ prs: [], exit_code: 1 }),
+        makeRunMetrics({ prs: [], exit_code: 1 }),
+        makeRunMetrics({ prs: [], exit_code: 1 }),
+        makeRunMetrics({ prs: [], exit_code: 1 }),
+        makeRunMetrics({ prs: [], exit_code: 1 }),
+      ],
+    });
+    const result = checkSignalOverrides(state);
+    expect(result!.mode).toBe('reflect');
+  });
+
+  it('signal overrides are used by selectMode', () => {
+    const state = makeBatchState({
+      consecutive_failures: 4,
+      run_history: [
+        makeRunMetrics({ exit_code: 1 }),
+        makeRunMetrics({ exit_code: 1 }),
+        makeRunMetrics({ exit_code: 1 }),
+        makeRunMetrics({ exit_code: 1 }),
+      ],
+    });
+    // Run 1 would normally be exploit, but signal overrides it
+    const { mode, reason } = selectMode(state, 1);
+    expect(mode).toBe('reflect');
+    expect(reason).toBe('signal:consecutive-failures');
+  });
+
+  it('guidance override takes priority over signals', () => {
+    const state = makeBatchState({
+      guidance: 'fix bugs mode:subtract',
+      consecutive_failures: 5,
+      run_history: [
+        makeRunMetrics({ exit_code: 1 }),
+        makeRunMetrics({ exit_code: 1 }),
+        makeRunMetrics({ exit_code: 1 }),
+      ],
+    });
+    const { mode, reason } = selectMode(state, 1);
+    expect(mode).toBe('subtract');
+    expect(reason).toBe('guidance');
+  });
+});
+
+describe('computeModeDistribution', () => {
+  it('counts modes from run history', () => {
+    const history = [
+      makeRunMetrics({ mode: 'exploit' }),
+      makeRunMetrics({ mode: 'exploit' }),
+      makeRunMetrics({ mode: 'explore' }),
+      makeRunMetrics({ mode: 'reflect' }),
+    ];
+    const dist = computeModeDistribution(history);
+    expect(dist).toEqual({ exploit: 2, explore: 1, reflect: 1 });
+  });
+
+  it('defaults missing mode to exploit', () => {
+    const history = [makeRunMetrics({})];
+    // mode is undefined, should default to exploit
+    const dist = computeModeDistribution(history);
+    expect(dist).toEqual({ exploit: 1 });
+  });
+
+  it('returns empty object for empty history', () => {
+    expect(computeModeDistribution([])).toEqual({});
+  });
+});
+
 describe('formatBatchFooter', () => {
   it('shows run count and PR count', () => {
     const state = makeBatchState({
@@ -1575,6 +1761,28 @@ describe('formatBatchFooter', () => {
     });
     const output = formatBatchFooter(state);
     expect(output).toContain('100% success');
+  });
+
+  it('shows mode distribution when modes are present', () => {
+    const state = makeBatchState({
+      run: 3,
+      prs: [],
+      run_history: [
+        makeRunMetrics({ run: 1, mode: 'exploit' }),
+        makeRunMetrics({ run: 2, mode: 'exploit' }),
+        makeRunMetrics({ run: 3, mode: 'explore' }),
+      ],
+    });
+    const output = formatBatchFooter(state);
+    expect(output).toContain('Modes:');
+    expect(output).toContain('exploit:2');
+    expect(output).toContain('explore:1');
+  });
+
+  it('omits mode line when no history', () => {
+    const state = makeBatchState({ run: 0, prs: [], run_history: [] });
+    const output = formatBatchFooter(state);
+    expect(output).not.toContain('Modes:');
   });
 });
 
