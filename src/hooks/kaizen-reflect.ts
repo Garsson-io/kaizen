@@ -29,6 +29,7 @@ import {
   countChangedFiles,
   emitSessionEvent,
 } from './session-telemetry.js';
+import { analyzeHookTelemetry } from './telemetry-analysis.js';
 
 /** Detect the GitHub repo from the origin remote URL. */
 function detectGhRepo(): string | undefined {
@@ -399,8 +400,14 @@ export function processHookInput(
     ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${timingReport}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`
     : '';
 
+  // Analyze collected hook telemetry (kaizen #249 — observability L2)
+  const telemetryReport = analyzeHookTelemetry(options.telemetryDir);
+  const telemetrySection = telemetryReport
+    ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${telemetryReport}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`
+    : '';
+
   if (isCreate) {
-    return generateCreateReflection(prUrl, branch, changed, transcriptPath) + timingSection;
+    return generateCreateReflection(prUrl, branch, changed, transcriptPath) + timingSection + telemetrySection;
   }
 
   // Merge path
@@ -422,7 +429,7 @@ export function processHookInput(
     sendTelegramIpc(notifyText);
   }
 
-  return output + timingSection;
+  return output + timingSection + telemetrySection;
 }
 
 /** Main entry point — read stdin, process, write stdout. */
