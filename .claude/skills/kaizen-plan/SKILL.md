@@ -153,7 +153,7 @@ Three artifacts, three responsibilities — no duplication:
 Sub-issues are thin pointers. Keep them minimal:
 
 ```bash
-gh issue create --repo {repo} \
+gh issue create --repo "$ISSUES_REPO" \
   --title "{PR title}" \
   --body "$(cat <<'EOF'
 Parent: #{epic-issue-number}
