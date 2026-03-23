@@ -69,6 +69,8 @@ export interface RunMetrics {
   issues_closed: string[];
   cases: string[];
   stop_requested: boolean;
+  /** Cognitive mode used for this run (default: "exploit" for backward compat) */
+  mode?: string;
 }
 
 export interface RunResult {
@@ -1400,6 +1402,7 @@ async function main(): Promise<void> {
     issues_closed: result.issuesClosed,
     cases: result.cases,
     stop_requested: result.stopRequested,
+    mode: 'exploit',
   };
   if (!freshState.run_history) freshState.run_history = [];
   freshState.run_history.push(runMetrics);

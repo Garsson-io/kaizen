@@ -99,6 +99,16 @@ describe('scoreRunMetrics', () => {
     expect(score.stop_requested).toBe(true);
   });
 
+  it('defaults mode to "exploit" when not present', () => {
+    const score = scoreRunMetrics(makeRunMetrics());
+    expect(score.mode).toBe('exploit');
+  });
+
+  it('propagates explicit mode from RunMetrics', () => {
+    const score = scoreRunMetrics(makeRunMetrics({ mode: 'explore' }));
+    expect(score.mode).toBe('explore');
+  });
+
   it('counts issues filed', () => {
     const score = scoreRunMetrics(
       makeRunMetrics({
@@ -137,6 +147,16 @@ describe('scoreRunResult', () => {
   it('marks as failed with zero PRs even on exit 0', () => {
     const score = scoreRunResult(makeRunResult(), 0, 100);
     expect(score.success).toBe(false);
+  });
+
+  it('defaults mode to exploit', () => {
+    const score = scoreRunResult(makeRunResult(), 0, 100);
+    expect(score.mode).toBe('exploit');
+  });
+
+  it('accepts explicit mode parameter', () => {
+    const score = scoreRunResult(makeRunResult(), 0, 100, 'reflect');
+    expect(score.mode).toBe('reflect');
   });
 });
 
@@ -208,7 +228,7 @@ describe('scoreBatch', () => {
 });
 
 describe('formatRunScoreLine', () => {
-  it('formats a successful run score', () => {
+  it('formats a successful run score with mode', () => {
     const score: RunScore = {
       success: true,
       cost_usd: 2.5,
@@ -220,9 +240,11 @@ describe('formatRunScoreLine', () => {
       efficiency: 0.4,
       cost_per_pr: 2.5,
       stop_requested: false,
+      mode: 'exploit',
     };
     const line = formatRunScoreLine(score);
     expect(line).toContain('pass');
+    expect(line).toContain('exploit');
     expect(line).toContain('$2.50');
     expect(line).toContain('42 tools');
     expect(line).toContain('1 PRs');
@@ -242,15 +264,17 @@ describe('formatRunScoreLine', () => {
       efficiency: 0,
       cost_per_pr: Infinity,
       stop_requested: false,
+      mode: 'explore',
     };
     const line = formatRunScoreLine(score);
     expect(line).toContain('fail');
+    expect(line).toContain('explore');
     expect(line).not.toContain('PR/$');
   });
 });
 
 describe('formatBatchScoreTable', () => {
-  it('formats a batch score as markdown table', () => {
+  it('formats a batch score as markdown table with mode distribution', () => {
     const score: BatchScore = {
       total_runs: 3,
       successful_runs: 2,
@@ -262,7 +286,11 @@ describe('formatBatchScoreTable', () => {
       avg_cost_per_success: 3.0,
       avg_duration_seconds: 216.67,
       overall_efficiency: 0.5,
-      runs: [],
+      runs: [
+        { success: true, cost_usd: 2, tool_calls: 10, pr_count: 1, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 200, efficiency: 0.5, cost_per_pr: 2, stop_requested: false, mode: 'exploit' },
+        { success: true, cost_usd: 3, tool_calls: 15, pr_count: 2, issues_closed_count: 3, issues_filed_count: 0, duration_seconds: 400, efficiency: 0.67, cost_per_pr: 1.5, stop_requested: false, mode: 'exploit' },
+        { success: false, cost_usd: 1, tool_calls: 5, pr_count: 0, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 50, efficiency: 0, cost_per_pr: Infinity, stop_requested: false, mode: 'explore' },
+      ],
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Runs** | 3 (2 successful) |');
@@ -272,6 +300,7 @@ describe('formatBatchScoreTable', () => {
     expect(table).toContain('| **Issues closed** | 5 |');
     expect(table).toContain('| **Avg cost/success** | $3.00 |');
     expect(table).toContain('| **Efficiency** | 0.50 PR/$ |');
+    expect(table).toContain('| **Modes** | exploit:2, explore:1 |');
   });
 
   it('shows N/A for avg cost when no successes', () => {
