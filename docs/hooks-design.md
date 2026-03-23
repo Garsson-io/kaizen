@@ -105,6 +105,8 @@ When a gate blocks commands, it needs an allowlist of commands that ARE permitte
 - **Test isolation:** Tests override `STATE_DIR` to a temp directory. Never rely on real state files
 - **Mock `gh`:** Create a mock `gh` script in a temp dir and prepend to `PATH`
 - **Always test both paths:** the "allowed" path AND the "denied" path
+- **Shared lib changes require E2E tests:** Any change to `lib/*.sh` must include at least one E2E test exercising the lib through a real hook invocation. Use `SessionSimulator` (`src/e2e/session-simulator.ts`) to fire hooks in session order with controlled environments. This catches interaction bugs (like #758) that unit tests miss.
+- **TypeScript E2E harness:** `src/e2e/hook-runner.ts` provides event builders, `runHook()`, and mock utilities. `src/e2e/session-simulator.ts` adds session-level simulation (all hooks for each event type, environment presets, session-wide assertions).
 
 ## Anti-Patterns
 
