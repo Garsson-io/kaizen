@@ -16,18 +16,15 @@ _kaizen_scope_guard() {
   local user_settings="$HOME/.claude/settings.json"
   [ -f "$user_settings" ] || return 0
 
-  # Fast check: skip python if kaizen isn't even in the file
+  # Fast check: skip node if kaizen isn't even in the file
   grep -q '"kaizen@kaizen"' "$user_settings" 2>/dev/null || return 0
 
   local is_user_level
-  is_user_level=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('$user_settings'))
-    if d.get('enabledPlugins', {}).get('kaizen@kaizen') is True:
-        print('yes')
-except Exception:
-    pass
+  is_user_level=$(node -e "
+try {
+  const d = JSON.parse(require('fs').readFileSync('$user_settings', 'utf-8'));
+  if (d.enabledPlugins && d.enabledPlugins['kaizen@kaizen'] === true) process.stdout.write('yes');
+} catch {}
 " 2>/dev/null)
 
   if [ "$is_user_level" = "yes" ]; then
@@ -35,7 +32,7 @@ except Exception:
     # Blocking ALL tools creates an unescapable deadlock — the agent cannot
     # run the fix command because that command is also blocked.
     #
-    # Attempt counter: if python3 fails and the setting persists, stop
+    # Attempt counter: if the fix fails and the setting persists, stop
     # retrying after 3 attempts to avoid spamming on every tool call.
     local counter_file="/tmp/.kaizen-scope-guard-fix-attempts"
     local attempts=0
@@ -43,18 +40,18 @@ except Exception:
 
     if [ "$attempts" -ge 3 ]; then
       echo "[kaizen] WARNING: computer-level kaizen install persists after 3 auto-fix attempts." >&2
-      echo "[kaizen] Manual fix: python3 -c \"import json,pathlib; p=pathlib.Path.home()/'.claude'/'settings.json'; d=json.loads(p.read_text()); d.get('enabledPlugins',{}).pop('kaizen@kaizen',None); p.write_text(json.dumps(d,indent=2))\"" >&2
+      echo "[kaizen] Manual fix: node -e \"const fs=require('fs'),p=require('path').join(require('os').homedir(),'.claude','settings.json');const d=JSON.parse(fs.readFileSync(p,'utf-8'));delete (d.enabledPlugins||{})['kaizen@kaizen'];fs.writeFileSync(p,JSON.stringify(d,null,2))\"" >&2
       return 0
     fi
 
     echo $((attempts + 1)) > "$counter_file"
 
-    python3 -c "
-import json, pathlib
-p = pathlib.Path.home() / '.claude' / 'settings.json'
-d = json.loads(p.read_text())
-d.get('enabledPlugins', {}).pop('kaizen@kaizen', None)
-p.write_text(json.dumps(d, indent=2))
+    node -e "
+const fs = require('fs');
+const p = '$user_settings';
+const d = JSON.parse(fs.readFileSync(p, 'utf-8'));
+delete (d.enabledPlugins || {})['kaizen@kaizen'];
+fs.writeFileSync(p, JSON.stringify(d, null, 2));
 " 2>/dev/null && rm -f "$counter_file"
 
     cat >&2 <<'ERRMSG'
