@@ -8,11 +8,8 @@ All skills read `kaizen.config.json` from the host project root. See [skill-conf
 ```bash
 KAIZEN_REPO=$(jq -r '.kaizen.repo' kaizen.config.json)
 HOST_REPO=$(jq -r '.host.repo' kaizen.config.json)
+ISSUES_REPO=$(jq -r '.issues.repo // .host.repo' kaizen.config.json)
 KAIZEN_CLI=$(jq -r '.host.caseCli // ""' kaizen.config.json)
-
-# Derived: where kaizen issues live (see skill-config-header.md)
-# Self-dogfood: ISSUES_REPO=$KAIZEN_REPO, no label filter
-# Host project: ISSUES_REPO=$HOST_REPO, add --label kaizen
 ```
 
 ## Flow

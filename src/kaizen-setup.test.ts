@@ -81,6 +81,20 @@ describe("generateConfig", () => {
     const config = JSON.parse(readFileSync(join(tempDir, "kaizen.config.json"), "utf-8"));
     expect(config.kaizen.repo).toBe("other/kaizen");
   });
+
+  it("sets issues.repo to host repo for host projects", () => {
+    generateConfig({ name: "p", repo: "org/host-app", description: "d" }, tempDir);
+    const config = JSON.parse(readFileSync(join(tempDir, "kaizen.config.json"), "utf-8"));
+    expect(config.issues.repo).toBe("org/host-app");
+    expect(config.issues.label).toBe("kaizen");
+  });
+
+  it("sets empty issues.label for self-dogfood mode", () => {
+    generateConfig({ name: "p", repo: "Garsson-io/kaizen", description: "d" }, tempDir);
+    const config = JSON.parse(readFileSync(join(tempDir, "kaizen.config.json"), "utf-8"));
+    expect(config.issues.repo).toBe("Garsson-io/kaizen");
+    expect(config.issues.label).toBe("");
+  });
 });
 
 describe("scaffoldPolicies", () => {
