@@ -22,7 +22,21 @@ import { join } from 'path';
 import {
   processStreamMessage,
   type RunResult,
+  type RunMetrics,
 } from './auto-dent-run.js';
+import { parsePhaseMarkers as parsePhaseMarkersLocal } from './auto-dent-stream.js';
+import {
+  type EventEnvelope,
+  type RunStartEvent,
+  type RunCompleteEvent,
+  type RunIssuePickedEvent,
+  type RunPrCreatedEvent,
+  makeRunId,
+} from './auto-dent-events.js';
+import {
+  scoreRunResult,
+  type RunScore,
+} from './auto-dent-score.js';
 
 // Result types
 
@@ -50,6 +64,8 @@ function makeRunResult(): RunResult {
     cost: 0,
     toolCalls: 0,
     stopRequested: false,
+    linesDeleted: 0,
+    issuesPruned: 0,
   };
 }
 
@@ -580,6 +596,162 @@ export const scenarios = {
     msg.error(opts.cost ?? 0.8),
   ],
 };
+
+// Telemetry bridge — convert StreamCapture to RunMetrics and EventEnvelopes
+// Enables end-to-end testing of the scoring + batch-summary pipeline from synthetic scenarios.
+
+export interface CaptureToMetricsOpts {
+  runNum?: number;
+  exitCode?: number;
+  mode?: string;
+  batchId?: string;
+}
+
+/**
+ * Convert a StreamCapture to RunMetrics — the format used by auto-dent-score.
+ * Bridges the harness to the scoring pipeline so synthetic scenarios can be scored.
+ */
+export function captureToRunMetrics(
+  capture: StreamCapture,
+  opts: CaptureToMetricsOpts = {},
+): RunMetrics {
+  const runNum = opts.runNum ?? 1;
+  const exitCode = opts.exitCode ?? (capture.result.prs.length > 0 ? 0 : 1);
+  const durationSeconds = Math.round(capture.durationMs / 1000);
+
+  return {
+    run: runNum,
+    start_epoch: Math.floor(Date.now() / 1000),
+    duration_seconds: durationSeconds,
+    exit_code: exitCode,
+    cost_usd: capture.result.cost,
+    tool_calls: capture.result.toolCalls,
+    prs: capture.result.prs,
+    issues_filed: capture.result.issuesFiled,
+    issues_closed: capture.result.issuesClosed,
+    cases: capture.result.cases,
+    stop_requested: capture.result.stopRequested,
+    mode: opts.mode ?? 'exploit',
+    lines_deleted: capture.result.linesDeleted,
+    issues_pruned: capture.result.issuesPruned,
+    failure_class: capture.result.failureClass,
+    lifecycle_violations: validateLifecycle(capture).violations.length,
+  };
+}
+
+/**
+ * Convert a StreamCapture to EventEnvelope[] — the format stored in events.jsonl.
+ * Bridges the harness to the batch-summary/batch-trends pipeline for end-to-end testing.
+ */
+export function captureToEvents(
+  capture: StreamCapture,
+  opts: CaptureToMetricsOpts = {},
+): EventEnvelope[] {
+  const batchId = opts.batchId ?? 'test-batch';
+  const runNum = opts.runNum ?? 1;
+  const runId = makeRunId(batchId, runNum);
+  const exitCode = opts.exitCode ?? (capture.result.prs.length > 0 ? 0 : 1);
+  const mode = opts.mode ?? 'exploit';
+  const now = new Date();
+  const envelopes: EventEnvelope[] = [];
+
+  // run.start
+  const startEvent: RunStartEvent = {
+    type: 'run.start',
+    run_id: runId,
+    batch_id: batchId,
+    run_num: runNum,
+    mode,
+    mode_reason: 'synthetic',
+    prompt_template: 'harness-scenario',
+    prompt_hash: 'synthetic',
+    start_epoch: Math.floor(now.getTime() / 1000),
+  };
+  envelopes.push({ timestamp: now.toISOString(), event: startEvent });
+
+  // run.issue_picked — extract from raw messages containing PICK phase marker
+  for (const rawMsg of capture.rawMessages) {
+    if (rawMsg.type !== 'assistant' || !rawMsg.message?.content) continue;
+    for (const block of rawMsg.message.content) {
+      if (block.type !== 'text') continue;
+      const markers = parsePhaseMarkersLocal(block.text);
+      const pickMarker = markers.find((m: { phase: string }) => m.phase === 'PICK');
+      if (pickMarker) {
+        const pickedEvent: RunIssuePickedEvent = {
+          type: 'run.issue_picked',
+          run_id: runId,
+          batch_id: batchId,
+          run_num: runNum,
+          issue: pickMarker.fields.issue ?? 'unknown',
+          title: pickMarker.fields.title ?? 'unknown',
+        };
+        envelopes.push({ timestamp: now.toISOString(), event: pickedEvent });
+        break;
+      }
+    }
+  }
+
+  // run.pr_created — one per PR
+  for (const prUrl of capture.result.prs) {
+    const prEvent: RunPrCreatedEvent = {
+      type: 'run.pr_created',
+      run_id: runId,
+      batch_id: batchId,
+      run_num: runNum,
+      pr_url: prUrl,
+    };
+    envelopes.push({ timestamp: now.toISOString(), event: prEvent });
+  }
+
+  // run.complete
+  const hasArtifacts = capture.result.prs.length > 0 ||
+    capture.result.issuesFiled.length > 0 ||
+    capture.result.issuesClosed.length > 0;
+  const outcome: RunCompleteEvent['outcome'] =
+    capture.result.stopRequested ? 'stop' :
+    exitCode !== 0 ? 'failure' :
+    hasArtifacts ? 'success' : 'empty_success';
+
+  const completeEvent: RunCompleteEvent = {
+    type: 'run.complete',
+    run_id: runId,
+    batch_id: batchId,
+    run_num: runNum,
+    duration_ms: capture.durationMs,
+    exit_code: exitCode,
+    cost_usd: capture.result.cost,
+    tool_calls: capture.result.toolCalls,
+    prs_created: capture.result.prs.length,
+    issues_filed: capture.result.issuesFiled.length,
+    issues_closed: capture.result.issuesClosed.length,
+    stop_requested: capture.result.stopRequested,
+    failure_class: capture.result.failureClass,
+    lifecycle_violations: validateLifecycle(capture).violations.length,
+    outcome,
+    mode,
+  };
+  envelopes.push({ timestamp: now.toISOString(), event: completeEvent });
+
+  return envelopes;
+}
+
+/**
+ * Score a StreamCapture using the auto-dent-score pipeline.
+ * Convenience wrapper that bridges harness → scoring in one call.
+ */
+export function scoreCapture(
+  capture: StreamCapture,
+  opts: CaptureToMetricsOpts = {},
+): RunScore {
+  const exitCode = opts.exitCode ?? (capture.result.prs.length > 0 ? 0 : 1);
+  const durationSeconds = Math.round(capture.durationMs / 1000);
+  return scoreRunResult(
+    capture.result,
+    exitCode,
+    durationSeconds,
+    opts.mode ?? 'exploit',
+  );
+}
 
 // Smoke test prompt — designed to be fast, cheap, and exercise the protocol
 

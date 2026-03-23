@@ -26,8 +26,13 @@ import {
   expectPhaseOrder,
   expectResult,
   scenarios,
+  captureToRunMetrics,
+  captureToEvents,
+  scoreCapture,
   SMOKE_TEST_PROMPT,
 } from './auto-dent-harness.js';
+import { summarizeEvents } from './batch-summary.js';
+import { scoreBatch } from './auto-dent-score.js';
 
 // Resolve repo root (works from worktrees too)
 function getRepoRoot(): string {
@@ -372,6 +377,208 @@ describe('scenarios: pre-built sequences', () => {
     const capture = runStream(scenarios.errorRun());
     expectPhase(capture, 'TEST', 'fail');
     expect(capture.result.prs).toHaveLength(0);
+  });
+});
+
+// Telemetry bridge tests — exercise the harness → scoring → batch-summary pipeline
+
+describe('bridge: captureToRunMetrics', () => {
+  it('converts successful run to RunMetrics with correct fields', () => {
+    const capture = runStream(scenarios.successfulRun({ cost: 2.5 }));
+    const metrics = captureToRunMetrics(capture, { runNum: 3, mode: 'exploit' });
+
+    expect(metrics.run).toBe(3);
+    expect(metrics.exit_code).toBe(0);
+    expect(metrics.cost_usd).toBe(2.5);
+    expect(metrics.prs).toHaveLength(1);
+    expect(metrics.tool_calls).toBeGreaterThan(0);
+    expect(metrics.mode).toBe('exploit');
+    expect(metrics.stop_requested).toBe(false);
+    expect(metrics.lines_deleted).toBe(0);
+    expect(metrics.issues_pruned).toBe(0);
+    expect(metrics.lifecycle_violations).toBe(0);
+  });
+
+  it('defaults to exit code 1 when no PRs created', () => {
+    const capture = runStream(scenarios.skippedRun());
+    const metrics = captureToRunMetrics(capture);
+
+    expect(metrics.exit_code).toBe(1);
+    expect(metrics.prs).toHaveLength(0);
+  });
+
+  it('detects lifecycle violations in metrics', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('IMPLEMENT', { case: 'test', branch: 'test' }),
+      msg.phase('PICK', { issue: '#100', title: 'wrong order' }),
+      msg.done(0.5),
+    ]);
+    const metrics = captureToRunMetrics(capture);
+
+    expect(metrics.lifecycle_violations).toBeGreaterThan(0);
+  });
+});
+
+describe('bridge: captureToEvents', () => {
+  it('converts successful run to event envelopes', () => {
+    const capture = runStream(scenarios.successfulRun({ cost: 1.5 }));
+    const events = captureToEvents(capture, { batchId: 'test-batch', runNum: 1 });
+
+    expect(events.length).toBeGreaterThanOrEqual(3); // start + issue_picked + pr_created + complete
+    expect(events[0].event.type).toBe('run.start');
+
+    const complete = events.find(e => e.event.type === 'run.complete');
+    expect(complete).toBeDefined();
+    expect((complete!.event as any).outcome).toBe('success');
+    expect((complete!.event as any).cost_usd).toBe(1.5);
+    expect((complete!.event as any).prs_created).toBe(1);
+  });
+
+  it('marks skipped runs as empty_success', () => {
+    const capture = runStream(scenarios.skippedRun());
+    const events = captureToEvents(capture, { exitCode: 0 });
+
+    const complete = events.find(e => e.event.type === 'run.complete');
+    expect((complete!.event as any).outcome).toBe('empty_success');
+  });
+
+  it('marks stop runs as stop', () => {
+    const capture = runStream(scenarios.stopRun());
+    const events = captureToEvents(capture, { exitCode: 0 });
+
+    const complete = events.find(e => e.event.type === 'run.complete');
+    expect((complete!.event as any).outcome).toBe('stop');
+  });
+
+  it('marks error runs as failure', () => {
+    const capture = runStream(scenarios.errorRun());
+    const events = captureToEvents(capture);
+
+    const complete = events.find(e => e.event.type === 'run.complete');
+    expect((complete!.event as any).outcome).toBe('failure');
+  });
+
+  it('extracts issue from PICK phase', () => {
+    const capture = runStream(scenarios.successfulRun({ issue: '#42', title: 'fix auth bug' }));
+    const events = captureToEvents(capture);
+
+    const picked = events.find(e => e.event.type === 'run.issue_picked');
+    expect(picked).toBeDefined();
+    expect((picked!.event as any).issue).toBe('#42');
+  });
+
+  it('emits pr_created events for each PR', () => {
+    const capture = runStream(scenarios.successfulRun({ prUrl: 'https://github.com/Garsson-io/kaizen/pull/42' }));
+    const events = captureToEvents(capture);
+
+    const prEvents = events.filter(e => e.event.type === 'run.pr_created');
+    expect(prEvents).toHaveLength(1);
+    expect((prEvents[0].event as any).pr_url).toBe('https://github.com/Garsson-io/kaizen/pull/42');
+  });
+});
+
+describe('bridge: scoreCapture', () => {
+  it('scores a successful run', () => {
+    const capture = runStream(scenarios.successfulRun({ cost: 2.0 }));
+    const score = scoreCapture(capture);
+
+    expect(score.success).toBe(true);
+    expect(score.cost_usd).toBe(2.0);
+    expect(score.pr_count).toBe(1);
+    expect(score.efficiency).toBeGreaterThan(0);
+    expect(score.failure_class).toBe('success');
+  });
+
+  it('scores a failed run', () => {
+    const capture = runStream(scenarios.errorRun({ cost: 0.8 }));
+    const score = scoreCapture(capture);
+
+    expect(score.success).toBe(false);
+    expect(score.cost_usd).toBe(0.8);
+    expect(score.pr_count).toBe(0);
+  });
+});
+
+describe('end-to-end: harness → events → batch-summary', () => {
+  it('generates a batch summary from multiple synthetic runs', () => {
+    const allEvents = [
+      ...captureToEvents(
+        runStream(scenarios.successfulRun({ issue: '#100', cost: 1.5 })),
+        { batchId: 'synth-batch', runNum: 1 },
+      ),
+      ...captureToEvents(
+        runStream(scenarios.successfulRun({ issue: '#101', cost: 2.0 })),
+        { batchId: 'synth-batch', runNum: 2 },
+      ),
+      ...captureToEvents(
+        runStream(scenarios.skippedRun({ issue: '#200', cost: 0.2 })),
+        { batchId: 'synth-batch', runNum: 3, exitCode: 0 },
+      ),
+      ...captureToEvents(
+        runStream(scenarios.errorRun({ cost: 0.8 })),
+        { batchId: 'synth-batch', runNum: 4 },
+      ),
+    ];
+
+    const summary = summarizeEvents(allEvents);
+
+    expect(summary.batch_id).toBe('synth-batch');
+    expect(summary.total_runs).toBe(4);
+    expect(summary.successful_runs).toBe(2);
+    expect(summary.total_prs).toBe(2);
+    expect(summary.total_cost_usd).toBeCloseTo(4.5, 1);
+    expect(summary.cost_per_pr_usd).toBeCloseTo(2.25, 1);
+    expect(summary.issues_worked.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('generates batch metrics from synthetic runs via scoring pipeline', () => {
+    const metricsArray = [
+      captureToRunMetrics(
+        runStream(scenarios.successfulRun({ cost: 1.5 })),
+        { runNum: 1, exitCode: 0, mode: 'exploit' },
+      ),
+      captureToRunMetrics(
+        runStream(scenarios.decomposeRun({ cost: 2.0 })),
+        { runNum: 2, exitCode: 0, mode: 'explore' },
+      ),
+      captureToRunMetrics(
+        runStream(scenarios.errorRun({ cost: 0.8 })),
+        { runNum: 3, exitCode: 1, mode: 'exploit' },
+      ),
+    ];
+
+    const batchScore = scoreBatch(metricsArray);
+
+    expect(batchScore.total_runs).toBe(3);
+    expect(batchScore.successful_runs).toBe(2);
+    expect(batchScore.total_prs).toBe(2);
+    expect(batchScore.total_cost_usd).toBeCloseTo(4.3, 1);
+    expect(batchScore.mode_breakdown.length).toBe(2);
+    expect(batchScore.mode_diversity).toBeGreaterThan(0);
+  });
+});
+
+// RunResult completeness tests
+
+describe('RunResult: field completeness', () => {
+  it('linesDeleted defaults to 0 in synthetic runs', () => {
+    const capture = runStream(scenarios.successfulRun());
+    expect(capture.result.linesDeleted).toBe(0);
+  });
+
+  it('issuesPruned defaults to 0 in synthetic runs', () => {
+    const capture = runStream(scenarios.successfulRun());
+    expect(capture.result.issuesPruned).toBe(0);
+  });
+
+  it('linesDeleted is extracted from git diff stat output', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.text('5 files changed, 10 insertions(+), 50 deletions(-)'),
+      msg.done(0.5),
+    ]);
+    expect(capture.result.linesDeleted).toBe(40); // 50 - 10
   });
 });
 
