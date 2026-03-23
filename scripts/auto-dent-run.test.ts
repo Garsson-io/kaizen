@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { writeFileSync, unlinkSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -306,6 +306,10 @@ describe('buildTemplateVars with run_history', () => {
     expect(vars.run_count).toBe('2');
     expect(vars.pr_merge_status).toContain('pull/100');
     expect(vars.pr_merge_status).toContain('pull/101');
+    // Each PR line should include a status label (merged, open, closed, or unknown)
+    for (const line of vars.pr_merge_status.split('\n')) {
+      expect(line).toMatch(/— \*\*(merged|open|closed)\*\*|— unknown/);
+    }
   });
 
   it('returns empty strings when no run_history exists', () => {

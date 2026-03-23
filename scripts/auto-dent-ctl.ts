@@ -658,7 +658,17 @@ export function buildReflectionTemplateVars(
     issues_closed_count: String(reflection.issuesClosedCount),
     run_history_table: reflection.runHistoryTable,
     reflection_insights: insightLines.join('\n'),
-    pr_merge_status: state.prs.length > 0 ? state.prs.join('\n') : '',
+    pr_merge_status: state.prs.length > 0
+      ? state.prs.map(url => {
+          const status = checkMergeStatus(url);
+          const label = status === 'merged' ? '**merged**'
+            : status === 'auto_queued' ? '**open** (auto-merge queued)'
+            : status === 'closed' ? '**closed**'
+            : status === 'open' ? '**open**'
+            : 'unknown';
+          return `- ${url} — ${label}`;
+        }).join('\n')
+      : '',
   };
 }
 

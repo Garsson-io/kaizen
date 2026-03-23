@@ -270,9 +270,17 @@ export function buildTemplateVars(
     issuesClosedCount = String(batchScore.total_issues_closed);
     runCount = String(batchScore.total_runs);
 
-    // Build PR merge status summary from state.prs
+    // Build PR merge status summary with actual merge state from GitHub
     if (state.prs.length > 0) {
-      prMergeStatus = state.prs.map(url => `- ${url}`).join('\n');
+      prMergeStatus = state.prs.map(url => {
+        const status = checkMergeStatus(url);
+        const label = status === 'merged' ? '**merged**'
+          : status === 'auto_queued' ? '**open** (auto-merge queued)'
+          : status === 'closed' ? '**closed**'
+          : status === 'open' ? '**open**'
+          : 'unknown';
+        return `- ${url} — ${label}`;
+      }).join('\n');
     }
   }
 
