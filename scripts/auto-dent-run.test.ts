@@ -7,6 +7,7 @@ import {
   buildPromptWithMetadata,
   buildTemplateVars,
   loadReflectionInsights,
+  loadReflectionHistory,
   renderTemplate,
   loadPromptTemplate,
   extractArtifacts,
@@ -282,6 +283,89 @@ describe('buildTemplateVars with reflection insights', () => {
     const state = makeBatchState();
     const vars = buildTemplateVars(state, 3, tmpDir);
     expect(vars.reflection_insights).toBe('');
+  });
+});
+
+describe('loadReflectionHistory', () => {
+  it('returns empty string when no history file exists', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'hist-none-'));
+    expect(loadReflectionHistory(tmpDir)).toBe('');
+  });
+
+  it('returns empty string for empty array', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'hist-empty-'));
+    writeFileSync(join(tmpDir, 'reflection-history.json'), '[]');
+    expect(loadReflectionHistory(tmpDir)).toBe('');
+  });
+
+  it('formats reflection entries with run number, success rate, and insights', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'hist-data-'));
+    const history = [
+      {
+        timestamp: '2026-03-23T01:00:00Z',
+        runCount: 5,
+        successRate: 0.8,
+        avgCostPerPr: 1.50,
+        insights: [
+          { type: 'success_pattern', message: 'Hooks issues merge quickly' },
+          { type: 'recommendation', message: 'Focus on testing gaps' },
+        ],
+        avoidIssues: [],
+      },
+      {
+        timestamp: '2026-03-23T02:00:00Z',
+        runCount: 15,
+        successRate: 0.6,
+        avgCostPerPr: 2.00,
+        insights: [
+          { type: 'failure_pattern', message: 'Large refactors fail' },
+        ],
+        avoidIssues: ['500'],
+      },
+    ];
+    writeFileSync(join(tmpDir, 'reflection-history.json'), JSON.stringify(history));
+
+    const result = loadReflectionHistory(tmpDir);
+    expect(result).toContain('Reflection 1');
+    expect(result).toContain('after run 5');
+    expect(result).toContain('success: 80%');
+    expect(result).toContain('Hooks issues merge quickly');
+    expect(result).toContain('Reflection 2');
+    expect(result).toContain('after run 15');
+    expect(result).toContain('Large refactors fail');
+  });
+
+  it('returns empty string for corrupted file', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'hist-bad-'));
+    writeFileSync(join(tmpDir, 'reflection-history.json'), 'not json');
+    expect(loadReflectionHistory(tmpDir)).toBe('');
+  });
+});
+
+describe('buildTemplateVars includes prior_reflections', () => {
+  it('includes prior_reflections when reflection-history.json exists', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'vars-hist-'));
+    const history = [{
+      timestamp: '2026-03-23T01:00:00Z',
+      runCount: 8,
+      successRate: 0.75,
+      avgCostPerPr: 1.80,
+      insights: [{ type: 'recommendation', message: 'Prioritize testing' }],
+      avoidIssues: [],
+    }];
+    writeFileSync(join(tmpDir, 'reflection-history.json'), JSON.stringify(history));
+
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 10, tmpDir);
+    expect(vars.prior_reflections).toContain('Prioritize testing');
+    expect(vars.prior_reflections).toContain('Reflection 1');
+  });
+
+  it('returns empty prior_reflections when no history exists', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'vars-nohist-'));
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 3, tmpDir);
+    expect(vars.prior_reflections).toBe('');
   });
 });
 

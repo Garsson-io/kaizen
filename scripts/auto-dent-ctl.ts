@@ -632,7 +632,19 @@ export function persistReflectionSummary(
 
   try {
     writeFileSync(summaryPath, JSON.stringify(summary, null, 2) + '\n');
-    console.log(`  [reflect] persisted reflection summary to ${summaryPath}`);
+
+    // Append to reflection history so consecutive reflections can see prior conclusions
+    const historyPath = join(batch.dir, 'reflection-history.json');
+    let history: PersistedReflection[] = [];
+    try {
+      if (existsSync(historyPath)) {
+        history = JSON.parse(readFileSync(historyPath, 'utf8'));
+      }
+    } catch { /* start fresh if corrupted */ }
+    history.push(summary);
+    writeFileSync(historyPath, JSON.stringify(history, null, 2) + '\n');
+
+    console.log(`  [reflect] persisted reflection summary to ${summaryPath} (history: ${history.length} entries)`);
     return summaryPath;
   } catch (e: any) {
     console.log(`  [reflect] warning: failed to persist reflection — ${e.message?.split('\n')[0] || 'failed'}`);

@@ -824,6 +824,31 @@ describe('persistReflectionSummary', () => {
     const count42 = data.avoidIssues.filter((i) => i === '42').length;
     expect(count42).toBe(1);
   });
+
+  it('appends to reflection-history.json for consecutive reflections', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-history-'));
+    const batch = makeBatchInfo({ dir: tmpDir });
+
+    // First reflection
+    const r1 = buildBatchReflection(batch);
+    r1.insights = [{ type: 'recommendation', message: 'Focus on hooks' }];
+    persistReflectionSummary(batch, r1);
+
+    const historyPath = join(tmpDir, 'reflection-history.json');
+    expect(existsSync(historyPath)).toBe(true);
+    let history = JSON.parse(readFileSync(historyPath, 'utf8'));
+    expect(history).toHaveLength(1);
+    expect(history[0].insights[0].message).toBe('Focus on hooks');
+
+    // Second reflection
+    const r2 = buildBatchReflection(batch);
+    r2.insights = [{ type: 'success_pattern', message: 'Testing works well' }];
+    persistReflectionSummary(batch, r2);
+
+    history = JSON.parse(readFileSync(historyPath, 'utf8'));
+    expect(history).toHaveLength(2);
+    expect(history[1].insights[0].message).toBe('Testing works well');
+  });
 });
 
 // Cross-batch aggregate tests (#586)
