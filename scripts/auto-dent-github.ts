@@ -190,7 +190,7 @@ export function sweepBatchPRs(allPrUrls: string[]): SweepResult[] {
         data.autoMergeRequest
       ) {
         const updateOut = ghExec(
-          `gh api repos/${repo}/pulls/${prNum}/update-branch -X PUT -f expected_head_sha="" 2>&1`,
+          `gh api repos/${repo}/pulls/${prNum}/update-branch -X PUT -f expected_head_sha=""`,
         );
         if (updateOut && !updateOut.includes('error')) {
           console.log(`  [sweep] updated stale branch for PR #${prNum}`);
