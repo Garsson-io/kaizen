@@ -273,6 +273,31 @@ export function markItem(
 }
 
 /**
+ * Reset any 'assigned' items back to 'pending'.
+ * Called on batch start/resume to recover from interrupted runs
+ * where items were claimed but never marked done/skipped.
+ */
+export function resetAssignedItems(logDir: string): number {
+  const plan = readPlan(logDir);
+  if (!plan) return 0;
+
+  let resetCount = 0;
+  for (const item of plan.items) {
+    if (item.status === 'assigned') {
+      item.status = 'pending';
+      resetCount++;
+    }
+  }
+
+  if (resetCount > 0) {
+    const planFile = resolve(logDir, 'plan.json');
+    writeFileSync(planFile, JSON.stringify(plan, null, 2) + '\n');
+  }
+
+  return resetCount;
+}
+
+/**
  * Format a plan summary for display.
  */
 export function formatPlanSummary(plan: BatchPlan): string {
