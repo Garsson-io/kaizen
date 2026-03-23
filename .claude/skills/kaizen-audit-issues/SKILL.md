@@ -23,7 +23,7 @@ description: Periodic issue taxonomy audit — checks label coverage, epic healt
 
 ```bash
 # All open issues with full metadata
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 200 \
+gh issue list --repo "$ISSUES_REPO" --state open --limit 200 \
   --json number,title,labels,body,createdAt,updatedAt,comments
 ```
 
@@ -33,7 +33,7 @@ Every kaizen issue MUST have: `kaizen` + level (`level-1`/`level-2`/`level-3`) +
 
 ```bash
 # Find issues missing required labels
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 200 --json number,title,labels \
+gh issue list --repo "$ISSUES_REPO" --state open --limit 200 --json number,title,labels \
   --jq '.[] | select(
     (.labels | map(.name) |
       (any(test("^kaizen$")) and any(test("^level-")) and any(test("^area/")))
@@ -57,11 +57,11 @@ Epics are directions that stay open. But they need active maintenance.
 
 ```bash
 # Open epics
-gh issue list --repo "$KAIZEN_REPO" --state open --label "epic" --limit 50 \
+gh issue list --repo "$ISSUES_REPO" --state open --label "epic" --limit 50 \
   --json number,title,updatedAt,body,comments
 
 # Closed epics (should be rare — epics are directions, not deliverables)
-gh issue list --repo "$KAIZEN_REPO" --state closed --label "epic" --limit 50 \
+gh issue list --repo "$ISSUES_REPO" --state closed --label "epic" --limit 50 \
   --json number,title,closedAt
 ```
 
@@ -76,7 +76,7 @@ Incidents are the most valuable data in the kaizen system. Issues without incide
 
 ```bash
 # Count incidents per issue (look for "## Incident" in comments)
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 200 --json number,title,comments \
+gh issue list --repo "$ISSUES_REPO" --state open --limit 200 --json number,title,comments \
   --jq '.[] | {
     number,
     title,
@@ -95,11 +95,11 @@ Report:
 
 ```bash
 # Issues per horizon
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 200 --json number,labels \
+gh issue list --repo "$ISSUES_REPO" --state open --limit 200 --json number,labels \
   --jq '[.[].labels[].name | select(startswith("horizon/"))] | group_by(.) | map({horizon: .[0], count: length}) | sort_by(-.count)'
 
 # Issues with NO horizon label
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 200 --json number,title,labels \
+gh issue list --repo "$ISSUES_REPO" --state open --limit 200 --json number,title,labels \
   --jq '.[] | select(.labels | map(.name) | any(startswith("horizon/")) | not) | "\(.number)\t\(.title)"'
 ```
 
@@ -112,7 +112,7 @@ Check:
 
 ```bash
 # Issues not updated in 30+ days
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 200 --json number,title,updatedAt \
+gh issue list --repo "$ISSUES_REPO" --state open --limit 200 --json number,title,updatedAt \
   --jq '[.[] | select(.updatedAt < (now - 2592000 | strftime("%Y-%m-%dT%H:%M:%SZ")))] | sort_by(.updatedAt) | .[:10][] | "\(.number)\t\(.title)\t\(.updatedAt)"'
 ```
 

@@ -29,10 +29,10 @@ Launch **two parallel research agents** to collect raw data:
 **Agent A — Issues & Structure:**
 ```bash
 # All open kaizen issues with full context
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 100 --json number,title,labels,body,createdAt,updatedAt,comments
+gh issue list --repo "$ISSUES_REPO" --state open --limit 100 --json number,title,labels,body,createdAt,updatedAt,comments
 
 # Recently closed issues (last 20) for pattern detection
-gh issue list --repo "$KAIZEN_REPO" --state closed --limit 20 --json number,title,labels,closedAt,body
+gh issue list --repo "$ISSUES_REPO" --state closed --limit 20 --json number,title,labels,closedAt,body
 
 # Active cases and their linked issues (via domain model CLI, not raw SQL)
 $KAIZEN_CLI case-list --status suggested,backlog,active,blocked
@@ -46,7 +46,7 @@ Also read:
 **Agent B — Incidents & Friction:**
 ```bash
 # Issues with incident comments (search for "incident", "broke", "failed", "manual fix")
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 100 --json number,title,body,comments --jq '.[] | select(.body + (.comments | map(.body) | join(" ")) | test("incident|broke|failed|manual fix|production|hotfix"; "i"))'
+gh issue list --repo "$ISSUES_REPO" --state open --limit 100 --json number,title,body,comments --jq '.[] | select(.body + (.comments | map(.body) | join(" ")) | test("incident|broke|failed|manual fix|production|hotfix"; "i"))'
 ```
 
 Also search for:
@@ -171,7 +171,7 @@ Classify closed issues and recent PRs by the **failure mode taxonomy** (FM1-FM7)
 
 ```bash
 # Recent closed issues
-gh issue list --repo "$KAIZEN_REPO" --state closed --limit 30 \
+gh issue list --repo "$ISSUES_REPO" --state closed --limit 30 \
   --json number,title,labels,body,closedAt
 ```
 

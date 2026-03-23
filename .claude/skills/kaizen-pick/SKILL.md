@@ -27,20 +27,20 @@ Run these in parallel to understand the current state:
 
 **High-priority issues (check FIRST — these override normal scoring):**
 ```bash
-gh issue list --repo "$KAIZEN_REPO" --state open --label "priority:critical" --json number,title,labels
-gh issue list --repo "$KAIZEN_REPO" --state open --label "priority:high" --json number,title,labels
+gh issue list --repo "$ISSUES_REPO" --state open --label "priority:critical" --json number,title,labels
+gh issue list --repo "$ISSUES_REPO" --state open --label "priority:high" --json number,title,labels
 ```
 
 **Open issues:**
 ```bash
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 50 --json number,title,labels,body,createdAt,updatedAt
+gh issue list --repo "$ISSUES_REPO" --state open --limit 50 --json number,title,labels,body,createdAt,updatedAt
 ```
 
 **Currently claimed (filter these OUT):**
 ```bash
 # Issues with status:active or status:backlog labels — an agent is working on them
-gh issue list --repo "$KAIZEN_REPO" --state open --label "status:active" --json number,title
-gh issue list --repo "$KAIZEN_REPO" --state open --label "status:backlog" --json number,title
+gh issue list --repo "$ISSUES_REPO" --state open --label "status:active" --json number,title
+gh issue list --repo "$ISSUES_REPO" --state open --label "status:backlog" --json number,title
 ```
 
 **Active cases (cross-reference):**
@@ -65,7 +65,7 @@ gh pr list --repo "$HOST_REPO" --state open --json number,title,headRefName,labe
 **Recent completed work (for momentum/diversity scoring):**
 ```bash
 # Recently closed issues — what topics were just worked on?
-gh issue list --repo "$KAIZEN_REPO" --state closed --limit 10 --json number,title,labels,closedAt
+gh issue list --repo "$ISSUES_REPO" --state closed --limit 10 --json number,title,labels,closedAt
 ```
 
 ### Step 2: Filter out unavailable issues and identify active domains
