@@ -11,6 +11,7 @@ import {
   formatWatchdogResult,
   buildBatchReflection,
   formatBatchReflection,
+  formatBatchReflectionComment,
   buildReflectionTemplateVars,
   DEFAULT_WATCHDOG_THRESHOLD_SEC,
   type BatchInfo,
@@ -624,6 +625,84 @@ describe('formatBatchReflection', () => {
     const reflection = buildBatchReflection(batch);
     const output = formatBatchReflection(reflection);
     expect(output).toContain('No significant patterns');
+  });
+});
+
+describe('formatBatchReflectionComment', () => {
+  it('formats reflection as a GitHub-friendly markdown comment', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 5,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'], issues_closed: ['#10'] }),
+          makeRunMetrics({ run: 2, cost_usd: 3.0, prs: ['https://github.com/Garsson-io/kaizen/pull/101'], issues_closed: ['#11'] }),
+          makeRunMetrics({ run: 3, cost_usd: 1.5, prs: [], exit_code: 1, issues_closed: [] }),
+          makeRunMetrics({ run: 4, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/102'], issues_closed: ['#12'] }),
+          makeRunMetrics({ run: 5, cost_usd: 2.5, prs: ['https://github.com/Garsson-io/kaizen/pull/103'], issues_closed: [] }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const comment = formatBatchReflectionComment(reflection);
+
+    expect(comment).toContain('### Mid-Batch Reflection (after run 5)');
+    expect(comment).toContain('| **Success rate** |');
+    expect(comment).toContain('80%');
+    expect(comment).toContain('| **Total cost** |');
+    expect(comment).toContain('$11.00');
+    expect(comment).toContain('| **PRs created** | 4 |');
+    expect(comment).toContain('| **Issues closed** | 3 |');
+    expect(comment).toContain('| **Avg cost/run** | $2.20 |');
+    expect(comment).toContain('**Insights:**');
+  });
+
+  it('shows no patterns message when insights are empty', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 1,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const comment = formatBatchReflectionComment(reflection);
+
+    expect(comment).toContain('### Mid-Batch Reflection (after run 1)');
+    expect(comment).toContain('No significant patterns detected yet');
+  });
+
+  it('includes avg cost/PR when there are PRs', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+          makeRunMetrics({ run: 2, cost_usd: 4.0, prs: ['https://github.com/Garsson-io/kaizen/pull/101'] }),
+          makeRunMetrics({ run: 3, cost_usd: 3.0, prs: [], exit_code: 1 }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const comment = formatBatchReflectionComment(reflection);
+
+    expect(comment).toContain('| **Avg cost/PR** | $4.50 |');
+  });
+
+  it('shows N/A for avg cost/PR when no PRs', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 2,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: [], exit_code: 1 }),
+          makeRunMetrics({ run: 2, cost_usd: 3.0, prs: [], exit_code: 1 }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    const comment = formatBatchReflectionComment(reflection);
+
+    expect(comment).toContain('| **Avg cost/PR** | N/A |');
   });
 });
 
