@@ -5,6 +5,7 @@ import {
   scoreBatch,
   scoreModeBreakdown,
   computeModeDiversity,
+  computeBatchTrend,
   formatRunScoreLine,
   formatBatchScoreTable,
   formatModeBreakdown,
@@ -13,6 +14,7 @@ import {
   detectCostAnomaly,
   type RunScore,
   type BatchScore,
+  type BatchTrend,
   type ModeStats,
   type PostHocBatchResult,
 } from './auto-dent-score.js';
@@ -366,6 +368,7 @@ describe('formatBatchScoreTable', () => {
       ],
       cost_anomaly_count: 0,
       mode_diversity: 0,
+      trend: null,
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Runs** | 3 (2 successful) |');
@@ -399,6 +402,7 @@ describe('formatBatchScoreTable', () => {
       mode_breakdown: [],
       cost_anomaly_count: 0,
       mode_diversity: 0,
+      trend: null,
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Avg cost/success** | N/A |');
@@ -460,6 +464,7 @@ describe('formatBatchScoreTable', () => {
       mode_breakdown: [],
       cost_anomaly_count: 0,
       mode_diversity: 0,
+      trend: null,
     };
     const table = formatBatchScoreTable(score);
     expect(table).not.toContain('merge rate');
@@ -947,6 +952,7 @@ describe('cost_vs_avg in scoring', () => {
       mode_breakdown: [],
       cost_anomaly_count: 2,
       mode_diversity: 0,
+      trend: null,
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Cost anomalies** | 2 runs >= 2x avg |');
@@ -970,8 +976,197 @@ describe('cost_vs_avg in scoring', () => {
       mode_breakdown: [],
       cost_anomaly_count: 0,
       mode_diversity: 0,
+      trend: null,
     };
     const table = formatBatchScoreTable(score);
     expect(table).not.toContain('Cost anomalies');
+  });
+});
+
+describe('computeBatchTrend', () => {
+  function makeScore(overrides: Partial<RunScore> = {}): RunScore {
+    return {
+      success: true,
+      cost_usd: 2.0,
+      tool_calls: 40,
+      pr_count: 1,
+      issues_closed_count: 1,
+      issues_filed_count: 0,
+      duration_seconds: 300,
+      efficiency: 0.5,
+      cost_per_pr: 2.0,
+      stop_requested: false,
+      mode: 'exploit',
+      lines_deleted: 0,
+      issues_pruned: 0,
+      cost_vs_avg: null,
+      ...overrides,
+    };
+  }
+
+  it('returns null for fewer than 4 runs', () => {
+    expect(computeBatchTrend([])).toBeNull();
+    expect(computeBatchTrend([makeScore()])).toBeNull();
+    expect(computeBatchTrend([makeScore(), makeScore(), makeScore()])).toBeNull();
+  });
+
+  it('returns stable summary when all runs are identical', () => {
+    const runs = Array.from({ length: 6 }, () => makeScore());
+    const trend = computeBatchTrend(runs)!;
+    expect(trend).not.toBeNull();
+    expect(trend.cost_slope).toBe(0);
+    expect(trend.efficiency_slope).toBe(0);
+    expect(trend.duration_slope).toBe(0);
+    expect(trend.first_half_success_rate).toBe(1);
+    expect(trend.second_half_success_rate).toBe(1);
+    expect(trend.summary).toBe('stable across batch');
+  });
+
+  it('detects increasing cost trend', () => {
+    const runs = [
+      makeScore({ cost_usd: 1.0 }),
+      makeScore({ cost_usd: 2.0 }),
+      makeScore({ cost_usd: 3.0 }),
+      makeScore({ cost_usd: 4.0 }),
+    ];
+    const trend = computeBatchTrend(runs)!;
+    expect(trend.cost_slope).toBeCloseTo(1.0);
+    expect(trend.summary).toContain('costs increasing');
+  });
+
+  it('detects decreasing cost trend', () => {
+    const runs = [
+      makeScore({ cost_usd: 4.0 }),
+      makeScore({ cost_usd: 3.0 }),
+      makeScore({ cost_usd: 2.0 }),
+      makeScore({ cost_usd: 1.0 }),
+    ];
+    const trend = computeBatchTrend(runs)!;
+    expect(trend.cost_slope).toBeCloseTo(-1.0);
+    expect(trend.summary).toContain('costs decreasing');
+  });
+
+  it('detects declining success rate in second half', () => {
+    const runs = [
+      makeScore({ success: true }),
+      makeScore({ success: true }),
+      makeScore({ success: false }),
+      makeScore({ success: false }),
+    ];
+    const trend = computeBatchTrend(runs)!;
+    expect(trend.first_half_success_rate).toBe(1);
+    expect(trend.second_half_success_rate).toBe(0);
+    expect(trend.summary).toContain('success rate declining');
+  });
+
+  it('detects improving success rate in second half', () => {
+    const runs = [
+      makeScore({ success: false }),
+      makeScore({ success: false }),
+      makeScore({ success: true }),
+      makeScore({ success: true }),
+    ];
+    const trend = computeBatchTrend(runs)!;
+    expect(trend.first_half_success_rate).toBe(0);
+    expect(trend.second_half_success_rate).toBe(1);
+    expect(trend.summary).toContain('success rate improving');
+  });
+
+  it('detects runs getting longer', () => {
+    const runs = [
+      makeScore({ duration_seconds: 100 }),
+      makeScore({ duration_seconds: 200 }),
+      makeScore({ duration_seconds: 300 }),
+      makeScore({ duration_seconds: 400 }),
+    ];
+    const trend = computeBatchTrend(runs)!;
+    expect(trend.duration_slope).toBeCloseTo(100);
+    expect(trend.summary).toContain('runs getting longer');
+  });
+
+  it('detects efficiency improvement', () => {
+    const runs = [
+      makeScore({ efficiency: 0.1 }),
+      makeScore({ efficiency: 0.2 }),
+      makeScore({ efficiency: 0.3 }),
+      makeScore({ efficiency: 0.4 }),
+    ];
+    const trend = computeBatchTrend(runs)!;
+    expect(trend.efficiency_slope).toBeCloseTo(0.1);
+    expect(trend.summary).toContain('efficiency improving');
+  });
+});
+
+describe('scoreBatch trend integration', () => {
+  it('scoreBatch includes trend for batches with 4+ runs', () => {
+    const history: RunMetrics[] = Array.from({ length: 5 }, (_, i) =>
+      makeRunMetrics({ run: i + 1 }),
+    );
+    const score = scoreBatch(history);
+    expect(score.trend).not.toBeNull();
+    expect(score.trend!.summary).toBeDefined();
+  });
+
+  it('scoreBatch returns null trend for small batches', () => {
+    const history = [makeRunMetrics(), makeRunMetrics()];
+    const score = scoreBatch(history);
+    expect(score.trend).toBeNull();
+  });
+});
+
+describe('formatBatchScoreTable trend integration', () => {
+  it('includes trend line when trend is present', () => {
+    const score: BatchScore = {
+      total_runs: 5,
+      successful_runs: 5,
+      success_rate: 1.0,
+      total_cost_usd: 10.0,
+      total_prs: 5,
+      total_issues_closed: 5,
+      total_duration_seconds: 1500,
+      total_lines_deleted: 0,
+      total_issues_pruned: 0,
+      avg_cost_per_success: 2.0,
+      avg_duration_seconds: 300,
+      overall_efficiency: 0.5,
+      runs: [],
+      mode_breakdown: [],
+      cost_anomaly_count: 0,
+      mode_diversity: 0,
+      trend: {
+        cost_slope: 0.5,
+        first_half_success_rate: 1.0,
+        second_half_success_rate: 0.8,
+        efficiency_slope: -0.01,
+        duration_slope: 5,
+        summary: 'costs increasing (+$0.50/run)',
+      },
+    };
+    const table = formatBatchScoreTable(score);
+    expect(table).toContain('| **Trend** | costs increasing (+$0.50/run) |');
+  });
+
+  it('omits trend line when trend is null', () => {
+    const score: BatchScore = {
+      total_runs: 2,
+      successful_runs: 2,
+      success_rate: 1.0,
+      total_cost_usd: 4.0,
+      total_prs: 2,
+      total_issues_closed: 2,
+      total_duration_seconds: 600,
+      total_lines_deleted: 0,
+      total_issues_pruned: 0,
+      avg_cost_per_success: 2.0,
+      avg_duration_seconds: 300,
+      overall_efficiency: 0.5,
+      runs: [],
+      mode_breakdown: [],
+      cost_anomaly_count: 0,
+      mode_diversity: 0,
+      trend: null,
+    };
+    const table = formatBatchScoreTable(score);
+    expect(table).not.toContain('Trend');
   });
 });

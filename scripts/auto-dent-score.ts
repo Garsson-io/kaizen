@@ -75,6 +75,8 @@ export interface BatchScore {
   mode_diversity: number;
   /** Post-hoc merge results (populated by postHocScoreBatch) */
   post_hoc?: PostHocBatchResult;
+  /** Batch trend analysis (null if fewer than 4 runs) */
+  trend: BatchTrend | null;
 }
 
 export interface ModeStats {
@@ -98,6 +100,20 @@ export interface ModeStats {
   lines_deleted: number;
   /** Total issues pruned */
   issues_pruned: number;
+}
+
+export interface BatchTrend {
+  /** Cost trend slope per run (positive = costs increasing) */
+  cost_slope: number;
+  /** Success rate in first half vs second half */
+  first_half_success_rate: number;
+  second_half_success_rate: number;
+  /** Efficiency trend slope per run (positive = getting more efficient) */
+  efficiency_slope: number;
+  /** Duration trend slope per run (positive = runs getting longer) */
+  duration_slope: number;
+  /** Human-readable trend summary */
+  summary: string;
 }
 
 export interface PostHocPRResult {
@@ -241,6 +257,7 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     mode_breakdown: scoreModeBreakdown(runs),
     cost_anomaly_count: costAnomalyCount,
     mode_diversity: computeModeDiversity(runs),
+    trend: computeBatchTrend(runs),
   };
 }
 
@@ -355,6 +372,10 @@ export function formatBatchScoreTable(score: BatchScore): string {
     }
   }
 
+  if (score.trend) {
+    lines.push(`| **Trend** | ${score.trend.summary} |`);
+  }
+
   // Append per-mode breakdown if there are multiple modes
   if (score.mode_breakdown && score.mode_breakdown.length > 1) {
     lines.push(formatModeBreakdown(score.mode_breakdown));
@@ -458,6 +479,104 @@ export function computeModeDiversity(runs: RunScore[]): number {
   // Normalize by max entropy (ln(numModes)) to get [0, 1]
   const maxEntropy = Math.log(numModes);
   return maxEntropy > 0 ? entropy / maxEntropy : 0;
+}
+
+/**
+ * Compute the slope of a simple linear regression (y = mx + b).
+ * Returns the slope m. With fewer than 2 points, returns 0.
+ */
+function linearSlope(values: number[]): number {
+  const n = values.length;
+  if (n < 2) return 0;
+
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  for (let i = 0; i < n; i++) {
+    sumX += i;
+    sumY += values[i];
+    sumXY += i * values[i];
+    sumXX += i * i;
+  }
+
+  const denom = n * sumXX - sumX * sumX;
+  if (denom === 0) return 0;
+  return (n * sumXY - sumX * sumY) / denom;
+}
+
+/**
+ * Compute batch trend analysis from run scores.
+ *
+ * Tracks how cost, efficiency, success rate, and duration evolve
+ * over the course of a batch. Helps detect "fatigue" (degrading
+ * performance in later runs) or "warmup" (improving over time).
+ *
+ * Returns null if fewer than 4 runs (not enough data for meaningful trends).
+ */
+export function computeBatchTrend(runs: RunScore[]): BatchTrend | null {
+  if (runs.length < 4) return null;
+
+  const costs = runs.map((r) => r.cost_usd);
+  const efficiencies = runs.map((r) => r.efficiency);
+  const durations = runs.map((r) => r.duration_seconds);
+
+  const costSlope = linearSlope(costs);
+  const efficiencySlope = linearSlope(efficiencies);
+  const durationSlope = linearSlope(durations);
+
+  const mid = Math.floor(runs.length / 2);
+  const firstHalf = runs.slice(0, mid);
+  const secondHalf = runs.slice(mid);
+
+  const firstHalfSuccessRate =
+    firstHalf.length > 0
+      ? firstHalf.filter((r) => r.success).length / firstHalf.length
+      : 0;
+  const secondHalfSuccessRate =
+    secondHalf.length > 0
+      ? secondHalf.filter((r) => r.success).length / secondHalf.length
+      : 0;
+
+  // Build human-readable summary
+  const parts: string[] = [];
+  if (Math.abs(costSlope) > 0.1) {
+    parts.push(
+      costSlope > 0
+        ? `costs increasing (+$${costSlope.toFixed(2)}/run)`
+        : `costs decreasing ($${costSlope.toFixed(2)}/run)`,
+    );
+  }
+  if (Math.abs(efficiencySlope) > 0.01) {
+    parts.push(
+      efficiencySlope > 0
+        ? `efficiency improving`
+        : `efficiency declining`,
+    );
+  }
+  const successDelta = secondHalfSuccessRate - firstHalfSuccessRate;
+  if (Math.abs(successDelta) > 0.15) {
+    parts.push(
+      successDelta > 0
+        ? `success rate improving in second half`
+        : `success rate declining in second half`,
+    );
+  }
+  if (Math.abs(durationSlope) > 10) {
+    parts.push(
+      durationSlope > 0
+        ? `runs getting longer (+${durationSlope.toFixed(0)}s/run)`
+        : `runs getting shorter (${durationSlope.toFixed(0)}s/run)`,
+    );
+  }
+
+  const summary = parts.length > 0 ? parts.join('; ') : 'stable across batch';
+
+  return {
+    cost_slope: costSlope,
+    first_half_success_rate: firstHalfSuccessRate,
+    second_half_success_rate: secondHalfSuccessRate,
+    efficiency_slope: efficiencySlope,
+    duration_slope: durationSlope,
+    summary,
+  };
 }
 
 /** Format per-mode breakdown as a markdown table. */
