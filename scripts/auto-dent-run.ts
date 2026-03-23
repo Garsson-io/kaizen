@@ -267,6 +267,8 @@ export function loadPromptTemplate(templateName: string): string | null {
 export interface ModeSelection {
   mode: string;
   template: string;
+  /** Why this mode was selected (signal name or 'schedule') */
+  reason: string;
 }
 
 const MODE_TEMPLATES: Record<string, string> = {
@@ -278,14 +280,68 @@ const MODE_TEMPLATES: Record<string, string> = {
 };
 
 /**
+ * Check signal-driven overrides based on batch state.
+ * Returns a ModeSelection if a signal fires, or null to fall through to the schedule.
+ *
+ * Signals (checked in priority order):
+ *   1. 3+ consecutive failures → reflect (diagnose what's going wrong)
+ *   2. No PRs in last 5 runs with history → explore (backlog may be exhausted)
+ *   3. Same mode 4+ times consecutively → force a different mode
+ */
+export function checkSignalOverrides(state: BatchState): ModeSelection | null {
+  const history = state.run_history || [];
+  if (history.length < 3) return null;
+
+  // Signal 1: consecutive failures → reflect
+  if (state.consecutive_failures >= 3) {
+    return {
+      mode: 'reflect',
+      template: MODE_TEMPLATES.reflect,
+      reason: 'signal:consecutive-failures',
+    };
+  }
+
+  // Signal 2: no PRs in last 5 runs → explore (backlog may be exhausted)
+  if (history.length >= 5) {
+    const recent5 = history.slice(-5);
+    const recentPRs = recent5.reduce((sum, r) => sum + r.prs.length, 0);
+    if (recentPRs === 0) {
+      return {
+        mode: 'explore',
+        template: MODE_TEMPLATES.explore,
+        reason: 'signal:no-recent-prs',
+      };
+    }
+  }
+
+  // Signal 3: same mode 4+ times in a row → break the streak
+  if (history.length >= 4) {
+    const recent4 = history.slice(-4);
+    const modes = recent4.map(r => r.mode || 'exploit');
+    if (modes.every(m => m === modes[0])) {
+      const staleMode = modes[0];
+      // Pick a different mode: if stuck on exploit, explore; otherwise contemplate
+      const breakMode = staleMode === 'exploit' ? 'explore' : 'contemplate';
+      return {
+        mode: breakMode,
+        template: MODE_TEMPLATES[breakMode],
+        reason: `signal:mode-streak-${staleMode}`,
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Select the cognitive mode for a given run.
  *
- * Schedule (v2):
- *   Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
- *   Overlay: every 15th run (mod 15 === 14) triggers contemplate instead
- *   ~67% exploitation, ~10% explore, ~7% reflect, ~7% subtract, ~7% contemplate
- *
- * Override: guidance containing "mode:<name>" forces that mode.
+ * Priority (highest first):
+ *   1. Guidance override: "mode:<name>" in guidance forces that mode
+ *   2. Test task: always exploit with test template
+ *   3. Signal-driven: reactive to batch state (failures, stalls, streaks)
+ *   4. Contemplate overlay: every 15th run for strategic assessment
+ *   5. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
  */
 export function selectMode(state: BatchState, runNum: number): ModeSelection {
   // Force mode from guidance (e.g., "mode:explore")
@@ -295,24 +351,42 @@ export function selectMode(state: BatchState, runNum: number): ModeSelection {
     return {
       mode: forced,
       template: MODE_TEMPLATES[forced] || MODE_TEMPLATES.exploit,
+      reason: 'guidance',
     };
   }
 
   // Test task always uses test template
   if (state.test_task) {
-    return { mode: 'exploit', template: 'test-task.md' };
+    return { mode: 'exploit', template: 'test-task.md', reason: 'test-task' };
   }
+
+  // Signal-driven overrides (reactive to batch state)
+  const signalMode = checkSignalOverrides(state);
+  if (signalMode) return signalMode;
 
   // Contemplate overlay: every 15th run pauses for strategic assessment
   if (runNum > 0 && runNum % 15 === 14) {
-    return { mode: 'contemplate', template: MODE_TEMPLATES.contemplate };
+    return { mode: 'contemplate', template: MODE_TEMPLATES.contemplate, reason: 'schedule' };
   }
 
   const slot = runNum % 10;
-  if (slot <= 6) return { mode: 'exploit', template: MODE_TEMPLATES.exploit };
-  if (slot === 7) return { mode: 'explore', template: MODE_TEMPLATES.explore };
-  if (slot === 8) return { mode: 'reflect', template: MODE_TEMPLATES.reflect };
-  return { mode: 'subtract', template: MODE_TEMPLATES.subtract };
+  if (slot <= 6) return { mode: 'exploit', template: MODE_TEMPLATES.exploit, reason: 'schedule' };
+  if (slot === 7) return { mode: 'explore', template: MODE_TEMPLATES.explore, reason: 'schedule' };
+  if (slot === 8) return { mode: 'reflect', template: MODE_TEMPLATES.reflect, reason: 'schedule' };
+  return { mode: 'subtract', template: MODE_TEMPLATES.subtract, reason: 'schedule' };
+}
+
+/**
+ * Compute mode distribution from run history.
+ * Returns a record of mode → count.
+ */
+export function computeModeDistribution(history: RunMetrics[]): Record<string, number> {
+  const dist: Record<string, number> = {};
+  for (const r of history) {
+    const m = r.mode || 'exploit';
+    dist[m] = (dist[m] || 0) + 1;
+  }
+  return dist;
 }
 
 export function buildPrompt(state: BatchState, runNum: number, logDir?: string): string {
@@ -1217,8 +1291,8 @@ async function runClaude(
 
   const logDir = dirname(stateFile);
   const modeSelection = selectMode(state, runNum);
-  if (modeSelection.mode !== 'exploit') {
-    console.log(`  [mode] run #${runNum}: ${modeSelection.mode} (template: ${modeSelection.template})`);
+  if (modeSelection.mode !== 'exploit' || modeSelection.reason !== 'schedule') {
+    console.log(`  [mode] run #${runNum}: ${modeSelection.mode} (${modeSelection.reason}, template: ${modeSelection.template})`);
   }
   const prompt = buildPrompt(state, runNum, logDir);
   const nonce = `${new Date()
@@ -1400,11 +1474,25 @@ export function formatBatchFooter(state: BatchState): string {
     `${mergeRate}% success`,
   ].join(' \u2502 ');
 
-  return [
+  // Mode distribution
+  const modeDist = computeModeDistribution(history);
+  const modeStr = Object.entries(modeDist)
+    .sort((a, b) => b[1] - a[1])
+    .map(([m, c]) => `${m}:${c}`)
+    .join(' ');
+
+  const lines = [
     `  ${color.dim(bar)}`,
     `  ${color.bold(line)}`,
-    `  ${color.dim(bar)}`,
-  ].join('\n');
+  ];
+
+  if (modeStr) {
+    lines.push(`  ${color.dim(`  Modes: ${modeStr}`)}`);
+  }
+
+  lines.push(`  ${color.dim(bar)}`);
+
+  return lines.join('\n');
 }
 
 function printRunSummary(
