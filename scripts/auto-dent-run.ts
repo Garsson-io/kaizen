@@ -243,14 +243,16 @@ const MODE_TEMPLATES: Record<string, string> = {
   explore: 'explore-gaps.md',
   reflect: 'reflect-batch.md',
   subtract: 'subtract-prune.md',
+  contemplate: 'contemplate-strategy.md',
 };
 
 /**
  * Select the cognitive mode for a given run.
  *
- * Schedule (v1 fixed):
- *   Run N mod 10: 0-6 exploit, 7 explore, 8 reflect, 9 subtract
- *   ~70% exploitation, ~10% each for exploration/reflection/subtraction
+ * Schedule (v2):
+ *   Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
+ *   Overlay: every 15th run (mod 15 === 14) triggers contemplate instead
+ *   ~67% exploitation, ~10% explore, ~7% reflect, ~7% subtract, ~7% contemplate
  *
  * Override: guidance containing "mode:<name>" forces that mode.
  */
@@ -268,6 +270,11 @@ export function selectMode(state: BatchState, runNum: number): ModeSelection {
   // Test task always uses test template
   if (state.test_task) {
     return { mode: 'exploit', template: 'test-task.md' };
+  }
+
+  // Contemplate overlay: every 15th run pauses for strategic assessment
+  if (runNum > 0 && runNum % 15 === 14) {
+    return { mode: 'contemplate', template: MODE_TEMPLATES.contemplate };
   }
 
   const slot = runNum % 10;
