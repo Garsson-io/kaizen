@@ -17,7 +17,7 @@ Without cost governance:
 | Level | Name | What's controlled | Mechanism |
 |-------|------|-------------------|-----------|
 | **L0** | No awareness | Nothing. Invoice arrives. | None |
-| **L1** | Tracking | "This case cost $X." Per-case token recording. | `api_usage` table, periodic reports |
+| **L1** | Tracking | "This case cost $X." Per-run cost recording. | `RunScore.cost_usd`, batch summaries |
 | **L2** | Budgets | Per-case token budget. Warning at threshold. Hard cap. | Budget field in case, agent receives remaining budget |
 | **L3** | Proportional gating | Expensive operations require justification. Low-value tasks get smaller budgets. | Task-class-to-budget mapping |
 | **L4** | Optimization | Detect waste: re-reading files, redundant CI, oversized context. | Analytics on token-per-outcome |
@@ -26,24 +26,28 @@ Without cost governance:
 
 ## You Are Here
 
-**L1.** `api_usage` and `usage_categories` tables exist. Session cost visible in agent responses. No enforcement, no budgets, no alerts. Session-dev-agents spec mentions "max cost per session ($5 default?)" with a question mark — unresolved.
+**L1-L2 (partial).** Auto-dent tracks `cost_usd` per run via Claude's `total_cost_usd` in result messages. `BatchScore.total_cost_usd` aggregates across runs. Cost anomaly detection (`detectCostAnomaly`) flags runs exceeding rolling average thresholds. Batch reflection summaries include total cost. Efficiency metrics (`cost_per_pr`, PRs-per-dollar) are computed per run.
+
+Gaps: No per-case budgets or hard caps. No cost-aware mode selection (expensive modes aren't deprioritized based on spend). No cross-batch cost trending.
 
 ## What Exists
 
 | Component | Level | Location |
 |-----------|-------|----------|
-| `api_usage` table | L1 | `store/messages.db` |
-| `usage_categories` table | L1 | `store/messages.db` |
-| Container timeout | L1 (time proxy) | `src/config.ts` |
-| Usage tracking skill | L1 (reference) | `.claude/skills/usage-tracking/` |
+| Per-run cost tracking (`cost_usd`) | L1 | `scripts/auto-dent-score.ts` (`RunScore`) |
+| Batch cost aggregation | L1 | `scripts/auto-dent-score.ts` (`BatchScore.total_cost_usd`) |
+| Cost anomaly detection | L2 | `scripts/auto-dent-score.ts` (`detectCostAnomaly`) |
+| Cost efficiency metrics | L1 | `scripts/auto-dent-score.ts` (`cost_per_pr`, `efficiency`) |
+| Wall-time timeout (cost proxy) | L1 | `scripts/auto-dent-run.ts` (wall-time watchdog) |
+| Batch reflection with cost summary | L1 | `scripts/auto-dent-ctl.ts` (`buildBatchReflection`) |
 
-## L1→L2: Per-Case Budgets (next step)
+## L2→L3: Per-Case Budgets & Proportional Gating (next step)
 
-**Problem L2 solves:** A dev agent session running `/kaizen-implement` burns $15 when the budget was $5. Today: nobody notices until weekly review. L2: agent warned at $4, hard-stopped at $5.
+**Problem L3 solves:** Cost anomaly detection flags expensive runs after the fact, but doesn't prevent them. A docs-only fix and a complex refactor get the same budget. Today: `--max-budget-usd` is a flat cap per run. L3: task classification maps to budget tiers, and the harness enforces per-case budgets proactively.
 
-**Rough shape:** Budget field in case record. Agent prompt includes remaining budget. MCP tool enforces hard cap by refusing to spawn new sessions when budget exhausted.
+**Rough shape:** Task-class-to-budget mapping derived from issue labels (`level-1` → $2, `level-3` → $10). Agent prompt includes remaining budget. Hard cap enforcement via cost tracking during the run.
 
-**Signal to escalate to L3:** Budget caps alone cause too many sessions killed mid-work because all tasks get the same budget regardless of complexity.
+**Signal to escalate to L4:** Budget caps cause too many runs killed mid-work because the system can't distinguish "this task legitimately needs more budget" from "this task is wasting money."
 
 ## L3–L4: Visible but not designed
 

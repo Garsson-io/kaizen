@@ -26,26 +26,30 @@ Without resilience:
 
 ## You Are Here
 
-**L1.** Container timeout (`CONTAINER_TIMEOUT`). IPC reaper removes stale files >1hr. Cursor rollback on agent error. Push-before-die in session-dev-agents spec (not yet implemented). 30+ catch blocks in `index.ts` with inconsistent error classification.
+**L1-L2 (partial).** Auto-dent harness provides wall-time timeout per run with SIGTERM/SIGKILL escalation. Heartbeat monitoring detects stalled agents. Watchdog (`auto-dent-ctl.ts`) halts batches with stale heartbeats. Post-result grace period prevents hung processes after work completes. Worktree isolation ensures crashed runs don't corrupt the main repo. Failure classification (`classifyFailure`) categorizes crashes for root-cause analysis.
+
+Gaps: No automatic retry of transient failures. No recovery manifests for mid-work crashes. No circuit breakers for external service outages (GitHub API, Claude API).
 
 ## What Exists
 
 | Component | Level | Location |
 |-----------|-------|----------|
-| Container timeout | L1 | `src/config.ts` (CONTAINER_TIMEOUT) |
-| IPC file reaper | L1 | `src/ipc.ts` |
-| Cursor rollback | L1 | `src/index.ts` |
-| Error catch blocks | L0-1 | `src/index.ts` (~30 catches, inconsistent) |
-| Download retry | L1 | `src/download-coalesce.ts` |
-| Push-before-die | L1 (spec'd) | `docs/session-based-dev-agents-spec.md` |
+| Wall-time watchdog (SIGTERM/SIGKILL) | L1 | `scripts/auto-dent-run.ts` |
+| Post-result grace timeout | L1 | `scripts/auto-dent-run.ts` (`POST_RESULT_GRACE_MS`) |
+| Heartbeat monitoring | L1 | `scripts/auto-dent-run.ts` (heartbeat interval) |
+| Watchdog (stale heartbeat → halt) | L2 | `scripts/auto-dent-ctl.ts` (`checkBatchHealth`) |
+| Worktree isolation per run | L2 | `scripts/auto-dent-run.ts` (worktree creation) |
+| Failure classification | L1 | `scripts/auto-dent-score.ts` (`classifyFailure`) |
+| Batch halt mechanism | L1 | `scripts/auto-dent-ctl.ts` (halt file) |
+| Worktree disk usage tracking | L1 | `src/worktree-du.ts` |
 
-## L1→L2: Recovery Manifests (next step)
+## L2→L3: Automatic Retry (next step)
 
-**Problem L2 solves:** Agent crashes mid-PR. Today: human reconstructs from git reflog and orphaned branches. L2: structured recovery metadata makes pickup automatic.
+**Problem L3 solves:** Agent hits a transient failure (API rate limit, network timeout, GitHub 502). Today: the run is scored as a failure and the batch moves on. L3: transient failures are classified and retried with backoff before being marked as failures.
 
-**Rough shape:** On session start, write a recovery manifest: `{ caseId, branch, lastToolCall, intent, startedAt }`. On clean exit, delete it. On next session start, check for orphaned manifests and offer recovery. The manifest tells the recovering agent what was happening and where to pick up.
+**Rough shape:** Extend `classifyFailure` to distinguish transient vs permanent failures. Transient failures get one retry with exponential backoff. Recovery manifests (`{ caseId, branch, lastPhase, intent }`) enable the retry to pick up mid-work rather than starting from scratch.
 
-**Signal to escalate to L3:** Agents keep dying on the same transient failures (API rate limits, network timeouts) rather than retrying.
+**Signal to escalate to L4:** The same external service outages (GitHub API, Claude API) cause cascading failures across multiple runs rather than being handled gracefully.
 
 ## L3–L4: Visible but not designed
 
