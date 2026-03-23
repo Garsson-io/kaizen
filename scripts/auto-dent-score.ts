@@ -30,6 +30,8 @@ export interface RunScore {
   cost_per_pr: number;
   /** Whether the agent requested a stop */
   stop_requested: boolean;
+  /** Cognitive mode used for this run */
+  mode: string;
 }
 
 export interface BatchScore {
@@ -98,6 +100,7 @@ export function scoreRunMetrics(metrics: RunMetrics): RunScore {
     efficiency: cost > 0 ? prCount / cost : 0,
     cost_per_pr: prCount > 0 ? cost / prCount : Infinity,
     stop_requested: metrics.stop_requested,
+    mode: metrics.mode ?? 'exploit',
   };
 }
 
@@ -106,6 +109,7 @@ export function scoreRunResult(
   result: RunResult,
   exitCode: number,
   durationSeconds: number,
+  mode: string = 'exploit',
 ): RunScore {
   const prCount = result.prs.length;
   const cost = result.cost;
@@ -120,6 +124,7 @@ export function scoreRunResult(
     efficiency: cost > 0 ? prCount / cost : 0,
     cost_per_pr: prCount > 0 ? cost / prCount : Infinity,
     stop_requested: result.stopRequested,
+    mode,
   };
 }
 
@@ -160,6 +165,7 @@ export function formatRunScoreLine(score: RunScore): string {
   const status = score.success ? 'pass' : 'fail';
   const parts = [
     status,
+    score.mode,
     `$${score.cost_usd.toFixed(2)}`,
     `${score.tool_calls} tools`,
     `${score.pr_count} PRs`,
@@ -173,6 +179,15 @@ export function formatRunScoreLine(score: RunScore): string {
 
 /** Format a BatchScore as a multi-line summary table. */
 export function formatBatchScoreTable(score: BatchScore): string {
+  // Compute mode distribution from per-run scores
+  const modeCounts: Record<string, number> = {};
+  for (const run of score.runs) {
+    modeCounts[run.mode] = (modeCounts[run.mode] || 0) + 1;
+  }
+  const modeStr = Object.entries(modeCounts)
+    .map(([mode, count]) => `${mode}:${count}`)
+    .join(', ');
+
   const lines = [
     `| Metric | Value |`,
     `|--------|-------|`,
@@ -184,6 +199,9 @@ export function formatBatchScoreTable(score: BatchScore): string {
     `| **Avg cost/success** | ${isNaN(score.avg_cost_per_success) ? 'N/A' : '$' + score.avg_cost_per_success.toFixed(2)} |`,
     `| **Efficiency** | ${score.overall_efficiency > 0 ? score.overall_efficiency.toFixed(2) + ' PR/$' : 'N/A'} |`,
   ];
+  if (modeStr) {
+    lines.push(`| **Modes** | ${modeStr} |`);
+  }
   if (score.post_hoc) {
     const ph = score.post_hoc;
     lines.push(
