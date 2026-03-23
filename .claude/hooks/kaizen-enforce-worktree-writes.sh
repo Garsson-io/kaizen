@@ -28,6 +28,7 @@ if [ -z "$FILE_PATH" ]; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Resolve the main checkout path from git
 GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)

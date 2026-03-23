@@ -27,6 +27,7 @@ if [ -z "$FILE_PATH" ]; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Detect worktree: git-dir differs from git-common-dir
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)

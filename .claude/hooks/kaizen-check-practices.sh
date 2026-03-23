@@ -20,6 +20,7 @@ if ! is_gh_pr_command "$CMD_LINE" "create"; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Resolve practices file relative to this hook's location
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"

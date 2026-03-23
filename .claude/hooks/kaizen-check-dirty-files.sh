@@ -36,6 +36,7 @@ else
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 
 # Fix cross-worktree false positive (kaizen #232):

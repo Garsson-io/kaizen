@@ -34,6 +34,7 @@ if [ $? -ne 0 ] || [ -z "$REVIEW_INFO" ]; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 PR_URL=$(echo "$REVIEW_INFO" | cut -d'|' -f1)
 ROUND=$(echo "$REVIEW_INFO" | cut -d'|' -f2)

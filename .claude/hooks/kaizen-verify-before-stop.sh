@@ -29,6 +29,7 @@ if [ -z "$CHANGED_TS" ]; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 FILE_COUNT=$(echo "$CHANGED_TS" | wc -l | tr -d ' ')
 

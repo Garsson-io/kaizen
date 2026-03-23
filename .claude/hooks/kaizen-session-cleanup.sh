@@ -7,5 +7,6 @@
 
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 source "$(dirname "$0")/lib/state-utils.sh" 2>/dev/null || { exit 0; }
 cleanup_merged_review_states

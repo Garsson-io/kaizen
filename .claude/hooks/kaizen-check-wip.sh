@@ -13,6 +13,7 @@ if [ "$GIT_COMMON" != ".git" ]; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Strong warning: you're on the main checkout, not a worktree
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")

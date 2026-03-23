@@ -36,6 +36,7 @@ if [ $? -ne 0 ] || [ -z "$ALL_STATES" ]; then
 fi
 
 source "$(dirname "$0")/lib/scope-guard.sh"
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Build PR list for the block message
 PR_COUNT=$(echo "$ALL_STATES" | wc -l | tr -d ' ')
