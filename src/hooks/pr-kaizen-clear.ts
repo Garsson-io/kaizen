@@ -383,6 +383,47 @@ function defaultPostComment(prUrl: string, comment: string): void {
   });
 }
 
+// ── PRD detection (kaizen #694) ───────────────────────────────────────
+
+/** List changed files in a PR (best-effort). */
+function defaultGetPrFiles(prUrl: string): string[] {
+  const prNum = prUrl.match(/(\d+)$/)?.[1];
+  const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
+  if (!prNum || !repo) return [];
+  try {
+    const out = execSync(
+      `gh pr diff ${prNum} --repo "${repo}" --name-only`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 15000 },
+    ).trim();
+    return out ? out.split('\n').map(f => f.trim()).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Check if PR contains new PRD files. */
+export function hasPrdFiles(files: string[]): boolean {
+  return files.some(f => /^docs\/prd[/-].*\.md$/i.test(f));
+}
+
+/** Advisory when a PRD is created but no issues were filed. */
+export function detectPrdWithoutFiledIssues(
+  files: string[],
+  items: Impediment[],
+  isNoAction: boolean,
+): string | null {
+  if (!hasPrdFiles(files)) return null;
+  const filedCount = items.filter(
+    i => i.disposition === 'filed' || i.disposition === 'incident',
+  ).length;
+  if (!isNoAction && filedCount > 0) return null;
+  return (
+    'Advisory: You created a PRD but filed no actionable issues. ' +
+    'PRDs without filed issues are reflection without action. ' +
+    'Did you mean to file P0/P1 items as issues?'
+  );
+}
+
 // ── Core logic (extracted for testability) ───────────────────────────
 
 export function processHookInput(
@@ -390,6 +431,7 @@ export function processHookInput(
   options: {
     stateDir?: string;
     postComment?: (prUrl: string, comment: string) => void;
+    getPrFiles?: (prUrl: string) => string[];
   } = {},
 ): string | null {
   if (input.tool_name !== 'Bash') return null;
@@ -502,6 +544,18 @@ export function processHookInput(
         output.push(`\n${fixableAdvisories.join('\n')}\n`);
       }
     }
+
+    // PRD-without-issues advisory (kaizen #694)
+    const getPrFiles = options.getPrFiles ?? defaultGetPrFiles;
+    try {
+      const files = getPrFiles(gatePrUrl);
+      const prdAdvisory = detectPrdWithoutFiledIssues(
+        files,
+        validatedItems,
+        isNoAction,
+      );
+      if (prdAdvisory) output.push(`\n${prdAdvisory}\n`);
+    } catch {}
 
     clearStateWithStatusAnyBranch(
       'needs_pr_kaizen',
