@@ -213,17 +213,23 @@ ad_parse_args() {
     esac
   done
 
+  # Use printf %q for safe quoting of values that may contain special chars
+  local budget_q max_budget_q guidance_q
+  budget_q=$(printf '%q' "$budget")
+  max_budget_q=$(printf '%q' "$max_budget")
+  guidance_q=$(printf '%q' "$guidance")
+
   cat <<EOF
 MAX_RUNS=$max_runs
 COOLDOWN=$cooldown
-BUDGET="$budget"
-MAX_BUDGET="$max_budget"
+BUDGET=$budget_q
+MAX_BUDGET=$max_budget_q
 MAX_FAILURES=$max_failures
 MAX_RUN_SECONDS=$max_run_seconds
 DRY_RUN=$dry_run
 TEST_TASK=$test_task
 NO_PLAN=$no_plan
 EXPERIMENT=$experiment
-GUIDANCE="$guidance"
+GUIDANCE=$guidance_q
 EOF
 }

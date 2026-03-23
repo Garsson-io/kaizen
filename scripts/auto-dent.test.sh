@@ -241,25 +241,29 @@ echo "--- ad_parse_args ---"
 
 # Basic guidance only
 PARSE_OUT=$(ad_parse_args "focus on hooks")
-assert_contains "parse: guidance" 'GUIDANCE="focus on hooks"' "$PARSE_OUT"
-assert_contains "parse: defaults max_runs" "MAX_RUNS=0" "$PARSE_OUT"
-assert_contains "parse: defaults cooldown" "COOLDOWN=30" "$PARSE_OUT"
-assert_contains "parse: defaults dry_run" "DRY_RUN=false" "$PARSE_OUT"
+assert_contains "parse: guidance" "GUIDANCE=" "$PARSE_OUT"
+# Verify roundtrip: eval the output and check the variable
+eval "$PARSE_OUT"
+assert_eq "parse: guidance value" "focus on hooks" "$GUIDANCE"
+assert_eq "parse: defaults max_runs" "0" "$MAX_RUNS"
+assert_eq "parse: defaults cooldown" "30" "$COOLDOWN"
+assert_eq "parse: defaults dry_run" "false" "$DRY_RUN"
 
 # All flags
 PARSE_OUT2=$(ad_parse_args --max-runs 5 --cooldown 60 --budget 3.00 --max-budget 25.00 \
   --max-failures 5 --max-run-seconds 900 --dry-run --test-task --no-plan --experiment "my guidance")
-assert_contains "parse: max_runs=5" "MAX_RUNS=5" "$PARSE_OUT2"
-assert_contains "parse: cooldown=60" "COOLDOWN=60" "$PARSE_OUT2"
-assert_contains "parse: budget=3.00" 'BUDGET="3.00"' "$PARSE_OUT2"
-assert_contains "parse: max_budget=25.00" 'MAX_BUDGET="25.00"' "$PARSE_OUT2"
-assert_contains "parse: max_failures=5" "MAX_FAILURES=5" "$PARSE_OUT2"
-assert_contains "parse: max_run_seconds=900" "MAX_RUN_SECONDS=900" "$PARSE_OUT2"
-assert_contains "parse: dry_run=true" "DRY_RUN=true" "$PARSE_OUT2"
-assert_contains "parse: test_task=true" "TEST_TASK=true" "$PARSE_OUT2"
-assert_contains "parse: no_plan=true" "NO_PLAN=true" "$PARSE_OUT2"
-assert_contains "parse: experiment=true" "EXPERIMENT=true" "$PARSE_OUT2"
-assert_contains "parse: guidance" 'GUIDANCE="my guidance"' "$PARSE_OUT2"
+eval "$PARSE_OUT2"
+assert_eq "parse: max_runs=5" "5" "$MAX_RUNS"
+assert_eq "parse: cooldown=60" "60" "$COOLDOWN"
+assert_eq "parse: budget=3.00" "3.00" "$BUDGET"
+assert_eq "parse: max_budget=25.00" "25.00" "$MAX_BUDGET"
+assert_eq "parse: max_failures=5" "5" "$MAX_FAILURES"
+assert_eq "parse: max_run_seconds=900" "900" "$MAX_RUN_SECONDS"
+assert_eq "parse: dry_run=true" "true" "$DRY_RUN"
+assert_eq "parse: test_task=true" "true" "$TEST_TASK"
+assert_eq "parse: no_plan=true" "true" "$NO_PLAN"
+assert_eq "parse: experiment=true" "true" "$EXPERIMENT"
+assert_eq "parse: guidance value" "my guidance" "$GUIDANCE"
 
 # Unknown flag
 PARSE_OUT3=$(ad_parse_args --unknown-flag 2>&1) || true
@@ -269,9 +273,10 @@ assert_contains "parse: unknown flag error" "PARSE_ERROR" "$PARSE_OUT3"
 PARSE_OUT4=$(ad_parse_args --help 2>&1)
 assert_contains "parse: help flag" "SHOW_HELP=true" "$PARSE_OUT4"
 
-# Guidance with special characters
+# Guidance with special characters — eval roundtrip proves safety
 PARSE_OUT5=$(ad_parse_args 'fix "hooks" & <scripts>')
-assert_contains "parse: special chars in guidance" 'fix "hooks" & <scripts>' "$PARSE_OUT5"
+eval "$PARSE_OUT5"
+assert_eq "parse: special chars roundtrip" 'fix "hooks" & <scripts>' "$GUIDANCE"
 
 echo ""
 echo "--- Subcommand dispatch (dry-run validation) ---"
