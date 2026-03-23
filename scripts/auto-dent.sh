@@ -60,6 +60,7 @@ Usage: auto-dent.sh [options] <guidance>
        auto-dent.sh --status
        auto-dent.sh --halt [batch-id]
        auto-dent.sh --score [--post-hoc] [batch-id]
+       auto-dent.sh --watchdog [--threshold N]
 
 Options:
   --max-runs N         Stop after N iterations (default: unlimited)
@@ -74,6 +75,7 @@ Options:
   --halt [batch-id]    Halt a specific batch, or all active batches
   --score [batch-id]   Score batch(es) — efficiency, success rate, cost-per-PR
   --cleanup [batch-id] Close superseded PRs whose issues are already resolved
+  --watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)
   --help               Show this help
 
 Self-update: between runs, the trampoline pulls main so that merged
@@ -111,6 +113,11 @@ fi
 if [[ "${1:-}" = "--cleanup" ]]; then
   shift
   exec npx tsx "$CTL_SCRIPT" cleanup "$@"
+fi
+
+if [[ "${1:-}" = "--watchdog" ]]; then
+  shift
+  exec npx tsx "$CTL_SCRIPT" watchdog "$@"
 fi
 
 # Arg parsing

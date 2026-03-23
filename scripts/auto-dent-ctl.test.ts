@@ -1,9 +1,17 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import {
   formatBatchStatus,
   formatLastState,
   formatBatchScoreOutput,
+  checkBatchHealth,
+  runWatchdog,
+  formatWatchdogResult,
+  DEFAULT_WATCHDOG_THRESHOLD_SEC,
   type BatchInfo,
+  type WatchdogResult,
 } from './auto-dent-ctl.js';
 import type { BatchState, RunMetrics } from './auto-dent-run.js';
 
@@ -276,5 +284,183 @@ describe('formatBatchScoreOutput', () => {
     });
     const output = formatBatchScoreOutput(batch, false);
     expect(output).not.toContain('Post-hoc merge status');
+  });
+});
+
+describe('checkBatchHealth', () => {
+  const NOW = 1742680800;
+  const THRESHOLD = 600;
+
+  it('reports healthy when heartbeat is within threshold', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({ last_heartbeat: NOW - 300 }),
+    });
+    const result = checkBatchHealth(batch, THRESHOLD, NOW);
+    expect(result.action).toBe('healthy');
+    expect(result.stale).toBe(false);
+    expect(result.heartbeatAge).toBe(300);
+  });
+
+  it('reports stale when heartbeat exceeds threshold', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({ last_heartbeat: NOW - 700 }),
+    });
+    const result = checkBatchHealth(batch, THRESHOLD, NOW);
+    expect(result.action).toBe('halt_created');
+    expect(result.stale).toBe(true);
+    expect(result.heartbeatAge).toBe(700);
+  });
+
+  it('reports already_halted when stale but halt file exists', () => {
+    const batch = makeBatchInfo({
+      halted: true,
+      state: makeBatchState({ last_heartbeat: NOW - 700 }),
+    });
+    const result = checkBatchHealth(batch, THRESHOLD, NOW);
+    expect(result.action).toBe('already_halted');
+    expect(result.stale).toBe(true);
+  });
+
+  it('reports no_heartbeat when heartbeat is 0', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({ last_heartbeat: 0 }),
+    });
+    const result = checkBatchHealth(batch, THRESHOLD, NOW);
+    expect(result.action).toBe('no_heartbeat');
+    expect(result.heartbeatAge).toBe(0);
+    expect(result.stale).toBe(false);
+  });
+
+  it('reports no_heartbeat when heartbeat is undefined', () => {
+    const state = makeBatchState();
+    delete (state as any).last_heartbeat;
+    const batch = makeBatchInfo({ state });
+    const result = checkBatchHealth(batch, THRESHOLD, NOW);
+    expect(result.action).toBe('no_heartbeat');
+  });
+
+  it('uses exact threshold boundary correctly', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({ last_heartbeat: NOW - 600 }),
+    });
+    const result = checkBatchHealth(batch, THRESHOLD, NOW);
+    expect(result.action).toBe('healthy');
+
+    const batch2 = makeBatchInfo({
+      state: makeBatchState({ last_heartbeat: NOW - 601 }),
+    });
+    const result2 = checkBatchHealth(batch2, THRESHOLD, NOW);
+    expect(result2.action).toBe('halt_created');
+  });
+});
+
+describe('runWatchdog', () => {
+  it('creates HALT file for stale batch', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'watchdog-test-'));
+    const batchDir = join(tmpDir, 'batch-test-001');
+    require('fs').mkdirSync(batchDir);
+    const state = makeBatchState({
+      batch_id: 'batch-test-001',
+      last_heartbeat: 1000,
+    });
+    writeFileSync(join(batchDir, 'state.json'), JSON.stringify(state));
+
+    const results = runWatchdog(tmpDir, 600, 2000);
+    expect(results.length).toBe(1);
+    expect(results[0].action).toBe('halt_created');
+    expect(existsSync(join(batchDir, 'HALT'))).toBe(true);
+  });
+
+  it('does not create HALT file for healthy batch', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'watchdog-test-'));
+    const batchDir = join(tmpDir, 'batch-test-002');
+    require('fs').mkdirSync(batchDir);
+    const state = makeBatchState({
+      batch_id: 'batch-test-002',
+      last_heartbeat: 1800,
+    });
+    writeFileSync(join(batchDir, 'state.json'), JSON.stringify(state));
+
+    const results = runWatchdog(tmpDir, 600, 2000);
+    expect(results.length).toBe(1);
+    expect(results[0].action).toBe('healthy');
+    expect(existsSync(join(batchDir, 'HALT'))).toBe(false);
+  });
+
+  it('skips stopped batches', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'watchdog-test-'));
+    const batchDir = join(tmpDir, 'batch-stopped');
+    require('fs').mkdirSync(batchDir);
+    const state = makeBatchState({
+      batch_id: 'batch-stopped',
+      last_heartbeat: 100,
+      stop_reason: 'completed',
+    });
+    writeFileSync(join(batchDir, 'state.json'), JSON.stringify(state));
+
+    const results = runWatchdog(tmpDir, 600, 2000);
+    expect(results.length).toBe(0);
+  });
+
+  it('returns empty array when no batches exist', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'watchdog-test-'));
+    const results = runWatchdog(tmpDir, 600, 2000);
+    expect(results.length).toBe(0);
+  });
+});
+
+describe('formatWatchdogResult', () => {
+  it('formats halt_created result', () => {
+    const r: WatchdogResult = {
+      batchId: 'batch-001',
+      heartbeatAge: 750,
+      stale: true,
+      halted: false,
+      action: 'halt_created',
+    };
+    const output = formatWatchdogResult(r);
+    expect(output).toContain('STALE');
+    expect(output).toContain('batch-001');
+    expect(output).toContain('12m30s');
+    expect(output).toContain('HALT file created');
+  });
+
+  it('formats healthy result', () => {
+    const r: WatchdogResult = {
+      batchId: 'batch-002',
+      heartbeatAge: 120,
+      stale: false,
+      halted: false,
+      action: 'healthy',
+    };
+    const output = formatWatchdogResult(r);
+    expect(output).toContain('OK');
+    expect(output).toContain('2m0s');
+  });
+
+  it('formats no_heartbeat result', () => {
+    const r: WatchdogResult = {
+      batchId: 'batch-003',
+      heartbeatAge: 0,
+      stale: false,
+      halted: false,
+      action: 'no_heartbeat',
+    };
+    const output = formatWatchdogResult(r);
+    expect(output).toContain('SKIP');
+    expect(output).toContain('no heartbeat');
+  });
+
+  it('formats already_halted result', () => {
+    const r: WatchdogResult = {
+      batchId: 'batch-004',
+      heartbeatAge: 900,
+      stale: true,
+      halted: true,
+      action: 'already_halted',
+    };
+    const output = formatWatchdogResult(r);
+    expect(output).toContain('STALE');
+    expect(output).toContain('already halted');
   });
 });
