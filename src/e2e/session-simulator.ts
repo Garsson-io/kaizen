@@ -35,7 +35,6 @@ import {
   bashPost,
   writePre,
   stopEvent,
-  preToolUse,
   createMockDir,
   addGitMock,
   addGhMock,
@@ -82,6 +81,7 @@ const DEFAULT_HOOKS = {
   Stop: [
     "kaizen-enforce-pr-review-stop.sh",
     "kaizen-enforce-post-merge-stop.sh",
+    "kaizen-verify-before-stop.sh",
     "kaizen-check-cleanup-on-stop.sh",
     "kaizen-enforce-reflect-stop.sh",
   ],
