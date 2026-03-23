@@ -89,6 +89,7 @@ Key variables: `{{guidance}}`, `{{run_tag}}`, `{{run_context}}`, `{{issues_close
 | `--max-runs N` | unlimited | Stop after N runs |
 | `--cooldown N` | 30s | Seconds between runs |
 | `--budget N.NN` | none | Per-run budget (passed to `claude --max-budget-usd`) |
+| `--max-budget N.NN` | none | Total batch budget — halts when cumulative cost exceeds |
 | `--max-failures N` | 3 | Stop after N consecutive failures |
 | `--max-run-seconds N` | 2700 (45min) | Wall-time timeout per run |
 | `--dry-run` | off | Show what would run |

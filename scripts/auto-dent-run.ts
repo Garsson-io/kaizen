@@ -65,6 +65,7 @@ export interface BatchState {
   max_runs: number;
   cooldown: number;
   budget: string;
+  max_budget?: string;
   max_failures: number;
   kaizen_repo: string;
   host_repo: string;
@@ -1177,6 +1178,7 @@ export function ensureBatchProgressIssue(
     `| **Batch ID** | \`${state.batch_id}\` |`,
     `| **Max runs** | ${state.max_runs || 'unlimited'} |`,
     `| **Budget/run** | ${state.budget ? '$' + state.budget : 'none'} |`,
+    `| **Max budget** | ${state.max_budget ? '$' + state.max_budget : 'none'} |`,
     `| **Cooldown** | ${state.cooldown}s |`,
     `| **Max failures** | ${state.max_failures} |`,
     `| **Started** | ${startedAt} |`,
