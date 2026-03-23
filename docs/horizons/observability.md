@@ -17,7 +17,7 @@ Without observability:
 | Level | Name | What you can answer | Mechanism |
 |-------|------|---------------------|-----------|
 | **L0** | Blind | "Did something happen?" (maybe) | Nothing. Check git log. |
-| **L1** | Output logs | "What happened?" (after the fact) | Session logs captured. CI results recorded. pino logger. |
+| **L1** | Output logs | "What happened?" (after the fact) | Session logs captured. CI results recorded. Structured scoring. |
 | **L2** | Structured telemetry | "How much did this cost? What did the agent touch?" | Token cost, wall time, tool calls, files touched — per case, queryable. |
 | **L3** | Decision tracing | "Why did the agent choose this approach?" | Key decisions logged with rationale, alternatives, context. Audit trail. |
 | **L4** | Anomaly detection | "Is this session behaving unusually?" | Baselines established. Alerts on unusual duration, scope, token burn. |
@@ -26,25 +26,34 @@ Without observability:
 
 ## You Are Here
 
-**L1.** pino logger in most modules. `api_usage` table tracks token counts. `task_run_logs` records scheduled task outcomes. Session logs are ephemeral (lost when conversation ends). No structured event capture, no cross-session analytics.
+**L2 (partial).** Auto-dent provides structured telemetry for batch operations: per-run `RunScore` with cost, duration, tool calls, PR count, efficiency metrics, and failure classification. `BatchScore` aggregates across runs. Phase markers (`AUTO_DENT_PHASE`) emit structured progress during runs. Heartbeat monitoring and watchdog detect stalled sessions. Cost anomaly detection flags runs that exceed rolling averages. Post-hoc scoring evaluates PR quality after creation. Structured JSON stream output from each run is parsed and scored.
+
+Gaps: No cross-batch analytics queryable from a single interface. No decision tracing (why the agent chose approach A over B). Interactive sessions outside auto-dent have no telemetry.
 
 ## What Exists
 
 | Component | Level | Location |
 |-----------|-------|----------|
-| pino logger | L1 | `src/` (most modules) |
-| `api_usage` table | L1 | `store/messages.db` |
-| `task_run_logs` table | L1 | `store/messages.db` |
-| `usage_categories` table | L1 | `store/messages.db` |
-| Telemetry spec | Design | `docs/kaizen-telemetry-and-investigations-spec.md` |
+| `RunScore` (per-run metrics) | L2 | `scripts/auto-dent-score.ts` |
+| `BatchScore` (aggregate metrics) | L2 | `scripts/auto-dent-score.ts` |
+| Phase markers (`AUTO_DENT_PHASE`) | L1-L2 | Emitted by agents, parsed by `scripts/auto-dent-run.ts` |
+| Cost anomaly detection | L2 | `scripts/auto-dent-score.ts` (`detectCostAnomaly`) |
+| Failure classification | L2 | `scripts/auto-dent-score.ts` (`classifyFailure`) |
+| Heartbeat monitoring | L1 | `scripts/auto-dent-run.ts` (heartbeat interval) |
+| Watchdog (stale heartbeat detection) | L1 | `scripts/auto-dent-ctl.ts` (`checkBatchHealth`) |
+| Batch trend analysis | L2 | `scripts/auto-dent-score.ts` (`analyzeBatchTrend`) |
+| Mode diversity scoring | L2 | `scripts/auto-dent-score.ts` |
+| Post-hoc PR scoring | L2 | `scripts/auto-dent-run.ts` (`runPostHocScoring`) |
+| In-flight PR comment updates | L1 | `scripts/auto-dent-run.ts` |
+| Batch reflection summary | L1 | `scripts/auto-dent-ctl.ts` (`buildBatchReflection`) |
 
-## L1→L2: Structured Telemetry (next step)
+## L2→L3: Decision Tracing (next step)
 
-**Problem L2 solves:** "This case cost $12" and "the agent modified 47 files" are knowable from a DB query, not archaeology.
+**Problem L3 solves:** "The agent created a PR that refactored X instead of fixing Y. Why?" Today: reconstruct from git diffs and PR description. L3: key decision points logged with rationale at natural checkpoints.
 
-**Rough shape:** Structured event emission on tool calls, file operations, and session boundaries. Stored in SQLite per-case. Queryable via `cli-kaizen` or MCP tool.
+**Rough shape:** Structured decision events emitted at case start (issue selection rationale), scope changes (why scope expanded/narrowed), and PR creation (what alternatives were considered). Stored alongside run scores. Queryable across batches.
 
-**Signal to escalate to L3:** If post-incident analysis repeatedly requires reconstructing "what was the agent thinking?" from git diffs because structured events don't capture the reasoning.
+**Signal to escalate to L4:** Repeated incidents where unexpected agent behavior is only understood after manual log archaeology, AND decision traces exist but anomalies aren't auto-detected.
 
 ## L3–L4: Visible but not designed
 

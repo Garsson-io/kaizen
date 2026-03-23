@@ -42,7 +42,12 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 | `auto-dent-run.sh` | L3 (wrapper) | `scripts/auto-dent-run.sh` |
 | `auto-dent-run.ts` | L3 (runner) | `scripts/auto-dent-run.ts` |
 | `auto-dent-ctl.ts` | L3 (control plane) | `scripts/auto-dent-ctl.ts` |
+| `auto-dent-score.ts` | L3 (scoring) | `scripts/auto-dent-score.ts` |
+| `auto-dent-analyze.ts` | L3 (analysis) | `scripts/auto-dent-analyze.ts` |
+| `auto-dent-harness.ts` | L3 (harness) | `scripts/auto-dent-harness.ts` |
+| `auto-dent-plan.ts` | L5 (planning) | `scripts/auto-dent-plan.ts` |
 | `auto-dent-run.test.ts` | L3 (tests) | `scripts/auto-dent-run.test.ts` |
+| `auto-dent-score.test.ts` | L3 (tests) | `scripts/auto-dent-score.test.ts` |
 | `/kaizen-deep-dive` skill | Foundation | `.claude/skills/kaizen-deep-dive/SKILL.md` |
 | `/kaizen-gaps` skill | Foundation (L5 prereq) | `.claude/skills/kaizen-gaps/SKILL.md` |
 | `--max-budget-usd` flag | L1 cost cap | Claude CLI |
