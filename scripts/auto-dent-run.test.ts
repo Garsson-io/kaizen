@@ -587,6 +587,16 @@ describe('formatPhaseMarker', () => {
     const result = formatPhaseMarker({ phase: 'PICK', fields: { issue: '#1', title: longTitle } });
     expect(result.length).toBeLessThanOrEqual(120);
   });
+
+  it('formats DECOMPOSE with epic and issues_created', () => {
+    const result = formatPhaseMarker({ phase: 'DECOMPOSE', fields: { epic: '#506', issues_created: '#560,#561,#562' } });
+    expect(result).toBe('[DECOMPOSE] epic:#506 created:#560,#561,#562');
+  });
+
+  it('formats DECOMPOSE with epic only', () => {
+    const result = formatPhaseMarker({ phase: 'DECOMPOSE', fields: { epic: '#548' } });
+    expect(result).toBe('[DECOMPOSE] epic:#548');
+  });
 });
 
 describe('formatToolUse', () => {

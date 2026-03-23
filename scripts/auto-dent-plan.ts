@@ -33,6 +33,8 @@ export interface PlanItem {
   score: number;
   approach: string;
   status: 'pending' | 'assigned' | 'done' | 'skipped';
+  item_type?: 'leaf' | 'decompose';
+  parent_epic?: string;
 }
 
 export interface BatchPlan {
@@ -41,6 +43,7 @@ export interface BatchPlan {
   items: PlanItem[];
   wip_excluded: string[];
   epics_scanned: string[];
+  decomposition_candidates?: string[];
 }
 
 function readState(stateFile: string): BatchState {
@@ -124,6 +127,7 @@ export function validatePlan(raw: any): BatchPlan | null {
       score: Number(item.score) || 0,
       approach: String(item.approach || ''),
       status: 'pending' as const,
+      ...(item.item_type === 'decompose' ? { item_type: 'decompose' as const, parent_epic: item.parent_epic ? String(item.parent_epic) : undefined } : { item_type: 'leaf' as const }),
     }));
 
   if (items.length === 0) return null;
@@ -134,6 +138,7 @@ export function validatePlan(raw: any): BatchPlan | null {
     items,
     wip_excluded: Array.isArray(raw.wip_excluded) ? raw.wip_excluded : [],
     epics_scanned: Array.isArray(raw.epics_scanned) ? raw.epics_scanned : [],
+    decomposition_candidates: Array.isArray(raw.decomposition_candidates) ? raw.decomposition_candidates : [],
   };
 }
 
@@ -271,18 +276,24 @@ export function markItem(
  * Format a plan summary for display.
  */
 export function formatPlanSummary(plan: BatchPlan): string {
+  const leafCount = plan.items.filter(i => i.item_type !== 'decompose').length;
+  const decompCount = plan.items.filter(i => i.item_type === 'decompose').length;
   const lines = [
-    `Plan: ${plan.items.length} items ranked by score`,
+    `Plan: ${plan.items.length} items (${leafCount} leaf, ${decompCount} decompose) ranked by score`,
   ];
   for (const item of plan.items.slice(0, 10)) {
     const scoreBar = '#'.repeat(Math.round(item.score));
-    lines.push(`  ${item.issue.padEnd(6)} [${scoreBar.padEnd(10)}] ${item.title}`);
+    const tag = item.item_type === 'decompose' ? ' [DECOMPOSE]' : '';
+    lines.push(`  ${item.issue.padEnd(6)} [${scoreBar.padEnd(10)}] ${item.title}${tag}`);
   }
   if (plan.wip_excluded.length > 0) {
     lines.push(`  Excluded (WIP): ${plan.wip_excluded.join(', ')}`);
   }
   if (plan.epics_scanned.length > 0) {
     lines.push(`  Epics scanned: ${plan.epics_scanned.length}`);
+  }
+  if (plan.decomposition_candidates && plan.decomposition_candidates.length > 0) {
+    lines.push(`  Decomposition candidates: ${plan.decomposition_candidates.length}`);
   }
   return lines.join('\n');
 }

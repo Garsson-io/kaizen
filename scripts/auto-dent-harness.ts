@@ -54,7 +54,7 @@ function makeRunResult(): RunResult {
 }
 
 const KNOWN_PHASES = new Set([
-  'PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT', 'STOP',
+  'PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DECOMPOSE', 'REFLECT', 'STOP',
 ]);
 
 function extractPhasesFromLog(logLines: string[]): Array<{ phase: string; line: string }> {

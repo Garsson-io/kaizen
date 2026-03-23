@@ -36,17 +36,38 @@ After creating a PR, you MUST queue it for auto-merge:
 Do NOT leave PRs open for manual review — this is an unattended batch.
 The harness will also attempt auto-merge as a safety net, but do it yourself first.
 
+## Bridging Abstract Work to Concrete Steps
+
+If your assigned item has `item_type: "decompose"`, or if leaf issues matching
+the guidance are exhausted, bridge abstract work (epics, PRDs, horizons) to
+concrete next steps before stopping:
+
+1. **Scan epics**: `gh issue list --repo {{host_repo}} --label epic --state open`
+2. **Scan PRDs**: `gh issue list --repo {{host_repo}} --label prd --state open`
+3. **Read horizon docs**: Check `docs/horizons/*.md` for maturity axes with defined next levels
+4. **Find undecomposed items**: Epics/PRDs with no concrete child issues filed
+5. **Decompose the highest-value one**: Read the epic body or PRD doc, file 1-3
+   concrete implementation issues, then implement the most actionable one
+
+Emit the DECOMPOSE phase marker when breaking down an epic:
+  AUTO_DENT_PHASE: DECOMPOSE | epic=#NNN | issues_created=#X,#Y,#Z
+
+This is higher-value than stopping — advancing an epic by one concrete step
+moves the strategic layer forward.
+
 ## Stopping the Loop
 
 If you determine there is no more meaningful work to do matching the guidance
-(backlog exhausted, all relevant issues claimed, or remaining issues are
-blocked/too risky), include this exact marker in your final response:
+(backlog exhausted, all relevant issues claimed, remaining issues are
+blocked/too risky, AND no epics/PRDs can be decomposed), include this exact
+marker in your final response:
 
 AUTO_DENT_PHASE: STOP | reason=<reason>
 
 For example: "AUTO_DENT_PHASE: STOP | reason=backlog exhausted — no more open issues matching 'hooks reliability'"
 This will gracefully stop the batch loop. Only use this when you've genuinely
-run out of work — not when a single run is complete.
+run out of work — not when a single run is complete. Before stopping, check
+whether there are epics or PRDs you could decompose instead.
 
 When done, summarize what was accomplished. List all PRs created, issues filed,
 and issues closed with full URLs.
@@ -68,6 +89,7 @@ Phases and their expected keys:
 | TEST | After running tests | result=<pass/fail>, count=<number of tests> |
 | PR | After creating a PR | url=<PR URL> |
 | MERGE | After queuing auto-merge | url=<PR URL>, status=<queued/merged> |
+| DECOMPOSE | After breaking down an epic/PRD | epic=<#NNN>, issues_created=<#X,#Y,#Z> |
 | REFLECT | After reflection | issues_filed=<N>, lessons=<short summary> |
 
 Example:

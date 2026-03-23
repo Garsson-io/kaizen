@@ -32,21 +32,28 @@ PRs already created (avoid overlapping work): {{prs}}
    gh pr list --repo {{host_repo}} --state open --json number,title,headRefName
    ```
 
-3. Check for epics, PRDs, and horizon docs that could be decomposed:
+3. Scan epics, PRDs, and horizons for decomposition opportunities:
    ```
-   gh issue list --repo {{host_repo}} --state open --label epic --json number,title
-   gh issue list --repo {{host_repo}} --state open --label prd --json number,title
+   gh issue list --repo {{host_repo}} --state open --label epic --json number,title,body
+   gh issue list --repo {{host_repo}} --state open --label prd --json number,title,body
    ```
+   Also check horizon docs in `docs/horizons/*.md` for maturity levels with concrete next steps.
 
-4. Score each candidate issue on:
+4. For each epic/PRD, check if it has concrete child issues already filed:
+   - If NO concrete child issues exist: this is a **decomposition opportunity**
+   - Read the epic body or linked PRD doc to identify 1-3 concrete, PR-sized pieces
+   - Add these as `item_type: "decompose"` items in the plan
+
+5. Score each candidate issue on:
    - **Relevance** to the guidance (0-10)
    - **Actionability** — is it concrete enough to implement in one PR? (0-10)
    - **Independence** — can it be done without blocking on other work? (0-10)
    - **Value** — how much does it improve the system? (0-10)
 
-5. Rank by composite score and select the top items (up to {{plan_size}} items).
+6. Rank by composite score. Interleave regular leaf issues with decomposition items.
+   Place at least one decomposition item in the top 5 if any exist.
 
-6. For each selected item, write a one-sentence approach.
+7. For each selected item, write a one-sentence approach.
 
 ## Output
 
@@ -62,12 +69,27 @@ You MUST output a single JSON code block with this exact structure:
       "title": "short title",
       "score": 0.0,
       "approach": "one sentence describing the implementation approach",
-      "status": "pending"
+      "status": "pending",
+      "item_type": "leaf"
+    },
+    {
+      "issue": "#NNN",
+      "title": "decompose: <epic title> - <concrete piece>",
+      "score": 0.0,
+      "approach": "file 1-3 concrete issues from this epic, then implement the first one",
+      "status": "pending",
+      "item_type": "decompose",
+      "parent_epic": "#NNN"
     }
   ],
   "wip_excluded": ["#NNN (reason)"],
-  "epics_scanned": ["#NNN title"]
+  "epics_scanned": ["#NNN title"],
+  "decomposition_candidates": ["#NNN title — reason it needs decomposition"]
 }
 ```
+
+Notes on `item_type`:
+- `"leaf"` — a concrete issue ready for implementation
+- `"decompose"` — an abstract item (epic/PRD/horizon) that needs to be broken into concrete issues first. The agent should file 1-3 child issues, then implement the most actionable one.
 
 Do NOT include any text outside the JSON code block. The output will be parsed programmatically.
