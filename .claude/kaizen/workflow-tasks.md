@@ -2,6 +2,8 @@
 
 Every kaizen skill creates tasks at start using TaskCreate. This gives the user visibility into progress and prepares the agent for all steps — including ones that come after the current skill.
 
+> **Hook inventory:** See [`hook-catalog.md`](docs/hook-catalog.md) for the complete hook list, gate patterns, and TS migration status.
+
 ## Why every skill creates tasks
 
 1. **Progress visibility** — the user sees what phase you're in

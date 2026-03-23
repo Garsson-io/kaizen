@@ -29,36 +29,15 @@ Everything in this directory is part of kAIzen. Components outside this director
 
 ### Claude Hooks (`hooks/`)
 
-These are registered in `.claude/settings.json` and fire on Claude Code tool-use events.
+Registered in `.claude-plugin/plugin.json` (all projects) and `.claude/settings.json` (kaizen repo only).
 
-| Hook | Event | Type | Blocks? | Purpose |
-|------|-------|------|---------|---------|
-| `check-wip.sh` | SessionStart | Advisory | No | Surface existing WIP + deferred items at session start |
-| `enforce-pr-review.ts` | PreToolUse(Bash) | Gate | Yes | Block non-review commands during PR review (kaizen #775) |
-| `enforce-pr-review-tools.sh` | PreToolUse(Edit/Write/Agent) | Gate | Yes | Block editing/agents during PR review |
-| `enforce-case-worktree.sh` | PreToolUse(Bash) | Advisory | No | Warn before commit/push outside worktree |
-| `enforce-worktree-writes.sh` | PreToolUse(Edit/Write) | Gate | Yes | Block source edits in main checkout |
-| `enforce-case-exists.sh` | PreToolUse(Edit/Write) | Gate | Yes | Block source edits in worktrees without a case |
-| `check-test-coverage.sh` | PreToolUse(Bash) | Advisory | No | Warn when source changes lack tests |
-| `check-verification.sh` | PreToolUse(Bash) | Advisory | No | Warn about missing verification section |
-| `check-dirty-files.ts` | PreToolUse(Bash) | Gate | Yes (PR create) / Warn (push/merge) | Dirty file check. Push downgraded to warn (kaizen #775) |
-| `enforce-pr-reflect.ts` | PreToolUse(Bash) | Gate | Yes | Block non-kaizen commands until reflection done (kaizen #775) |
-| `bump-plugin-version.ts` | PreToolUse(Bash) | Advisory | No | Auto-bump plugin version before PR (kaizen #775) |
-| `stop-gate.ts` | Stop | Gate | Yes | **Unified stop gate** — shows all pending items, supports KAIZEN_UNFINISHED escape (kaizen #775) |
-| `verify-before-stop.sh` | Stop | Advisory | No | Remind about tsc/vitest for modified TS |
-| `check-cleanup-on-stop.sh` | Stop | Advisory | No | Warn about orphaned worktree state |
-| `pr-review-loop.ts` | PostToolUse(Bash) | State machine | No | Multi-round PR self-review with state tracking |
-| `kaizen-reflect.ts` | PostToolUse(Bash) | State machine | No | Trigger kaizen reflection; set `needs_pr_kaizen` state on PR create and merge |
-| `pr-kaizen-clear.ts` | PostToolUse(Bash) | State machine | No | Clear kaizen gate on KAIZEN_IMPEDIMENTS/NO_ACTION/UNFINISHED |
-| `post-merge-clear.sh` | PostToolUse(Bash,Skill) | State machine | No | Clear post-merge gate on /kaizen |
+**See [`hook-catalog.md`](docs/hook-catalog.md) for the complete hook inventory** — every hook, event type, enforcement level, gate pattern, and TS migration status.
 
-### Shared Libraries (`hooks/lib/`)
-
-| Library | Purpose |
-|---------|---------|
-| `parse-command.sh` | Command parsing: heredoc stripping, `gh`/`git` subcommand detection, PR number extraction |
-| `state-utils.sh` | Worktree-scoped state isolation. All state file iteration MUST go through this library |
-| `send-telegram-ipc.sh` | Telegram message helper for escalation notifications |
+Key architectural points:
+- All enforcement logic is in **TypeScript** (bash shims are ~5-line trampolines)
+- **One unified stop gate** (`stop-gate.ts`) replaces 3 separate stop hooks (kaizen #775)
+- **KAIZEN_UNFINISHED** escape clears all gates — always available, can't deadlock
+- **Three gate types:** `needs_review`, `needs_pr_kaizen`, `needs_post_merge` — all enforced by PreToolUse + Stop hooks
 
 ### Test Infrastructure (`hooks/tests/`)
 

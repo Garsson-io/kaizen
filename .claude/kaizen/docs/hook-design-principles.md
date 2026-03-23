@@ -204,7 +204,7 @@ Plain text output on stdout. Gets appended to tool result. Exit 0 always.
 
 ## The PR Review Enforcement System
 
-Four hooks working together:
+Four hooks working together (see [`hook-catalog.md`](hook-catalog.md) for full inventory):
 
 | Hook | Event | Role |
 |------|-------|------|
