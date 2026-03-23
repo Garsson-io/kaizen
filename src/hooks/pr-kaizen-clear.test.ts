@@ -1018,16 +1018,18 @@ describe('detectPrdWithoutFiledIssues', () => {
   const prdFiles = ['docs/prd-agent-diagnosis.md', 'src/foo.ts'];
   const noPrdFiles = ['src/foo.ts', 'CLAUDE.md'];
 
-  it('returns advisory when PRD present and KAIZEN_NO_ACTION', () => {
+  it('returns blocking message when PRD present and KAIZEN_NO_ACTION', () => {
     const result = detectPrdWithoutFiledIssues(prdFiles, [], true);
+    expect(result).toContain('BLOCKED');
     expect(result).toContain('PRD but filed no actionable issues');
   });
 
-  it('returns advisory when PRD present and zero filed dispositions', () => {
+  it('returns blocking message when PRD present and zero filed dispositions', () => {
     const items = [
       { impediment: 'minor style issue', disposition: 'no-action', type: 'positive', reason: 'cosmetic' },
     ];
     const result = detectPrdWithoutFiledIssues(prdFiles, items, false);
+    expect(result).toContain('BLOCKED');
     expect(result).toContain('PRD but filed no actionable issues');
   });
 
@@ -1045,19 +1047,33 @@ describe('detectPrdWithoutFiledIssues', () => {
   });
 });
 
-describe('processHookInput PRD advisory (kaizen #694)', () => {
-  it('emits advisory when PRD in diff and KAIZEN_NO_ACTION', () => {
+describe('processHookInput PRD blocking gate (kaizen #683, upgraded from #694)', () => {
+  it('blocks gate when PRD in diff and KAIZEN_NO_ACTION', () => {
     const input = noActionInput('docs-only', 'PRD creation only');
     const result = processHookInput(input, {
       stateDir: testStateDir,
       postComment: () => {},
       getPrFiles: () => ['docs/prd-agent-diagnosis.md', 'CLAUDE.md'],
     });
+    expect(result).toContain('BLOCKED');
     expect(result).toContain('PRD but filed no actionable issues');
-    expect(result).toContain('gate cleared');
+    expect(result).not.toContain('gate cleared');
   });
 
-  it('no advisory when PRD in diff but issues were filed', () => {
+  it('blocks gate when PRD in diff with only no-action impediments', () => {
+    const input = impedimentsInput(
+      '[{"impediment":"cosmetic","disposition":"no-action","type":"positive","reason":"style only"}]',
+    );
+    const result = processHookInput(input, {
+      stateDir: testStateDir,
+      postComment: () => {},
+      getPrFiles: () => ['docs/prd-agent-diagnosis.md'],
+    });
+    expect(result).toContain('BLOCKED');
+    expect(result).not.toContain('gate cleared');
+  });
+
+  it('clears gate when PRD in diff and issues were filed', () => {
     const input = impedimentsInput(
       '[{"impediment":"P0 from PRD","disposition":"filed","ref":"#999"}]',
     );
@@ -1066,11 +1082,11 @@ describe('processHookInput PRD advisory (kaizen #694)', () => {
       postComment: () => {},
       getPrFiles: () => ['docs/prd-agent-diagnosis.md'],
     });
-    expect(result).not.toContain('PRD but filed no actionable issues');
+    expect(result).not.toContain('BLOCKED');
     expect(result).toContain('gate cleared');
   });
 
-  it('no advisory when no PRD files in diff', () => {
+  it('clears gate when no PRD files in diff', () => {
     const input = noActionInput('config-only', 'just config');
     const result = processHookInput(input, {
       stateDir: testStateDir,
@@ -1079,5 +1095,19 @@ describe('processHookInput PRD advisory (kaizen #694)', () => {
     });
     expect(result).not.toContain('PRD');
     expect(result).toContain('gate cleared');
+  });
+
+  it('preserves gate state when PRD blocks clearing', () => {
+    const input = noActionInput('docs-only', 'PRD creation only');
+    processHookInput(input, {
+      stateDir: testStateDir,
+      postComment: () => {},
+      getPrFiles: () => ['docs/prd-agent-diagnosis.md'],
+    });
+    const stateContent = fs.readFileSync(
+      path.join(testStateDir, 'pr-kaizen-Garsson-io_kaizen_42'),
+      'utf-8',
+    );
+    expect(stateContent).toContain('needs_pr_kaizen');
   });
 });
