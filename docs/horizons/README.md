@@ -33,25 +33,26 @@ For the full framework design, see [`docs/horizons-framework-spec.md`](../horizo
 | 7 | **Cost Governance** | L1-L2 (partial — cost tracking, anomaly detection) | L2 complete: per-case budgets, cost-aware mode selection | [cost-governance.md](cost-governance.md) |
 | 8 | **Worktree-First Infrastructure** | L0→L1 (ad-hoc fixes) | L2 shared `git-paths.ts` resolver | [worktree-first-infrastructure.md](worktree-first-infrastructure.md) |
 | 9 | **Autonomous Batch Operations** | L3 (governed + observable) | L3 complete: total budget enforcement, admin notifications | [autonomous-batch-operations.md](autonomous-batch-operations.md) |
+| 10 | **Deployment Automation** | L1 (documented procedure) | L2: post-update validation, settings-fragment merge check | [deployment-automation.md](deployment-automation.md) |
 
 ### Trust (who can do what, who sees what)
 
 | # | Horizon | Current | Next Step | Doc |
 |---|---------|---------|-----------|-----|
-| 10 | **Security** | L1-2 (least privilege + credential proxy) | L3 input sanitization | [security.md](security.md) |
-| 11 | **Human-Agent Interface** | L0 (raw output) | L1 plain-language summaries | [human-agent-interface.md](human-agent-interface.md) |
+| 11 | **Security** | L1-2 (least privilege + credential proxy) | L3 input sanitization | [security.md](security.md) |
+| 12 | **Human-Agent Interface** | L0 (raw output) | L1 plain-language summaries | [human-agent-interface.md](human-agent-interface.md) |
 
 ### Platform (how the system grows)
 
 | # | Horizon | Current | Next Step | Doc |
 |---|---------|---------|-----------|-----|
-| 12 | **Extensibility** | L1-2 (documented extension points) | L3 validated integration | [extensibility.md](extensibility.md) |
+| 13 | **Extensibility** | L1-2 (documented extension points) | L3 validated integration | [extensibility.md](extensibility.md) |
 
 ## Dormant Horizons
 
 | # | Horizon | Activation Signal | Doc |
 |---|---------|-------------------|-----|
-| 13 | **Scalability** | 3+ active verticals | [scalability.md](scalability.md) |
+| 14 | **Scalability** | 3+ active verticals | [scalability.md](scalability.md) |
 
 ## Meta
 
