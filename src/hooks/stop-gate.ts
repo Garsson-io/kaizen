@@ -12,17 +12,8 @@
  * Part of kAIzen Agent Control Flow — kaizen #775
  */
 
-import { execSync } from 'node:child_process';
-import { readHookInput } from './hook-io.js';
+import { getCurrentBranch, readHookInput } from './hook-io.js';
 import { readAllPendingGates } from './lib/gate-manager.js';
-
-function getCurrentBranch(): string {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
-  } catch {
-    return '';
-  }
-}
 
 async function main(): Promise<void> {
   // Read hook input (required by Claude Code protocol)

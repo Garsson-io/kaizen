@@ -12,19 +12,10 @@
  * Part of kAIzen Agent Control Flow — kaizen #775
  */
 
-import { execSync } from 'node:child_process';
-import { readHookInput } from './hook-io.js';
+import { getCurrentBranch, readHookInput } from './hook-io.js';
 import { isReviewCommand } from './lib/allowlist.js';
 import { stripHeredocBody } from './parse-command.js';
 import { findStateWithStatus } from './state-utils.js';
-
-function getCurrentBranch(): string {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
-  } catch {
-    return '';
-  }
-}
 
 export function processPreToolUse(
   command: string,
@@ -41,7 +32,6 @@ export function processPreToolUse(
   }
 
   // SLOW PATH: check state
-  const opts = stateDir ? { stateDir } : {};
   const reviewState = findStateWithStatus(
     'needs_review',
     currentBranch,

@@ -5,6 +5,8 @@
  * This module handles the boilerplate.
  */
 
+import { execSync } from 'node:child_process';
+
 export interface HookInput {
   session_id?: string;
   transcript_path?: string;
@@ -35,4 +37,16 @@ export async function readHookInput(): Promise<HookInput | null> {
 /** Write advisory output to stdout (shown to the agent in PostToolUse). */
 export function writeHookOutput(text: string): void {
   process.stdout.write(text);
+}
+
+/** Get the current git branch name. Returns empty string on failure. */
+export function getCurrentBranch(): string {
+  try {
+    return execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return '';
+  }
 }

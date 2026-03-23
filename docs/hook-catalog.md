@@ -22,16 +22,16 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 
 | Hook | Level | Blocking | Purpose |
 |------|-------|----------|---------|
-| `kaizen-enforce-pr-review.sh` | L3 | Yes (deny) | **Gate**: Blocks Bash commands when PR review is pending (`needs_review` state). |
+| `kaizen-enforce-pr-review-ts.sh` → `enforce-pr-review.ts` | L3 | Yes (deny) | **Gate**: Blocks Bash commands when PR review is pending (`needs_review` state). Issue #775. |
 | `kaizen-enforce-case-worktree.sh` | L1 | No (advisory) | Warns on `git commit`/`push` outside a worktree. |
 | `kaizen-check-test-coverage.sh` | L1 | No (advisory) | Warns when changed source files lack test coverage. Issue #8. |
 | `kaizen-check-verification.sh` | L1 | No (advisory) | Warns when PR body lacks Verification section. Issue #10. |
-| `kaizen-check-dirty-files.sh` | L3 | Yes (deny) | Forces agent to address every dirty file before commit/push. |
-| `kaizen-enforce-pr-reflect.sh` | L3 | Yes (deny) | **Gate**: Blocks Bash until kaizen reflection is done (`needs_pr_kaizen` state). Issue #57. |
+| `kaizen-check-dirty-files-ts.sh` → `check-dirty-files.ts` | L3 | Yes (deny on PR create) / Warn (push/merge) | Dirty file check. Push downgraded to warn. Skips during merge. Issue #775. |
+| `kaizen-enforce-pr-reflect-ts.sh` → `enforce-pr-reflect.ts` | L3 | Yes (deny) | **Gate**: Blocks Bash until kaizen reflection is done (`needs_pr_kaizen` state). Issue #775. |
 | `kaizen-warn-code-quality.sh` | L1 | No (advisory) | Warns about excessive mocks, large files, duplicate code. Issue #89. |
 | `kaizen-check-practices.sh` | L1 | No (advisory) | Shows relevant practices before PR creation. Issue #210. |
 | `kaizen-block-git-rebase.sh` | L2 | Yes (deny) | Blocks `git rebase`. Allows `--abort`/`--continue`/`--skip`. Issue #296. |
-| `kaizen-bump-plugin-version.sh` | L1 | No (advisory) | Auto-bumps plugin version before PR. **Kaizen repo only** (settings.json). |
+| `kaizen-bump-plugin-version-ts.sh` → `bump-plugin-version.ts` | L1 | No (advisory) | Auto-bumps plugin version before PR. **Kaizen repo only** (settings.json). Issue #775. |
 
 ## PreToolUse Hooks — Edit|Write Matcher
 
