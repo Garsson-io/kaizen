@@ -65,8 +65,33 @@ export interface BatchScore {
   overall_efficiency: number;
   /** Per-run scores */
   runs: RunScore[];
+  /** Per-mode effectiveness breakdown */
+  mode_breakdown: ModeStats[];
   /** Post-hoc merge results (populated by postHocScoreBatch) */
   post_hoc?: PostHocBatchResult;
+}
+
+export interface ModeStats {
+  /** Cognitive mode name */
+  mode: string;
+  /** Number of runs in this mode */
+  runs: number;
+  /** Number of successful runs (exit 0 + PR) */
+  successes: number;
+  /** Success rate as fraction 0..1 */
+  success_rate: number;
+  /** Total cost for runs in this mode */
+  cost_usd: number;
+  /** Total PRs created by runs in this mode */
+  prs: number;
+  /** Average cost per run in this mode */
+  avg_cost: number;
+  /** Efficiency: PRs per dollar */
+  efficiency: number;
+  /** Total net lines deleted */
+  lines_deleted: number;
+  /** Total issues pruned */
+  issues_pruned: number;
 }
 
 export interface PostHocPRResult {
@@ -179,6 +204,7 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
       runs.length > 0 ? totalDuration / runs.length : 0,
     overall_efficiency: totalCost > 0 ? totalPrs / totalCost : 0,
     runs,
+    mode_breakdown: scoreModeBreakdown(runs),
   };
 }
 
@@ -243,6 +269,12 @@ export function formatBatchScoreTable(score: BatchScore): string {
       );
     }
   }
+
+  // Append per-mode breakdown if there are multiple modes
+  if (score.mode_breakdown && score.mode_breakdown.length > 1) {
+    lines.push(formatModeBreakdown(score.mode_breakdown));
+  }
+
   return lines.join('\n');
 }
 
@@ -272,6 +304,66 @@ export function postHocScoreBatch(
     effective_efficiency: totalCostUsd > 0 ? merged / totalCostUsd : 0,
     scored_at: new Date().toISOString(),
   };
+}
+
+/** Compute per-mode effectiveness breakdown from run scores. */
+export function scoreModeBreakdown(runs: RunScore[]): ModeStats[] {
+  const byMode = new Map<string, RunScore[]>();
+  for (const run of runs) {
+    const group = byMode.get(run.mode) || [];
+    group.push(run);
+    byMode.set(run.mode, group);
+  }
+
+  const stats: ModeStats[] = [];
+  for (const [mode, modeRuns] of byMode) {
+    const successes = modeRuns.filter((r) => r.success).length;
+    const totalCost = modeRuns.reduce((s, r) => s + r.cost_usd, 0);
+    const totalPrs = modeRuns.reduce((s, r) => s + r.pr_count, 0);
+    const totalLinesDeleted = modeRuns.reduce((s, r) => s + r.lines_deleted, 0);
+    const totalIssuesPruned = modeRuns.reduce((s, r) => s + r.issues_pruned, 0);
+
+    stats.push({
+      mode,
+      runs: modeRuns.length,
+      successes,
+      success_rate: modeRuns.length > 0 ? successes / modeRuns.length : 0,
+      cost_usd: totalCost,
+      prs: totalPrs,
+      avg_cost: modeRuns.length > 0 ? totalCost / modeRuns.length : 0,
+      efficiency: totalCost > 0 ? totalPrs / totalCost : 0,
+      lines_deleted: totalLinesDeleted,
+      issues_pruned: totalIssuesPruned,
+    });
+  }
+
+  // Sort by number of runs descending (most-used mode first)
+  stats.sort((a, b) => b.runs - a.runs);
+  return stats;
+}
+
+/** Format per-mode breakdown as a markdown table. */
+export function formatModeBreakdown(modeStats: ModeStats[]): string {
+  if (modeStats.length <= 1) return '';
+
+  const lines = [
+    '',
+    '**Per-mode effectiveness:**',
+    '',
+    '| Mode | Runs | Success | PRs | Cost | Efficiency | Deleted |',
+    '|------|------|---------|-----|------|------------|---------|',
+  ];
+
+  for (const m of modeStats) {
+    const rate = `${(m.success_rate * 100).toFixed(0)}%`;
+    const eff = m.efficiency > 0 ? `${m.efficiency.toFixed(2)} PR/$` : '-';
+    const deleted = m.lines_deleted > 0 ? `-${m.lines_deleted}` : '-';
+    lines.push(
+      `| ${m.mode} | ${m.runs} | ${rate} | ${m.prs} | $${m.cost_usd.toFixed(2)} | ${eff} | ${deleted} |`,
+    );
+  }
+
+  return lines.join('\n');
 }
 
 /** Format post-hoc results as a compact summary line. */
