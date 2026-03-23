@@ -77,17 +77,16 @@ moves the strategic layer forward.
 
 ## Stopping the Loop
 
-If you determine there is no more meaningful work to do matching the guidance
-(backlog exhausted, all relevant issues claimed, remaining issues are
-blocked/too risky, AND no epics/PRDs can be decomposed), include this exact
-marker in your final response:
+**One issue per run.** Complete one issue, create one PR, queue it for merge, then stop. The harness will restart with fresh context for the next issue. Do not pick additional issues after your first PR is queued — stopping is correct behavior, not a failure.
+
+The only exception: if your assigned issue is blocked or already resolved, skip it, pick one replacement, and stop after that PR.
+
+If all issues are genuinely exhausted (backlog empty, all remaining issues claimed or blocked, AND no epics/PRDs can be decomposed), include this marker in your final response:
 
 AUTO_DENT_PHASE: STOP | reason=<reason>
 
 For example: "AUTO_DENT_PHASE: STOP | reason=backlog exhausted — no more open issues matching 'hooks reliability'"
-This will gracefully stop the batch loop. Only use this when you've genuinely
-run out of work — not when a single run is complete. Before stopping, check
-whether there are epics or PRDs you could decompose instead.
+Only emit STOP when work is truly gone. Do not emit STOP after a normal single-issue run — just finish and let the harness restart.
 
 When done, summarize what was accomplished. List all PRs created, issues filed,
 and issues closed with full URLs.
