@@ -32,7 +32,7 @@ import {
   SMOKE_TEST_PROMPT,
 } from './auto-dent-harness.js';
 import { summarizeEvents } from './batch-summary.js';
-import { scoreRunResult, scoreBatch } from './auto-dent-score.js';
+import { scoreBatch } from './auto-dent-score.js';
 
 // Resolve repo root (works from worktrees too)
 function getRepoRoot(): string {

@@ -27,7 +27,6 @@ import {
 import { parsePhaseMarkers as parsePhaseMarkersLocal } from './auto-dent-stream.js';
 import {
   type EventEnvelope,
-  type AutoDentEvent,
   type RunStartEvent,
   type RunCompleteEvent,
   type RunIssuePickedEvent,
