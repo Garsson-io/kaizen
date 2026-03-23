@@ -86,6 +86,11 @@
             "type": "command",
             "command": "./.kaizen/.claude/hooks/kaizen-enforce-pr-review-tools.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "./.kaizen/.claude/hooks/kaizen-lint-kernel-paths.sh",
+            "timeout": 10
           }
         ]
       },
