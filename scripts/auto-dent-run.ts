@@ -14,6 +14,10 @@
  * Stop mechanism: Claude emits "AUTO_DENT_PHASE: STOP | reason=<reason>"
  * (structured phase marker) to signal stop. Legacy "AUTO_DENT_STOP: <reason>"
  * is also supported for backward compatibility. See issue #499.
+ *
+ * Decomposed into modules (#600):
+ *   - auto-dent-github.ts  — GitHub CLI operations (merge, sweep, label, cleanup)
+ *   - auto-dent-stream.ts  — Stream processing (phase markers, artifacts, display)
  */
 
 import { spawn, execSync } from 'child_process';
@@ -24,36 +28,55 @@ import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { claimNextItem } from './auto-dent-plan.js';
 
-// ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
+// Re-export from extracted modules for backward compatibility
+export {
+  ghExec,
+  checkMergeStatus,
+  sweepBatchPRs,
+  labelArtifacts,
+  queueAutoMerge,
+  extractLinkedIssue,
+  isIssueClosed,
+  cleanupSupersededPRs,
+  type MergeStatus,
+  type SweepAction,
+  type SweepResult,
+  type CleanupResult,
+} from './auto-dent-github.js';
 
-const colorEnabled = process.stdout.isTTY && !process.env.NO_COLOR;
+export {
+  color,
+  formatToolUse,
+  parsePhaseMarkers,
+  formatPhaseMarker,
+  extractArtifacts,
+  extractContemplationRecommendations,
+  checkStopSignal,
+  processStreamMessage,
+  buildInFlightComment,
+  postInFlightUpdate,
+  formatHeartbeat,
+  IN_FLIGHT_UPDATE_INTERVAL_MS,
+  type PhaseMarker,
+  type StreamContext,
+} from './auto-dent-stream.js';
 
-function ansi(code: string, text: string): string {
-  return colorEnabled ? `\x1b[${code}m${text}\x1b[0m` : text;
-}
-
-export const color = {
-  green: (t: string) => ansi('32', t),
-  yellow: (t: string) => ansi('33', t),
-  red: (t: string) => ansi('31', t),
-  dim: (t: string) => ansi('90', t),
-  cyan: (t: string) => ansi('36', t),
-  bold: (t: string) => ansi('1', t),
-  magenta: (t: string) => ansi('35', t),
-};
-
-// Phase status icons with color
-const PHASE_STYLE: Record<string, (t: string) => string> = {
-  PICK: color.cyan,
-  EVALUATE: color.yellow,
-  IMPLEMENT: color.magenta,
-  TEST: color.green,
-  PR: color.green,
-  MERGE: color.green,
-  DECOMPOSE: color.cyan,
-  REFLECT: color.yellow,
-  STOP: color.red,
-};
+// Import for internal use
+import {
+  ghExec,
+  checkMergeStatus,
+  sweepBatchPRs,
+  labelArtifacts,
+  queueAutoMerge,
+} from './auto-dent-github.js';
+import {
+  color,
+  processStreamMessage,
+  postInFlightUpdate,
+  formatHeartbeat,
+  IN_FLIGHT_UPDATE_INTERVAL_MS,
+  type StreamContext,
+} from './auto-dent-stream.js';
 
 // Types
 
@@ -398,6 +421,8 @@ export function loadPromptTemplate(templateName: string): string | null {
   }
 }
 
+// Mode selection
+
 export interface ModeSelection {
   mode: string;
   template: string;
@@ -418,15 +443,15 @@ const MODE_TEMPLATES: Record<string, string> = {
  * Returns a ModeSelection if a signal fires, or null to fall through to the schedule.
  *
  * Signals (checked in priority order):
- *   1. 3+ consecutive failures → reflect (diagnose what's going wrong)
- *   2. No PRs in last 5 runs with history → explore (backlog may be exhausted)
- *   3. Same mode 4+ times consecutively → force a different mode
+ *   1. 3+ consecutive failures -> reflect (diagnose what's going wrong)
+ *   2. No PRs in last 5 runs with history -> explore (backlog may be exhausted)
+ *   3. Same mode 4+ times consecutively -> force a different mode
  */
 export function checkSignalOverrides(state: BatchState): ModeSelection | null {
   const history = state.run_history || [];
   if (history.length < 3) return null;
 
-  // Signal 1: consecutive failures → reflect
+  // Signal 1: consecutive failures -> reflect
   if (state.consecutive_failures >= 3) {
     return {
       mode: 'reflect',
@@ -435,7 +460,7 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
     };
   }
 
-  // Signal 2: no PRs in last 5 runs → explore (backlog may be exhausted)
+  // Signal 2: no PRs in last 5 runs -> explore (backlog may be exhausted)
   if (history.length >= 5) {
     const recent5 = history.slice(-5);
     const recentPRs = recent5.reduce((sum, r) => sum + r.prs.length, 0);
@@ -448,7 +473,7 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
     }
   }
 
-  // Signal 3: same mode 4+ times in a row → break the streak
+  // Signal 3: same mode 4+ times in a row -> break the streak
   if (history.length >= 4) {
     const recent4 = history.slice(-4);
     const modes = recent4.map(r => r.mode || 'exploit');
@@ -515,9 +540,9 @@ export function computeAdaptiveWeights(
     }
 
     const totalPrs = runs.reduce((s, r) => s + r.prs.length, 0);
-    const totalCost = runs.reduce((s, r) => s + r.cost_usd, 0);
+    const totalCostVal = runs.reduce((s, r) => s + r.cost_usd, 0);
     const successRate = totalPrs / runs.length; // PRs per run
-    const efficiency = totalCost > 0 ? totalPrs / totalCost : 0; // PRs per dollar
+    const efficiency = totalCostVal > 0 ? totalPrs / totalCostVal : 0; // PRs per dollar
 
     // Blend success rate and efficiency, then scale by base weight
     // This preserves the general shape (exploit dominant) while rewarding performance
@@ -613,7 +638,7 @@ export function selectMode(state: BatchState, runNum: number): ModeSelection {
 
 /**
  * Compute mode distribution from run history.
- * Returns a record of mode → count.
+ * Returns a record of mode -> count.
  */
 export function computeModeDistribution(history: RunMetrics[]): Record<string, number> {
   const dist: Record<string, number> = {};
@@ -770,583 +795,7 @@ Emit these naturally as you complete each phase. Missing keys are fine — emit 
   return prompt;
 }
 
-// Stream-JSON parsing
-
-function formatElapsed(startMs: number): string {
-  const elapsed = Math.floor((Date.now() - startMs) / 1000);
-  const m = Math.floor(elapsed / 60);
-  const s = elapsed % 60;
-  return `${m}m${s.toString().padStart(2, '0')}s`;
-}
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max - 1) + '\u2026' : s;
-}
-
-export function formatToolUse(
-  name: string,
-  input: Record<string, any>,
-): string {
-  switch (name) {
-    case 'Read':
-      return `Read ${truncate(input?.file_path || '?', 60)}`;
-    case 'Edit':
-      return `Edit ${truncate(input?.file_path || '?', 60)}`;
-    case 'Write':
-      return `Write ${truncate(input?.file_path || '?', 60)}`;
-    case 'Bash':
-      return `$ ${truncate(input?.command || input?.description || '?', 70)}`;
-    case 'Grep':
-      return `Grep "${truncate(input?.pattern || '?', 30)}" ${input?.path || ''}`;
-    case 'Glob':
-      return `Glob ${truncate(input?.pattern || '?', 50)}`;
-    case 'Skill':
-      return `Skill /${input?.skill_name || input?.skill || '?'}`;
-    case 'Agent':
-      return `Agent: ${truncate(input?.description || '?', 50)}`;
-    case 'TaskCreate':
-      return `Task+ ${truncate(input?.subject || '?', 50)}`;
-    case 'TaskUpdate':
-      return `Task~ #${input?.taskId || '?'} -> ${input?.status || '?'}`;
-    case 'EnterWorktree':
-      return `EnterWorktree ${input?.name || ''}`;
-    case 'ExitWorktree':
-      return `ExitWorktree`;
-    case 'ToolSearch':
-      return `ToolSearch`;
-    default:
-      return name;
-  }
-}
-
-// Structured phase marker parsing
-// Agents emit: AUTO_DENT_PHASE: <PHASE> | key=value | key=value ...
-
-export interface PhaseMarker {
-  phase: string;
-  fields: Record<string, string>;
-}
-
-export function parsePhaseMarkers(text: string): PhaseMarker[] {
-  const markers: PhaseMarker[] = [];
-
-  for (const match of text.matchAll(
-    /^AUTO_DENT_PHASE:\s*(\w+)(?:\s*\|(.+))?$/gm,
-  )) {
-    const phase = match[1];
-    const fields: Record<string, string> = {};
-
-    if (match[2]) {
-      for (const pair of match[2].split('|')) {
-        const eqIdx = pair.indexOf('=');
-        if (eqIdx > 0) {
-          fields[pair.slice(0, eqIdx).trim()] = pair.slice(eqIdx + 1).trim();
-        }
-      }
-    }
-
-    markers.push({ phase, fields });
-  }
-
-  return markers;
-}
-
-export function formatPhaseMarker(marker: PhaseMarker): string {
-  const styleFn = PHASE_STYLE[marker.phase] || color.dim;
-  const icon = marker.phase === 'STOP' ? '\u25cf' : '\u25c9';
-  const parts = [styleFn(`${icon} [${marker.phase}]`)];
-
-  // Show the most informative fields for each phase
-  const { fields } = marker;
-  if (fields.issue) parts.push(fields.issue);
-  if (fields.title) parts.push(fields.title);
-  if (fields.verdict) parts.push(fields.verdict);
-  if (fields.reason) parts.push(`(${fields.reason})`);
-  if (fields.case) parts.push(`case:${fields.case}`);
-  if (fields.branch) parts.push(`branch:${fields.branch}`);
-  if (fields.result) parts.push(fields.result);
-  if (fields.count) parts.push(`${fields.count} tests`);
-  if (fields.url) parts.push(fields.url);
-  if (fields.status) parts.push(fields.status);
-  if (fields.epic) parts.push(`epic:${fields.epic}`);
-  if (fields.issues_created) parts.push(`created:${fields.issues_created}`);
-  if (fields.issues_filed) parts.push(`${fields.issues_filed} issues filed`);
-  if (fields.lessons) parts.push(fields.lessons);
-
-  return truncate(parts.join(' '), 120);
-}
-
-export function extractArtifacts(text: string, result: RunResult): void {
-  for (const m of text.matchAll(
-    /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/g,
-  )) {
-    if (!result.prs.includes(m[0])) result.prs.push(m[0]);
-  }
-  for (const m of text.matchAll(
-    /https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+/g,
-  )) {
-    if (!result.issuesFiled.includes(m[0])) result.issuesFiled.push(m[0]);
-  }
-  for (const m of text.matchAll(
-    /(?:closes?|closed|fix(?:es|ed)?|resolves?)\s+(#\d+)/gi,
-  )) {
-    if (!result.issuesClosed.includes(m[1])) result.issuesClosed.push(m[1]);
-  }
-  for (const m of text.matchAll(/kaizen\s+#(\d+)/gi)) {
-    const ref = `#${m[1]}`;
-    if (!result.issuesClosed.includes(ref)) result.issuesClosed.push(ref);
-  }
-  for (const m of text.matchAll(/case[:\s]+(\d{6}-\d{4}-[\w-]+)/g)) {
-    if (!result.cases.includes(m[1])) result.cases.push(m[1]);
-  }
-  // Extract issues pruned (closed as not-planned/wontfix/duplicate)
-  for (const _m of text.matchAll(
-    /gh\s+issue\s+close\s+.*--reason\s+not-planned/g,
-  )) {
-    result.issuesPruned++;
-  }
-  // Extract net lines deleted from git diff --stat summaries
-  // Matches patterns like "5 files changed, 10 insertions(+), 50 deletions(-)"
-  for (const m of text.matchAll(
-    /(\d+)\s+insertion[s]?\(\+\).*?(\d+)\s+deletion[s]?\(-\)/g,
-  )) {
-    const insertions = parseInt(m[1], 10);
-    const deletions = parseInt(m[2], 10);
-    const net = deletions - insertions;
-    if (net > 0) result.linesDeleted += net;
-  }
-}
-
-/**
- * Extract structured contemplation recommendations from run output.
- *
- * Parses lines matching: CONTEMPLATION_REC: <recommendation text>
- * These are emitted by contemplate-strategy.md runs to feed back
- * strategic insights into subsequent batch runs (#631).
- */
-export function extractContemplationRecommendations(text: string): string[] {
-  const recs: string[] = [];
-  for (const match of text.matchAll(/^CONTEMPLATION_REC:[^\S\n]*(.+)$/gm)) {
-    const rec = match[1].trim();
-    if (rec) recs.push(rec);
-  }
-  return recs;
-}
-
-export function checkStopSignal(text: string, result: RunResult): void {
-  // Primary: structured phase marker format (preferred, avoids in-band ambiguity).
-  // AUTO_DENT_PHASE: STOP | reason=<text>
-  for (const marker of parsePhaseMarkers(text)) {
-    if (marker.phase === 'STOP' && marker.fields.reason) {
-      result.stopRequested = true;
-      result.stopReason = marker.fields.reason;
-      return;
-    }
-  }
-
-  // Legacy: in-band text signal (kept for backward compatibility).
-  // Require signal at start of a line to avoid false positives from
-  // conversational text that mentions the signal (see batch-260322-2148-5c83).
-  const match = text.match(/^AUTO_DENT_STOP:\s*(.+)/m);
-  if (match) {
-    result.stopRequested = true;
-    result.stopReason = match[1].trim();
-  }
-}
-
-export interface StreamContext {
-  resultReceivedAt?: number;
-  lastPhase?: string;
-  lastActivity?: string;
-}
-
-// In-flight progress update interval (10 minutes)
-const IN_FLIGHT_UPDATE_INTERVAL_MS = 10 * 60 * 1000;
-
-/**
- * Build the in-flight progress comment body for the GitHub progress issue.
- * Posted periodically during a run so observers can see batch health.
- */
-export function buildInFlightComment(
-  runNum: number,
-  runStart: number,
-  result: RunResult,
-  ctx: StreamContext,
-): string {
-  const elapsedSec = Math.floor((Date.now() - runStart) / 1000);
-  const mins = Math.floor(elapsedSec / 60);
-  const secs = elapsedSec % 60;
-
-  const status = ctx.resultReceivedAt
-    ? 'waiting for process exit'
-    : 'working';
-
-  const lines = [
-    `### Run #${runNum} — in progress (${mins}m ${secs}s elapsed)`,
-    '',
-    `| Metric | Value |`,
-    `|--------|-------|`,
-    `| **Tool calls** | ${result.toolCalls} |`,
-    `| **Cost so far** | $${result.cost.toFixed(2)} |`,
-    `| **Status** | ${status} |`,
-  ];
-
-  if (ctx.lastActivity) {
-    lines.push(`| **Last activity** | ${ctx.lastActivity} |`);
-  }
-  if (ctx.lastPhase) {
-    lines.push(`| **Last phase** | ${ctx.lastPhase} |`);
-  }
-  if (result.prs.length > 0) {
-    lines.push(`| **PRs so far** | ${result.prs.join(', ')} |`);
-  }
-
-  return lines.join('\n');
-}
-
-/**
- * Post an in-flight progress comment to the GitHub progress issue.
- * Non-fatal: swallows errors to avoid disrupting the run.
- */
-export function postInFlightUpdate(
-  progressIssue: string,
-  kaizenRepo: string,
-  runNum: number,
-  runStart: number,
-  result: RunResult,
-  ctx: StreamContext,
-): boolean {
-  if (!progressIssue || !kaizenRepo) return false;
-  const m = progressIssue.match(/issues\/(\d+)/);
-  if (!m) return false;
-
-  const comment = buildInFlightComment(runNum, runStart, result, ctx);
-  const out = ghExec(
-    `gh issue comment ${m[1]} --repo ${kaizenRepo} --body ${JSON.stringify(comment)}`,
-  );
-  if (out) {
-    console.log(`  [in-flight] posted progress update for run #${runNum}`);
-    return true;
-  }
-  return false;
-}
-
-export function processStreamMessage(
-  msg: Record<string, any>,
-  result: RunResult,
-  runStart: number,
-  ctx?: StreamContext,
-): void {
-  const elapsed = formatElapsed(runStart);
-
-  switch (msg.type) {
-    case 'system':
-      if (msg.subtype === 'init') {
-        console.log(
-          `  ${color.dim(`[${elapsed}]`)}  ${color.bold('Session')} ${(msg.session_id || '').slice(0, 8)}... | model: ${msg.model || 'default'}`,
-        );
-      }
-      break;
-
-    case 'assistant':
-      if (msg.message?.content) {
-        for (const block of msg.message.content) {
-          if (block.type === 'tool_use') {
-            result.toolCalls++;
-            const toolDesc = formatToolUse(block.name, block.input);
-            console.log(`  ${color.dim(`[${elapsed}]`)}  ${toolDesc}`);
-            if (ctx) ctx.lastActivity = toolDesc;
-          }
-          if (block.type === 'text' && block.text) {
-            extractArtifacts(block.text, result);
-            checkStopSignal(block.text, result);
-            // Extract contemplation recommendations (#631)
-            const recs = extractContemplationRecommendations(block.text);
-            if (recs.length > 0) {
-              if (!result.contemplationRecs) result.contemplationRecs = [];
-              result.contemplationRecs.push(...recs);
-            }
-            for (const marker of parsePhaseMarkers(block.text)) {
-              console.log(`  [${elapsed}]  ${formatPhaseMarker(marker)}`);
-              if (ctx) ctx.lastPhase = formatPhaseMarker(marker);
-            }
-          }
-        }
-      }
-      break;
-
-    case 'result':
-      if (ctx) {
-        ctx.resultReceivedAt = Date.now();
-      }
-      if (msg.total_cost_usd) {
-        result.cost = msg.total_cost_usd;
-      }
-      if (msg.result) {
-        extractArtifacts(msg.result, result);
-        checkStopSignal(msg.result, result);
-        const recs = extractContemplationRecommendations(msg.result);
-        if (recs.length > 0) {
-          if (!result.contemplationRecs) result.contemplationRecs = [];
-          result.contemplationRecs.push(...recs);
-        }
-      }
-      {
-        const statusText = msg.subtype === 'success'
-          ? color.green('done')
-          : color.red(`error: ${msg.subtype}`);
-        console.log(
-          `  ${color.dim(`[${elapsed}]`)}  ${statusText} | $${result.cost?.toFixed(2) || '?'} | ${result.toolCalls} tool calls`,
-        );
-      }
-      break;
-  }
-}
-
-// Post-run hygiene
-
-function ghExec(cmd: string): string {
-  try {
-    return execSync(cmd, { encoding: 'utf8', timeout: 30_000 }).trim();
-  } catch (e: any) {
-    console.log(
-      `  [hygiene] warning: ${cmd.slice(0, 80)}... -> ${e.message?.split('\n')[0] || 'failed'}`,
-    );
-    return '';
-  }
-}
-
-export type MergeStatus =
-  | 'merged'
-  | 'auto_queued'
-  | 'open'
-  | 'closed'
-  | 'unknown';
-
-export function checkMergeStatus(prUrl: string): MergeStatus {
-  const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-  if (!m) return 'unknown';
-  try {
-    const json = ghExec(
-      `gh pr view ${m[2]} --repo ${m[1]} --json state,mergeStateStatus,autoMergeRequest`,
-    );
-    if (!json) return 'unknown';
-    const data = JSON.parse(json);
-    if (data.state === 'MERGED') return 'merged';
-    if (data.state === 'CLOSED') return 'closed';
-    if (data.autoMergeRequest) return 'auto_queued';
-    return 'open';
-  } catch {
-    return 'unknown';
-  }
-}
-
-export type SweepAction = 'updated' | 'already_current' | 'merged' | 'closed' | 'failed';
-
-export interface SweepResult {
-  pr: string;
-  action: SweepAction;
-}
-
-/**
- * Sweep all batch PRs: update stale branches so auto-merge can proceed.
- *
- * When strict branch protection is enabled and main advances (from a
- * previous run's PR merging), subsequent PRs fall BEHIND and auto-merge
- * stalls silently. This sweep detects BEHIND branches and calls the
- * GitHub API to update them.
- *
- * See issue #368, hypothesis H1/H4.
- */
-export function sweepBatchPRs(allPrUrls: string[]): SweepResult[] {
-  const results: SweepResult[] = [];
-
-  for (const prUrl of allPrUrls) {
-    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (!m) continue;
-
-    const [, repo, prNum] = m;
-
-    try {
-      const json = ghExec(
-        `gh pr view ${prNum} --repo ${repo} --json state,mergeStateStatus,autoMergeRequest`,
-      );
-      if (!json) {
-        results.push({ pr: prUrl, action: 'failed' });
-        continue;
-      }
-
-      const data = JSON.parse(json);
-
-      if (data.state === 'MERGED') {
-        results.push({ pr: prUrl, action: 'merged' });
-        continue;
-      }
-      if (data.state === 'CLOSED') {
-        results.push({ pr: prUrl, action: 'closed' });
-        continue;
-      }
-
-      // Only update if branch is behind and auto-merge is queued
-      if (
-        data.mergeStateStatus === 'BEHIND' &&
-        data.autoMergeRequest
-      ) {
-        const updateOut = ghExec(
-          `gh api repos/${repo}/pulls/${prNum}/update-branch -X PUT -f expected_head_sha="" 2>&1`,
-        );
-        if (updateOut && !updateOut.includes('error')) {
-          console.log(`  [sweep] updated stale branch for PR #${prNum}`);
-          results.push({ pr: prUrl, action: 'updated' });
-        } else {
-          console.log(`  [sweep] failed to update branch for PR #${prNum}`);
-          results.push({ pr: prUrl, action: 'failed' });
-        }
-      } else {
-        results.push({ pr: prUrl, action: 'already_current' });
-      }
-    } catch {
-      results.push({ pr: prUrl, action: 'failed' });
-    }
-  }
-
-  return results;
-}
-
-export function labelArtifacts(result: RunResult, label: string): void {
-  for (const pr of result.prs) {
-    const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (m) {
-      ghExec(`gh pr edit ${m[2]} --repo ${m[1]} --add-label ${label}`);
-      console.log(`  [hygiene] labeled PR ${pr}`);
-    }
-  }
-  for (const issue of result.issuesFiled) {
-    const m = issue.match(/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)/);
-    if (m) {
-      ghExec(`gh issue edit ${m[2]} --repo ${m[1]} --add-label ${label}`);
-      console.log(`  [hygiene] labeled issue ${issue}`);
-    }
-  }
-}
-
-export function queueAutoMerge(result: RunResult, hostRepo: string): void {
-  for (const pr of result.prs) {
-    const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (m) {
-      const out = ghExec(
-        `gh pr merge ${m[2]} --repo ${m[1]} --squash --delete-branch --auto`,
-      );
-      if (out) {
-        console.log(`  [hygiene] queued auto-merge for PR ${pr}`);
-      }
-    }
-  }
-}
-
-// PR cleanup — close superseded PRs whose target issues are already closed
-
-export interface CleanupResult {
-  pr: string;
-  action: 'closed' | 'already_closed' | 'already_merged' | 'still_open' | 'no_issue' | 'failed';
-  issue?: string;
-}
-
-/**
- * Extract the linked issue number from a PR body.
- * Looks for "Closes #NNN", "Fixes #NNN", "Resolves #NNN" patterns.
- */
-export function extractLinkedIssue(prBody: string): string | null {
-  const match = prBody.match(
-    /(?:closes?|fix(?:es|ed)?|resolves?)\s+#(\d+)/i,
-  );
-  return match ? match[1] : null;
-}
-
-/**
- * Check if a GitHub issue is closed.
- */
-export function isIssueClosed(issueNum: string, repo: string): boolean {
-  const json = ghExec(
-    `gh issue view ${issueNum} --repo ${repo} --json state`,
-  );
-  if (!json) return false;
-  try {
-    return JSON.parse(json).state === 'CLOSED';
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Close superseded PRs — PRs from a batch whose target issues are already closed.
- *
- * When a batch run fixes an issue and a later run (or earlier parallel run)
- * also created a PR for the same issue, the second PR is superseded.
- * This function finds and closes those stale PRs.
- */
-export function cleanupSupersededPRs(
-  prUrls: string[],
-  repo: string,
-): CleanupResult[] {
-  const results: CleanupResult[] = [];
-
-  for (const prUrl of prUrls) {
-    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (!m) continue;
-
-    const [, prRepo, prNum] = m;
-
-    try {
-      // Get PR state and body
-      const json = ghExec(
-        `gh pr view ${prNum} --repo ${prRepo} --json state,body`,
-      );
-      if (!json) {
-        results.push({ pr: prUrl, action: 'failed' });
-        continue;
-      }
-
-      const data = JSON.parse(json);
-
-      if (data.state === 'MERGED') {
-        results.push({ pr: prUrl, action: 'already_merged' });
-        continue;
-      }
-      if (data.state === 'CLOSED') {
-        results.push({ pr: prUrl, action: 'already_closed' });
-        continue;
-      }
-
-      // Extract linked issue
-      const issueNum = extractLinkedIssue(data.body || '');
-      if (!issueNum) {
-        results.push({ pr: prUrl, action: 'no_issue' });
-        continue;
-      }
-
-      // Check if linked issue is closed
-      if (isIssueClosed(issueNum, repo)) {
-        // Close the superseded PR
-        const closeResult = ghExec(
-          `gh pr close ${prNum} --repo ${prRepo} --comment "Superseded — issue #${issueNum} was already resolved by another PR in this batch."`,
-        );
-        if (closeResult !== undefined) {
-          console.log(`  [cleanup] closed superseded PR #${prNum} (issue #${issueNum} already resolved)`);
-          results.push({ pr: prUrl, action: 'closed', issue: `#${issueNum}` });
-        } else {
-          results.push({ pr: prUrl, action: 'failed', issue: `#${issueNum}` });
-        }
-      } else {
-        results.push({ pr: prUrl, action: 'still_open', issue: `#${issueNum}` });
-      }
-    } catch {
-      results.push({ pr: prUrl, action: 'failed' });
-    }
-  }
-
-  return results;
-}
+// Text utilities
 
 /**
  * Truncate text at a word boundary, max `max` characters.
@@ -1369,6 +818,8 @@ export function cleanGuidanceForTitle(guidance: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+// Batch progress issue management
 
 export function ensureBatchProgressIssue(
   state: BatchState,
@@ -1540,19 +991,6 @@ const POST_RESULT_GRACE_MS = 60_000;
 // Grace period after SIGTERM before SIGKILL
 const SIGKILL_GRACE_MS = 10_000;
 
-export function formatHeartbeat(
-  runStart: number,
-  toolCalls: number,
-  ctx: StreamContext,
-): string {
-  const elapsed = formatElapsed(runStart);
-  if (ctx.resultReceivedAt) {
-    const ago = Math.floor((Date.now() - ctx.resultReceivedAt) / 1000);
-    return `  [${elapsed}]  ... waiting for process exit (result received ${ago}s ago, ${toolCalls} tool calls)`;
-  }
-  return `  [${elapsed}]  ... working (${toolCalls} tool calls so far)`;
-}
-
 async function runClaude(
   state: BatchState,
   runNum: number,
@@ -1609,7 +1047,7 @@ async function runClaude(
   const maxRunMs =
     (state.max_run_seconds || DEFAULT_MAX_RUN_SECONDS) * 1000;
 
-  return new Promise((resolve) => {
+  return new Promise((resolvePromise) => {
     let processExited = false;
 
     const child = spawn('claude', args, {
@@ -1728,7 +1166,7 @@ async function runClaude(
       processExited = true;
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolve({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode, promptMeta });
+      resolvePromise({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode, promptMeta });
     });
 
     child.on('error', (err) => {
@@ -1736,7 +1174,7 @@ async function runClaude(
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolve({ exitCode: 1, duration, result, mode: modeSelection.mode, promptMeta });
+      resolvePromise({ exitCode: 1, duration, result, mode: modeSelection.mode, promptMeta });
     });
   });
 }
