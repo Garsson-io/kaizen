@@ -1,187 +1,132 @@
 /**
- * issue-routing.test.ts — E2E test for issue repo routing.
+ * issue-routing.test.ts — E2E: skills route issues to the host repo.
  *
- * Verifies that kaizen skills query the CORRECT GitHub repo for issues
- * based on kaizen.config.json. This is a LIVE test that hits the GitHub API.
+ * Creates a synthetic host project with kaizen configured, then runs
+ * claude -p with the kaizen plugin. Verifies the agent follows the
+ * skill-config-header.md routing and queries the host repo for issues.
  *
- * Two scenarios:
- *   1. Self-dogfood (kaizen repo): ISSUES_REPO == KAIZEN_REPO
- *   2. Host project (langsmith-cli): ISSUES_REPO == HOST_REPO (not KAIZEN_REPO)
+ * Fixture: https://github.com/Garsson-io/kaizen-test-fixture
+ *   - Has issues enabled, "kaizen" label, and test issue #1
+ *   - Dedicated test repo — safe to query
  *
- * Run with: npx vitest run src/e2e/issue-routing.test.ts
+ * Run: KAIZEN_LIVE_TEST=1 npx vitest run src/e2e/issue-routing.test.ts
  */
 
-import { describe, it, expect } from "vitest";
-import { execSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { SyntheticProject } from "./synthetic-project.js";
 
 const KAIZEN_ROOT = resolve(__dirname, "../..");
-const HOST_PROJECT = "/home/aviadr1/projects/langsmith-cli";
+const isLive = process.env.KAIZEN_LIVE_TEST === "1";
 
-// Read kaizen.config.json and compute ISSUES_REPO / ISSUES_LABEL
-// This is the exact logic from skill-config-header.md
-function computeIssueRouting(configPath: string): {
-  kaizenRepo: string;
-  hostRepo: string;
-  issuesRepo: string;
-  issuesLabel: string;
-} {
-  const raw = readFileSync(configPath, "utf-8");
-  const config = JSON.parse(raw);
-  const kaizenRepo: string = config.kaizen.repo;
-  const hostRepo: string = config.host.repo;
+const KAIZEN_REPO = "Garsson-io/kaizen";
+const HOST_FIXTURE_REPO = "Garsson-io/kaizen-test-fixture";
 
-  if (kaizenRepo === hostRepo) {
-    return { kaizenRepo, hostRepo, issuesRepo: kaizenRepo, issuesLabel: "" };
-  }
-  return {
-    kaizenRepo,
-    hostRepo,
-    issuesRepo: hostRepo,
-    issuesLabel: "--label kaizen",
-  };
-}
+function claude(
+  prompt: string,
+  opts: { cwd: string; maxTurns?: number; maxBudget?: number; timeout?: number },
+): { result: string; is_error: boolean; num_turns: number; total_cost_usd: number } {
+  const args = [
+    "claude", "-p",
+    "--output-format", "json",
+    "--model", "haiku",
+    "--dangerously-skip-permissions",
+    "--max-turns", String(opts.maxTurns ?? 8),
+    "--max-budget-usd", String(opts.maxBudget ?? 0.50),
+    "--plugin-dir", KAIZEN_ROOT,
+    prompt,
+  ];
 
-// Run gh issue list and return parsed JSON
-function ghIssueList(
-  repo: string,
-  opts: { labels?: string[]; limit?: number; state?: string } = {},
-): Array<{ number: number; title: string; url: string; labels: Array<{ name: string }> }> {
-  const args = ["gh", "issue", "list", "--repo", repo, "--json", "number,title,url,labels"];
-  args.push("--limit", String(opts.limit ?? 5));
-  args.push("--state", opts.state ?? "open");
-  for (const label of opts.labels ?? []) {
-    args.push("--label", label);
-  }
-
-  const result = execSync(args.join(" "), {
+  const proc = spawnSync(args[0], args.slice(1), {
     encoding: "utf-8",
-    timeout: 15000,
+    cwd: opts.cwd,
+    timeout: opts.timeout ?? 120000,
+    env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "cli" },
   });
-  return JSON.parse(result.trim());
+
+  if (proc.error) throw new Error(`claude failed: ${proc.error.message}`);
+
+  try {
+    return JSON.parse(proc.stdout.trim());
+  } catch {
+    throw new Error(
+      `claude output not JSON:\nstdout: ${proc.stdout?.slice(0, 500)}\nstderr: ${proc.stderr?.slice(0, 500)}`,
+    );
+  }
 }
 
-// Verify an issue URL belongs to the expected repo
-function issueUrlMatchesRepo(url: string, repo: string): boolean {
-  // GitHub issue URLs look like: https://github.com/owner/repo/issues/123
-  return url.includes(`github.com/${repo}/issues/`);
-}
-
-describe("Issue Routing — Self-Dogfood (kaizen repo)", () => {
-  const configPath = resolve(KAIZEN_ROOT, "kaizen.config.json");
-
-  it("kaizen.config.json exists", () => {
-    expect(existsSync(configPath)).toBe(true);
-  });
-
-  it("routes to KAIZEN_REPO when host == kaizen (self-dogfood)", () => {
-    const routing = computeIssueRouting(configPath);
-    expect(routing.kaizenRepo).toBe(routing.hostRepo); // self-dogfood
-    expect(routing.issuesRepo).toBe(routing.kaizenRepo);
-    expect(routing.issuesLabel).toBe("");
-  });
-
-  it("gh issue list returns issues from kaizen repo", { timeout: 20000 }, () => {
-    const routing = computeIssueRouting(configPath);
-    const issues = ghIssueList(routing.issuesRepo, { limit: 3 });
-    expect(issues.length).toBeGreaterThan(0);
-
-    // Every issue URL must point to the kaizen repo
-    for (const issue of issues) {
-      expect(
-        issueUrlMatchesRepo(issue.url, routing.kaizenRepo),
-        `Issue #${issue.number} URL ${issue.url} doesn't match repo ${routing.kaizenRepo}`,
-      ).toBe(true);
-    }
-  });
-});
-
-describe("Issue Routing — Host Project (langsmith-cli)", () => {
-  const configPath = resolve(HOST_PROJECT, "kaizen.config.json");
-  const hostExists = existsSync(configPath);
-
-  if (!hostExists) {
-    it.skip("langsmith-cli not found — skipping host project tests", () => {});
+describe("Issue Routing E2E — skill queries host repo in synthetic project", () => {
+  if (!isLive) {
+    it.skip("set KAIZEN_LIVE_TEST=1 to run live tests", () => {});
     return;
   }
 
-  it("kaizen.config.json exists in host project", () => {
-    expect(existsSync(configPath)).toBe(true);
+  let project: SyntheticProject;
+
+  beforeAll(() => {
+    project = new SyntheticProject({ language: "node" });
+    project.fullSetup({
+      name: "test-host-app",
+      repo: HOST_FIXTURE_REPO,
+      description: "Synthetic host for issue routing E2E test",
+    });
+
+    // Verify config was created correctly — host != kaizen
+    const config = JSON.parse(project.readFile("kaizen.config.json"));
+    expect(config.host.repo).toBe(HOST_FIXTURE_REPO);
+    expect(config.kaizen.repo).toBe(KAIZEN_REPO);
   });
 
-  it("host repo differs from kaizen repo", () => {
-    const routing = computeIssueRouting(configPath);
-    expect(routing.kaizenRepo).not.toBe(routing.hostRepo);
-    expect(routing.kaizenRepo).toBe("Garsson-io/kaizen");
-    expect(routing.hostRepo).toBe("gigaverse-app/langsmith-cli");
+  afterAll(() => {
+    project?.cleanup();
   });
 
-  it("routes to HOST_REPO with kaizen label filter", () => {
-    const routing = computeIssueRouting(configPath);
-    expect(routing.issuesRepo).toBe(routing.hostRepo);
-    expect(routing.issuesRepo).not.toBe(routing.kaizenRepo);
-    expect(routing.issuesLabel).toBe("--label kaizen");
+  it("claude CLI is available", () => {
+    const proc = spawnSync("claude", ["--version"], { encoding: "utf-8" });
+    expect(proc.status).toBe(0);
   });
 
-  it("gh issue list hits host repo, NOT kaizen repo", { timeout: 20000 }, () => {
-    const routing = computeIssueRouting(configPath);
-
-    // Query the ISSUES_REPO (should be host repo)
-    // This may return 0 results if no issues exist yet — that's fine,
-    // the important thing is that gh doesn't error and the repo is correct
-    let issues: Array<{ number: number; title: string; url: string }>;
-    try {
-      issues = ghIssueList(routing.issuesRepo, { limit: 5 });
-    } catch (e: unknown) {
-      // If the repo has no issues or is empty, gh returns [] not an error
-      // A real error (wrong repo, no access) would throw
-      throw new Error(
-        `gh issue list failed for ${routing.issuesRepo} — ` +
-        `this is the bug: skills would query the wrong repo. Error: ${e}`,
+  it(
+    "kaizen-pick step 1 queries the host repo, not the kaizen repo",
+    { timeout: 180000 },
+    () => {
+      // This is the real test: invoke the actual skill and check which
+      // repo the agent queries. We tell it to run /kaizen-pick step 1
+      // which reads kaizen.config.json and lists open issues.
+      const result = claude(
+        [
+          "Run /kaizen-pick. Only do step 1 (gather the landscape).",
+          "After listing issues, STOP. Do not continue to step 2.",
+          "Show which repo you queried for issues.",
+        ].join(" "),
+        { cwd: project.projectRoot, maxTurns: 15, maxBudget: 1.00, timeout: 180000 },
       );
-    }
 
-    // If there are issues, verify they come from the host repo, not kaizen
-    for (const issue of issues) {
+      const text = result.result ?? "";
+      console.log("--- kaizen-pick output ---");
+      console.log(text.slice(0, 1200));
+      console.log("--- end ---");
+
+      // The agent should have queried the host fixture repo
+      // We check for its presence in the output (either as repo name
+      // or in issue URLs)
+      const queriedHostRepo =
+        text.includes(HOST_FIXTURE_REPO) ||
+        text.includes("kaizen-test-fixture");
+
+      const queriedKaizenRepo =
+        text.includes(`github.com/${KAIZEN_REPO}/issues/`);
+
       expect(
-        issueUrlMatchesRepo(issue.url, routing.hostRepo),
-        `Issue #${issue.number} URL ${issue.url} should be from ${routing.hostRepo}, not ${routing.kaizenRepo}`,
+        queriedHostRepo,
+        `Agent should query ${HOST_FIXTURE_REPO} for issues. Output: ${text.slice(0, 800)}`,
       ).toBe(true);
 
-      // Negative check: should NOT be a kaizen repo issue
       expect(
-        issueUrlMatchesRepo(issue.url, routing.kaizenRepo),
-        `Issue #${issue.number} URL ${issue.url} is from kaizen repo — routing is WRONG`,
+        queriedKaizenRepo,
+        `Agent queried kaizen repo instead of host repo. Output: ${text.slice(0, 800)}`,
       ).toBe(false);
-    }
-  });
-
-  it("OLD routing (bug) would have queried kaizen repo instead", { timeout: 20000 }, () => {
-    // Demonstrate the bug: the old code used $KAIZEN_REPO for everything
-    const routing = computeIssueRouting(configPath);
-    const kaizenIssues = ghIssueList(routing.kaizenRepo, { limit: 3 });
-    const hostIssues = ghIssueList(routing.issuesRepo, { limit: 3 });
-
-    // Kaizen repo has issues (it's an active project)
-    expect(kaizenIssues.length).toBeGreaterThan(0);
-
-    // Verify kaizen issues come from kaizen repo (not host)
-    for (const issue of kaizenIssues) {
-      expect(issueUrlMatchesRepo(issue.url, routing.kaizenRepo)).toBe(true);
-      // These are NOT host project issues — the old code served these to the host
-      expect(issueUrlMatchesRepo(issue.url, routing.hostRepo)).toBe(false);
-    }
-
-    // If host has issues, they should be different from kaizen issues
-    if (hostIssues.length > 0) {
-      const kaizenNumbers = new Set(kaizenIssues.map((i) => i.number));
-      const hostNumbers = new Set(hostIssues.map((i) => i.number));
-      // Different repos, different issue number spaces
-      // (could overlap by coincidence, but URLs definitely differ)
-      for (const issue of hostIssues) {
-        expect(issueUrlMatchesRepo(issue.url, routing.hostRepo)).toBe(true);
-      }
-    }
-  });
+    },
+  );
 });
