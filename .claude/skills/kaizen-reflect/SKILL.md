@@ -255,8 +255,7 @@ Before writing the solution section of any issue, answer these four questions:
 
 ## Kaizen Backlog
 
-All improvements that are too large for the current PR go to:
-**[github.com/Garsson-io/kaizen/issues](https://github.com/Garsson-io/kaizen/issues)**
+All improvements that are too large for the current PR go to the `$ISSUES_REPO` issue tracker (see [skill-config-header.md](../../kaizen/skill-config-header.md) for routing).
 
 See [`docs/issue-taxonomy.md`](../../../docs/issue-taxonomy.md) for the full labeling taxonomy, epic lifecycle policy, and incident recording format.
 
@@ -272,7 +271,7 @@ Issue format:
 
 **Fast path:** Use `/kaizen-file-issue` for quick incident-to-issue capture. It enforces the discipline checks above (failure mode framing, duplicate search, level classification) in a streamlined 2-minute flow.
 
-**Before filing a new issue:** Search for existing issues first (`gh issue list --repo "$KAIZEN_REPO" --search "<keywords>"`). If a match exists, add an incident comment instead of filing a duplicate. Incidents compound evidence; duplicates fragment it.
+**Before filing a new issue:** Search for existing issues first (`gh issue list --repo "$ISSUES_REPO" --search "<keywords>"`). If a match exists, add an incident comment instead of filing a duplicate. Incidents compound evidence; duplicates fragment it.
 
 ## PR Kaizen Section
 

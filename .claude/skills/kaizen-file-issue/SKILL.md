@@ -53,11 +53,11 @@ Ask (or extract from context) these three things:
 **Before filing, always search.** Duplicates fragment evidence; incidents compound it.
 
 ```bash
-# Search kaizen repo for similar issues
-gh issue list --repo "$KAIZEN_REPO" --state open --search "<keywords from the incident>" --json number,title,labels --limit 10
+# Search for similar issues in the issues repo (HOST_REPO for host projects, KAIZEN_REPO for self-dogfood)
+gh issue list --repo "$ISSUES_REPO" --state open --search "<keywords from the incident>" --json number,title,labels --limit 10
 
 # Also search closed issues — the problem may have been "fixed" before
-gh issue list --repo "$KAIZEN_REPO" --state closed --search "<keywords>" --json number,title,labels --limit 5
+gh issue list --repo "$ISSUES_REPO" --state closed --search "<keywords>" --json number,title,labels --limit 5
 ```
 
 **If a match exists:** Add an incident comment to the existing issue instead of filing a new one. Use this format:

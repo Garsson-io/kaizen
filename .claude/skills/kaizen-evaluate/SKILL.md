@@ -35,7 +35,7 @@ This is a conversation, not a checklist. The phases overlap. Use judgment about 
 1. **Already fixed?** Check if the issue was already resolved by a merged PR or commit:
    ```bash
    # Check if issue is closed
-   gh issue view {N} --repo "$KAIZEN_REPO" --json state
+   gh issue view {N} --repo "$ISSUES_REPO" --json state
    # Search git log for commits referencing this issue
    git log --oneline --all --grep="#{N}" | head -5
    # Search for PRs that fixed this issue
@@ -45,7 +45,7 @@ This is a conversation, not a checklist. The phases overlap. Use judgment about 
 
 2. **GitHub labels:** Does the kaizen issue have `status:active`, `status:backlog`, or `status:blocked` labels?
    ```bash
-   gh issue view {N} --repo "$KAIZEN_REPO" --json labels,state
+   gh issue view {N} --repo "$ISSUES_REPO" --json labels,state
    ```
 
 3. **Active cases in database:** Is there a case linked to this issue?
@@ -69,8 +69,8 @@ This is a conversation, not a checklist. The phases overlap. Use judgment about 
 
 **On approval (end of Phase 5):** When the admin approves this case for implementation, label the kaizen issue as claimed:
 ```bash
-gh issue edit {N} --repo "$KAIZEN_REPO" --add-label "status:backlog"
-gh issue comment {N} --repo "$KAIZEN_REPO" --body "Claimed for evaluation by accept-case at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+gh issue edit {N} --repo "$ISSUES_REPO" --add-label "status:backlog"
+gh issue comment {N} --repo "$ISSUES_REPO" --body "Claimed for evaluation by accept-case at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
 This labeling is defense-in-depth on top of the L3 enforcement in `ipc-cases.ts` (which blocks duplicate case creation for the same kaizen issue). The label makes the claim visible to other agents checking `gh issue list` before they even reach the code-level check.
@@ -81,9 +81,9 @@ Before doing deep analysis, check if a detailed spec already exists for this iss
 
 ```bash
 # Check for linked spec documents
-gh issue view {N} --repo "$KAIZEN_REPO" --json body --jq '.body' | grep -oE 'docs/[a-z0-9-]+-spec\.md'
+gh issue view {N} --repo "$ISSUES_REPO" --json body --jq '.body' | grep -oE 'docs/[a-z0-9-]+-spec\.md'
 # Check issue body length (>100 lines suggests a detailed spec)
-gh issue view {N} --repo "$KAIZEN_REPO" --json body --jq '.body' | wc -l
+gh issue view {N} --repo "$ISSUES_REPO" --json body --jq '.body' | wc -l
 ```
 
 **If a detailed spec exists (>100 lines or links to a `docs/*-spec.md`):**

@@ -26,7 +26,7 @@ Before touching any source code, verify a case exists. The `enforce-case-exists.
 **Checklist:**
 1. **Issue still open?** Before entering a worktree or creating a case, verify the issue isn't already fixed:
    ```bash
-   gh issue view {N} --repo "$KAIZEN_REPO" --json state
+   gh issue view {N} --repo "$ISSUES_REPO" --json state
    git log --oneline --all --grep="#{N}" | head -5
    ```
    If closed or a commit references it, STOP — report to admin before proceeding.
@@ -63,7 +63,7 @@ For kaizen issues, always pass `--github-issue` to link the case to the existing
 4. **Self-review: invoke `/kaizen-review-pr`** — This invokes the review skill which has its own 4-task workflow: (1) load review criteria from `.claude/kaizen/review-criteria.md`, read full diff, scan failure modes FM-1 through FM-12; (2) review using subagents — small PR (≤50 lines): sequential, medium (50-300): 2-3 agents, large (>300): 5 parallel agents covering DRY, testability, tooling, security, and horizons; (3) filter findings — drop confidence < 75, classify MUST-FIX (≥90) and SHOULD-FIX (75-89); (4) fix loop below.
 5. **Review fix loop** — Fix all MUST-FIX and SHOULD-FIX findings from the review. Commit + push fixes. Re-run `/kaizen-review-pr` from step (1). Repeat until clean or max 3 rounds. If still unclean at round 3: escalate to human with `gh pr comment`. Hooks `pr-review-loop.sh` and `enforce-pr-review-stop.sh` enforce this — you cannot stop with pending review.
 6. **Commit + push** — Stage changes, commit with descriptive message, push to remote branch.
-7. **Create PR** — `gh pr create` with `Fixes Garsson-io/kaizen#N` in body (cross-repo prefix required for auto-close). Add `status:has-pr` label to kaizen issue. Add PR link as comment.
+7. **Create PR** — `gh pr create` with `Fixes $ISSUES_REPO#N` in body (cross-repo prefix required for auto-close). Add `status:has-pr` label to kaizen issue. Add PR link as comment.
 8. **Wait for CI** — Run `gh pr checks` to watch for CI failures. If checks fail, read the failure, fix, commit, push, and re-check. Do not merge with failing checks.
 9. **Merge (squash)** — Verify no merge conflicts. Squash merge. Verify merge completed cleanly (check PR state is "merged"). If conflicts: merge main into branch, resolve, push, re-check CI, then merge.
 10. **Kaizen reflection (subagent)** — The kaizen-bg subagent handles reflection in the background. It reads the full session transcript (uncompressed — it sees what you may have forgotten), scans for signals (user corrections, failed tool calls, hook denials, retries), and files incidents/issues independently. You launch it via the Agent tool when the hook fires, then wait for its results to clear the gate. Note any impediments you noticed during the session to pass along.
@@ -159,12 +159,12 @@ The L3 enforcement in `ipc-cases.ts` will:
 After creating a PR, link it to the kaizen issue and ensure auto-closure on merge:
 ```bash
 # Add has-pr label
-gh issue edit {N} --repo "$KAIZEN_REPO" --add-label "status:has-pr"
+gh issue edit {N} --repo "$ISSUES_REPO" --add-label "status:has-pr"
 # Add PR link as comment
-gh issue comment {N} --repo "$KAIZEN_REPO" --body "PR: {pr_url}"
+gh issue comment {N} --repo "$ISSUES_REPO" --body "PR: {pr_url}"
 ```
 
-**CRITICAL: The PR description body MUST include `Fixes Garsson-io/kaizen#{N}`** (with the cross-repo prefix). This tells GitHub to auto-close the kaizen issue when the PR merges. Without this, issues stay open after PRs merge and epic progress tracking breaks.
+**CRITICAL: The PR description body MUST include `Fixes $ISSUES_REPO#{N}`** (with the full `owner/repo` prefix). This tells GitHub to auto-close the kaizen issue when the PR merges. Without this, issues stay open after PRs merge and epic progress tracking breaks. When `$ISSUES_REPO == $HOST_REPO` (same repo), `Fixes #{N}` also works.
 
 ### On case completion
 
@@ -184,9 +184,9 @@ When a sub-issue is closed (either by PR merge or case completion), **update the
 
 ```bash
 # Find the parent epic — look for task list references to this issue
-gh issue list --repo "$KAIZEN_REPO" --state open --label "kaizen" --search "#{N}" --json number,title
+gh issue list --repo "$ISSUES_REPO" --state open --label "kaizen" --search "#{N}" --json number,title
 # Then edit the epic body with updated progress
-gh issue edit {EPIC} --repo "$KAIZEN_REPO" --body "$(cat <<'BODY'
+gh issue edit {EPIC} --repo "$ISSUES_REPO" --body "$(cat <<'BODY'
 ... updated body with checked items, current state, next step ...
 BODY
 )"

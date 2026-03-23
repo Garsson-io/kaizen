@@ -255,7 +255,7 @@ Every PRD produces an **epic issue** — the tracking anchor for the initiative.
 **For file+PR PRDs (large initiatives):** The issue is the epic anchor. Keep it short — the spec document has the details.
 
 ```bash
-gh issue create --repo {repo} --title "Epic: {Initiative Name}" --label "epic,{domain}" --body "$(cat <<'EOF'
+gh issue create --repo "$ISSUES_REPO" --title "Epic: {Initiative Name}" --label "epic,{domain}" --body "$(cat <<'EOF'
 ## Summary
 
 {2-3 sentences: what this initiative is and why it matters}
