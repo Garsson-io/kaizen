@@ -5,6 +5,8 @@
  * Subcommands:
  *   status              List active batches with last-worked-on info
  *   halt [batch-id]     Halt a specific batch (or all active batches)
+ *   score [batch-id]    Score batches — efficiency, success rate, cost-per-PR
+ *   score --post-hoc    Include live merge status checks from GitHub
  *
  * Usage:
  *   npx tsx scripts/auto-dent-ctl.ts status
@@ -16,6 +18,14 @@ import { readdirSync, readFileSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BatchState } from './auto-dent-run.js';
+import { checkMergeStatus } from './auto-dent-run.js';
+import {
+  scoreBatch,
+  postHocScoreBatch,
+  formatBatchScoreTable,
+  formatRunScoreLine,
+  formatPostHocLine,
+} from './auto-dent-score.js';
 
 function getRepoRoot(): string {
   try {
@@ -148,6 +158,48 @@ export function formatLastState(state: BatchState): string {
   return lines.join('\n');
 }
 
+export function formatBatchScoreOutput(batch: BatchInfo, postHoc: boolean = false): string {
+  const s = batch.state;
+  const history = s.run_history || [];
+
+  if (history.length === 0) {
+    return `  Batch ${batch.batchId}: no run history to score.`;
+  }
+
+  const batchScore = scoreBatch(history);
+  const lines: string[] = [
+    `  Batch: ${batch.batchId}`,
+    '',
+    formatBatchScoreTable(batchScore),
+    '',
+    '  Per-run scores:',
+  ];
+
+  for (let i = 0; i < batchScore.runs.length; i++) {
+    const runScore = batchScore.runs[i];
+    const runNum = history[i].run;
+    lines.push(`    #${runNum}: ${formatRunScoreLine(runScore)}`);
+  }
+
+  if (postHoc && s.prs.length > 0) {
+    lines.push('');
+    lines.push('  Post-hoc merge status:');
+    const prStatuses = s.prs.map((url) => ({
+      url,
+      status: checkMergeStatus(url),
+    }));
+    const postHocResult = postHocScoreBatch(prStatuses, batchScore.total_cost_usd);
+    batchScore.post_hoc = postHocResult;
+
+    for (const pr of postHocResult.prs) {
+      lines.push(`    ${pr.url} — ${pr.status}`);
+    }
+    lines.push(`  ${formatPostHocLine(postHocResult)}`);
+  }
+
+  return lines.join('\n');
+}
+
 export function haltBatch(batchDir: string): void {
   const haltFile = join(batchDir, 'HALT');
   writeFileSync(haltFile, `halted at ${new Date().toISOString()}\n`);
@@ -163,7 +215,9 @@ function main(): void {
 Usage:
   auto-dent-ctl.ts status              List batches with last-worked-on info
   auto-dent-ctl.ts halt [batch-id]     Halt specific batch (or all active)
-  auto-dent-ctl.ts halt-state <file>   Print last-state from a state.json file`);
+  auto-dent-ctl.ts halt-state <file>   Print last-state from a state.json file
+  auto-dent-ctl.ts score [batch-id]    Score batch(es) — efficiency, success rate, cost
+  auto-dent-ctl.ts score --post-hoc [batch-id]  Include live PR merge status checks`);
     process.exit(0);
   }
 
@@ -227,6 +281,35 @@ Usage:
           console.log(formatLastState(b.state));
           console.log('');
         }
+      }
+      break;
+    }
+
+    case 'score': {
+      const postHoc = args.includes('--post-hoc');
+      const scoreArgs = args.slice(1).filter((a) => a !== '--post-hoc');
+      const targetId = scoreArgs[0];
+      const batches = discoverBatches(logsDir);
+
+      if (batches.length === 0) {
+        console.log('No auto-dent batches found.');
+        process.exit(0);
+      }
+
+      const targets = targetId
+        ? batches.filter((b) => b.batchId === targetId)
+        : batches;
+
+      if (targets.length === 0) {
+        console.error(`No batch found with ID: ${targetId}`);
+        const available = batches.map((b) => b.batchId);
+        console.error(`Available batches: ${available.join(', ')}`);
+        process.exit(1);
+      }
+
+      for (const batch of targets) {
+        console.log(formatBatchScoreOutput(batch, postHoc));
+        console.log('');
       }
       break;
     }
