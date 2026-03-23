@@ -34,13 +34,28 @@ except Exception:
     # Auto-fix: remove the bad setting rather than blocking (#758).
     # Blocking ALL tools creates an unescapable deadlock — the agent cannot
     # run the fix command because that command is also blocked.
+    #
+    # Attempt counter: if python3 fails and the setting persists, stop
+    # retrying after 3 attempts to avoid spamming on every tool call.
+    local counter_file="/tmp/.kaizen-scope-guard-fix-attempts"
+    local attempts=0
+    [ -f "$counter_file" ] && attempts=$(cat "$counter_file" 2>/dev/null || echo 0)
+
+    if [ "$attempts" -ge 3 ]; then
+      echo "[kaizen] WARNING: computer-level kaizen install persists after 3 auto-fix attempts." >&2
+      echo "[kaizen] Manual fix: python3 -c \"import json,pathlib; p=pathlib.Path.home()/'.claude'/'settings.json'; d=json.loads(p.read_text()); d.get('enabledPlugins',{}).pop('kaizen@kaizen',None); p.write_text(json.dumps(d,indent=2))\"" >&2
+      return 0
+    fi
+
+    echo $((attempts + 1)) > "$counter_file"
+
     python3 -c "
 import json, pathlib
 p = pathlib.Path.home() / '.claude' / 'settings.json'
 d = json.loads(p.read_text())
 d.get('enabledPlugins', {}).pop('kaizen@kaizen', None)
 p.write_text(json.dumps(d, indent=2))
-" 2>/dev/null
+" 2>/dev/null && rm -f "$counter_file"
 
     cat >&2 <<'ERRMSG'
 [kaizen] WARNING: computer-level kaizen install detected and auto-removed.
