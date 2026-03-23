@@ -13,9 +13,15 @@ import {
   formatBatchReflection,
   formatBatchReflectionComment,
   buildReflectionTemplateVars,
+  buildAggregateBatchRecord,
+  appendBatchToAggregate,
+  readAggregate,
+  computeAggregateStats,
+  formatAggregateStats,
   DEFAULT_WATCHDOG_THRESHOLD_SEC,
   type BatchInfo,
   type WatchdogResult,
+  type AggregateBatchRecord,
 } from './auto-dent-ctl.js';
 import type { BatchState, RunMetrics } from './auto-dent-run.js';
 
@@ -743,5 +749,247 @@ describe('buildReflectionTemplateVars', () => {
     const reflection = buildBatchReflection(batch);
     const vars = buildReflectionTemplateVars(reflection, batch.state);
     expect(vars.pr_merge_status).toBe('');
+  });
+});
+
+// Cross-batch aggregate tests (#586)
+
+describe('buildAggregateBatchRecord', () => {
+  it('builds a record from a batch with run history', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        batch_end: 1742684400,
+        run: 3,
+        prs: ['https://github.com/Garsson-io/kaizen/pull/500', 'https://github.com/Garsson-io/kaizen/pull/501'],
+        issues_filed: ['#600'],
+        issues_closed: ['#451', '#452'],
+        stop_reason: 'max runs reached',
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/500'], mode: 'exploit' }),
+          makeRunMetrics({ run: 2, cost_usd: 1.5, prs: [], exit_code: 1, mode: 'explore' }),
+          makeRunMetrics({ run: 3, cost_usd: 3.0, prs: ['https://github.com/Garsson-io/kaizen/pull/501'], mode: 'exploit' }),
+        ],
+      }),
+    });
+
+    const record = buildAggregateBatchRecord(batch);
+
+    expect(record.batch_id).toBe('batch-260322-2100-a1b2');
+    expect(record.total_runs).toBe(3);
+    expect(record.successful_runs).toBe(2);
+    expect(record.total_cost_usd).toBeCloseTo(6.5);
+    expect(record.total_prs).toBe(2);
+    expect(record.total_issues_closed).toBe(3); // from run metrics, not batch state
+    expect(record.stop_reason).toBe('max runs reached');
+    expect(record.mode_breakdown).toHaveProperty('exploit');
+    expect(record.mode_breakdown).toHaveProperty('explore');
+    expect(record.mode_breakdown.exploit.runs).toBe(2);
+    expect(record.mode_breakdown.exploit.successes).toBe(2);
+    expect(record.mode_breakdown.explore.runs).toBe(1);
+    expect(record.mode_breakdown.explore.successes).toBe(0);
+    expect(record.prs).toEqual(['https://github.com/Garsson-io/kaizen/pull/500', 'https://github.com/Garsson-io/kaizen/pull/501']);
+    expect(record.recorded_at).toBeTruthy();
+  });
+
+  it('handles batch with no run history', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({ run_history: undefined }),
+    });
+    const record = buildAggregateBatchRecord(batch);
+    expect(record.total_runs).toBe(0);
+    expect(record.success_rate).toBe(0);
+    expect(record.total_cost_usd).toBe(0);
+  });
+});
+
+describe('appendBatchToAggregate', () => {
+  it('appends a record to a new aggregate file', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'agg-test-'));
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 1,
+        run_history: [makeRunMetrics({ run: 1 })],
+      }),
+    });
+
+    const result = appendBatchToAggregate(tmpDir, batch);
+    expect(result.action).toBe('appended');
+
+    const records = readAggregate(tmpDir);
+    expect(records).toHaveLength(1);
+    expect(records[0].batch_id).toBe('batch-260322-2100-a1b2');
+  });
+
+  it('skips duplicate batch IDs', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'agg-test-'));
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 1,
+        run_history: [makeRunMetrics({ run: 1 })],
+      }),
+    });
+
+    appendBatchToAggregate(tmpDir, batch);
+    const result2 = appendBatchToAggregate(tmpDir, batch);
+    expect(result2.action).toBe('already_exists');
+
+    const records = readAggregate(tmpDir);
+    expect(records).toHaveLength(1);
+  });
+
+  it('appends multiple different batches', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'agg-test-'));
+    const batch1 = makeBatchInfo({
+      batchId: 'batch-1',
+      state: makeBatchState({
+        batch_id: 'batch-1',
+        run: 1,
+        run_history: [makeRunMetrics({ run: 1 })],
+      }),
+    });
+    const batch2 = makeBatchInfo({
+      batchId: 'batch-2',
+      state: makeBatchState({
+        batch_id: 'batch-2',
+        run: 2,
+        run_history: [makeRunMetrics({ run: 1 }), makeRunMetrics({ run: 2 })],
+      }),
+    });
+
+    appendBatchToAggregate(tmpDir, batch1);
+    appendBatchToAggregate(tmpDir, batch2);
+
+    const records = readAggregate(tmpDir);
+    expect(records).toHaveLength(2);
+    expect(records[0].batch_id).toBe('batch-1');
+    expect(records[1].batch_id).toBe('batch-2');
+  });
+});
+
+describe('readAggregate', () => {
+  it('returns empty array for non-existent file', () => {
+    const records = readAggregate('/tmp/non-existent-dir-12345');
+    expect(records).toEqual([]);
+  });
+
+  it('skips malformed lines', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'agg-test-'));
+    writeFileSync(
+      join(tmpDir, 'aggregate.jsonl'),
+      '{"batch_id":"b1","total_runs":1}\nnot json\n{"batch_id":"b2","total_runs":2}\n',
+    );
+    const records = readAggregate(tmpDir);
+    expect(records).toHaveLength(2);
+  });
+});
+
+describe('computeAggregateStats', () => {
+  function makeRecord(overrides: Partial<AggregateBatchRecord> = {}): AggregateBatchRecord {
+    return {
+      batch_id: 'batch-test',
+      guidance: 'test guidance',
+      batch_start: 1742680800,
+      batch_end: 1742684400,
+      total_runs: 5,
+      successful_runs: 3,
+      success_rate: 0.6,
+      total_cost_usd: 10.0,
+      total_prs: 3,
+      total_issues_closed: 2,
+      total_issues_filed: 1,
+      total_duration_seconds: 1500,
+      stop_reason: 'completed',
+      mode_breakdown: {
+        exploit: { runs: 3, successes: 2, prs: 2, cost: 6.0 },
+        explore: { runs: 2, successes: 1, prs: 1, cost: 4.0 },
+      },
+      issues_attempted: ['#451', '#452'],
+      prs: [],
+      recorded_at: '2026-03-22T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('computes stats across multiple batches', () => {
+    const records = [
+      makeRecord({ batch_id: 'b1', total_runs: 5, successful_runs: 3, total_cost_usd: 10, total_prs: 3 }),
+      makeRecord({ batch_id: 'b2', total_runs: 3, successful_runs: 2, total_cost_usd: 6, total_prs: 2 }),
+    ];
+    const stats = computeAggregateStats(records);
+
+    expect(stats.totalBatches).toBe(2);
+    expect(stats.totalRuns).toBe(8);
+    expect(stats.totalCost).toBeCloseTo(16);
+    expect(stats.totalPrs).toBe(5);
+    expect(stats.overallSuccessRate).toBeCloseTo(5 / 8);
+    expect(stats.avgCostPerPr).toBeCloseTo(16 / 5);
+  });
+
+  it('aggregates mode effectiveness across batches', () => {
+    const records = [
+      makeRecord({
+        batch_id: 'b1',
+        mode_breakdown: { exploit: { runs: 3, successes: 2, prs: 2, cost: 6 } },
+      }),
+      makeRecord({
+        batch_id: 'b2',
+        mode_breakdown: { exploit: { runs: 2, successes: 1, prs: 1, cost: 4 } },
+      }),
+    ];
+    const stats = computeAggregateStats(records);
+
+    expect(stats.modeEffectiveness.exploit.runs).toBe(5);
+    expect(stats.modeEffectiveness.exploit.successes).toBe(3);
+    expect(stats.modeEffectiveness.exploit.prs).toBe(3);
+    expect(stats.modeEffectiveness.exploit.successRate).toBeCloseTo(0.6);
+  });
+
+  it('handles empty records', () => {
+    const stats = computeAggregateStats([]);
+    expect(stats.totalBatches).toBe(0);
+    expect(stats.overallSuccessRate).toBe(0);
+    expect(stats.avgCostPerPr).toBe(0);
+  });
+
+  it('returns recent batches sorted by start time', () => {
+    const records = [
+      makeRecord({ batch_id: 'old', batch_start: 1000000 }),
+      makeRecord({ batch_id: 'new', batch_start: 2000000 }),
+    ];
+    const stats = computeAggregateStats(records);
+    expect(stats.recentBatches[0].batch_id).toBe('new');
+    expect(stats.recentBatches[1].batch_id).toBe('old');
+  });
+});
+
+describe('formatAggregateStats', () => {
+  it('formats stats as human-readable text', () => {
+    const stats = computeAggregateStats([{
+      batch_id: 'b1',
+      guidance: 'test',
+      batch_start: 1742680800,
+      batch_end: 1742684400,
+      total_runs: 5,
+      successful_runs: 3,
+      success_rate: 0.6,
+      total_cost_usd: 10,
+      total_prs: 3,
+      total_issues_closed: 2,
+      total_issues_filed: 1,
+      total_duration_seconds: 1500,
+      stop_reason: 'completed',
+      mode_breakdown: { exploit: { runs: 5, successes: 3, prs: 3, cost: 10 } },
+      issues_attempted: [],
+      prs: [],
+      recorded_at: '2026-03-22T00:00:00.000Z',
+    }]);
+
+    const output = formatAggregateStats(stats);
+    expect(output).toContain('Cross-Batch History');
+    expect(output).toContain('Total batches');
+    expect(output).toContain('$10.00');
+    expect(output).toContain('60%');
+    expect(output).toContain('Recent batches');
+    expect(output).toContain('b1');
   });
 });

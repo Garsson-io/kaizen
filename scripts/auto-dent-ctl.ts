@@ -19,7 +19,7 @@
  *   npx tsx scripts/auto-dent-ctl.ts watchdog --threshold 600
  */
 
-import { readdirSync, readFileSync, existsSync, writeFileSync } from 'fs';
+import { readdirSync, readFileSync, existsSync, writeFileSync, appendFileSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BatchState, RunMetrics } from './auto-dent-run.js';
@@ -607,6 +607,265 @@ export function buildReflectionTemplateVars(
   };
 }
 
+// Cross-batch aggregate — persistent outcome data (#586)
+
+export interface AggregateBatchRecord {
+  /** Batch identifier */
+  batch_id: string;
+  /** Batch guidance string */
+  guidance: string;
+  /** Epoch timestamp when batch started */
+  batch_start: number;
+  /** Epoch timestamp when batch ended */
+  batch_end: number;
+  /** Total runs completed */
+  total_runs: number;
+  /** Number of successful runs (exit 0 + PR) */
+  successful_runs: number;
+  /** Success rate as fraction 0..1 */
+  success_rate: number;
+  /** Total cost in USD */
+  total_cost_usd: number;
+  /** Total PRs created */
+  total_prs: number;
+  /** Total issues closed */
+  total_issues_closed: number;
+  /** Total issues filed */
+  total_issues_filed: number;
+  /** Total duration in seconds */
+  total_duration_seconds: number;
+  /** Stop reason */
+  stop_reason: string;
+  /** Per-mode breakdown: mode → {runs, successes, prs, cost} */
+  mode_breakdown: Record<string, { runs: number; successes: number; prs: number; cost: number }>;
+  /** Issue numbers attempted (from issues_closed + issues_filed) */
+  issues_attempted: string[];
+  /** PR URLs */
+  prs: string[];
+  /** Timestamp when this record was written */
+  recorded_at: string;
+}
+
+/**
+ * Build an AggregateBatchRecord from a BatchInfo.
+ */
+export function buildAggregateBatchRecord(batch: BatchInfo): AggregateBatchRecord {
+  const s = batch.state;
+  const history = s.run_history || [];
+  const scores = history.map(scoreRunMetrics);
+
+  const totalCost = scores.reduce((sum, r) => sum + r.cost_usd, 0);
+  const totalPrs = scores.reduce((sum, r) => sum + r.pr_count, 0);
+  const totalIssuesClosed = scores.reduce((sum, r) => sum + r.issues_closed_count, 0);
+  const totalIssuesFiled = scores.reduce((sum, r) => sum + r.issues_filed_count, 0);
+  const totalDuration = scores.reduce((sum, r) => sum + r.duration_seconds, 0);
+  const successfulRuns = scores.filter((r) => r.success).length;
+  const successRate = scores.length > 0 ? successfulRuns / scores.length : 0;
+
+  // Mode breakdown
+  const modeBreakdown: Record<string, { runs: number; successes: number; prs: number; cost: number }> = {};
+  for (const score of scores) {
+    if (!modeBreakdown[score.mode]) {
+      modeBreakdown[score.mode] = { runs: 0, successes: 0, prs: 0, cost: 0 };
+    }
+    modeBreakdown[score.mode].runs++;
+    if (score.success) modeBreakdown[score.mode].successes++;
+    modeBreakdown[score.mode].prs += score.pr_count;
+    modeBreakdown[score.mode].cost += score.cost_usd;
+  }
+
+  // Issues attempted (union of closed + filed)
+  const issuesAttempted = Array.from(new Set([...s.issues_closed, ...s.issues_filed]));
+
+  return {
+    batch_id: batch.batchId,
+    guidance: s.guidance,
+    batch_start: s.batch_start,
+    batch_end: s.batch_end || Math.floor(Date.now() / 1000),
+    total_runs: history.length,
+    successful_runs: successfulRuns,
+    success_rate: successRate,
+    total_cost_usd: totalCost,
+    total_prs: totalPrs,
+    total_issues_closed: totalIssuesClosed,
+    total_issues_filed: totalIssuesFiled,
+    total_duration_seconds: totalDuration,
+    stop_reason: s.stop_reason || 'completed',
+    mode_breakdown: modeBreakdown,
+    issues_attempted: issuesAttempted,
+    prs: s.prs,
+    recorded_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Append a batch record to the aggregate JSONL file.
+ * Idempotent: skips if batch_id already exists in the file.
+ */
+export function appendBatchToAggregate(
+  logsDir: string,
+  batch: BatchInfo,
+): { action: 'appended' | 'already_exists' | 'error'; path: string } {
+  const aggregatePath = join(logsDir, 'aggregate.jsonl');
+
+  // Check for duplicate
+  if (existsSync(aggregatePath)) {
+    const existing = readFileSync(aggregatePath, 'utf8');
+    const lines = existing.split('\n').filter(Boolean);
+    for (const line of lines) {
+      try {
+        const record = JSON.parse(line);
+        if (record.batch_id === batch.batchId) {
+          return { action: 'already_exists', path: aggregatePath };
+        }
+      } catch { /* skip malformed lines */ }
+    }
+  }
+
+  const record = buildAggregateBatchRecord(batch);
+  appendFileSync(aggregatePath, JSON.stringify(record) + '\n');
+  return { action: 'appended', path: aggregatePath };
+}
+
+/**
+ * Read all aggregate records from the JSONL file.
+ */
+export function readAggregate(logsDir: string): AggregateBatchRecord[] {
+  const aggregatePath = join(logsDir, 'aggregate.jsonl');
+  if (!existsSync(aggregatePath)) return [];
+
+  const content = readFileSync(aggregatePath, 'utf8');
+  const records: AggregateBatchRecord[] = [];
+  for (const line of content.split('\n').filter(Boolean)) {
+    try {
+      records.push(JSON.parse(line));
+    } catch { /* skip malformed lines */ }
+  }
+  return records;
+}
+
+export interface AggregateStats {
+  totalBatches: number;
+  totalRuns: number;
+  totalCost: number;
+  totalPrs: number;
+  totalIssuesClosed: number;
+  overallSuccessRate: number;
+  avgCostPerPr: number;
+  avgCostPerRun: number;
+  modeEffectiveness: Record<string, { runs: number; successes: number; prs: number; cost: number; successRate: number; efficiency: number }>;
+  recentBatches: Array<{ batch_id: string; guidance: string; runs: number; prs: number; cost: number; success_rate: number }>;
+}
+
+/**
+ * Compute aggregate statistics across all batches.
+ */
+export function computeAggregateStats(records: AggregateBatchRecord[]): AggregateStats {
+  const totalBatches = records.length;
+  const totalRuns = records.reduce((s, r) => s + r.total_runs, 0);
+  const totalCost = records.reduce((s, r) => s + r.total_cost_usd, 0);
+  const totalPrs = records.reduce((s, r) => s + r.total_prs, 0);
+  const totalIssuesClosed = records.reduce((s, r) => s + r.total_issues_closed, 0);
+  const totalSuccessful = records.reduce((s, r) => s + r.successful_runs, 0);
+  const overallSuccessRate = totalRuns > 0 ? totalSuccessful / totalRuns : 0;
+  const avgCostPerPr = totalPrs > 0 ? totalCost / totalPrs : 0;
+  const avgCostPerRun = totalRuns > 0 ? totalCost / totalRuns : 0;
+
+  // Aggregate mode effectiveness
+  const modes: Record<string, { runs: number; successes: number; prs: number; cost: number }> = {};
+  for (const record of records) {
+    for (const [mode, stats] of Object.entries(record.mode_breakdown)) {
+      if (!modes[mode]) modes[mode] = { runs: 0, successes: 0, prs: 0, cost: 0 };
+      modes[mode].runs += stats.runs;
+      modes[mode].successes += stats.successes;
+      modes[mode].prs += stats.prs;
+      modes[mode].cost += stats.cost;
+    }
+  }
+
+  const modeEffectiveness: AggregateStats['modeEffectiveness'] = {};
+  for (const [mode, stats] of Object.entries(modes)) {
+    modeEffectiveness[mode] = {
+      ...stats,
+      successRate: stats.runs > 0 ? stats.successes / stats.runs : 0,
+      efficiency: stats.cost > 0 ? stats.prs / stats.cost : 0,
+    };
+  }
+
+  // Recent batches (last 10, sorted by batch_start desc)
+  const sorted = [...records].sort((a, b) => b.batch_start - a.batch_start);
+  const recentBatches = sorted.slice(0, 10).map((r) => ({
+    batch_id: r.batch_id,
+    guidance: r.guidance,
+    runs: r.total_runs,
+    prs: r.total_prs,
+    cost: r.total_cost_usd,
+    success_rate: r.success_rate,
+  }));
+
+  return {
+    totalBatches,
+    totalRuns,
+    totalCost,
+    totalPrs,
+    totalIssuesClosed,
+    overallSuccessRate,
+    avgCostPerPr,
+    avgCostPerRun,
+    modeEffectiveness,
+    recentBatches,
+  };
+}
+
+/**
+ * Format aggregate stats for human-readable display.
+ */
+export function formatAggregateStats(stats: AggregateStats): string {
+  const lines: string[] = [
+    'Cross-Batch History',
+    '',
+    `| Metric | Value |`,
+    `|--------|-------|`,
+    `| **Total batches** | ${stats.totalBatches} |`,
+    `| **Total runs** | ${stats.totalRuns} |`,
+    `| **Total cost** | $${stats.totalCost.toFixed(2)} |`,
+    `| **Total PRs** | ${stats.totalPrs} |`,
+    `| **Issues closed** | ${stats.totalIssuesClosed} |`,
+    `| **Overall success rate** | ${(stats.overallSuccessRate * 100).toFixed(0)}% |`,
+    `| **Avg cost/PR** | ${stats.avgCostPerPr > 0 ? '$' + stats.avgCostPerPr.toFixed(2) : 'N/A'} |`,
+    `| **Avg cost/run** | $${stats.avgCostPerRun.toFixed(2)} |`,
+  ];
+
+  // Mode effectiveness
+  const modeEntries = Object.entries(stats.modeEffectiveness);
+  if (modeEntries.length > 0) {
+    lines.push('');
+    lines.push('Mode effectiveness (all-time):');
+    lines.push('');
+    lines.push('| Mode | Runs | Success | PRs | Cost | Efficiency |');
+    lines.push('|------|------|---------|-----|------|------------|');
+    for (const [mode, m] of modeEntries.sort((a, b) => b[1].runs - a[1].runs)) {
+      const eff = m.efficiency > 0 ? `${m.efficiency.toFixed(2)} PR/$` : '-';
+      lines.push(`| ${mode} | ${m.runs} | ${(m.successRate * 100).toFixed(0)}% | ${m.prs} | $${m.cost.toFixed(2)} | ${eff} |`);
+    }
+  }
+
+  // Recent batches
+  if (stats.recentBatches.length > 0) {
+    lines.push('');
+    lines.push('Recent batches:');
+    lines.push('');
+    lines.push('| Batch | Guidance | Runs | PRs | Cost | Success |');
+    lines.push('|-------|----------|------|-----|------|---------|');
+    for (const b of stats.recentBatches) {
+      const guidance = b.guidance.length > 40 ? b.guidance.slice(0, 37) + '...' : b.guidance;
+      lines.push(`| ${b.batch_id} | ${guidance} | ${b.runs} | ${b.prs} | $${b.cost.toFixed(2)} | ${(b.success_rate * 100).toFixed(0)}% |`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 function main(): void {
   const args = process.argv.slice(2);
   const subcommand = args[0];
@@ -624,7 +883,14 @@ Usage:
   auto-dent-ctl.ts reflect [batch-id]  Cross-run pattern analysis and learning (#551)
   auto-dent-ctl.ts reflect --post [batch-id]  Post reflection summary to progress issue (#571)
   auto-dent-ctl.ts reflect --prompt [batch-id]  Output rendered prompt for Claude reflection
-  auto-dent-ctl.ts watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)`);
+  auto-dent-ctl.ts history             Cross-batch aggregate stats (#586)
+  auto-dent-ctl.ts aggregate [batch-id]  Append batch(es) to aggregate.jsonl (called at batch end)
+  auto-dent-ctl.ts watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)
+
+Cross-batch learning (#586):
+  The aggregate subcommand appends a batch summary to logs/auto-dent/aggregate.jsonl.
+  The history subcommand reads aggregate.jsonl and shows cross-batch metrics.
+  Backfill: auto-dent-ctl.ts aggregate   (no batch-id = backfill all completed)`);
     process.exit(0);
   }
 
@@ -852,6 +1118,57 @@ Usage:
 
         console.log('');
       }
+      break;
+    }
+
+    case 'history': {
+      const records = readAggregate(logsDir);
+      if (records.length === 0) {
+        console.log('No aggregate data found. Batches append to aggregate.jsonl on completion.');
+        console.log('Run: auto-dent-ctl.ts aggregate [batch-id] to backfill existing batches.');
+        process.exit(0);
+      }
+      const stats = computeAggregateStats(records);
+      console.log(formatAggregateStats(stats));
+      break;
+    }
+
+    case 'aggregate': {
+      const targetId = args[1];
+      const batches = discoverBatches(logsDir);
+
+      if (batches.length === 0) {
+        console.log('No auto-dent batches found.');
+        process.exit(0);
+      }
+
+      // If no target, backfill all completed batches
+      const targets = targetId
+        ? batches.filter((b) => b.batchId === targetId)
+        : batches.filter((b) => !b.active);
+
+      if (targets.length === 0) {
+        if (targetId) {
+          console.error(`No batch found with ID: ${targetId}`);
+        } else {
+          console.log('No completed batches to aggregate.');
+        }
+        process.exit(0);
+      }
+
+      let appended = 0;
+      let skipped = 0;
+      for (const batch of targets) {
+        const result = appendBatchToAggregate(logsDir, batch);
+        if (result.action === 'appended') {
+          console.log(`  Appended: ${batch.batchId}`);
+          appended++;
+        } else if (result.action === 'already_exists') {
+          skipped++;
+        }
+      }
+      console.log(`Aggregate updated: ${appended} appended, ${skipped} already present.`);
+      console.log(`File: ${join(logsDir, 'aggregate.jsonl')}`);
       break;
     }
 
