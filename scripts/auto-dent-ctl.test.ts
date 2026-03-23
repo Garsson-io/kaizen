@@ -269,7 +269,8 @@ describe('formatBatchScoreOutput', () => {
     });
     const output = formatBatchScoreOutput(batch);
     expect(output).toContain('#1: pass');
-    expect(output).toContain('#2: fail');
+    // Run 2 has exit_code=0 and no PRs but has default issues_closed, so failure_class='success' (label 'ok')
+    expect(output).toContain('#2: ok');
   });
 
   it('shows efficiency metric for successful runs', () => {

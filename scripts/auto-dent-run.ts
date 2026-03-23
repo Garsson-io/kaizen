@@ -21,7 +21,7 @@ import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
-import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly } from './auto-dent-score.js';
+import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { claimNextItem } from './auto-dent-plan.js';
 
 // ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
@@ -112,6 +112,8 @@ export interface RunMetrics {
   prompt_template?: string;
   /** SHA-256 hash of the prompt template content (first 12 chars) */
   prompt_hash?: string;
+  /** Structured failure classification (populated post-run) */
+  failure_class?: string;
 }
 
 export interface RunResult {
@@ -127,6 +129,8 @@ export interface RunResult {
   linesDeleted: number;
   /** Issues closed as not-planned (pruned, not fixed) */
   issuesPruned: number;
+  /** Structured failure classification */
+  failureClass?: string;
 }
 
 // State I/O
@@ -280,6 +284,7 @@ export function buildTemplateVars(
   let issuesClosedCount = '';
   let runCount = '';
   let prMergeStatus = '';
+  let failureClassSummary = '';
   const history = state.run_history || [];
   if (history.length > 0) {
     const batchScore = scoreBatch(history);
@@ -288,13 +293,15 @@ export function buildTemplateVars(
       '|-----|------|------|-----|--------|----------|--------|',
       ...batchScore.runs.map((r, i) => {
         const m = history[i];
-        return `| ${m?.run ?? i} | ${r.mode} | $${r.cost_usd.toFixed(2)} | ${r.pr_count} | ${r.issues_closed_count} | ${r.duration_seconds}s | ${r.success ? 'pass' : 'fail'} |`;
+        const status = r.success ? 'pass' : failureClassLabel(r.failure_class);
+        return `| ${m?.run ?? i} | ${r.mode} | $${r.cost_usd.toFixed(2)} | ${r.pr_count} | ${r.issues_closed_count} | ${r.duration_seconds}s | ${status} |`;
       }),
     ].join('\n');
     totalCost = batchScore.total_cost_usd.toFixed(2);
     prCount = String(batchScore.total_prs);
     issuesClosedCount = String(batchScore.total_issues_closed);
     runCount = String(batchScore.total_runs);
+    failureClassSummary = formatFailureDistribution(batchScore.runs.map(r => r.failure_class));
 
     // Build PR merge status summary with actual merge state from GitHub
     if (state.prs.length > 0) {
@@ -332,6 +339,7 @@ export function buildTemplateVars(
     run_count: runCount,
     pr_merge_status: prMergeStatus,
     prior_reflections: priorReflections,
+    failure_class_summary: failureClassSummary,
   };
 }
 
@@ -1914,6 +1922,8 @@ async function main(): Promise<void> {
     prompt_template: promptMeta.template,
     prompt_hash: promptMeta.hash,
   };
+  // Classify failure from metrics (log-based classification could be added later)
+  runMetrics.failure_class = classifyFailure(runMetrics);
   if (!freshState.run_history) freshState.run_history = [];
   freshState.run_history.push(runMetrics);
 

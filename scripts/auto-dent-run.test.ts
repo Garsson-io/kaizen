@@ -429,7 +429,7 @@ describe('buildTemplateVars with run_history', () => {
     });
     const vars = buildTemplateVars(state, 2);
 
-    expect(vars.run_history_table).toContain('fail');
+    expect(vars.run_history_table).toContain('crash');
     expect(vars.total_cost).toBe('0.50');
     expect(vars.pr_count).toBe('0');
   });

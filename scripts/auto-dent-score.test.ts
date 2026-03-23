@@ -12,11 +12,16 @@ import {
   postHocScoreBatch,
   formatPostHocLine,
   detectCostAnomaly,
+  classifyFailure,
+  failureClassLabel,
+  failureClassDistribution,
+  formatFailureDistribution,
   type RunScore,
   type BatchScore,
   type BatchTrend,
   type ModeStats,
   type PostHocBatchResult,
+  type FailureClass,
 } from './auto-dent-score.js';
 import type { RunMetrics, RunResult } from './auto-dent-run.js';
 
@@ -334,9 +339,10 @@ describe('formatRunScoreLine', () => {
       mode: 'explore',
       lines_deleted: 0,
       issues_pruned: 0,
+      failure_class: 'crash',
     };
     const line = formatRunScoreLine(score);
-    expect(line).toContain('fail');
+    expect(line).toContain('crash');
     expect(line).toContain('explore');
     expect(line).not.toContain('PR/$');
   });
@@ -358,9 +364,9 @@ describe('formatBatchScoreTable', () => {
       avg_duration_seconds: 216.67,
       overall_efficiency: 0.5,
       runs: [
-        { success: true, cost_usd: 2, tool_calls: 10, pr_count: 1, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 200, efficiency: 0.5, cost_per_pr: 2, stop_requested: false, mode: 'exploit', lines_deleted: 80, issues_pruned: 1, cost_vs_avg: null },
-        { success: true, cost_usd: 3, tool_calls: 15, pr_count: 2, issues_closed_count: 3, issues_filed_count: 0, duration_seconds: 400, efficiency: 0.67, cost_per_pr: 1.5, stop_requested: false, mode: 'exploit', lines_deleted: 40, issues_pruned: 1, cost_vs_avg: null },
-        { success: false, cost_usd: 1, tool_calls: 5, pr_count: 0, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 50, efficiency: 0, cost_per_pr: Infinity, stop_requested: false, mode: 'explore', lines_deleted: 0, issues_pruned: 0, cost_vs_avg: null },
+        { success: true, cost_usd: 2, tool_calls: 10, pr_count: 1, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 200, efficiency: 0.5, cost_per_pr: 2, stop_requested: false, mode: 'exploit', lines_deleted: 80, issues_pruned: 1, cost_vs_avg: null, failure_class: 'success' },
+        { success: true, cost_usd: 3, tool_calls: 15, pr_count: 2, issues_closed_count: 3, issues_filed_count: 0, duration_seconds: 400, efficiency: 0.67, cost_per_pr: 1.5, stop_requested: false, mode: 'exploit', lines_deleted: 40, issues_pruned: 1, cost_vs_avg: null, failure_class: 'success' },
+        { success: false, cost_usd: 1, tool_calls: 5, pr_count: 0, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 50, efficiency: 0, cost_per_pr: Infinity, stop_requested: false, mode: 'explore', lines_deleted: 0, issues_pruned: 0, cost_vs_avg: null, failure_class: 'crash' },
       ],
       mode_breakdown: [
         { mode: 'exploit', runs: 2, successes: 2, success_rate: 1, cost_usd: 5, prs: 3, avg_cost: 2.5, efficiency: 0.6, lines_deleted: 120, issues_pruned: 2 },
@@ -487,6 +493,7 @@ function makeRunScore(overrides: Partial<RunScore> = {}): RunScore {
     lines_deleted: 0,
     issues_pruned: 0,
     cost_vs_avg: null,
+    failure_class: 'success',
     ...overrides,
   };
 }
@@ -630,6 +637,7 @@ describe('computeModeDiversity', () => {
       cost_vs_avg: null,
       lines_deleted: 0,
       issues_pruned: 0,
+      failure_class: 'success',
     };
   }
 
@@ -1000,6 +1008,7 @@ describe('computeBatchTrend', () => {
       lines_deleted: 0,
       issues_pruned: 0,
       cost_vs_avg: null,
+      failure_class: 'success',
       ...overrides,
     };
   }
@@ -1168,5 +1177,90 @@ describe('formatBatchScoreTable trend integration', () => {
     };
     const table = formatBatchScoreTable(score);
     expect(table).not.toContain('Trend');
+  });
+});
+
+describe('classifyFailure', () => {
+  it('classifies successful run with PRs as success', () => {
+    expect(classifyFailure(makeRunMetrics({ exit_code: 0, prs: ['pr1'] }))).toBe('success');
+  });
+
+  it('classifies exit 0 with no artifacts as empty_success', () => {
+    expect(classifyFailure(makeRunMetrics({ exit_code: 0, prs: [], issues_filed: [], issues_closed: [] }))).toBe('empty_success');
+  });
+
+  it('classifies exit 0 with issues filed as success', () => {
+    expect(classifyFailure(makeRunMetrics({ exit_code: 0, prs: [], issues_filed: ['#1'], issues_closed: [] }))).toBe('success');
+  });
+
+  it('classifies non-zero exit as crash by default', () => {
+    expect(classifyFailure(makeRunMetrics({ exit_code: 1, prs: [] }))).toBe('crash');
+  });
+
+  it('classifies hook rejection from log', () => {
+    expect(classifyFailure(
+      makeRunMetrics({ exit_code: 1, prs: [] }),
+      'Error: hook rejected the commit',
+    )).toBe('hook_rejection');
+  });
+
+  it('classifies infrastructure failure from log', () => {
+    expect(classifyFailure(
+      makeRunMetrics({ exit_code: 1, prs: [] }),
+      'fatal: unable to access remote',
+    )).toBe('infrastructure');
+  });
+
+  it('classifies timeout from log', () => {
+    expect(classifyFailure(
+      makeRunMetrics({ exit_code: 1, prs: [] }),
+      'process timed out after 300s',
+    )).toBe('timeout');
+  });
+
+  it('classifies scope overflow from log', () => {
+    expect(classifyFailure(
+      makeRunMetrics({ exit_code: 1, prs: [] }),
+      'context limit exceeded, too many changes',
+    )).toBe('scope_overflow');
+  });
+
+  it('classifies issue blocked from log', () => {
+    expect(classifyFailure(
+      makeRunMetrics({ exit_code: 1, prs: [] }),
+      'issue blocked by dependency',
+    )).toBe('issue_blocked');
+  });
+});
+
+describe('failureClassLabel', () => {
+  it('returns compact labels for each class', () => {
+    expect(failureClassLabel('success')).toBe('ok');
+    expect(failureClassLabel('empty_success')).toBe('empty');
+    expect(failureClassLabel('crash')).toBe('crash');
+    expect(failureClassLabel('hook_rejection')).toBe('hook');
+    expect(failureClassLabel('infrastructure')).toBe('infra');
+    expect(failureClassLabel('timeout')).toBe('timeout');
+    expect(failureClassLabel('unknown')).toBe('???');
+  });
+});
+
+describe('failureClassDistribution', () => {
+  it('counts failure classes', () => {
+    const dist = failureClassDistribution(['success', 'crash', 'crash', 'empty_success']);
+    expect(dist.success).toBe(1);
+    expect(dist.crash).toBe(2);
+    expect(dist.empty_success).toBe(1);
+  });
+});
+
+describe('formatFailureDistribution', () => {
+  it('formats distribution sorted by count', () => {
+    const result = formatFailureDistribution(['crash', 'crash', 'success', 'empty_success']);
+    expect(result).toBe('crash:2, success:1, empty_success:1');
+  });
+
+  it('returns empty string for empty array', () => {
+    expect(formatFailureDistribution([])).toBe('');
   });
 });
