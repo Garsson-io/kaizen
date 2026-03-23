@@ -8,14 +8,75 @@
  * (logging warnings rather than throwing).
  */
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import type { RunResult } from './auto-dent-run.js';
 
 // GitHub CLI wrapper (tolerant of failures)
 
+/**
+ * Parse a shell-style command string into an array of arguments.
+ * Handles double-quoted strings (with JSON/shell escape sequences) and
+ * single-quoted strings. Does NOT interpret backticks or $() substitutions —
+ * that is exactly the point: user-controlled data (e.g. markdown backtick
+ * code-spans in --body) never reaches a shell.
+ */
+export function parseShellArgs(cmd: string): string[] {
+  const args: string[] = [];
+  let current = '';
+  let i = 0;
+  while (i < cmd.length) {
+    const c = cmd[i];
+    if (c === ' ' || c === '\t') {
+      if (current !== '') { args.push(current); current = ''; }
+      i++;
+    } else if (c === '"') {
+      i++;
+      while (i < cmd.length && cmd[i] !== '"') {
+        if (cmd[i] === '\\' && i + 1 < cmd.length) {
+          const esc = cmd[i + 1];
+          if (esc === '"' || esc === '\\' || esc === '/') { current += esc; i += 2; }
+          else if (esc === 'n') { current += '\n'; i += 2; }
+          else if (esc === 'r') { current += '\r'; i += 2; }
+          else if (esc === 't') { current += '\t'; i += 2; }
+          else { current += '\\'; current += esc; i += 2; }
+        } else {
+          current += cmd[i]; i++;
+        }
+      }
+      i++;
+    } else if (c === "'") {
+      i++;
+      while (i < cmd.length && cmd[i] !== "'") { current += cmd[i]; i++; }
+      i++;
+    } else {
+      current += c; i++;
+    }
+  }
+  if (current !== '') args.push(current);
+  return args;
+}
+
+/**
+ * Execute a gh CLI command without going through a shell.
+ * Parses the command string into args, then uses spawnSync so that
+ * user-controlled data (markdown backticks, dollar signs, etc.) in
+ * --body/--title values is never interpreted as shell syntax.
+ */
 export function ghExec(cmd: string): string {
+  const args = parseShellArgs(cmd);
+  const [bin, ...rest] = args;
   try {
-    return execSync(cmd, { encoding: 'utf8', timeout: 30_000 }).trim();
+    const result = spawnSync(bin, rest, {
+      encoding: 'utf8',
+      timeout: 30_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      const detail = (result.stderr || '').split('\n')[0] || `exit ${result.status}`;
+      throw new Error(detail);
+    }
+    return (result.stdout || '').trim();
   } catch (e: any) {
     console.log(
       `  [hygiene] warning: ${cmd.slice(0, 80)}... -> ${e.message?.split('\n')[0] || 'failed'}`,
