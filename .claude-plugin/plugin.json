@@ -1,6 +1,6 @@
 {
   "name": "kaizen",
-  "version": "1.0.57",
+  "version": "1.0.58",
   "description": "Continuous improvement plugin for Claude Code — enforcement hooks, reflection workflows, dev workflow skills, and recursive self-improvement",
   "author": {
     "name": "Garsson-io",
@@ -104,11 +104,6 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-tools.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-lint-kernel-paths.sh",
             "timeout": 10
           }
         ]
