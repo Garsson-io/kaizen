@@ -36,6 +36,12 @@ export interface BatchSummary {
   avg_run_duration_minutes: number;
   avg_cost_per_run_usd: number;
   cost_per_pr_usd: number;
+  /** Label frequency across all picked issues — enables domain/horizon distribution analysis */
+  label_distribution: Record<string, number>;
+  /** Horizon labels (horizon/*) grouped for quick visibility */
+  horizon_distribution: Record<string, number>;
+  /** Area labels (area/*) grouped for quick visibility */
+  area_distribution: Record<string, number>;
 }
 
 /**
@@ -94,6 +100,23 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
   const issuesWorked = [...new Set(issueEvents.map(e => e.event.issue))];
   const prsCreated = [...new Set(prEvents.map(e => e.event.pr_url))];
 
+  // Compute label distributions from issue_picked events
+  const labelDistribution: Record<string, number> = {};
+  const horizonDistribution: Record<string, number> = {};
+  const areaDistribution: Record<string, number> = {};
+  for (const e of issueEvents) {
+    const labels = e.event.labels ?? [];
+    for (const label of labels) {
+      labelDistribution[label] = (labelDistribution[label] ?? 0) + 1;
+      if (label.startsWith('horizon/')) {
+        horizonDistribution[label] = (horizonDistribution[label] ?? 0) + 1;
+      }
+      if (label.startsWith('area/')) {
+        areaDistribution[label] = (areaDistribution[label] ?? 0) + 1;
+      }
+    }
+  }
+
   const runCount = completeEvents.length || 1;
   const totalDurationMinutes = Math.round(totalDurationMs / 60000 * 10) / 10;
 
@@ -116,6 +139,9 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     avg_run_duration_minutes: Math.round(totalDurationMinutes / runCount * 10) / 10,
     avg_cost_per_run_usd: Math.round(totalCost / runCount * 100) / 100,
     cost_per_pr_usd: totalPrs > 0 ? Math.round(totalCost / totalPrs * 100) / 100 : 0,
+    label_distribution: labelDistribution,
+    horizon_distribution: horizonDistribution,
+    area_distribution: areaDistribution,
   };
 }
 
@@ -163,6 +189,26 @@ export function formatPlainLanguage(summary: BatchSummary): string {
     lines.push('### Failure Patterns');
     for (const [cls, count] of failureEntries.sort((a, b) => b[1] - a[1])) {
       lines.push(`- ${cls}: ${count} occurrence${count > 1 ? 's' : ''}`);
+    }
+  }
+
+  // Domain distribution (horizons and areas)
+  const horizonEntries = Object.entries(summary.horizon_distribution);
+  const areaEntries = Object.entries(summary.area_distribution);
+  if (horizonEntries.length > 0 || areaEntries.length > 0) {
+    lines.push('');
+    lines.push('### Domain Distribution');
+    if (horizonEntries.length > 0) {
+      lines.push('**Horizons touched:**');
+      for (const [label, count] of horizonEntries.sort((a, b) => b[1] - a[1])) {
+        lines.push(`- ${label}: ${count} issue${count > 1 ? 's' : ''}`);
+      }
+    }
+    if (areaEntries.length > 0) {
+      lines.push('**Areas touched:**');
+      for (const [label, count] of areaEntries.sort((a, b) => b[1] - a[1])) {
+        lines.push(`- ${label}: ${count} issue${count > 1 ? 's' : ''}`);
+      }
     }
   }
 
