@@ -75,6 +75,9 @@ Periodically, look outward. The next breakthrough may not be on any existing hor
 Parallel work produces overlap, not waste.
 The first to merge wins. The rest close gracefully.
 
+The framework that can't evolve becomes the ceiling.
+The tool you can't question is the tool that will fail you.
+
 The goal is not to be done. The goal is to be better at not being done.
 ```
 
@@ -176,6 +179,16 @@ The fix is periodic outward-facing inquiry: What are other teams doing? What doe
 
 This doesn't mean chasing every new tool or framework. It means maintaining curiosity as a practice — a scheduled, intentional counterweight to the inward focus of daily kaizen work.
 
+### The framework must evolve
+
+The Zen of Kaizen is the most dangerous document in the system. Every skill references it. Every reflection cites it. Every enforcement decision is guided by it. And precisely because everyone agrees it's important, nobody questions it.
+
+But a framework that can't evolve becomes the ceiling. If the improvement system is sacred — above criticism, above revision — then the system can only improve within the boundaries the framework defines. It can never improve the boundaries themselves. This is the deepest form of local optimization: optimizing within a fixed set of assumptions that nobody re-examines.
+
+The fix is to apply kaizen to kaizen's own philosophy. The principles in this document should be treated as hypotheses, not commandments. When practice contradicts a principle, practice wins. When a principle consistently produces bad outcomes, revise the principle. When a new principle is needed, propose it through the same process that produced the originals: observe anomalies, articulate the gap, test the principle, and adopt it with provenance.
+
+The recursion terminates at the human. Philosophical changes are too important for autonomous execution. The system proposes, the human disposes. But the system must propose — waiting for a human to notice a philosophical gap recreates the bottleneck that the horizon discovery tower was designed to eliminate.
+
 ### The escalation framework
 
 The core algorithm:
@@ -261,4 +274,5 @@ Each principle traces back to a specific observation, incident, or conversation.
 | *Perfection is achieved not when...* | #560, #561 — auto-dent producing 20+ additive PRs with no removals | Additive bias, complexity debt |
 | *A system that only looks inward...* | #553, #561 — self-reflection converging on local optima | Exploration/exploitation balance |
 | *Parallel work produces overlap* | Multiple agents picking same issue | Parallel coordination |
+| *The framework that can't evolve becomes the ceiling* | #559, #561 — the improvement framework itself must be evolvable | Recursive self-improvement, philosophical evolution |
 | *The goal is not to be done* | Founding principle | Infinite game orientation |
