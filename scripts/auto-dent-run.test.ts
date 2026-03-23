@@ -26,6 +26,7 @@ import {
   selectMode,
   checkSignalOverrides,
   computeAdaptiveWeights,
+  modeSuccess,
   weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
@@ -2069,13 +2070,13 @@ describe('computeAdaptiveWeights', () => {
     for (let i = 0; i < 7; i++) {
       history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: i < 6 ? ['pr'] : [], cost_usd: 1.0 }));
     }
-    // explore: 3 runs, 0 PRs (low success)
+    // explore: 3 runs, 0 issues filed (low success for explore)
     for (let i = 7; i < 10; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'explore', prs: [], cost_usd: 2.0 }));
+      history.push(makeRunMetrics({ run: i, mode: 'explore', prs: [], issues_filed: [], cost_usd: 2.0 }));
     }
     // reflect and subtract: 1 run each
-    history.push(makeRunMetrics({ run: 10, mode: 'reflect', prs: ['pr'], cost_usd: 1.0 }));
-    history.push(makeRunMetrics({ run: 11, mode: 'subtract', prs: ['pr'], cost_usd: 0.5 }));
+    history.push(makeRunMetrics({ run: 10, mode: 'reflect', issues_filed: ['#1'], cost_usd: 1.0 }));
+    history.push(makeRunMetrics({ run: 11, mode: 'subtract', prs: ['pr'], lines_deleted: 200, cost_usd: 0.5 }));
 
     const weights = computeAdaptiveWeights(history, 10);
     expect(weights).not.toBeNull();
@@ -2112,6 +2113,68 @@ describe('computeAdaptiveWeights', () => {
     expect(weights!.explore).toBeGreaterThan(0);
     expect(weights!.reflect).toBeGreaterThan(0);
     expect(weights!.subtract).toBeGreaterThan(0);
+  });
+
+  it('uses issues_filed for explore mode success (not PRs)', () => {
+    const history: RunMetrics[] = [];
+    // exploit: 7 runs, all with PRs
+    for (let i = 0; i < 7; i++) {
+      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr'], cost_usd: 1.0 }));
+    }
+    // explore: 5 runs, 0 PRs but filed issues
+    for (let i = 7; i < 12; i++) {
+      history.push(makeRunMetrics({ run: i, mode: 'explore', prs: [], issues_filed: ['#1', '#2'], cost_usd: 1.5 }));
+    }
+
+    const weights = computeAdaptiveWeights(history, 10);
+    expect(weights).not.toBeNull();
+    // explore should get meaningful weight since it filed issues
+    expect(weights!.explore).toBeGreaterThan(0.01);
+  });
+
+  it('uses lines_deleted for subtract mode success', () => {
+    const history: RunMetrics[] = [];
+    for (let i = 0; i < 10; i++) {
+      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr'], cost_usd: 1.0 }));
+    }
+    // subtract: 3 runs, 0 PRs but deleted lines
+    for (let i = 10; i < 13; i++) {
+      history.push(makeRunMetrics({ run: i, mode: 'subtract', prs: [], lines_deleted: 300, issues_pruned: 2, cost_usd: 0.8 }));
+    }
+
+    const weights = computeAdaptiveWeights(history, 10);
+    expect(weights).not.toBeNull();
+    // subtract should get meaningful weight since it deleted lines
+    expect(weights!.subtract).toBeGreaterThan(0.01);
+  });
+});
+
+describe('modeSuccess', () => {
+  it('exploit uses PRs', () => {
+    expect(modeSuccess('exploit', makeRunMetrics({ prs: ['pr1', 'pr2'] }))).toBe(2);
+    expect(modeSuccess('exploit', makeRunMetrics({ prs: [] }))).toBe(0);
+  });
+
+  it('explore uses issues_filed', () => {
+    expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1', '#2', '#3'] }))).toBe(3);
+    expect(modeSuccess('explore', makeRunMetrics({ prs: ['pr1'], issues_filed: [] }))).toBe(0);
+  });
+
+  it('reflect uses issues_filed', () => {
+    expect(modeSuccess('reflect', makeRunMetrics({ issues_filed: ['#1'] }))).toBe(1);
+  });
+
+  it('subtract uses lines_deleted and issues_pruned', () => {
+    expect(modeSuccess('subtract', makeRunMetrics({ lines_deleted: 200, issues_pruned: 1 }))).toBe(3);
+    expect(modeSuccess('subtract', makeRunMetrics({ lines_deleted: 0, issues_pruned: 0 }))).toBe(0);
+  });
+
+  it('contemplate always returns 1', () => {
+    expect(modeSuccess('contemplate', makeRunMetrics({ prs: [], issues_filed: [] }))).toBe(1);
+  });
+
+  it('unknown modes fall back to PRs', () => {
+    expect(modeSuccess('unknown', makeRunMetrics({ prs: ['pr1'] }))).toBe(1);
   });
 });
 

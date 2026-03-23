@@ -519,11 +519,40 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
 }
 
 /**
+ * Compute mode-appropriate success metric for a run.
+ * Each mode has its own definition of "success":
+ *   - exploit: PRs produced
+ *   - explore: issues filed (its purpose is discovery, not PRs)
+ *   - reflect: issues filed (insights that become actionable issues)
+ *   - subtract: lines deleted + issues pruned (reduction, not addition)
+ *   - contemplate: fixed baseline (strategic value not measurable per-run)
+ */
+export function modeSuccess(mode: string, metrics: RunMetrics): number {
+  switch (mode) {
+    case 'exploit':
+      return metrics.prs.length;
+    case 'explore':
+      return metrics.issues_filed.length;
+    case 'reflect':
+      return metrics.issues_filed.length;
+    case 'subtract':
+      return (metrics.lines_deleted ?? 0) / 100 + (metrics.issues_pruned ?? 0);
+    case 'contemplate':
+      return 1; // strategic value, always counts as success
+    default:
+      return metrics.prs.length;
+  }
+}
+
+/**
  * Compute adaptive mode weights from run history.
  *
- * For each mode, computes an effectiveness score based on:
- *   - Success rate (PRs produced per run)
- *   - Cost efficiency (PRs per dollar)
+ * For each mode, computes an effectiveness score based on mode-appropriate
+ * success metrics (not just PRs). Each mode is measured by its own output:
+ *   - exploit → PRs/run, PRs/$
+ *   - explore/reflect → issues/run, issues/$
+ *   - subtract → (lines_deleted/100 + issues_pruned)/run
+ *   - contemplate → fixed baseline
  *
  * Returns weights normalized so they sum to 1.0, or null if insufficient data.
  * Requires at least `minRuns` total runs with mode data to activate.
@@ -555,7 +584,7 @@ export function computeAdaptiveWeights(
     subtract: 0.1,
   };
 
-  // Compute raw effectiveness scores
+  // Compute raw effectiveness scores using mode-appropriate metrics
   const scores: Record<string, number> = {};
   for (const mode of schedulableModes) {
     const runs = byMode.get(mode) || [];
@@ -565,10 +594,10 @@ export function computeAdaptiveWeights(
       continue;
     }
 
-    const totalPrs = runs.reduce((s, r) => s + r.prs.length, 0);
+    const totalSuccess = runs.reduce((s, r) => s + modeSuccess(mode, r), 0);
     const totalCostVal = runs.reduce((s, r) => s + r.cost_usd, 0);
-    const successRate = totalPrs / runs.length; // PRs per run
-    const efficiency = totalCostVal > 0 ? totalPrs / totalCostVal : 0; // PRs per dollar
+    const successRate = totalSuccess / runs.length;
+    const efficiency = totalCostVal > 0 ? totalSuccess / totalCostVal : 0;
 
     // Blend success rate and efficiency, then scale by base weight
     // This preserves the general shape (exploit dominant) while rewarding performance
