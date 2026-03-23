@@ -4,6 +4,9 @@
  * Tests the shared lib in isolation by running `bash scope-guard.sh` with
  * different HOME environments. scope-guard auto-runs on source (line 75),
  * so running it as a standalone script exercises the full path.
+ *
+ * Each test gets its own counter file via KAIZEN_SCOPE_GUARD_COUNTER env var
+ * to avoid interference when vitest runs test files in parallel.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -15,48 +18,46 @@ import {
   readFileSync,
   existsSync,
   rmSync,
-  unlinkSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const KAIZEN_ROOT = resolve(__dirname, "../..");
 const SCOPE_GUARD = join(KAIZEN_ROOT, ".claude", "hooks", "lib", "scope-guard.sh");
-const COUNTER_FILE = "/tmp/.kaizen-scope-guard-fix-attempts";
-
-function runScopeGuard(home: string): { stderr: string; exitCode: number } {
-  const result = spawnSync("bash", [SCOPE_GUARD], {
-    encoding: "utf-8",
-    env: { ...process.env, HOME: home, PATH: process.env.PATH },
-    timeout: 5000,
-  });
-  return {
-    stderr: (result.stderr ?? "").trim(),
-    exitCode: result.status ?? 1,
-  };
-}
-
-function removeCounter(): void {
-  try { unlinkSync(COUNTER_FILE); } catch { /* ignore */ }
-}
 
 describe("scope-guard.sh", () => {
   let fakeHome: string;
+  let counterFile: string;
 
   beforeEach(() => {
     fakeHome = mkdtempSync(join(tmpdir(), "sg-test-"));
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    removeCounter();
+    counterFile = join(fakeHome, ".scope-guard-counter");
   });
 
   afterEach(() => {
     rmSync(fakeHome, { recursive: true, force: true });
-    removeCounter();
   });
 
+  function runScopeGuard(): { stderr: string; exitCode: number } {
+    const result = spawnSync("bash", [SCOPE_GUARD], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        KAIZEN_SCOPE_GUARD_COUNTER: counterFile,
+        PATH: process.env.PATH,
+      },
+      timeout: 5000,
+    });
+    return {
+      stderr: (result.stderr ?? "").trim(),
+      exitCode: result.status ?? 1,
+    };
+  }
+
   it("no settings.json — noop, no warning", () => {
-    // Don't create settings.json
-    const { stderr, exitCode } = runScopeGuard(fakeHome);
+    const { stderr, exitCode } = runScopeGuard();
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
   });
@@ -66,7 +67,7 @@ describe("scope-guard.sh", () => {
       join(fakeHome, ".claude", "settings.json"),
       JSON.stringify({ enabledPlugins: { "other@1.0": true } }),
     );
-    const { stderr, exitCode } = runScopeGuard(fakeHome);
+    const { stderr, exitCode } = runScopeGuard();
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
   });
@@ -76,10 +77,9 @@ describe("scope-guard.sh", () => {
       join(fakeHome, ".claude", "settings.json"),
       JSON.stringify({ someKey: "kaizen@kaizen", enabledPlugins: { "other@1.0": true } }),
     );
-    const { stderr, exitCode } = runScopeGuard(fakeHome);
+    const { stderr, exitCode } = runScopeGuard();
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    // settings.json unchanged
     const settings = JSON.parse(readFileSync(join(fakeHome, ".claude", "settings.json"), "utf-8"));
     expect(settings.enabledPlugins).toEqual({ "other@1.0": true });
   });
@@ -89,11 +89,10 @@ describe("scope-guard.sh", () => {
       join(fakeHome, ".claude", "settings.json"),
       JSON.stringify({ enabledPlugins: { "kaizen@kaizen": true, "other@1.0": true } }),
     );
-    const { stderr, exitCode } = runScopeGuard(fakeHome);
+    const { stderr, exitCode } = runScopeGuard();
     expect(exitCode).toBe(0);
     expect(stderr).toContain("auto-removed");
 
-    // settings.json fixed
     const settings = JSON.parse(readFileSync(join(fakeHome, ".claude", "settings.json"), "utf-8"));
     expect(settings.enabledPlugins).not.toHaveProperty("kaizen@kaizen");
     expect(settings.enabledPlugins).toHaveProperty("other@1.0");
@@ -104,8 +103,8 @@ describe("scope-guard.sh", () => {
       join(fakeHome, ".claude", "settings.json"),
       JSON.stringify({ enabledPlugins: { "kaizen@kaizen": true } }),
     );
-    runScopeGuard(fakeHome);
-    expect(existsSync(COUNTER_FILE)).toBe(false);
+    runScopeGuard();
+    expect(existsSync(counterFile)).toBe(false);
   });
 
   it("counter cap at 3 — manual instructions, no auto-fix", () => {
@@ -113,14 +112,13 @@ describe("scope-guard.sh", () => {
       join(fakeHome, ".claude", "settings.json"),
       JSON.stringify({ enabledPlugins: { "kaizen@kaizen": true } }),
     );
-    writeFileSync(COUNTER_FILE, "3");
+    writeFileSync(counterFile, "3");
 
-    const { stderr, exitCode } = runScopeGuard(fakeHome);
+    const { stderr, exitCode } = runScopeGuard();
     expect(exitCode).toBe(0);
     expect(stderr).toContain("Manual fix");
     expect(stderr).toContain("persists after 3");
 
-    // settings.json NOT fixed
     const content = readFileSync(join(fakeHome, ".claude", "settings.json"), "utf-8");
     expect(content).toContain("kaizen@kaizen");
   });
@@ -130,10 +128,9 @@ describe("scope-guard.sh", () => {
       join(fakeHome, ".claude", "settings.json"),
       JSON.stringify({ enabledPlugins: { "kaizen@kaizen": true } }),
     );
-    writeFileSync(COUNTER_FILE, "1");
+    writeFileSync(counterFile, "1");
 
-    runScopeGuard(fakeHome);
-    // Successful fix should clean counter
-    expect(existsSync(COUNTER_FILE)).toBe(false);
+    runScopeGuard();
+    expect(existsSync(counterFile)).toBe(false);
   });
 });

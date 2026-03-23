@@ -47,8 +47,6 @@ import {
 
 const KAIZEN_ROOT = resolve(__dirname, "../..");
 const HOOKS_DIR = join(KAIZEN_ROOT, ".claude", "hooks");
-const COUNTER_FILE = "/tmp/.kaizen-scope-guard-fix-attempts";
-
 // ── Hook Registry (matches settings-fragment.json) ──
 
 const DEFAULT_HOOKS = {
@@ -111,6 +109,7 @@ export class SessionSimulator {
   private fakeHome: string;
   private stateDir: string;
   private auditDir: string;
+  private counterFile: string;
   private mockDir: MockDir;
   private steps: StepResult[] = [];
   private hookTimeout: number;
@@ -120,6 +119,8 @@ export class SessionSimulator {
     this.fakeHome = mkdtempSync(join(tmpdir(), "ses-home-"));
     this.stateDir = mkdtempSync(join(tmpdir(), "ses-state-"));
     this.auditDir = mkdtempSync(join(tmpdir(), "ses-audit-"));
+    // Each session gets its own counter file to avoid parallel test interference
+    this.counterFile = join(this.stateDir, ".scope-guard-counter");
     this.mockDir = createMockDir();
 
     // Default mocks so hooks that call git/gh don't crash
@@ -159,7 +160,7 @@ export class SessionSimulator {
   }
 
   setCounter(value: number): void {
-    writeFileSync(COUNTER_FILE, String(value));
+    writeFileSync(this.counterFile, String(value));
   }
 
   mockCommand(name: string, opts: MockCommandOpts): void {
@@ -261,12 +262,12 @@ export class SessionSimulator {
   }
 
   counterExists(): boolean {
-    return existsSync(COUNTER_FILE);
+    return existsSync(this.counterFile);
   }
 
   counterValue(): number {
-    if (!existsSync(COUNTER_FILE)) return 0;
-    return parseInt(readFileSync(COUNTER_FILE, "utf-8").trim(), 10) || 0;
+    if (!existsSync(this.counterFile)) return 0;
+    return parseInt(readFileSync(this.counterFile, "utf-8").trim(), 10) || 0;
   }
 
   // ── Cleanup ──
@@ -276,7 +277,6 @@ export class SessionSimulator {
     rmSync(this.stateDir, { recursive: true, force: true });
     rmSync(this.auditDir, { recursive: true, force: true });
     this.mockDir.cleanup();
-    this.removeCounter();
   }
 
   // ── Internals ──
@@ -293,6 +293,7 @@ export class SessionSimulator {
         env: {
           HOME: this.fakeHome,
           KAIZEN_TELEMETRY_DISABLED: "1",
+          KAIZEN_SCOPE_GUARD_COUNTER: this.counterFile,
           AUDIT_LOG: "/dev/null",
           AUDIT_DIR: this.auditDir,
           STATE_DIR: this.stateDir,
@@ -309,6 +310,6 @@ export class SessionSimulator {
   }
 
   private removeCounter(): void {
-    try { unlinkSync(COUNTER_FILE); } catch { /* ignore */ }
+    try { unlinkSync(this.counterFile); } catch { /* ignore */ }
   }
 }

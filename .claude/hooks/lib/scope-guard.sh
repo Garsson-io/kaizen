@@ -34,7 +34,7 @@ try {
     #
     # Attempt counter: if the fix fails and the setting persists, stop
     # retrying after 3 attempts to avoid spamming on every tool call.
-    local counter_file="/tmp/.kaizen-scope-guard-fix-attempts"
+    local counter_file="${KAIZEN_SCOPE_GUARD_COUNTER:-/tmp/.kaizen-scope-guard-fix-attempts}"
     local attempts=0
     [ -f "$counter_file" ] && attempts=$(cat "$counter_file" 2>/dev/null || echo 0)
 
