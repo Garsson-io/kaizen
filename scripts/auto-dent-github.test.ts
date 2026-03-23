@@ -15,28 +15,13 @@ import {
   syncEpicChecklists,
   verifyIssuesClosed,
 } from './auto-dent-github.js';
-import type { RunResult } from './auto-dent-run.js';
+import { makeRunResult } from './auto-dent-test-helpers.js';
 
 vi.mock('child_process', () => ({
   execSync: vi.fn(),
 }));
 
 const mockExecSync = vi.mocked(execSync);
-
-function makeResult(overrides: Partial<RunResult> = {}): RunResult {
-  return {
-    prs: [],
-    issuesFiled: [],
-    issuesClosed: [],
-    cases: [],
-    cost: 0,
-    toolCalls: 0,
-    stopRequested: false,
-    linesDeleted: 0,
-    issuesPruned: 0,
-    ...overrides,
-  };
-}
 
 describe('ghExec', () => {
   beforeEach(() => {
@@ -210,7 +195,7 @@ describe('labelArtifacts', () => {
 
   it('labels PRs and issues', () => {
     mockExecSync.mockReturnValue('ok');
-    const result = makeResult({
+    const result = makeRunResult({
       prs: ['https://github.com/o/r/pull/1'],
       issuesFiled: ['https://github.com/o/r/issues/10'],
     });
@@ -226,7 +211,7 @@ describe('labelArtifacts', () => {
   });
 
   it('does nothing for empty result', () => {
-    labelArtifacts(makeResult(), 'auto-dent');
+    labelArtifacts(makeRunResult(), 'auto-dent');
     expect(mockExecSync).not.toHaveBeenCalled();
   });
 });
@@ -238,7 +223,7 @@ describe('queueAutoMerge', () => {
 
   it('queues auto-merge for each PR', () => {
     mockExecSync.mockReturnValue('ok');
-    const result = makeResult({
+    const result = makeRunResult({
       prs: ['https://github.com/o/r/pull/1', 'https://github.com/o/r/pull/2'],
     });
 
