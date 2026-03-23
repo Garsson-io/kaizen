@@ -71,6 +71,8 @@ export interface BatchScore {
   mode_breakdown: ModeStats[];
   /** Number of runs flagged as cost anomalies (>= 2x rolling avg) */
   cost_anomaly_count: number;
+  /** Mode diversity score: 0 = all runs in one mode, 1 = perfectly even distribution */
+  mode_diversity: number;
   /** Post-hoc merge results (populated by postHocScoreBatch) */
   post_hoc?: PostHocBatchResult;
 }
@@ -238,6 +240,7 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     runs,
     mode_breakdown: scoreModeBreakdown(runs),
     cost_anomaly_count: costAnomalyCount,
+    mode_diversity: computeModeDiversity(runs),
   };
 }
 
@@ -335,6 +338,7 @@ export function formatBatchScoreTable(score: BatchScore): string {
   ];
   if (modeStr) {
     lines.push(`| **Modes** | ${modeStr} |`);
+    lines.push(`| **Mode diversity** | ${(score.mode_diversity * 100).toFixed(0)}% |`);
   }
   if (score.cost_anomaly_count > 0) {
     lines.push(`| **Cost anomalies** | ${score.cost_anomaly_count} runs >= 2x avg |`);
@@ -421,6 +425,39 @@ export function scoreModeBreakdown(runs: RunScore[]): ModeStats[] {
   // Sort by number of runs descending (most-used mode first)
   stats.sort((a, b) => b.runs - a.runs);
   return stats;
+}
+
+/**
+ * Compute mode diversity using normalized Shannon entropy.
+ *
+ * Returns a value in [0, 1]:
+ *   0 = all runs used a single mode (no diversity)
+ *   1 = runs are perfectly evenly distributed across modes
+ *
+ * With only one distinct mode, returns 0.
+ */
+export function computeModeDiversity(runs: RunScore[]): number {
+  if (runs.length === 0) return 0;
+
+  const counts = new Map<string, number>();
+  for (const r of runs) {
+    counts.set(r.mode, (counts.get(r.mode) || 0) + 1);
+  }
+
+  const numModes = counts.size;
+  if (numModes <= 1) return 0;
+
+  // Shannon entropy: H = -sum(p * ln(p))
+  const total = runs.length;
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const p = count / total;
+    if (p > 0) entropy -= p * Math.log(p);
+  }
+
+  // Normalize by max entropy (ln(numModes)) to get [0, 1]
+  const maxEntropy = Math.log(numModes);
+  return maxEntropy > 0 ? entropy / maxEntropy : 0;
 }
 
 /** Format per-mode breakdown as a markdown table. */
