@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   buildPrompt,
+  buildPromptWithMetadata,
   buildTemplateVars,
   loadReflectionInsights,
   renderTemplate,
@@ -33,6 +34,7 @@ import {
   type StreamContext,
   type SweepAction,
   type SweepResult,
+  type PromptMetadata,
 } from './auto-dent-run.js';
 
 function makeBatchState(overrides: Partial<BatchState> = {}): BatchState {
@@ -1882,5 +1884,44 @@ describe('color helpers', () => {
     expect(color.cyan('cyan')).toBe('cyan');
     expect(color.yellow('yellow')).toBe('yellow');
     expect(color.magenta('magenta')).toBe('magenta');
+  });
+});
+
+describe('buildPromptWithMetadata', () => {
+  it('returns template name and hash for template-based prompts', () => {
+    const state = makeBatchState();
+    const meta = buildPromptWithMetadata(state, 1);
+    // Default mode is exploit → deep-dive-default.md
+    expect(meta.template).toBe('deep-dive-default.md');
+    expect(meta.hash).toMatch(/^[0-9a-f]{12}$/);
+    expect(meta.prompt).toBeTruthy();
+  });
+
+  it('returns consistent hash for same template', () => {
+    const state = makeBatchState();
+    const meta1 = buildPromptWithMetadata(state, 1);
+    const meta2 = buildPromptWithMetadata(state, 2);
+    // Same template file → same hash
+    expect(meta1.hash).toBe(meta2.hash);
+  });
+
+  it('returns different template for explore mode', () => {
+    const state = makeBatchState({ guidance: 'mode:explore' });
+    const meta = buildPromptWithMetadata(state, 1);
+    expect(meta.template).toBe('explore-gaps.md');
+    expect(meta.hash).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it('returns different template for reflect mode', () => {
+    const state = makeBatchState({ guidance: 'mode:reflect' });
+    const meta = buildPromptWithMetadata(state, 1);
+    expect(meta.template).toBe('reflect-batch.md');
+  });
+
+  it('prompt content matches buildPrompt output', () => {
+    const state = makeBatchState();
+    const meta = buildPromptWithMetadata(state, 3);
+    const prompt = buildPrompt(state, 3);
+    expect(meta.prompt).toBe(prompt);
   });
 });
