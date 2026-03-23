@@ -208,6 +208,50 @@ describe('analyzeTrends', () => {
   });
 });
 
+describe('toDataPoint mode_distribution', () => {
+  it('includes mode_distribution from summary', () => {
+    const summary = summarizeEvents([
+      makeCompleteEnvelope({ run_num: 1, mode: 'exploit', outcome: 'success' }),
+      makeCompleteEnvelope({ run_num: 2, mode: 'explore', outcome: 'success' }),
+      makeCompleteEnvelope({ run_num: 3, mode: 'exploit', outcome: 'failure' }),
+    ]);
+    const dp = toDataPoint(summary, '2026-03-20T00:00:00Z');
+    expect(dp.mode_distribution).toEqual({ exploit: 2, explore: 1 });
+  });
+});
+
+describe('analyzeTrends mode_diversity', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'batch-trends-mode-'));
+  });
+
+  it('tracks mode diversity trend across batches', () => {
+    const batch1 = join(tmpDir, 'batch-001');
+    const batch2 = join(tmpDir, 'batch-002');
+    mkdirSync(batch1);
+    mkdirSync(batch2);
+
+    // batch-001: only exploit (1 mode)
+    writeBatchEvents(batch1, [
+      makeCompleteEnvelope({ batch_id: 'batch-001', mode: 'exploit' }, '2026-03-19T10:00:00Z'),
+      makeCompleteEnvelope({ batch_id: 'batch-001', mode: 'exploit', run_num: 2 }, '2026-03-19T11:00:00Z'),
+    ]);
+    // batch-002: exploit + explore + reflect (3 modes)
+    writeBatchEvents(batch2, [
+      makeCompleteEnvelope({ batch_id: 'batch-002', mode: 'exploit' }, '2026-03-20T10:00:00Z'),
+      makeCompleteEnvelope({ batch_id: 'batch-002', mode: 'explore', run_num: 2 }, '2026-03-20T11:00:00Z'),
+      makeCompleteEnvelope({ batch_id: 'batch-002', mode: 'reflect', run_num: 3 }, '2026-03-20T12:00:00Z'),
+    ]);
+
+    const report = analyzeTrends([batch1, batch2]);
+    expect(report.trends.mode_diversity.direction).toBe('improving');
+    expect(report.trends.mode_diversity.first_half_avg).toBe(1);
+    expect(report.trends.mode_diversity.second_half_avg).toBe(3);
+  });
+});
+
 describe('formatTrendReport', () => {
   let tmpDir: string;
 
