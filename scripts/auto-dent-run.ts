@@ -21,6 +21,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine } from './auto-dent-score.js';
+import { claimNextItem } from './auto-dent-plan.js';
 
 // Types
 
@@ -134,10 +135,25 @@ export function resolvePromptsDir(): string {
 export function buildTemplateVars(
   state: BatchState,
   runNum: number,
+  logDir?: string,
 ): Record<string, string> {
   const runTag = `${state.batch_id}/run-${runNum}`;
   const hostRepo = state.host_repo || state.kaizen_repo || 'unknown';
   const now = new Date();
+
+  // Try to claim next item from plan (if a plan exists)
+  let planAssignment = '';
+  if (logDir) {
+    const planItem = claimNextItem(logDir);
+    if (planItem) {
+      planAssignment = [
+        `- **Issue:** ${planItem.issue} — ${planItem.title}`,
+        `- **Approach:** ${planItem.approach}`,
+        `- **Score:** ${planItem.score}/10`,
+      ].join('\n');
+      console.log(`  [plan] assigned ${planItem.issue}: ${planItem.title}`);
+    }
+  }
 
   return {
     guidance: state.guidance,
@@ -152,6 +168,7 @@ export function buildTemplateVars(
     iso_now: now.toISOString(),
     issues_closed: state.issues_closed.join(' '),
     prs: state.prs.join(' '),
+    plan_assignment: planAssignment,
   };
 }
 
@@ -199,8 +216,8 @@ export function loadPromptTemplate(templateName: string): string | null {
   }
 }
 
-export function buildPrompt(state: BatchState, runNum: number): string {
-  const vars = buildTemplateVars(state, runNum);
+export function buildPrompt(state: BatchState, runNum: number, logDir?: string): string {
+  const vars = buildTemplateVars(state, runNum, logDir);
 
   // Try to load from external template file
   const templateFile = state.test_task
@@ -1075,7 +1092,8 @@ async function runClaude(
 
   const ctx: StreamContext = {};
 
-  const prompt = buildPrompt(state, runNum);
+  const logDir = dirname(stateFile);
+  const prompt = buildPrompt(state, runNum, logDir);
   const nonce = `${new Date()
     .toISOString()
     .replace(/[-:T]/g, '')
