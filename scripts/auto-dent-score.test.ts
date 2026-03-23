@@ -39,6 +39,8 @@ function makeRunResult(overrides: Partial<RunResult> = {}): RunResult {
     cost: 0,
     toolCalls: 0,
     stopRequested: false,
+    linesDeleted: 0,
+    issuesPruned: 0,
     ...overrides,
   };
 }
@@ -117,6 +119,22 @@ describe('scoreRunMetrics', () => {
     );
     expect(score.issues_filed_count).toBe(2);
   });
+
+  it('propagates lines_deleted from RunMetrics', () => {
+    const score = scoreRunMetrics(makeRunMetrics({ lines_deleted: 42 }));
+    expect(score.lines_deleted).toBe(42);
+  });
+
+  it('propagates issues_pruned from RunMetrics', () => {
+    const score = scoreRunMetrics(makeRunMetrics({ issues_pruned: 3 }));
+    expect(score.issues_pruned).toBe(3);
+  });
+
+  it('defaults lines_deleted and issues_pruned to 0 when absent', () => {
+    const score = scoreRunMetrics(makeRunMetrics());
+    expect(score.lines_deleted).toBe(0);
+    expect(score.issues_pruned).toBe(0);
+  });
 });
 
 describe('scoreRunResult', () => {
@@ -157,6 +175,13 @@ describe('scoreRunResult', () => {
   it('accepts explicit mode parameter', () => {
     const score = scoreRunResult(makeRunResult(), 0, 100, 'reflect');
     expect(score.mode).toBe('reflect');
+  });
+
+  it('propagates linesDeleted and issuesPruned from RunResult', () => {
+    const result = makeRunResult({ linesDeleted: 100, issuesPruned: 2 });
+    const score = scoreRunResult(result, 0, 100);
+    expect(score.lines_deleted).toBe(100);
+    expect(score.issues_pruned).toBe(2);
   });
 });
 
@@ -214,6 +239,18 @@ describe('scoreBatch', () => {
     expect(isNaN(score.avg_cost_per_success)).toBe(true);
   });
 
+  it('aggregates subtraction metrics across runs', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, lines_deleted: 50, issues_pruned: 1 }),
+      makeRunMetrics({ run: 2, lines_deleted: 30, issues_pruned: 2 }),
+      makeRunMetrics({ run: 3, exit_code: 1, prs: [] }),
+    ];
+
+    const score = scoreBatch(history);
+    expect(score.total_lines_deleted).toBe(80);
+    expect(score.total_issues_pruned).toBe(3);
+  });
+
   it('provides per-run scores', () => {
     const history: RunMetrics[] = [
       makeRunMetrics({ run: 1 }),
@@ -241,6 +278,8 @@ describe('formatRunScoreLine', () => {
       cost_per_pr: 2.5,
       stop_requested: false,
       mode: 'exploit',
+      lines_deleted: 0,
+      issues_pruned: 0,
     };
     const line = formatRunScoreLine(score);
     expect(line).toContain('pass');
@@ -250,6 +289,27 @@ describe('formatRunScoreLine', () => {
     expect(line).toContain('1 PRs');
     expect(line).toContain('300s');
     expect(line).toContain('0.40 PR/$');
+  });
+
+  it('shows subtraction metrics when non-zero', () => {
+    const score: RunScore = {
+      success: true,
+      cost_usd: 1.0,
+      tool_calls: 10,
+      pr_count: 1,
+      issues_closed_count: 0,
+      issues_filed_count: 0,
+      duration_seconds: 100,
+      efficiency: 1.0,
+      cost_per_pr: 1.0,
+      stop_requested: false,
+      mode: 'subtract',
+      lines_deleted: 200,
+      issues_pruned: 3,
+    };
+    const line = formatRunScoreLine(score);
+    expect(line).toContain('-200 lines');
+    expect(line).toContain('3 pruned');
   });
 
   it('formats a failed run score without efficiency', () => {
@@ -265,6 +325,8 @@ describe('formatRunScoreLine', () => {
       cost_per_pr: Infinity,
       stop_requested: false,
       mode: 'explore',
+      lines_deleted: 0,
+      issues_pruned: 0,
     };
     const line = formatRunScoreLine(score);
     expect(line).toContain('fail');
@@ -283,13 +345,15 @@ describe('formatBatchScoreTable', () => {
       total_prs: 3,
       total_issues_closed: 5,
       total_duration_seconds: 650,
+      total_lines_deleted: 120,
+      total_issues_pruned: 2,
       avg_cost_per_success: 3.0,
       avg_duration_seconds: 216.67,
       overall_efficiency: 0.5,
       runs: [
-        { success: true, cost_usd: 2, tool_calls: 10, pr_count: 1, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 200, efficiency: 0.5, cost_per_pr: 2, stop_requested: false, mode: 'exploit' },
-        { success: true, cost_usd: 3, tool_calls: 15, pr_count: 2, issues_closed_count: 3, issues_filed_count: 0, duration_seconds: 400, efficiency: 0.67, cost_per_pr: 1.5, stop_requested: false, mode: 'exploit' },
-        { success: false, cost_usd: 1, tool_calls: 5, pr_count: 0, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 50, efficiency: 0, cost_per_pr: Infinity, stop_requested: false, mode: 'explore' },
+        { success: true, cost_usd: 2, tool_calls: 10, pr_count: 1, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 200, efficiency: 0.5, cost_per_pr: 2, stop_requested: false, mode: 'exploit', lines_deleted: 80, issues_pruned: 1 },
+        { success: true, cost_usd: 3, tool_calls: 15, pr_count: 2, issues_closed_count: 3, issues_filed_count: 0, duration_seconds: 400, efficiency: 0.67, cost_per_pr: 1.5, stop_requested: false, mode: 'exploit', lines_deleted: 40, issues_pruned: 1 },
+        { success: false, cost_usd: 1, tool_calls: 5, pr_count: 0, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 50, efficiency: 0, cost_per_pr: Infinity, stop_requested: false, mode: 'explore', lines_deleted: 0, issues_pruned: 0 },
       ],
     };
     const table = formatBatchScoreTable(score);
@@ -298,6 +362,8 @@ describe('formatBatchScoreTable', () => {
     expect(table).toContain('| **Total cost** | $6.00 |');
     expect(table).toContain('| **Total PRs** | 3 |');
     expect(table).toContain('| **Issues closed** | 5 |');
+    expect(table).toContain('| **Lines deleted** | 120 |');
+    expect(table).toContain('| **Issues pruned** | 2 |');
     expect(table).toContain('| **Avg cost/success** | $3.00 |');
     expect(table).toContain('| **Efficiency** | 0.50 PR/$ |');
     expect(table).toContain('| **Modes** | exploit:2, explore:1 |');
@@ -311,6 +377,8 @@ describe('formatBatchScoreTable', () => {
       total_cost_usd: 1.0,
       total_prs: 0,
       total_issues_closed: 0,
+      total_lines_deleted: 0,
+      total_issues_pruned: 0,
       total_duration_seconds: 50,
       avg_cost_per_success: NaN,
       avg_duration_seconds: 50,
@@ -331,6 +399,8 @@ describe('formatBatchScoreTable', () => {
       total_prs: 3,
       total_issues_closed: 3,
       total_duration_seconds: 900,
+      total_lines_deleted: 0,
+      total_issues_pruned: 0,
       avg_cost_per_success: 3.0,
       avg_duration_seconds: 300,
       overall_efficiency: 1 / 3,
@@ -363,6 +433,8 @@ describe('formatBatchScoreTable', () => {
       total_prs: 1,
       total_issues_closed: 1,
       total_duration_seconds: 300,
+      total_lines_deleted: 0,
+      total_issues_pruned: 0,
       avg_cost_per_success: 3.0,
       avg_duration_seconds: 300,
       overall_efficiency: 1 / 3,

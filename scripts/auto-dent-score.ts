@@ -32,6 +32,10 @@ export interface RunScore {
   stop_requested: boolean;
   /** Cognitive mode used for this run */
   mode: string;
+  /** Net lines removed (positive = deletion) */
+  lines_deleted: number;
+  /** Issues closed as not-planned (pruned, not fixed) */
+  issues_pruned: number;
 }
 
 export interface BatchScore {
@@ -49,6 +53,10 @@ export interface BatchScore {
   total_issues_closed: number;
   /** Total duration in seconds */
   total_duration_seconds: number;
+  /** Total net lines deleted across all runs */
+  total_lines_deleted: number;
+  /** Total issues pruned across all runs */
+  total_issues_pruned: number;
   /** Average cost per successful run (NaN if no successes) */
   avg_cost_per_success: number;
   /** Average duration per run */
@@ -101,6 +109,8 @@ export function scoreRunMetrics(metrics: RunMetrics): RunScore {
     cost_per_pr: prCount > 0 ? cost / prCount : Infinity,
     stop_requested: metrics.stop_requested,
     mode: metrics.mode ?? 'exploit',
+    lines_deleted: metrics.lines_deleted ?? 0,
+    issues_pruned: metrics.issues_pruned ?? 0,
   };
 }
 
@@ -125,6 +135,8 @@ export function scoreRunResult(
     cost_per_pr: prCount > 0 ? cost / prCount : Infinity,
     stop_requested: result.stopRequested,
     mode,
+    lines_deleted: result.linesDeleted,
+    issues_pruned: result.issuesPruned,
   };
 }
 
@@ -140,6 +152,14 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     0,
   );
   const totalDuration = runs.reduce((s, r) => s + r.duration_seconds, 0);
+  const totalLinesDeleted = runs.reduce(
+    (s, r) => s + r.lines_deleted,
+    0,
+  );
+  const totalIssuesPruned = runs.reduce(
+    (s, r) => s + r.issues_pruned,
+    0,
+  );
 
   return {
     total_runs: runs.length,
@@ -149,6 +169,8 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     total_prs: totalPrs,
     total_issues_closed: totalIssuesClosed,
     total_duration_seconds: totalDuration,
+    total_lines_deleted: totalLinesDeleted,
+    total_issues_pruned: totalIssuesPruned,
     avg_cost_per_success:
       successfulRuns.length > 0
         ? totalCost / successfulRuns.length
@@ -174,6 +196,12 @@ export function formatRunScoreLine(score: RunScore): string {
   if (score.efficiency > 0) {
     parts.push(`${score.efficiency.toFixed(2)} PR/$`);
   }
+  if (score.lines_deleted > 0) {
+    parts.push(`-${score.lines_deleted} lines`);
+  }
+  if (score.issues_pruned > 0) {
+    parts.push(`${score.issues_pruned} pruned`);
+  }
   return parts.join(' | ');
 }
 
@@ -196,6 +224,8 @@ export function formatBatchScoreTable(score: BatchScore): string {
     `| **Total cost** | $${score.total_cost_usd.toFixed(2)} |`,
     `| **Total PRs** | ${score.total_prs} |`,
     `| **Issues closed** | ${score.total_issues_closed} |`,
+    `| **Lines deleted** | ${score.total_lines_deleted} |`,
+    `| **Issues pruned** | ${score.total_issues_pruned} |`,
     `| **Avg cost/success** | ${isNaN(score.avg_cost_per_success) ? 'N/A' : '$' + score.avg_cost_per_success.toFixed(2)} |`,
     `| **Efficiency** | ${score.overall_efficiency > 0 ? score.overall_efficiency.toFixed(2) + ' PR/$' : 'N/A'} |`,
   ];
