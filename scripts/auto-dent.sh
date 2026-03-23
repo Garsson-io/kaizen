@@ -45,6 +45,7 @@ fi
 MAX_RUNS=0              # 0 = unlimited
 COOLDOWN=30             # seconds between runs
 BUDGET=""               # per-run budget
+MAX_BUDGET=""           # total batch budget
 MAX_FAILURES=3          # consecutive failures before stopping
 MAX_RUN_SECONDS=2700    # 45 minutes per run (wall-time timeout)
 DRY_RUN=false
@@ -67,6 +68,7 @@ Options:
   --max-runs N         Stop after N iterations (default: unlimited)
   --cooldown N         Seconds between runs (default: 30)
   --budget N.NN        Max USD per run (passed to claude --max-budget-usd)
+  --max-budget N.NN    Max USD for entire batch (stops when cumulative cost exceeds)
   --max-failures N     Stop after N consecutive failures (default: 3)
   --max-run-seconds N  Wall-time timeout per run in seconds (default: 2700 = 45min)
   --no-plan            Skip planning pre-pass (use discovery mode)
@@ -94,7 +96,7 @@ Halt: Ctrl+C halts from the same terminal. From another terminal:
 Examples:
   ./scripts/auto-dent.sh "focus on hooks reliability"
   ./scripts/auto-dent.sh --max-runs 5 --budget 5.00 "improve test coverage"
-  ./scripts/auto-dent.sh --max-runs 10 --budget 5.00 "fix area/skills issues"
+  ./scripts/auto-dent.sh --max-budget 50.00 --budget 5.00 "fix area/skills issues"
 EOF
   exit 0
 }
@@ -147,6 +149,7 @@ while [[ $# -gt 0 ]]; do
     --max-runs) MAX_RUNS="$2"; shift 2 ;;
     --cooldown) COOLDOWN="$2"; shift 2 ;;
     --budget) BUDGET="$2"; shift 2 ;;
+    --max-budget) MAX_BUDGET="$2"; shift 2 ;;
     --max-failures) MAX_FAILURES="$2"; shift 2 ;;
     --max-run-seconds) MAX_RUN_SECONDS="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
@@ -182,6 +185,7 @@ STATE_FILE="$LOG_DIR/state.json"
 # JSON-escape guidance using node
 GUIDANCE_JSON=$(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" "$GUIDANCE")
 BUDGET_JSON=$(if [[ -n "$BUDGET" ]]; then echo "\"$BUDGET\""; else echo "null"; fi)
+MAX_BUDGET_JSON=$(if [[ -n "$MAX_BUDGET" ]]; then echo "\"$MAX_BUDGET\""; else echo "null"; fi)
 KAIZEN_REPO_JSON=$(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" "${KAIZEN_REPO:-}")
 HOST_REPO_JSON=$(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" "${HOST_REPO:-}")
 
@@ -193,6 +197,7 @@ cat > "$STATE_FILE" << STATEOF
   "max_runs": $MAX_RUNS,
   "cooldown": $COOLDOWN,
   "budget": $BUDGET_JSON,
+  "max_budget": $MAX_BUDGET_JSON,
   "max_failures": $MAX_FAILURES,
   "kaizen_repo": $KAIZEN_REPO_JSON,
   "host_repo": $HOST_REPO_JSON,
@@ -272,6 +277,7 @@ echo "║ Guidance:  $GUIDANCE"
 echo "║ Max runs:  $([ "$MAX_RUNS" -eq 0 ] && echo "unlimited" || echo "$MAX_RUNS")"
 echo "║ Cooldown:  ${COOLDOWN}s"
 [[ -n "$BUDGET" ]] && echo "║ Budget/run: \$$BUDGET"
+[[ -n "$MAX_BUDGET" ]] && echo "║ Max budget: \$$MAX_BUDGET (total batch)"
 echo "║ Run timeout: ${MAX_RUN_SECONDS}s ($(( MAX_RUN_SECONDS / 60 ))min)"
 [[ "$TEST_TASK" = true ]] && echo "║ Mode:      TEST TASK (synthetic pipeline probe)"
 [[ "$EXPERIMENT" = true ]] && echo "║ Experiment: enabled (extra diagnostics)"
@@ -284,6 +290,12 @@ echo "║ Halt:      touch $HALT_FILE  (or --halt from another terminal)"
 echo "║ Self-update: enabled (pulls main between runs)"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
+
+if [[ "$MAX_RUNS" -eq 0 && -z "$MAX_BUDGET" ]]; then
+  echo "⚠  WARNING: No --max-runs or --max-budget set. This batch will run indefinitely."
+  echo "   Consider: --max-budget 50.00 or --max-runs 20"
+  echo ""
+fi
 
 if [[ "$DRY_RUN" = true ]]; then
   echo "[dry-run] Would execute per run:"
@@ -339,6 +351,23 @@ while true; do
     echo ">>> Stopping: $MAX_FAILURES consecutive failures"
     update_state stop_reason "$MAX_FAILURES consecutive failures"
     break
+  fi
+
+  # Budget exhaustion check
+  if [[ -n "$MAX_BUDGET" ]]; then
+    TOTAL_COST=$(node -e "
+      const s = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+      const total = (s.run_history || []).reduce((sum, r) => sum + (r.cost_usd || 0), 0);
+      console.log(total.toFixed(2));
+    " "$STATE_FILE")
+    BUDGET_EXCEEDED=$(node -e "console.log(parseFloat('$TOTAL_COST') >= parseFloat('$MAX_BUDGET') ? 'yes' : 'no')")
+    if [[ "$BUDGET_EXCEEDED" = "yes" ]]; then
+      echo ">>> Stopping: total cost \$$TOTAL_COST >= max budget \$$MAX_BUDGET"
+      update_state stop_reason "budget exhausted (\$$TOTAL_COST >= \$$MAX_BUDGET)"
+      break
+    fi
+    BUDGET_REMAINING=$(node -e "console.log((parseFloat('$MAX_BUDGET') - parseFloat('$TOTAL_COST')).toFixed(2))")
+    echo ">>> Budget: \$$TOTAL_COST spent / \$$MAX_BUDGET max (\$$BUDGET_REMAINING remaining)"
   fi
 
   # Self-update: pull main before each run
