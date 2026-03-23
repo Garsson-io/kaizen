@@ -240,6 +240,19 @@ Is the check fully automatable (no judgment needed)?
   YES → Level 2 (hooks) or Level 3 (mechanistic) — why rely on agent memory?
 ```
 
+## Issue-Filing Discipline — describe the failure mode, not the solution (kaizen #713)
+
+Before writing the solution section of any issue, answer these four questions:
+
+1. **What is the failure mode?** Not the specific trigger — the *class* of failure. Example: "tests can hang with no circuit breaker" not "test wrote to `/proc`."
+2. **How often is this expected to recur, and what is the real cost?** If it happened once and cost 5 minutes, the issue may not be worth the filing overhead.
+3. **What is the simplest fix at the right level?** (L1/L2/L3) — consider all three before committing to one.
+4. **Is the solution section describing an outcome, or a specific implementation?** If it prescribes a specific mechanism (e.g., "add a hook that blocks X"), flag it. The issue should describe the *problem and desired outcome*. Leave the mechanism to the implementor.
+
+**Why this matters:** Issues filed in solution mode ("add a hook that blocks X") collapse the solution space. A future implementor reads the spec as a contract and builds exactly what it says — even if the spec is wrong. The filer is in "what would have prevented this?" mode rather than "what failure mode are we addressing?" mode. The first answer is usually too narrow. (See #685 → #712 as a concrete example of this pattern.)
+
+**Red flag:** If your issue title starts with "Add hook that..." or "Create script to..." — you're describing the solution, not the problem. Rewrite the title to name the failure mode.
+
 ## Kaizen Backlog
 
 All improvements that are too large for the current PR go to:
@@ -251,10 +264,10 @@ Issue format:
 - **Title:** `[L{level}] Brief description`
 - **Required labels:** `kaizen` + level (`level-1`/`level-2`/`level-3`) + area (`area/hooks`, `area/skills`, `area/cases`, `area/deploy`, `area/testing`, `area/container`, `area/worktree`) + horizon (recommended)
 - **Body:**
-  - What failed (incident description)
+  - What failed (incident description / failure mode class)
   - Why it failed (root cause)
   - Current level of fix (if any)
-  - Proposed improvement and target level
+  - Desired outcome and target level (not a specific mechanism — see discipline check above)
   - Verification: how to confirm the fix works
 
 **Before filing a new issue:** Search for existing issues first (`gh issue list --repo "$KAIZEN_REPO" --search "<keywords>"`). If a match exists, add an incident comment instead of filing a duplicate. Incidents compound evidence; duplicates fragment it.
