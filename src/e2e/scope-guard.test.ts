@@ -39,13 +39,27 @@ describe("scope-guard.sh", () => {
     rmSync(fakeHome, { recursive: true, force: true });
   });
 
-  function runScopeGuard(): { stderr: string; exitCode: number } {
+  // projectDir simulates a project that has its own plugin.json (double-install scenario)
+  let projectDir: string;
+
+  beforeEach(() => {
+    projectDir = mkdtempSync(join(tmpdir(), "sg-project-"));
+    mkdirSync(join(projectDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(join(projectDir, ".claude-plugin", "plugin.json"), '{"name":"kaizen"}');
+  });
+
+  afterEach(() => {
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  function runScopeGuard(opts?: { noProjectPlugin?: boolean }): { stderr: string; exitCode: number } {
     const result = spawnSync("bash", [SCOPE_GUARD], {
       encoding: "utf-8",
       env: {
         ...process.env,
         HOME: fakeHome,
         KAIZEN_SCOPE_GUARD_COUNTER: counterFile,
+        CLAUDE_PROJECT_DIR: opts?.noProjectPlugin ? fakeHome : projectDir,
         PATH: process.env.PATH,
       },
       timeout: 5000,
@@ -84,14 +98,27 @@ describe("scope-guard.sh", () => {
     expect(settings.enabledPlugins).toEqual({ "other@1.0": true });
   });
 
-  it("bad install — auto-fixes and emits warning", () => {
+  it("user-level only (no project plugin) — leaves kaizen@kaizen alone", () => {
+    writeFileSync(
+      join(fakeHome, ".claude", "settings.json"),
+      JSON.stringify({ enabledPlugins: { "kaizen@kaizen": true, "other@1.0": true } }),
+    );
+    const { stderr, exitCode } = runScopeGuard({ noProjectPlugin: true });
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    // kaizen@kaizen should still be there
+    const settings = JSON.parse(readFileSync(join(fakeHome, ".claude", "settings.json"), "utf-8"));
+    expect(settings.enabledPlugins).toHaveProperty("kaizen@kaizen");
+  });
+
+  it("double-install — auto-fixes and emits warning", () => {
     writeFileSync(
       join(fakeHome, ".claude", "settings.json"),
       JSON.stringify({ enabledPlugins: { "kaizen@kaizen": true, "other@1.0": true } }),
     );
     const { stderr, exitCode } = runScopeGuard();
     expect(exitCode).toBe(0);
-    expect(stderr).toContain("auto-removed");
+    expect(stderr).toContain("double kaizen install detected");
 
     const settings = JSON.parse(readFileSync(join(fakeHome, ".claude", "settings.json"), "utf-8"));
     expect(settings.enabledPlugins).not.toHaveProperty("kaizen@kaizen");

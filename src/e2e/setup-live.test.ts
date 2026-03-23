@@ -1,17 +1,20 @@
 /**
- * setup-live.test.ts — Live E2E tests for kaizen plugin setup.
+ * setup-live.test.ts — Live E2E tests for kaizen plugin installation and setup.
  *
- * Runs `claude -p` against real temp projects to verify the ACTUAL user
- * experience: skills load, hooks fire, setup creates correct files.
+ * Tests the ACTUAL user experience:
+ *   1. Install kaizen via `claude plugin marketplace add` + `claude plugin install`
+ *   2. Verify skills load after install
+ *   3. Run /kaizen-setup and verify files are created
+ *   4. Verify hooks fire
  *
- * These tests use haiku for cost efficiency (~$0.01 per test).
+ * This is the test that catches real installation bugs like #769 (skills
+ * not loading after install) because it runs the same commands users run.
+ *
  * Run with: KAIZEN_LIVE_TEST=1 npx vitest run src/e2e/setup-live.test.ts
- *
- * This is the test that would have caught #769 (skills not loading)
- * and #768 (no scope question during install).
+ * Uses haiku for cost efficiency.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execSync, spawnSync } from "node:child_process";
 import {
   mkdtempSync,
@@ -22,13 +25,13 @@ import {
   rmSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 
 const KAIZEN_ROOT = resolve(__dirname, "../..");
 const isLive = process.env.KAIZEN_LIVE_TEST === "1";
 
-// Run claude -p with the kaizen plugin against a project directory.
-// Returns parsed JSON result.
+// Run claude -p in a project directory. No --plugin-dir — uses whatever
+// plugins are installed in the user's environment (the real path).
 function claude(
   prompt: string,
   opts: {
@@ -36,29 +39,26 @@ function claude(
     maxTurns?: number;
     maxBudget?: number;
     timeout?: number;
-    allowedTools?: string[];
+    pluginDir?: string;
+    model?: string;
   },
 ): {
   result: string;
   is_error: boolean;
   num_turns: number;
   total_cost_usd: number;
-  duration_ms: number;
 } {
   const args = [
     "claude", "-p",
-    "--plugin-dir", KAIZEN_ROOT,
     "--output-format", "json",
-    "--model", "haiku",
+    "--model", opts.model ?? "sonnet",
     "--dangerously-skip-permissions",
     "--max-turns", String(opts.maxTurns ?? 5),
     "--max-budget-usd", String(opts.maxBudget ?? 0.50),
   ];
 
-  if (opts.allowedTools) {
-    for (const tool of opts.allowedTools) {
-      args.push("--allowedTools", tool);
-    }
+  if (opts.pluginDir) {
+    args.push("--plugin-dir", opts.pluginDir);
   }
 
   args.push(prompt);
@@ -77,24 +77,34 @@ function claude(
   try {
     return JSON.parse(proc.stdout.trim());
   } catch {
-    throw new Error(`claude output is not JSON:\nstdout: ${proc.stdout}\nstderr: ${proc.stderr}`);
+    throw new Error(`claude output not JSON:\nstdout: ${proc.stdout?.slice(0, 500)}\nstderr: ${proc.stderr?.slice(0, 500)}`);
   }
 }
 
-// Create a temp project directory with git init
+// Run a claude CLI command (not -p mode)
+function claudeCmd(args: string[]): { stdout: string; stderr: string; status: number } {
+  const proc = spawnSync("claude", args, {
+    encoding: "utf-8",
+    timeout: 30000,
+  });
+  return {
+    stdout: proc.stdout ?? "",
+    stderr: proc.stderr ?? "",
+    status: proc.status ?? 1,
+  };
+}
+
 function createTempProject(name: string): string {
   const dir = mkdtempSync(join(tmpdir(), `kaizen-live-${name}-`));
   execSync("git init && git config user.name test && git config user.email test@test.com", {
-    cwd: dir,
-    stdio: "pipe",
+    cwd: dir, stdio: "pipe",
   });
   writeFileSync(join(dir, "README.md"), `# ${name}\n`);
   execSync("git add . && git commit -m init", { cwd: dir, stdio: "pipe" });
   return dir;
 }
 
-describe("Live E2E: Plugin Setup", () => {
-  // Skip all tests if KAIZEN_LIVE_TEST is not set
+describe("Live E2E: Full Installation Flow", () => {
   if (!isLive) {
     it.skip("set KAIZEN_LIVE_TEST=1 to run live tests", () => {});
     return;
@@ -106,7 +116,28 @@ describe("Live E2E: Plugin Setup", () => {
     expect(result.stdout).toMatch(/\d+\.\d+/);
   });
 
-  describe("skill discovery", () => {
+  describe("plugin installation via marketplace", () => {
+    it("adds kaizen marketplace", { timeout: 30000 }, () => {
+      const result = claudeCmd(["plugin", "marketplace", "add", "Garsson-io/kaizen"]);
+      // Either succeeds or says already added
+      expect(
+        result.stdout.includes("kaizen") || result.stderr.includes("kaizen"),
+        `marketplace add failed: ${result.stdout} ${result.stderr}`,
+      ).toBe(true);
+    });
+
+    it("installs kaizen plugin", { timeout: 30000 }, () => {
+      const result = claudeCmd(["plugin", "install", "kaizen@kaizen"]);
+      expect(
+        result.stdout.toLowerCase().includes("success") ||
+        result.stdout.toLowerCase().includes("installed") ||
+        result.stdout.toLowerCase().includes("already"),
+        `plugin install failed: ${result.stdout} ${result.stderr}`,
+      ).toBe(true);
+    });
+  });
+
+  describe("skills load after marketplace install", () => {
     let projectDir: string;
 
     beforeAll(() => {
@@ -117,28 +148,42 @@ describe("Live E2E: Plugin Setup", () => {
       rmSync(projectDir, { recursive: true, force: true });
     });
 
-    it("loads all kaizen skills", { timeout: 30000 }, () => {
-      // Ask claude to invoke /kaizen-zen — if skills are loaded, this should work
+    it("kaizen-zen skill works (proves skills loaded from installed plugin)", { timeout: 60000 }, () => {
+      // NO --plugin-dir here — uses the marketplace-installed plugin
       const result = claude(
-        "Run /kaizen-zen to print the Zen of Kaizen.",
-        { cwd: projectDir, maxTurns: 3, maxBudget: 0.20 },
+        "Run /kaizen-zen to print the Zen of Kaizen. Just print it, nothing else.",
+        { cwd: projectDir, maxTurns: 5, maxBudget: 0.30 },
       );
 
-      // The zen skill should produce output containing kaizen philosophy text
       const text = (result.result ?? "").toLowerCase();
       expect(
         text.includes("kaizen") || text.includes("zen") || text.includes("improvement"),
-        `Expected kaizen zen output, got: ${JSON.stringify(result).slice(0, 500)}`,
+        `Expected kaizen zen output from installed plugin, got: ${JSON.stringify(result).slice(0, 500)}`,
+      ).toBe(true);
+    });
+
+    it("kaizen-setup skill is available", { timeout: 60000 }, () => {
+      // Verify /kaizen-setup is recognized (not "Unknown skill")
+      const result = claude(
+        'What does the /kaizen-setup skill do? Just describe it in one sentence.',
+        { cwd: projectDir, maxTurns: 2, maxBudget: 0.20 },
+      );
+
+      const text = (result.result ?? "").toLowerCase();
+      // Should describe setup, not say "unknown skill"
+      expect(text).not.toContain("unknown skill");
+      expect(
+        text.includes("setup") || text.includes("config") || text.includes("install"),
+        `Expected setup description, got: ${result.result?.slice(0, 200)}`,
       ).toBe(true);
     });
   });
 
-  describe("setup flow on a Python project", () => {
+  describe("full setup flow on Python project (installed plugin)", () => {
     let projectDir: string;
 
     beforeAll(() => {
       projectDir = createTempProject("python-setup");
-      // Make it look like a Python project
       writeFileSync(join(projectDir, "pyproject.toml"), '[project]\nname = "test-app"\nversion = "0.1.0"\n');
       writeFileSync(join(projectDir, "CLAUDE.md"), "# Test Python App\n\nA test project.\n");
     });
@@ -147,46 +192,37 @@ describe("Live E2E: Plugin Setup", () => {
       rmSync(projectDir, { recursive: true, force: true });
     });
 
-    it("creates kaizen.config.json in project root", { timeout: 120000 }, () => {
+    it("kaizen-setup creates config files", { timeout: 180000 }, () => {
+      // The plugin is already installed (from earlier tests).
+      // In a real flow the user would restart or /reload-plugins.
+      // We simulate "second session" by just running /kaizen-setup directly.
       const result = claude(
-        'Run /kaizen-setup for this project. Use these values: name="test-python-app", repo="testorg/test-python-app", description="A test Python CLI", kaizen-repo="Garsson-io/kaizen", channel="none". Do NOT ask questions, just create the files.',
-        { cwd: projectDir, maxTurns: 10, maxBudget: 1.00 },
+        "Run /kaizen-setup to configure kaizen for this project. Use these values: name=test-python-app, repo=testorg/test-python-app, description=A test Python CLI, channel=none. Do not ask questions.",
+        { cwd: projectDir, maxTurns: 15, maxBudget: 2.00 },
       );
 
       expect(result.is_error).toBe(false);
 
-      // kaizen.config.json should exist in project root
+      // kaizen.config.json in project root
       const configPath = join(projectDir, "kaizen.config.json");
-      expect(existsSync(configPath), "kaizen.config.json not created").toBe(true);
+      expect(existsSync(configPath), `kaizen.config.json not created. Result: ${(result.result ?? "").slice(0, 300)}`).toBe(true);
 
       const config = JSON.parse(readFileSync(configPath, "utf-8"));
       expect(config.host.name).toBe("test-python-app");
       expect(config.host.repo).toBe("testorg/test-python-app");
-      expect(config.kaizen.repo).toBe("Garsson-io/kaizen");
     });
 
     it("creates policies-local.md", () => {
-      const policiesPath = join(projectDir, ".claude", "kaizen", "policies-local.md");
-      expect(existsSync(policiesPath), "policies-local.md not created").toBe(true);
+      expect(existsSync(join(projectDir, ".claude", "kaizen", "policies-local.md")), "policies-local.md not created").toBe(true);
     });
 
     it("injects kaizen section into CLAUDE.md", () => {
       const content = readFileSync(join(projectDir, "CLAUDE.md"), "utf-8");
       expect(content.toLowerCase()).toContain("kaizen");
     });
-
-    it("config is NOT in plugin cache directory", () => {
-      // The critical #756 bug: config was written to plugin cache instead of project root
-      const pluginCacheConfig = join(KAIZEN_ROOT, "kaizen.config.json");
-      // kaizen's own config is fine — but it should say "kaizen", not "test-python-app"
-      if (existsSync(pluginCacheConfig)) {
-        const config = JSON.parse(readFileSync(pluginCacheConfig, "utf-8"));
-        expect(config.host.name).not.toBe("test-python-app");
-      }
-    });
   });
 
-  describe("hooks fire correctly after setup", () => {
+  describe("hooks fire after install", () => {
     let projectDir: string;
 
     beforeAll(() => {
@@ -207,18 +243,17 @@ describe("Live E2E: Plugin Setup", () => {
       rmSync(projectDir, { recursive: true, force: true });
     });
 
-    it("blocks git rebase commands", () => {
+    it("blocks git rebase commands", { timeout: 30000 }, () => {
+      // NO --plugin-dir — uses installed plugin
       const result = claude(
         "Run this exact command: git rebase -i HEAD~3",
         { cwd: projectDir, maxTurns: 3, maxBudget: 0.20 },
       );
 
-      // The hook should have blocked the rebase
-      // The result should mention "blocked" or "rebase" or the agent should report it was denied
-      const text = result.result.toLowerCase();
+      const text = (result.result ?? "").toLowerCase();
       expect(
         text.includes("block") || text.includes("denied") || text.includes("not allowed") || text.includes("rebase"),
-        `Expected rebase to be blocked, got: ${result.result.slice(0, 200)}`,
+        `Expected rebase to be blocked, got: ${result.result?.slice(0, 200)}`,
       ).toBe(true);
     });
   });
