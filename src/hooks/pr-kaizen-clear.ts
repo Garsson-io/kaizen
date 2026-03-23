@@ -406,7 +406,7 @@ export function hasPrdFiles(files: string[]): boolean {
   return files.some(f => /^docs\/prd[/-].*\.md$/i.test(f));
 }
 
-/** Advisory when a PRD is created but no issues were filed. */
+/** Block gate clearing when a PRD is created but no issues were filed (kaizen #683). */
 export function detectPrdWithoutFiledIssues(
   files: string[],
   items: Impediment[],
@@ -418,9 +418,9 @@ export function detectPrdWithoutFiledIssues(
   ).length;
   if (!isNoAction && filedCount > 0) return null;
   return (
-    'Advisory: You created a PRD but filed no actionable issues. ' +
-    'PRDs without filed issues are reflection without action. ' +
-    'Did you mean to file P0/P1 items as issues?'
+    'BLOCKED: You created a PRD but filed no actionable issues. ' +
+    'PRDs without filed issues are "reflection without action" (kaizen #683). ' +
+    'File at least one P0/P1 item as a GitHub issue, then resubmit your reflection with it as a "filed" disposition.'
   );
 }
 
@@ -545,16 +545,16 @@ export function processHookInput(
       }
     }
 
-    // PRD-without-issues advisory (kaizen #694)
+    // PRD-without-issues BLOCKING check (kaizen #683, upgraded from #694 advisory)
     const getPrFiles = options.getPrFiles ?? defaultGetPrFiles;
     try {
       const files = getPrFiles(gatePrUrl);
-      const prdAdvisory = detectPrdWithoutFiledIssues(
+      const prdBlock = detectPrdWithoutFiledIssues(
         files,
         validatedItems,
         isNoAction,
       );
-      if (prdAdvisory) output.push(`\n${prdAdvisory}\n`);
+      if (prdBlock) return `\n${prdBlock}\n`;
     } catch {}
 
     clearStateWithStatusAnyBranch(
