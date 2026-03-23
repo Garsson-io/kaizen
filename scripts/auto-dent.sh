@@ -82,6 +82,7 @@ Options:
   --reflect [batch-id] Cross-run pattern analysis and learning
   --reflect --prompt [batch-id]  Output rendered reflection prompt for Claude
   --history            Cross-batch aggregate stats (all-time metrics)
+  --trends             Cross-batch trend analysis (cost/PR, success rate over time)
   --aggregate [batch-id]  Append batch(es) to aggregate.jsonl (backfill)
   --watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)
   --help               Show this help
@@ -140,6 +141,11 @@ fi
 if [[ "${1:-}" = "--aggregate" ]]; then
   shift
   exec npx tsx "$CTL_SCRIPT" aggregate "$@"
+fi
+
+if [[ "${1:-}" = "--trends" ]]; then
+  shift
+  exec npx tsx "$SCRIPT_DIR/batch-trends.ts" "$REPO_ROOT/logs/auto-dent" "$@"
 fi
 
 # Arg parsing
@@ -493,6 +499,24 @@ while true; do
     check_halt_file && break 2
   done
 done
+
+# Post structured batch summary to progress issue (#651)
+PROGRESS_ISSUE=$(read_state progress_issue)
+if [[ -f "$LOG_DIR/events.jsonl" ]]; then
+  echo ">>> Generating structured batch summary from events.jsonl..."
+  BATCH_SUMMARY_TEXT=$(npx tsx "$SCRIPT_DIR/batch-summary.ts" "$LOG_DIR" 2>/dev/null) || true
+  if [[ -n "$BATCH_SUMMARY_TEXT" && -n "$PROGRESS_ISSUE" && -n "$KAIZEN_REPO" ]]; then
+    echo ">>> Posting batch summary to $PROGRESS_ISSUE..."
+    gh issue comment "$PROGRESS_ISSUE" --repo "$KAIZEN_REPO" --body "$BATCH_SUMMARY_TEXT" 2>/dev/null || echo ">>> Summary posting skipped (non-fatal)."
+  fi
+  # Also save summary to file
+  if [[ -n "$BATCH_SUMMARY_TEXT" ]]; then
+    echo "$BATCH_SUMMARY_TEXT" > "$LOG_DIR/batch-summary-report.md"
+    echo ">>> Structured summary saved to $LOG_DIR/batch-summary-report.md"
+  fi
+else
+  echo ">>> No events.jsonl found — skipping structured summary."
+fi
 
 # Close batch progress issue
 npx tsx "$SCRIPT_DIR/auto-dent-run.ts" --close-batch "$STATE_FILE" 2>/dev/null || true
