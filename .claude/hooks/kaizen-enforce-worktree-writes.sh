@@ -10,6 +10,7 @@
 #   - data/             (sessions, IPC, case workspaces — runtime data)
 #   - store/            (SQLite database — runtime data)
 #   - logs/             (log files — runtime data)
+#   - strategy/        (machine-written batch memory — kaizen #703)
 #   - .claude/worktrees/ (worktree directories)
 #
 # Blocked on main checkout when on main branch (source code):

@@ -174,6 +174,8 @@ export interface RunResult {
   issuesPruned: number;
   /** Structured failure classification */
   failureClass?: string;
+  /** Whether the run was killed by the wall-clock timeout watchdog (#686) */
+  timedOut?: boolean;
   /** Contemplation recommendations extracted from contemplate run output */
   contemplationRecs?: string[];
 }
@@ -384,8 +386,8 @@ export function buildTemplateVars(
     }
   }
 
-  // Format contemplation recommendations for prompt injection
-  const contemplationRecs = (state.contemplation_recommendations || []);
+  // Format contemplation recommendations for prompt injection (dedup on read — #700)
+  const contemplationRecs = [...new Set(state.contemplation_recommendations || [])];
   const contemplationRecsText = contemplationRecs.length > 0
     ? contemplationRecs.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
@@ -1071,8 +1073,8 @@ export function closeBatchProgressIssue(
 
 // Execute Claude
 
-// Default max wall time per run: 45 minutes
-const DEFAULT_MAX_RUN_SECONDS = 45 * 60;
+// Default max wall time per run: 20 minutes (#686)
+const DEFAULT_MAX_RUN_SECONDS = 20 * 60;
 // Grace period after result before SIGTERM
 const POST_RESULT_GRACE_MS = 60_000;
 // Grace period after SIGTERM before SIGKILL
@@ -1183,9 +1185,10 @@ async function runClaude(
         }, IN_FLIGHT_UPDATE_INTERVAL_MS)
       : undefined;
 
-    // Global wall-time timeout (#354)
+    // Global wall-time timeout (#354, #686)
     const wallTimer = setTimeout(() => {
       if (!processExited) {
+        result.timedOut = true;
         console.log(
           `  [watchdog] run exceeded ${maxRunMs / 1000}s wall time — SIGTERM`,
         );
@@ -1662,8 +1665,8 @@ async function main(): Promise<void> {
     prompt_hash: promptMeta.hash,
     lifecycle_violations: lifecycleViolationCount,
   };
-  // Classify failure from metrics (log-based classification could be added later)
-  runMetrics.failure_class = classifyFailure(runMetrics);
+  // Classify failure: wall-clock timeout is authoritative (#686), then heuristics
+  runMetrics.failure_class = result.timedOut ? 'timeout' : classifyFailure(runMetrics);
   if (!freshState.run_history) freshState.run_history = [];
   freshState.run_history.push(runMetrics);
 
@@ -1685,8 +1688,10 @@ async function main(): Promise<void> {
   // Store contemplation recommendations in batch state (#631)
   if (result.contemplationRecs && result.contemplationRecs.length > 0) {
     if (!freshState.contemplation_recommendations) freshState.contemplation_recommendations = [];
-    freshState.contemplation_recommendations.push(...result.contemplationRecs);
-    console.log(`  [contemplate] ${result.contemplationRecs.length} recommendation(s) stored in batch state`);
+    const existing = new Set(freshState.contemplation_recommendations);
+    const newRecs = result.contemplationRecs.filter(r => !existing.has(r));
+    freshState.contemplation_recommendations.push(...newRecs);
+    console.log(`  [contemplate] ${newRecs.length} new recommendation(s) stored (${result.contemplationRecs.length - newRecs.length} duplicates skipped)`);
     events.emit({
       type: 'batch.reflect',
       run_id: makeRunId(state.batch_id, runNum),

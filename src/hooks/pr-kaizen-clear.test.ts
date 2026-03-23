@@ -40,7 +40,9 @@ import * as os from 'node:os';
 import {
   classifyReflectionQuality,
   detectFixableFiledImpediments,
+  detectPrdWithoutFiledIssues,
   formatReflectionComment,
+  hasPrdFiles,
   matchesWaiverBlocklist,
   processHookInput,
 } from './pr-kaizen-clear.js';
@@ -989,5 +991,93 @@ describe('processHookInput: fixable-filed advisory (kaizen #401)', () => {
     });
     expect(result).toContain('PR kaizen gate cleared');
     expect(result).not.toContain('Advisory');
+  });
+});
+
+// ── PRD detection (kaizen #694) ──────────────────────────────────────
+
+describe('hasPrdFiles', () => {
+  it('detects docs/prd-*.md files', () => {
+    expect(hasPrdFiles(['docs/prd-agent-self-diagnosis.md', 'src/foo.ts'])).toBe(true);
+  });
+
+  it('detects docs/prd/ subdirectory files', () => {
+    expect(hasPrdFiles(['docs/prd/my-feature.md'])).toBe(true);
+  });
+
+  it('returns false for non-PRD files', () => {
+    expect(hasPrdFiles(['src/hooks/pr-kaizen-clear.ts', 'README.md'])).toBe(false);
+  });
+
+  it('returns false for empty list', () => {
+    expect(hasPrdFiles([])).toBe(false);
+  });
+});
+
+describe('detectPrdWithoutFiledIssues', () => {
+  const prdFiles = ['docs/prd-agent-diagnosis.md', 'src/foo.ts'];
+  const noPrdFiles = ['src/foo.ts', 'CLAUDE.md'];
+
+  it('returns advisory when PRD present and KAIZEN_NO_ACTION', () => {
+    const result = detectPrdWithoutFiledIssues(prdFiles, [], true);
+    expect(result).toContain('PRD but filed no actionable issues');
+  });
+
+  it('returns advisory when PRD present and zero filed dispositions', () => {
+    const items = [
+      { impediment: 'minor style issue', disposition: 'no-action', type: 'positive', reason: 'cosmetic' },
+    ];
+    const result = detectPrdWithoutFiledIssues(prdFiles, items, false);
+    expect(result).toContain('PRD but filed no actionable issues');
+  });
+
+  it('returns null when PRD present with filed dispositions', () => {
+    const items = [
+      { impediment: 'P0 item from PRD', disposition: 'filed', ref: '#123' },
+    ];
+    const result = detectPrdWithoutFiledIssues(prdFiles, items, false);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when no PRD files', () => {
+    const result = detectPrdWithoutFiledIssues(noPrdFiles, [], true);
+    expect(result).toBeNull();
+  });
+});
+
+describe('processHookInput PRD advisory (kaizen #694)', () => {
+  it('emits advisory when PRD in diff and KAIZEN_NO_ACTION', () => {
+    const input = noActionInput('docs-only', 'PRD creation only');
+    const result = processHookInput(input, {
+      stateDir: testStateDir,
+      postComment: () => {},
+      getPrFiles: () => ['docs/prd-agent-diagnosis.md', 'CLAUDE.md'],
+    });
+    expect(result).toContain('PRD but filed no actionable issues');
+    expect(result).toContain('gate cleared');
+  });
+
+  it('no advisory when PRD in diff but issues were filed', () => {
+    const input = impedimentsInput(
+      '[{"impediment":"P0 from PRD","disposition":"filed","ref":"#999"}]',
+    );
+    const result = processHookInput(input, {
+      stateDir: testStateDir,
+      postComment: () => {},
+      getPrFiles: () => ['docs/prd-agent-diagnosis.md'],
+    });
+    expect(result).not.toContain('PRD but filed no actionable issues');
+    expect(result).toContain('gate cleared');
+  });
+
+  it('no advisory when no PRD files in diff', () => {
+    const input = noActionInput('config-only', 'just config');
+    const result = processHookInput(input, {
+      stateDir: testStateDir,
+      postComment: () => {},
+      getPrFiles: () => ['vitest.config.ts'],
+    });
+    expect(result).not.toContain('PRD');
+    expect(result).toContain('gate cleared');
   });
 });
