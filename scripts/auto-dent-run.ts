@@ -1413,11 +1413,11 @@ async function main(): Promise<void> {
   console.log(`Tag: ${runTag}`);
   console.log(`Log: ${logFile}`);
 
-  // Structured telemetry (#647) — emitter created early, start event emitted after runClaude
-  // (selectMode/buildPromptWithMetadata have side effects, so we use runClaude's returned metadata)
+  // Structured telemetry (#647) — emitter created early
   const events = new EventEmitter(logDir);
 
   const runStartEpoch = Math.floor(Date.now() / 1000);
+  const runStartDate = new Date();
   const { exitCode, duration, result, mode: runMode, modeReason: runModeReason, promptMeta } = await runClaude(
     state,
     runNum,
@@ -1426,8 +1426,10 @@ async function main(): Promise<void> {
     stateFile,
   );
 
-  // Emit run.start telemetry using actual metadata from runClaude (#647)
-  events.emit({
+  // Emit run.start telemetry with correct pre-run timestamp (#656)
+  // Uses emitAt() to backdate the envelope timestamp to when the run actually started,
+  // and includes start_epoch for explicit duration calculations.
+  events.emitAt(runStartDate, {
     type: 'run.start',
     run_id: makeRunId(state.batch_id, runNum),
     batch_id: state.batch_id,
@@ -1436,6 +1438,7 @@ async function main(): Promise<void> {
     mode_reason: runModeReason,
     prompt_template: promptMeta.template,
     prompt_hash: promptMeta.hash,
+    start_epoch: runStartEpoch,
   });
 
   // Append metadata to log
@@ -1534,10 +1537,29 @@ async function main(): Promise<void> {
     }
   }
 
-  // Emit run.complete telemetry event (#647)
+  // Emit run.complete telemetry event (#647, #657)
+  // Uses mode-aware success: explore/reflect runs that file issues count as success,
+  // not just runs that produce PRs.
   {
+    const runMetricsForOutcome: RunMetrics = {
+      run: runNum,
+      start_epoch: runStartEpoch,
+      duration_seconds: duration,
+      exit_code: exitCode,
+      cost_usd: result.cost,
+      tool_calls: result.toolCalls,
+      prs: result.prs,
+      issues_filed: result.issuesFiled,
+      issues_closed: result.issuesClosed,
+      cases: result.cases,
+      stop_requested: result.stopRequested,
+      mode: runMode,
+      lines_deleted: result.linesDeleted,
+      issues_pruned: result.issuesPruned,
+    };
     const outcome = result.stopRequested ? 'stop' as const
-      : (exitCode === 0 && result.prs.length > 0) ? 'success' as const
+      : (exitCode === 0 && modeSuccess(runMode, runMetricsForOutcome) > 0) ? 'success' as const
+      : (exitCode === 0) ? 'empty_success' as const
       : 'failure' as const;
     events.emit({
       type: 'run.complete',
@@ -1555,6 +1577,7 @@ async function main(): Promise<void> {
       failure_class: result.failureClass,
       lifecycle_violations: lifecycleViolationCount,
       outcome,
+      mode: runMode,
     });
   }
 

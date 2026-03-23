@@ -29,6 +29,8 @@ export interface RunStartEvent {
   mode_reason: string;
   prompt_template: string;
   prompt_hash: string;
+  /** Epoch seconds when the run actually started (before runClaude) */
+  start_epoch?: number;
 }
 
 export interface RunIssuePickedEvent {
@@ -64,7 +66,9 @@ export interface RunCompleteEvent {
   stop_requested: boolean;
   failure_class?: string;
   lifecycle_violations: number;
-  outcome: 'success' | 'failure' | 'stop';
+  outcome: 'success' | 'empty_success' | 'failure' | 'stop';
+  /** Cognitive mode used, for context in analysis */
+  mode?: string;
 }
 
 export interface BatchReflectEvent {
@@ -106,8 +110,13 @@ export class EventEmitter {
   }
 
   emit(event: AutoDentEvent): void {
+    this.emitAt(new Date(), event);
+  }
+
+  /** Emit an event with an explicit timestamp (for events that must be backdated). */
+  emitAt(when: Date, event: AutoDentEvent): void {
     const envelope: EventEnvelope = {
-      timestamp: new Date().toISOString(),
+      timestamp: when.toISOString(),
       event,
     };
     try {

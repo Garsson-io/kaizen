@@ -21,6 +21,7 @@ export interface BatchSummary {
   batch_id: string;
   total_runs: number;
   successful_runs: number;
+  empty_success_runs: number;
   failed_runs: number;
   stopped_runs: number;
   total_duration_minutes: number;
@@ -87,6 +88,7 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
   const totalViolations = completeEvents.reduce((sum, e) => sum + e.event.lifecycle_violations, 0);
 
   const successCount = completeEvents.filter(e => e.event.outcome === 'success').length;
+  const emptySuccessCount = completeEvents.filter(e => e.event.outcome === 'empty_success').length;
   const failCount = completeEvents.filter(e => e.event.outcome === 'failure').length;
   const stopCount = completeEvents.filter(e => e.event.outcome === 'stop').length;
 
@@ -124,6 +126,7 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     batch_id: batchId,
     total_runs: completeEvents.length,
     successful_runs: successCount,
+    empty_success_runs: emptySuccessCount,
     failed_runs: failCount,
     stopped_runs: stopCount,
     total_duration_minutes: totalDurationMinutes,
@@ -164,6 +167,7 @@ export function formatPlainLanguage(summary: BatchSummary): string {
   // Outcome breakdown
   const parts: string[] = [];
   if (summary.successful_runs > 0) parts.push(`${summary.successful_runs} successful`);
+  if (summary.empty_success_runs > 0) parts.push(`${summary.empty_success_runs} empty`);
   if (summary.failed_runs > 0) parts.push(`${summary.failed_runs} failed`);
   if (summary.stopped_runs > 0) parts.push(`${summary.stopped_runs} stopped`);
   if (parts.length > 0) {
