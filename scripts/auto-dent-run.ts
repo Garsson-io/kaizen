@@ -88,6 +88,8 @@ import {
   labelArtifacts,
   queueAutoMerge,
   fetchIssueLabels,
+  verifyIssuesClosed,
+  syncEpicChecklists,
 } from './auto-dent-github.js';
 import {
   color,

@@ -2728,3 +2728,50 @@ describe('validateRunLifecycle', () => {
     expect(result.phasesPresent).toContain('IMPLEMENT');
   });
 });
+
+// Static analysis: verify re-exported symbols used locally are also imported (#746)
+// Re-exports (export { X } from './mod') satisfy tsc but don't create local
+// runtime bindings. This test parses the source to catch that class of wiring bug.
+describe('module wiring: re-exported symbols used locally must be imported', () => {
+  it('every symbol called in the module body that comes from a re-export is also in a local import', () => {
+    const source = readFileSync(join(__dirname, 'auto-dent-run.ts'), 'utf-8');
+
+    // Extract re-exported symbols (export { X, Y } from './mod')
+    const reExportPattern = /^export\s*\{([^}]+)\}\s*from\s*['"][^'"]+['"]/gm;
+    const reExported = new Set<string>();
+    for (const m of source.matchAll(reExportPattern)) {
+      for (const sym of m[1].split(',')) {
+        const name = sym.replace(/\s*as\s+\w+/, '').replace(/type\s+/, '').trim();
+        if (name) reExported.add(name);
+      }
+    }
+
+    // Extract locally imported symbols (import { X, Y } from './mod')
+    const importPattern = /^import\s*\{([^}]+)\}\s*from\s*['"][^'"]+['"]/gm;
+    const imported = new Set<string>();
+    for (const m of source.matchAll(importPattern)) {
+      for (const sym of m[1].split(',')) {
+        const name = sym.replace(/\s*as\s+\w+/, '').replace(/type\s+/, '').trim();
+        if (name) imported.add(name);
+      }
+    }
+
+    // Find the main function body (everything after the imports/exports block)
+    // Look for symbols that are: (1) re-exported, (2) called as functions, (3) NOT imported
+    const bodyStart = source.lastIndexOf('from \'./auto-dent-stream.js\';');
+    const body = bodyStart > 0 ? source.slice(bodyStart) : source;
+
+    const missing: string[] = [];
+    for (const sym of reExported) {
+      // Skip type-only re-exports
+      if (sym.startsWith('type ')) continue;
+      // Check if symbol is used as a function call in the body (not in an export block)
+      const callPattern = new RegExp(`(?<!export[^;]*?)\\b${sym}\\s*\\(`, 'm');
+      if (callPattern.test(body) && !imported.has(sym)) {
+        missing.push(sym);
+      }
+    }
+
+    expect(missing).toEqual([]);
+  });
+});
