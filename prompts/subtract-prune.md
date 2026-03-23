@@ -25,9 +25,11 @@ After creating a PR, you MUST queue it for auto-merge:
 
 Pick the highest-value subtraction from this list:
 
-1. **Obsolete issues**: Read the 20 oldest open issues.
-   `gh issue list --repo {{kaizen_repo}} --state open --sort created --json number,title,createdAt --limit 20`
-   Close any that are obsolete with `gh issue close <num> --reason not-planned --comment "Obsolete: <reason>"`.
+1. **Staleness audit**: Run the staleness audit to find obsolete issues:
+   `npx tsx scripts/staleness-audit.ts --repo {{kaizen_repo}}`
+   Review the report. Close issues recommended for closure with
+   `gh issue close <num> --reason not-planned --comment "Obsolete: <reason>"`.
+   Investigate issues flagged for investigation — check if the problem still exists.
 
 2. **Duplicate issues**: Search for issues with overlapping titles or descriptions.
    Close duplicates with `gh issue close <num> --reason not-planned --comment "Duplicate of #X"`.
