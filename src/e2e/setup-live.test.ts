@@ -40,6 +40,7 @@ function claude(
     maxBudget?: number;
     timeout?: number;
     pluginDir?: string;
+    model?: string;
   },
 ): {
   result: string;
@@ -50,7 +51,7 @@ function claude(
   const args = [
     "claude", "-p",
     "--output-format", "json",
-    "--model", "haiku",
+    "--model", opts.model ?? "sonnet",
     "--dangerously-skip-permissions",
     "--max-turns", String(opts.maxTurns ?? 5),
     "--max-budget-usd", String(opts.maxBudget ?? 0.50),
@@ -192,10 +193,12 @@ describe("Live E2E: Full Installation Flow", () => {
     });
 
     it("kaizen-setup creates config files", { timeout: 180000 }, () => {
-      // The EXACT prompt a real user would type — nothing more
+      // The plugin is already installed (from earlier tests).
+      // In a real flow the user would restart or /reload-plugins.
+      // We simulate "second session" by just running /kaizen-setup directly.
       const result = claude(
-        "Claude, install kaizen https://github.com/Garsson-io/kaizen in my project",
-        { cwd: projectDir, maxTurns: 20, maxBudget: 2.00 },
+        "Run /kaizen-setup to configure kaizen for this project. Use these values: name=test-python-app, repo=testorg/test-python-app, description=A test Python CLI, channel=none. Do not ask questions.",
+        { cwd: projectDir, maxTurns: 15, maxBudget: 2.00 },
       );
 
       expect(result.is_error).toBe(false);

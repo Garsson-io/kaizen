@@ -1,10 +1,14 @@
 #!/bin/bash
 # Part of kAIzen Agent Control Flow
-# scope-guard.sh — Auto-fixes computer-level kaizen install (warns, never blocks)
+# scope-guard.sh — Prevents double-firing when kaizen is installed at BOTH levels
 #
-# Computer-level installation (kaizen@kaizen in ~/.claude/settings.json enabledPlugins)
-# causes all hooks to fire TWICE — once from the plugin registry, once from the project.
-# This doubles vitest/tsc processes and causes WSL OOM crashes.
+# Problem: If kaizen@kaizen is in BOTH ~/.claude/settings.json (user level)
+# AND the project has .claude-plugin/plugin.json (project level), every hook
+# fires TWICE — doubling vitest/tsc processes and causing WSL OOM crashes.
+#
+# Fix: When CLAUDE_PLUGIN_ROOT is set (project-level plugin active), remove
+# the redundant user-level entry. When only user-level exists (host projects),
+# leave it alone — that's the intended install path.
 #
 # Design: auto-remove the bad setting and emit a warning to stderr (exit 0).
 # Never block — blocking ALL tools creates an unescapable deadlock (#758).
@@ -16,7 +20,15 @@ _kaizen_scope_guard() {
   local user_settings="$HOME/.claude/settings.json"
   [ -f "$user_settings" ] || return 0
 
-  # Fast check: skip node if kaizen isn't even in the file
+  # Only act when BOTH levels are active (double-install):
+  # user-level (kaizen@kaizen in ~/.claude/settings.json) AND
+  # project-level (.claude-plugin/plugin.json in the current project).
+  # If the project doesn't have its own plugin.json, the user-level
+  # install is the only source — don't remove it.
+  local project_plugin="${CLAUDE_PROJECT_DIR:-.}/.claude-plugin/plugin.json"
+  [ -f "$project_plugin" ] || return 0
+
+  # Fast check: skip node if kaizen isn't even in user settings
   grep -q '"kaizen@kaizen"' "$user_settings" 2>/dev/null || return 0
 
   local is_user_level
@@ -28,18 +40,14 @@ try {
 " 2>/dev/null)
 
   if [ "$is_user_level" = "yes" ]; then
-    # Auto-fix: remove the bad setting rather than blocking (#758).
-    # Blocking ALL tools creates an unescapable deadlock — the agent cannot
-    # run the fix command because that command is also blocked.
-    #
-    # Attempt counter: if the fix fails and the setting persists, stop
-    # retrying after 3 attempts to avoid spamming on every tool call.
+    # Double-install detected: user-level + project-level.
+    # Remove the user-level entry to prevent double-firing.
     local counter_file="${KAIZEN_SCOPE_GUARD_COUNTER:-/tmp/.kaizen-scope-guard-fix-attempts}"
     local attempts=0
     [ -f "$counter_file" ] && attempts=$(cat "$counter_file" 2>/dev/null || echo 0)
 
     if [ "$attempts" -ge 3 ]; then
-      echo "[kaizen] WARNING: computer-level kaizen install persists after 3 auto-fix attempts." >&2
+      echo "[kaizen] WARNING: double kaizen install persists after 3 auto-fix attempts." >&2
       echo "[kaizen] Manual fix: node -e \"const fs=require('fs'),p=require('path').join(require('os').homedir(),'.claude','settings.json');const d=JSON.parse(fs.readFileSync(p,'utf-8'));delete (d.enabledPlugins||{})['kaizen@kaizen'];fs.writeFileSync(p,JSON.stringify(d,null,2))\"" >&2
       return 0
     fi
@@ -55,15 +63,14 @@ fs.writeFileSync(p, JSON.stringify(d, null, 2));
 " 2>/dev/null && rm -f "$counter_file"
 
     cat >&2 <<'ERRMSG'
-[kaizen] WARNING: computer-level kaizen install detected and auto-removed.
+[kaizen] WARNING: double kaizen install detected — removed user-level entry.
 
-kaizen@kaizen was in ~/.claude/settings.json enabledPlugins, which causes
-every hook to fire twice and can crash WSL with OOM.
+kaizen@kaizen was in both ~/.claude/settings.json (user level) and this
+project's plugin.json (project level). This causes every hook to fire twice.
 
-Auto-fixed: removed kaizen@kaizen from ~/.claude/settings.json.
-Kaizen hooks are provided per-project via .claude-plugin/plugin.json.
+Auto-fixed: removed kaizen@kaizen from user-level settings.
+The project-level plugin.json provides hooks for this project.
 ERRMSG
-    # Return 0 — allow the tool call through. The bad setting is now gone.
     return 0
   fi
 }

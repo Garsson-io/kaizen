@@ -21,13 +21,17 @@ Or manually in any Claude Code session:
 ```
 /plugin marketplace add Garsson-io/kaizen
 /plugin install kaizen@kaizen
+/reload-plugins
 ```
 
-This adds the kaizen marketplace and installs the plugin. All skills, hooks, and agents are automatically registered. Then run `/kaizen-setup` to configure your project.
+Then run `/kaizen-setup` to configure your project. This creates:
+1. `kaizen.config.json` — project configuration
+2. `.claude/kaizen/policies-local.md` — project-specific policies
+3. Appends a kaizen section to `CLAUDE.md`
 
-**No Node.js required in your project.** Kaizen runs from its own plugin directory. The setup creates 3 small config files in your project root — that's it.
+**No Node.js required in your host project.** Kaizen runs from its own plugin directory.
 
-For local development, you can also load it directly:
+### For local development
 
 ```bash
 claude --plugin-dir /path/to/kaizen
