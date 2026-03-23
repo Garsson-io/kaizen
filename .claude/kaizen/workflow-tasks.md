@@ -94,7 +94,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 - **PreToolUse(Edit/Write):** `enforce-case-exists` (blocks edits without case), `enforce-worktree-writes` (blocks edits in main checkout)
 - **PreToolUse(Bash):** `check-test-coverage` (warns on source commits without tests), `check-dirty-files` (blocks push with dirty files), `block-git-rebase`
 - **PostToolUse(Bash):** `pr-review-loop` (initiates review after PR create), `reflect` (prompts for reflection)
-- **Stop:** `enforce-pr-review-stop` (blocks stop with pending review), `enforce-post-merge-stop` (blocks stop without reflection), `verify-before-stop` (runs tsc + vitest)
+- **Stop:** `stop-gate.ts` (unified gate — blocks stop with any pending gate: review, reflection, post-merge), `verify-before-stop` (reminds about tsc + vitest)
 
 **Adapt the list:** Not every task applies. Docs-only PRs skip TDD (#2-3). Bug fixes might skip architecture (#1). But the default is ALL tasks — delete explicitly with a reason, don't silently skip.
 

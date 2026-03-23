@@ -33,24 +33,24 @@ These are registered in `.claude/settings.json` and fire on Claude Code tool-use
 
 | Hook | Event | Type | Blocks? | Purpose |
 |------|-------|------|---------|---------|
-| `check-wip.sh` | SessionStart | Advisory | No | Surface existing WIP at session start |
-| `enforce-pr-review.sh` | PreToolUse(Bash) | Gate | Yes | Block non-review commands during PR review |
+| `check-wip.sh` | SessionStart | Advisory | No | Surface existing WIP + deferred items at session start |
+| `enforce-pr-review.ts` | PreToolUse(Bash) | Gate | Yes | Block non-review commands during PR review (kaizen #775) |
 | `enforce-pr-review-tools.sh` | PreToolUse(Edit/Write/Agent) | Gate | Yes | Block editing/agents during PR review |
-| `enforce-pr-review-stop.sh` | Stop | Gate | Yes | Block agent from finishing with pending review |
 | `enforce-case-worktree.sh` | PreToolUse(Bash) | Advisory | No | Warn before commit/push outside worktree |
 | `enforce-worktree-writes.sh` | PreToolUse(Edit/Write) | Gate | Yes | Block source edits in main checkout |
 | `enforce-case-exists.sh` | PreToolUse(Edit/Write) | Gate | Yes | Block source edits in worktrees without a case |
 | `check-test-coverage.sh` | PreToolUse(Bash) | Advisory | No | Warn when source changes lack tests |
 | `check-verification.sh` | PreToolUse(Bash) | Advisory | No | Warn about missing verification section |
-| `check-dirty-files.sh` | PreToolUse(Bash) | Gate | Yes | Block push/PR create with dirty files |
-| `verify-before-stop.sh` | Stop | Gate | Yes (if fail) | Run tsc/vitest before agent finishes |
+| `check-dirty-files.ts` | PreToolUse(Bash) | Gate | Yes (PR create) / Warn (push/merge) | Dirty file check. Push downgraded to warn (kaizen #775) |
+| `enforce-pr-reflect.ts` | PreToolUse(Bash) | Gate | Yes | Block non-kaizen commands until reflection done (kaizen #775) |
+| `bump-plugin-version.ts` | PreToolUse(Bash) | Advisory | No | Auto-bump plugin version before PR (kaizen #775) |
+| `stop-gate.ts` | Stop | Gate | Yes | **Unified stop gate** — shows all pending items, supports KAIZEN_UNFINISHED escape (kaizen #775) |
+| `verify-before-stop.sh` | Stop | Advisory | No | Remind about tsc/vitest for modified TS |
 | `check-cleanup-on-stop.sh` | Stop | Advisory | No | Warn about orphaned worktree state |
-| `pr-review-loop.sh` | PostToolUse(Bash) | State machine | No | Multi-round PR self-review with state tracking |
-| `kaizen-reflect.sh` | PostToolUse(Bash) | State machine | No | Trigger kaizen reflection; set `needs_pr_kaizen` state on PR create and merge |
-| `enforce-pr-kaizen.sh` | PreToolUse(Bash) | Gate | Yes | Block non-kaizen commands until kaizen action is complete |
-| `pr-kaizen-clear.sh` | PostToolUse(Bash) | State machine | No | Clear PR kaizen gate on `gh issue create` or `KAIZEN_NO_ACTION` |
-| `enforce-post-merge-stop.sh` | Stop | Gate | Yes | Block agent from finishing with pending post-merge workflow |
-| `post-merge-clear.sh` | PostToolUse(Bash,Skill) | State machine | No | Clear post-merge gate on /kaizen; promote awaiting_merge on merge confirmation |
+| `pr-review-loop.ts` | PostToolUse(Bash) | State machine | No | Multi-round PR self-review with state tracking |
+| `kaizen-reflect.ts` | PostToolUse(Bash) | State machine | No | Trigger kaizen reflection; set `needs_pr_kaizen` state on PR create and merge |
+| `pr-kaizen-clear.ts` | PostToolUse(Bash) | State machine | No | Clear kaizen gate on KAIZEN_IMPEDIMENTS/NO_ACTION/UNFINISHED |
+| `post-merge-clear.sh` | PostToolUse(Bash,Skill) | State machine | No | Clear post-merge gate on /kaizen |
 
 ### Shared Libraries (`hooks/lib/`)
 
@@ -211,7 +211,7 @@ Read-only mounts, mandatory worktree launcher, protected wrappers. Use when huma
   1. `gh pr merge` → `pr-review-loop.sh` writes `needs_post_merge` (direct merge) or `awaiting_merge` (`--auto`)
   2. `gh pr view` confirms MERGED → `post-merge-clear.sh` promotes `awaiting_merge` to `needs_post_merge`
   3. Agent runs `/kaizen` → `post-merge-clear.sh` clears state
-  4. `enforce-post-merge-stop.sh` blocks Stop while `needs_post_merge` exists
+  4. `stop-gate.ts` blocks Stop while any gate exists (review, reflection, post-merge)
 
 ### Cross-worktree isolation rule
 

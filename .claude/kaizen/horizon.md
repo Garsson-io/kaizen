@@ -21,7 +21,7 @@
 
 **L3–L4**, with L5 just beginning.
 
-- **L3 (achieved):** `enforce-post-merge-stop.sh` gates on `/kaizen` running. Agent cannot stop without reflecting.
+- **L3 (achieved):** Unified `stop-gate.ts` gates on all pending items (review, reflection, post-merge). Agent cannot stop without completing them or using `KAIZEN_UNFINISHED` escape.
 - **L4 (in progress):** `kaizen-reflect.sh` and MCP enforcement (#57, #108) require that reflections produce filed issues, not just prose. PR #157 pending.
 - **L5a (not started):** No structured incident data. Incidents are prose in issue comments — not countable, not queryable, not labeled by horizon or root-cause-class.
 - **L5b (not started):** Agents reflect but don't check the backlog for pattern matches. Level classification is per-incident, never cross-incident.

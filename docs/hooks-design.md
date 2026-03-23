@@ -44,22 +44,43 @@ This creates a "you must do X before you can do Y" enforcement.
 
 See [`hook-language-boundaries.md`](hook-language-boundaries.md) for the full policy. Summary:
 
-- **Bash hooks** are the execution entry point (Claude Code invokes them)
-- **TypeScript** is preferred for complex logic (via `npx tsx` trampolines)
-- **Shared libraries** (`lib/*.sh`) provide common functions for bash hooks
-- Never mix languages within a single hook's logic — use a trampoline
+- **TypeScript** is the default for all hook logic. Testable, type-safe, and maintainable.
+- **Bash shims** (~5 lines) are the execution entry point that Claude Code invokes. They delegate to TS.
+- **Remaining bash hooks** (advisory-only: check-test-coverage, check-verification, etc.) are simple enough to stay in bash. Any hook with branching logic or state management should be in TypeScript.
+- Never mix languages within a single hook's logic — use a trampoline.
 
 ### Trampoline Pattern
 
-When a hook needs complex logic, use a thin bash wrapper that delegates to TypeScript:
+All enforcement hooks use a thin bash wrapper that delegates to TypeScript:
 
 ```bash
 #!/bin/bash
-# thin-hook.sh — trampoline to TypeScript implementation
-exec npx tsx "$(dirname "$0")/hook-impl.ts" "$@"
+# kaizen-some-hook-ts.sh — trampoline to TypeScript implementation
+source "$(dirname "$0")/lib/scope-guard.sh"
+KAIZEN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec npx --prefix "$KAIZEN_DIR" tsx "$KAIZEN_DIR/src/hooks/some-hook.ts" 2>/dev/null
 ```
 
-The bash script handles Claude Code's hook protocol (stdin JSON, stdout JSON). The TypeScript handles the logic.
+The bash shim handles scope-guard and kaizen dir resolution. The TypeScript file handles all logic, reads stdin JSON, and writes stdout JSON. This makes the logic fully testable with vitest.
+
+### Hook Testability (kaizen #775)
+
+TypeScript hooks follow a pattern that separates the testable core from the entry point:
+
+```typescript
+// Testable pure function — injected dependencies, no I/O
+export function processHookInput(command: string, branch: string, stateDir?: string): Result { ... }
+
+// Entry point — thin glue, not tested directly
+async function main(): Promise<void> {
+  const input = await readHookInput();
+  const branch = getCurrentBranch();
+  const result = processHookInput(input.tool_input?.command ?? '', branch);
+  // ... write output
+}
+```
+
+Shared utilities live in `src/hooks/hook-io.ts` (stdin/stdout, getCurrentBranch), `src/hooks/lib/allowlist.ts` (command allowlists), and `src/hooks/lib/gate-manager.ts` (unified stop gate logic).
 
 ### Regex Patterns — The Alternation Trap
 
@@ -100,13 +121,22 @@ When a gate blocks commands, it needs an allowlist of commands that ARE permitte
 
 ### Testing Hooks
 
-- **Unit tests:** Each hook has `test-{hook-name}.sh` in `tests/`
-- **Integration tests:** `test-hook-interaction-matrix.sh` tests cross-hook behavior
+**TypeScript hooks (preferred):**
+- Each TS hook has a co-located `.test.ts` file (e.g., `enforce-pr-review.test.ts`)
+- Tests use injected `stateDir` and `currentBranch` params — no real filesystem or git needed
+- Run with `npx vitest run src/hooks/`
+
+**Bash hooks (legacy/advisory):**
+- Each bash hook has `test-{hook-name}.sh` in `.claude/hooks/tests/`
+- Integration tests: `test-hook-interaction-matrix.sh` tests cross-hook behavior
+- Run with `npm run test:hooks`
+
+**Shared principles:**
 - **Test isolation:** Tests override `STATE_DIR` to a temp directory. Never rely on real state files
 - **Mock `gh`:** Create a mock `gh` script in a temp dir and prepend to `PATH`
 - **Always test both paths:** the "allowed" path AND the "denied" path
-- **Shared lib changes require E2E tests:** Any change to `lib/*.sh` must include at least one E2E test exercising the lib through a real hook invocation. Use `SessionSimulator` (`src/e2e/session-simulator.ts`) to fire hooks in session order with controlled environments. This catches interaction bugs (like #758) that unit tests miss.
-- **TypeScript E2E harness:** `src/e2e/hook-runner.ts` provides event builders, `runHook()`, and mock utilities. `src/e2e/session-simulator.ts` adds session-level simulation (all hooks for each event type, environment presets, session-wide assertions).
+- **Shared lib changes require E2E tests:** Use `SessionSimulator` (`src/e2e/session-simulator.ts`) to fire hooks in session order with controlled environments
+- **TypeScript E2E harness:** `src/e2e/hook-runner.ts` provides event builders, `runHook()`, and mock utilities
 
 ## Anti-Patterns
 

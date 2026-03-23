@@ -399,13 +399,13 @@ These questions are intentionally abstract. They produce value when they surface
 | `check-wip.sh` | 2 | SessionStart hook | Surface existing WIP at session start |
 | `enforce-case-worktree.sh` | 2 | PreToolUse(Bash) | Warn before commit/push outside worktree |
 | `enforce-worktree-writes.sh` | 2 | PreToolUse(Edit/Write) | Block source edits in main checkout |
-| `enforce-pr-review.sh` | 2 | PreToolUse(Bash) | Block non-review commands during PR review |
+| `enforce-pr-review.ts` | 2 | PreToolUse(Bash) | Block non-review commands during PR review |
 | `enforce-pr-review-tools.sh` | 2 | PreToolUse(Edit/Write/Agent) | Block editing/agents during PR review |
-| `enforce-pr-review-stop.sh` | 2 | Stop hook | Block agent from stopping with pending review |
-| `pr-review-loop.sh` | 2 | PostToolUse(Bash) | Multi-round PR self-review state machine |
+| `stop-gate.ts` | 2 | Stop hook | Unified gate — blocks stop with any pending gate |
+| `pr-review-loop.ts` | 2 | PostToolUse(Bash) | Multi-round PR self-review state machine |
 | `check-test-coverage.sh` | 2 | PreToolUse(Bash) | Warn when source changes lack tests |
 | `check-verification.sh` | 2 | PreToolUse(Bash) | Warn about missing verification section |
-| `check-dirty-files.sh` | 2 | PreToolUse(Bash) | Block push/PR create with dirty files |
+| `check-dirty-files.ts` | 2 | PreToolUse(Bash) | Block PR create with dirty files, warn on push |
 | `warn-code-quality.sh` | 2 | PreToolUse(Bash) | Warn on commit/PR: >3 mocks, >500 line files, jscpd duplication |
 | `verify-before-stop.sh` | 2 | Stop hook | Run tsc/vitest before agent finishes |
 | `check-cleanup-on-stop.sh` | 2 | Stop hook | Warn about orphaned worktree state |
