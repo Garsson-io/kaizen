@@ -12,6 +12,7 @@ import {
   loadPromptTemplate,
   extractArtifacts,
   extractContemplationRecommendations,
+  extractReflectionInsights,
   parsePhaseMarkers,
   formatPhaseMarker,
   checkStopSignal,
@@ -778,6 +779,103 @@ describe('extractContemplationRecommendations', () => {
   it('only matches at start of line', () => {
     const recs = extractContemplationRecommendations('some text CONTEMPLATION_REC: not a rec');
     expect(recs).toEqual([]);
+  });
+});
+
+describe('extractReflectionInsights', () => {
+  it('extracts structured insights from reflect-mode output', () => {
+    const text = [
+      'Some analysis text...',
+      'REFLECTION_INSIGHT: Prioritize testing issues — 80% success rate',
+      'More analysis...',
+      'REFLECTION_INSIGHT: Avoid issue #472 — blocked on upstream merge',
+    ].join('\n');
+    const insights = extractReflectionInsights(text);
+    expect(insights).toEqual([
+      'Prioritize testing issues — 80% success rate',
+      'Avoid issue #472 — blocked on upstream merge',
+    ]);
+  });
+
+  it('returns empty array when no insights present', () => {
+    expect(extractReflectionInsights('just regular text')).toEqual([]);
+  });
+
+  it('trims whitespace from insights', () => {
+    const insights = extractReflectionInsights('REFLECTION_INSIGHT:   padded text   ');
+    expect(insights).toEqual(['padded text']);
+  });
+
+  it('ignores empty insights', () => {
+    const text = ['REFLECTION_INSIGHT:   ', 'REFLECTION_INSIGHT: valid'].join('\n');
+    const insights = extractReflectionInsights(text);
+    expect(insights).toEqual(['valid']);
+  });
+
+  it('only matches at start of line', () => {
+    const insights = extractReflectionInsights('some text REFLECTION_INSIGHT: not an insight');
+    expect(insights).toEqual([]);
+  });
+});
+
+describe('buildTemplateVars with reflection_insights from state', () => {
+  it('formats state reflection insights as numbered list', () => {
+    const state = makeBatchState({
+      reflection_insights: [
+        'Prioritize testing issues',
+        'Avoid blocked issues',
+      ],
+    });
+    const vars = buildTemplateVars(state, 5);
+    expect(vars.reflection_insights).toContain('1. Prioritize testing issues');
+    expect(vars.reflection_insights).toContain('2. Avoid blocked issues');
+  });
+
+  it('returns empty string when no state reflection insights and no logDir', () => {
+    const state = makeBatchState();
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.reflection_insights).toBe('');
+  });
+
+  it('returns empty string for empty array', () => {
+    const state = makeBatchState({ reflection_insights: [] });
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.reflection_insights).toBe('');
+  });
+
+  it('deduplicates identical insights', () => {
+    const state = makeBatchState({
+      reflection_insights: [
+        'Prioritize testing issues',
+        'Avoid blocked issues',
+        'Prioritize testing issues',
+      ],
+    });
+    const vars = buildTemplateVars(state, 5);
+    expect(vars.reflection_insights).toContain('1. Prioritize testing issues');
+    expect(vars.reflection_insights).toContain('2. Avoid blocked issues');
+    expect(vars.reflection_insights).not.toContain('3.');
+  });
+
+  it('merges file-based and state-based insights when logDir has reflection-summary.json', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-merge-'));
+    const summary = {
+      timestamp: new Date().toISOString(),
+      runCount: 3,
+      successRate: 0.67,
+      avgCostPerPr: 2.50,
+      insights: [{ type: 'success_pattern', message: 'Testing hooks works well' }],
+      avoidIssues: [],
+    };
+    writeFileSync(join(tmpDir, 'reflection-summary.json'), JSON.stringify(summary));
+
+    const state = makeBatchState({
+      reflection_insights: ['Agent insight: focus on tests'],
+    });
+    const vars = buildTemplateVars(state, 5, tmpDir);
+    expect(vars.reflection_insights).toContain('Testing hooks works well');
+    expect(vars.reflection_insights).toContain('Agent Reflection Insights');
+    expect(vars.reflection_insights).toContain('1. Agent insight: focus on tests');
   });
 });
 

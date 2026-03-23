@@ -65,6 +65,7 @@ export {
   formatPhaseMarker,
   extractArtifacts,
   extractContemplationRecommendations,
+  extractReflectionInsights,
   checkStopSignal,
   processStreamMessage,
   buildInFlightComment,
@@ -129,6 +130,8 @@ export interface BatchState {
   run_history?: RunMetrics[];
   /** Recommendations from contemplation runs that feed back into subsequent runs */
   contemplation_recommendations?: string[];
+  /** Insights from reflect-mode runs that feed back into subsequent runs (#699) */
+  reflection_insights?: string[];
 }
 
 export interface RunMetrics {
@@ -178,6 +181,8 @@ export interface RunResult {
   timedOut?: boolean;
   /** Contemplation recommendations extracted from contemplate run output */
   contemplationRecs?: string[];
+  /** Reflection insights extracted from reflect-mode run output (#699) */
+  reflectionInsights?: string[];
 }
 
 // State I/O
@@ -344,6 +349,15 @@ export function buildTemplateVars(
 
     // Load reflection history for reflect/contemplate prompts (#611)
     priorReflections = loadReflectionHistory(logDir);
+  }
+
+  // Merge state-based reflection insights from REFLECTION_INSIGHT: markers (#699)
+  const stateInsights = [...new Set(state.reflection_insights || [])];
+  if (stateInsights.length > 0) {
+    const stateInsightsText = stateInsights.map((r, i) => `${i + 1}. ${r}`).join('\n');
+    reflectionInsights = reflectionInsights
+      ? `${reflectionInsights}\n\n### Agent Reflection Insights\n\n${stateInsightsText}`
+      : stateInsightsText;
   }
 
   // Build run history table and batch-level stats for reflect/contemplate prompts
@@ -1699,6 +1713,15 @@ async function main(): Promise<void> {
       run_num: runNum,
       recommendations_count: result.contemplationRecs.length,
     });
+  }
+
+  // Store reflection insights in batch state (#699)
+  if (result.reflectionInsights && result.reflectionInsights.length > 0) {
+    if (!freshState.reflection_insights) freshState.reflection_insights = [];
+    const existing = new Set(freshState.reflection_insights);
+    const newInsights = result.reflectionInsights.filter(r => !existing.has(r));
+    freshState.reflection_insights.push(...newInsights);
+    console.log(`  [reflect] ${newInsights.length} new insight(s) stored (${result.reflectionInsights.length - newInsights.length} duplicates skipped)`);
   }
 
   if (result.prs.length > 0) {
