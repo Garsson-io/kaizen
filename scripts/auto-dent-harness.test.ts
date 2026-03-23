@@ -21,6 +21,11 @@ import {
   msg,
   expectPhase,
   phaseCount,
+  validateLifecycle,
+  expectValidLifecycle,
+  expectPhaseOrder,
+  expectResult,
+  scenarios,
   SMOKE_TEST_PROMPT,
 } from './auto-dent-harness.js';
 
@@ -165,6 +170,208 @@ describe('synthetic: DECOMPOSE phase marker', () => {
     expect(phaseCount(capture, 'PICK')).toBe(1);
     expect(phaseCount(capture, 'PR')).toBe(1);
     expect(capture.result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/999');
+  });
+});
+
+// Lifecycle validation tests
+
+describe('lifecycle: validateLifecycle', () => {
+  it('valid lifecycle with standard ordering', () => {
+    const capture = runStream(scenarios.successfulRun());
+    const validation = validateLifecycle(capture);
+
+    expect(validation.valid).toBe(true);
+    expect(validation.violations).toHaveLength(0);
+    expect(validation.phasesPresent).toContain('PICK');
+    expect(validation.phasesPresent).toContain('PR');
+  });
+
+  it('detects reversed phase ordering', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('IMPLEMENT', { case: 'test', branch: 'test' }),
+      msg.phase('PICK', { issue: '#100', title: 'wrong order' }),
+      msg.done(0.5),
+    ]);
+
+    const validation = validateLifecycle(capture);
+    expect(validation.valid).toBe(false);
+    expect(validation.violations.length).toBeGreaterThan(0);
+    expect(validation.violations[0].phase).toBe('PICK');
+    expect(validation.violations[0].after).toBe('IMPLEMENT');
+  });
+
+  it('floating phases (DECOMPOSE, STOP) do not cause violations', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#100', title: 'test' }),
+      msg.phase('DECOMPOSE', { epic: '#100', issues_created: '#101' }),
+      msg.phase('EVALUATE', { verdict: 'proceed', reason: 'ok' }),
+      msg.phase('STOP', { reason: 'done' }),
+      msg.done(0.5),
+    ]);
+
+    const validation = validateLifecycle(capture);
+    expect(validation.valid).toBe(true);
+  });
+
+  it('reports missing standard phases', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#100', title: 'test' }),
+      msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/1' }),
+      msg.done(1.0),
+    ]);
+
+    const validation = validateLifecycle(capture);
+    expect(validation.phasesMissing).toContain('EVALUATE');
+    expect(validation.phasesMissing).toContain('IMPLEMENT');
+    expect(validation.phasesMissing).toContain('TEST');
+    expect(validation.phasesMissing).not.toContain('PICK');
+    expect(validation.phasesMissing).not.toContain('PR');
+  });
+
+  it('empty stream is valid (no ordering violations possible)', () => {
+    const capture = runStream([msg.init(), msg.done(0)]);
+    const validation = validateLifecycle(capture);
+    expect(validation.valid).toBe(true);
+    expect(validation.phasesPresent).toHaveLength(0);
+  });
+});
+
+describe('lifecycle: expectValidLifecycle', () => {
+  it('passes for valid lifecycle', () => {
+    const capture = runStream(scenarios.successfulRun());
+    expect(() => expectValidLifecycle(capture)).not.toThrow();
+  });
+
+  it('throws descriptive error for invalid lifecycle', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('TEST', { result: 'pass', count: '1' }),
+      msg.phase('EVALUATE', { verdict: 'proceed', reason: 'too late' }),
+      msg.done(0.5),
+    ]);
+
+    expect(() => expectValidLifecycle(capture)).toThrow(/EVALUATE.*after.*TEST/);
+  });
+});
+
+describe('lifecycle: expectPhaseOrder', () => {
+  it('passes when phases appear in expected relative order', () => {
+    const capture = runStream(scenarios.successfulRun());
+    expect(() => expectPhaseOrder(capture, ['PICK', 'EVALUATE', 'TEST', 'PR'])).not.toThrow();
+  });
+
+  it('allows gaps between expected phases', () => {
+    const capture = runStream(scenarios.successfulRun());
+    expect(() => expectPhaseOrder(capture, ['PICK', 'PR'])).not.toThrow();
+  });
+
+  it('throws when phase is missing', () => {
+    const capture = runStream(scenarios.skippedRun());
+    expect(() => expectPhaseOrder(capture, ['PICK', 'IMPLEMENT'])).toThrow(/IMPLEMENT.*not found/);
+  });
+
+  it('throws when phases are reversed', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/1' }),
+      msg.phase('PICK', { issue: '#1', title: 'late pick' }),
+      msg.done(0.5),
+    ]);
+
+    expect(() => expectPhaseOrder(capture, ['PICK', 'PR'])).toThrow(/appeared before/);
+  });
+});
+
+// Result assertion tests
+
+describe('result: expectResult', () => {
+  it('passes when all expectations are met', () => {
+    const capture = runStream(scenarios.successfulRun({ cost: 1.5 }));
+    expect(() => expectResult(capture, {
+      minPrs: 1,
+      maxCost: 5.0,
+      stopRequested: false,
+    })).not.toThrow();
+  });
+
+  it('fails when PR count is below minimum', () => {
+    const capture = runStream(scenarios.skippedRun());
+    expect(() => expectResult(capture, { minPrs: 1 })).toThrow(/PRs.*expected >= 1.*got 0/);
+  });
+
+  it('fails when cost exceeds maximum', () => {
+    const capture = runStream(scenarios.successfulRun({ cost: 10.0 }));
+    expect(() => expectResult(capture, { maxCost: 5.0 })).toThrow(/Cost.*expected <= \$5/);
+  });
+
+  it('fails when stopRequested does not match', () => {
+    const capture = runStream(scenarios.stopRun());
+    expect(() => expectResult(capture, { stopRequested: false })).toThrow(/stopRequested.*expected false/);
+  });
+
+  it('reports multiple failures at once', () => {
+    const capture = runStream(scenarios.skippedRun({ cost: 10.0 }));
+    expect(() => expectResult(capture, {
+      minPrs: 1,
+      maxCost: 5.0,
+    })).toThrow(/PRs.*\n.*Cost/);
+  });
+
+  it('checks tool call bounds', () => {
+    const capture = runStream(scenarios.successfulRun());
+    expect(() => expectResult(capture, { minToolCalls: 1 })).not.toThrow();
+    expect(() => expectResult(capture, { maxToolCalls: 0 })).toThrow(/Tool calls/);
+  });
+});
+
+// Scenario builder tests
+
+describe('scenarios: pre-built sequences', () => {
+  it('successfulRun produces valid lifecycle with PR', () => {
+    const capture = runStream(scenarios.successfulRun());
+    expectValidLifecycle(capture);
+    expect(capture.result.prs.length).toBeGreaterThanOrEqual(1);
+    expect(capture.result.cost).toBeGreaterThan(0);
+    expect(capture.result.toolCalls).toBeGreaterThan(0);
+  });
+
+  it('successfulRun accepts custom options', () => {
+    const capture = runStream(scenarios.successfulRun({
+      issue: '#42',
+      prUrl: 'https://github.com/Garsson-io/kaizen/pull/42',
+      cost: 3.0,
+    }));
+    expectPhase(capture, 'PICK', '#42');
+    expect(capture.result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/42');
+    expect(capture.result.cost).toBe(3.0);
+  });
+
+  it('skippedRun produces valid lifecycle with no PRs', () => {
+    const capture = runStream(scenarios.skippedRun());
+    expectValidLifecycle(capture);
+    expect(capture.result.prs).toHaveLength(0);
+  });
+
+  it('decomposeRun includes DECOMPOSE phase and PR', () => {
+    const capture = runStream(scenarios.decomposeRun());
+    expectValidLifecycle(capture);
+    expectPhase(capture, 'DECOMPOSE');
+    expect(capture.result.prs.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('stopRun signals stop', () => {
+    const capture = runStream(scenarios.stopRun());
+    expect(capture.result.stopRequested).toBe(true);
+    expectPhase(capture, 'STOP');
+  });
+
+  it('errorRun has TEST fail phase and no PRs', () => {
+    const capture = runStream(scenarios.errorRun());
+    expectPhase(capture, 'TEST', 'fail');
+    expect(capture.result.prs).toHaveLength(0);
   });
 });
 
