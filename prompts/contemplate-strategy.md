@@ -80,6 +80,26 @@ Quick-check the kaizen system:
 - Are there unmerged PRs piling up?
 - Are there recurring failure patterns in recent runs?
 
+### 6. Philosophical Review
+
+Read the Zen of Kaizen:
+```
+cat .claude/kaizen/zen.md
+```
+
+For each principle, consider:
+- **Cited recently?** Has this principle been referenced in recent reflections or decisions?
+  If a principle hasn't been cited in months, it may be vestigial — or under-applied.
+- **Anomalies?** Are there incidents where following this principle led to bad outcomes?
+  When practice contradicts philosophy, practice wins.
+- **Gaps?** Is there friction in this batch that no principle addresses?
+  Unnamed friction is the signal that a principle is missing.
+- **Tensions?** Do any principles conflict with each other in practice?
+  Tensions are engines of philosophical evolution, not bugs.
+
+If you identify a gap or anomaly, file an issue with the `zen-evolution` label proposing
+an amendment. The system proposes, the human disposes.
+
 ## Output
 
 Post your strategic assessment to the batch progress issue as a comment.
@@ -90,6 +110,7 @@ For each finding, take one concrete action:
 - **Guidance exhausted?** Post updated guidance recommendation
 - **Epic stalled?** Decompose it into concrete next steps
 - **System problem?** File a kaizen issue
+- **Philosophical gap?** File a `zen-evolution` issue proposing an amendment
 
 ## Progress Markers
 
