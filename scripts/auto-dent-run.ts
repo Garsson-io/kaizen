@@ -20,7 +20,7 @@ import { spawn, execSync } from 'child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
-import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine } from './auto-dent-score.js';
+import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly } from './auto-dent-score.js';
 import { claimNextItem } from './auto-dent-plan.js';
 
 // ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
@@ -1494,6 +1494,18 @@ async function main(): Promise<void> {
   );
 
   printRunSummary(runNum, exitCode, duration, result);
+
+  // Cost anomaly detection (#585)
+  {
+    const priorHistory = (readState(stateFile).run_history || []);
+    const anomaly = detectCostAnomaly(result.cost, priorHistory);
+    if (anomaly && anomaly.severity !== 'normal') {
+      const tag = anomaly.severity === 'anomaly' ? 'ANOMALY' : 'WARNING';
+      console.log(
+        `  ${color.yellow(`[cost-${tag.toLowerCase()}]`)} run #${runNum} cost $${anomaly.run_cost.toFixed(2)} is ${anomaly.cost_vs_avg.toFixed(1)}x the rolling avg ($${anomaly.rolling_avg.toFixed(2)})`,
+      );
+    }
+  }
 
   // Batch scoreboard (cumulative stats across all runs)
   {

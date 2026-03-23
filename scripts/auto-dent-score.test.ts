@@ -9,10 +9,12 @@ import {
   formatModeBreakdown,
   postHocScoreBatch,
   formatPostHocLine,
+  detectCostAnomaly,
   type RunScore,
   type BatchScore,
   type ModeStats,
   type PostHocBatchResult,
+  type CostAnomalyResult,
 } from './auto-dent-score.js';
 import type { RunMetrics, RunResult } from './auto-dent-run.js';
 
@@ -354,14 +356,15 @@ describe('formatBatchScoreTable', () => {
       avg_duration_seconds: 216.67,
       overall_efficiency: 0.5,
       runs: [
-        { success: true, cost_usd: 2, tool_calls: 10, pr_count: 1, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 200, efficiency: 0.5, cost_per_pr: 2, stop_requested: false, mode: 'exploit', lines_deleted: 80, issues_pruned: 1 },
-        { success: true, cost_usd: 3, tool_calls: 15, pr_count: 2, issues_closed_count: 3, issues_filed_count: 0, duration_seconds: 400, efficiency: 0.67, cost_per_pr: 1.5, stop_requested: false, mode: 'exploit', lines_deleted: 40, issues_pruned: 1 },
-        { success: false, cost_usd: 1, tool_calls: 5, pr_count: 0, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 50, efficiency: 0, cost_per_pr: Infinity, stop_requested: false, mode: 'explore', lines_deleted: 0, issues_pruned: 0 },
+        { success: true, cost_usd: 2, tool_calls: 10, pr_count: 1, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 200, efficiency: 0.5, cost_per_pr: 2, stop_requested: false, mode: 'exploit', lines_deleted: 80, issues_pruned: 1, cost_vs_avg: null },
+        { success: true, cost_usd: 3, tool_calls: 15, pr_count: 2, issues_closed_count: 3, issues_filed_count: 0, duration_seconds: 400, efficiency: 0.67, cost_per_pr: 1.5, stop_requested: false, mode: 'exploit', lines_deleted: 40, issues_pruned: 1, cost_vs_avg: null },
+        { success: false, cost_usd: 1, tool_calls: 5, pr_count: 0, issues_closed_count: 1, issues_filed_count: 0, duration_seconds: 50, efficiency: 0, cost_per_pr: Infinity, stop_requested: false, mode: 'explore', lines_deleted: 0, issues_pruned: 0, cost_vs_avg: null },
       ],
       mode_breakdown: [
         { mode: 'exploit', runs: 2, successes: 2, success_rate: 1, cost_usd: 5, prs: 3, avg_cost: 2.5, efficiency: 0.6, lines_deleted: 120, issues_pruned: 2 },
         { mode: 'explore', runs: 1, successes: 0, success_rate: 0, cost_usd: 1, prs: 0, avg_cost: 1, efficiency: 0, lines_deleted: 0, issues_pruned: 0 },
       ],
+      cost_anomaly_count: 0,
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Runs** | 3 (2 successful) |');
@@ -393,6 +396,7 @@ describe('formatBatchScoreTable', () => {
       overall_efficiency: 0,
       runs: [],
       mode_breakdown: [],
+      cost_anomaly_count: 0,
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Avg cost/success** | N/A |');
@@ -415,6 +419,7 @@ describe('formatBatchScoreTable', () => {
       overall_efficiency: 1 / 3,
       runs: [],
       mode_breakdown: [],
+      cost_anomaly_count: 0,
       post_hoc: {
         prs: [
           { url: 'https://github.com/org/repo/pull/1', status: 'merged' },
@@ -450,6 +455,7 @@ describe('formatBatchScoreTable', () => {
       overall_efficiency: 1 / 3,
       runs: [],
       mode_breakdown: [],
+      cost_anomaly_count: 0,
     };
     const table = formatBatchScoreTable(score);
     expect(table).not.toContain('merge rate');
@@ -471,6 +477,7 @@ function makeRunScore(overrides: Partial<RunScore> = {}): RunScore {
     mode: 'exploit',
     lines_deleted: 0,
     issues_pruned: 0,
+    cost_vs_avg: null,
     ...overrides,
   };
 }
@@ -700,5 +707,173 @@ describe('formatPostHocLine', () => {
     };
     const line = formatPostHocLine(ph);
     expect(line).toContain('merge rate: N/A');
+  });
+});
+
+describe('detectCostAnomaly', () => {
+  it('returns null when no prior history', () => {
+    expect(detectCostAnomaly(5.0, [])).toBeNull();
+  });
+
+  it('returns null when rolling average is zero', () => {
+    const history = [makeRunMetrics({ cost_usd: 0 })];
+    expect(detectCostAnomaly(5.0, history)).toBeNull();
+  });
+
+  it('returns normal when cost is below 2x average', () => {
+    const history = [
+      makeRunMetrics({ cost_usd: 2.0 }),
+      makeRunMetrics({ cost_usd: 3.0 }),
+    ];
+    const result = detectCostAnomaly(4.0, history);
+    expect(result).not.toBeNull();
+    expect(result!.severity).toBe('normal');
+    expect(result!.rolling_avg).toBe(2.5);
+    expect(result!.cost_vs_avg).toBeCloseTo(1.6);
+  });
+
+  it('returns warning when cost is 2-4x average', () => {
+    const history = [
+      makeRunMetrics({ cost_usd: 2.0 }),
+      makeRunMetrics({ cost_usd: 2.0 }),
+    ];
+    const result = detectCostAnomaly(5.0, history);
+    expect(result).not.toBeNull();
+    expect(result!.severity).toBe('warning');
+    expect(result!.cost_vs_avg).toBe(2.5);
+  });
+
+  it('returns anomaly when cost is 4x+ average', () => {
+    const history = [
+      makeRunMetrics({ cost_usd: 1.0 }),
+      makeRunMetrics({ cost_usd: 1.0 }),
+    ];
+    const result = detectCostAnomaly(5.0, history);
+    expect(result).not.toBeNull();
+    expect(result!.severity).toBe('anomaly');
+    expect(result!.cost_vs_avg).toBe(5.0);
+  });
+
+  it('returns warning at exactly 2x threshold', () => {
+    const history = [makeRunMetrics({ cost_usd: 2.0 })];
+    const result = detectCostAnomaly(4.0, history);
+    expect(result).not.toBeNull();
+    expect(result!.severity).toBe('warning');
+  });
+
+  it('returns anomaly at exactly 4x threshold', () => {
+    const history = [makeRunMetrics({ cost_usd: 1.0 })];
+    const result = detectCostAnomaly(4.0, history);
+    expect(result).not.toBeNull();
+    expect(result!.severity).toBe('anomaly');
+  });
+});
+
+describe('cost_vs_avg in scoring', () => {
+  it('scoreRunMetrics returns null cost_vs_avg when no prior history', () => {
+    const score = scoreRunMetrics(makeRunMetrics());
+    expect(score.cost_vs_avg).toBeNull();
+  });
+
+  it('scoreRunMetrics computes cost_vs_avg from prior history', () => {
+    const priorHistory = [
+      makeRunMetrics({ cost_usd: 2.0 }),
+      makeRunMetrics({ cost_usd: 4.0 }),
+    ];
+    const score = scoreRunMetrics(makeRunMetrics({ cost_usd: 6.0 }), priorHistory);
+    expect(score.cost_vs_avg).toBe(2.0); // 6.0 / 3.0
+  });
+
+  it('scoreRunResult returns null cost_vs_avg when no prior history', () => {
+    const score = scoreRunResult(makeRunResult(), 0, 100);
+    expect(score.cost_vs_avg).toBeNull();
+  });
+
+  it('scoreRunResult computes cost_vs_avg from prior history', () => {
+    const priorHistory = [makeRunMetrics({ cost_usd: 2.0 })];
+    const result = makeRunResult({ cost: 6.0 });
+    const score = scoreRunResult(result, 0, 100, 'exploit', priorHistory);
+    expect(score.cost_vs_avg).toBe(3.0); // 6.0 / 2.0
+  });
+
+  it('scoreBatch computes cost_vs_avg per run using rolling history', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, cost_usd: 2.0 }),
+      makeRunMetrics({ run: 2, cost_usd: 2.0 }),
+      makeRunMetrics({ run: 3, cost_usd: 6.0 }),
+    ];
+    const score = scoreBatch(history);
+    // Run 1: no prior history -> null
+    expect(score.runs[0].cost_vs_avg).toBeNull();
+    // Run 2: prior = [2.0], avg = 2.0, cost = 2.0 -> 1.0
+    expect(score.runs[1].cost_vs_avg).toBe(1.0);
+    // Run 3: prior = [2.0, 2.0], avg = 2.0, cost = 6.0 -> 3.0
+    expect(score.runs[2].cost_vs_avg).toBe(3.0);
+  });
+
+  it('scoreBatch counts cost anomalies', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, cost_usd: 2.0 }),
+      makeRunMetrics({ run: 2, cost_usd: 2.0 }),
+      makeRunMetrics({ run: 3, cost_usd: 8.0 }), // 4x avg -> anomaly
+    ];
+    const score = scoreBatch(history);
+    expect(score.cost_anomaly_count).toBe(1);
+  });
+
+  it('formatRunScoreLine includes cost_vs_avg when present', () => {
+    const score = makeRunScore({ cost_vs_avg: 2.5 });
+    const line = formatRunScoreLine(score);
+    expect(line).toContain('2.5x avg');
+  });
+
+  it('formatRunScoreLine omits cost_vs_avg when null', () => {
+    const score = makeRunScore({ cost_vs_avg: null });
+    const line = formatRunScoreLine(score);
+    expect(line).not.toContain('x avg');
+  });
+
+  it('formatBatchScoreTable shows anomaly count when nonzero', () => {
+    const score: BatchScore = {
+      total_runs: 2,
+      successful_runs: 2,
+      success_rate: 1.0,
+      total_cost_usd: 10.0,
+      total_prs: 2,
+      total_issues_closed: 2,
+      total_duration_seconds: 600,
+      total_lines_deleted: 0,
+      total_issues_pruned: 0,
+      avg_cost_per_success: 5.0,
+      avg_duration_seconds: 300,
+      overall_efficiency: 0.2,
+      runs: [],
+      mode_breakdown: [],
+      cost_anomaly_count: 2,
+    };
+    const table = formatBatchScoreTable(score);
+    expect(table).toContain('| **Cost anomalies** | 2 runs >= 2x avg |');
+  });
+
+  it('formatBatchScoreTable omits anomaly row when zero', () => {
+    const score: BatchScore = {
+      total_runs: 2,
+      successful_runs: 2,
+      success_rate: 1.0,
+      total_cost_usd: 4.0,
+      total_prs: 2,
+      total_issues_closed: 2,
+      total_duration_seconds: 600,
+      total_lines_deleted: 0,
+      total_issues_pruned: 0,
+      avg_cost_per_success: 2.0,
+      avg_duration_seconds: 300,
+      overall_efficiency: 0.5,
+      runs: [],
+      mode_breakdown: [],
+      cost_anomaly_count: 0,
+    };
+    const table = formatBatchScoreTable(score);
+    expect(table).not.toContain('Cost anomalies');
   });
 });

@@ -36,6 +36,8 @@ export interface RunScore {
   lines_deleted: number;
   /** Issues closed as not-planned (pruned, not fixed) */
   issues_pruned: number;
+  /** Cost relative to rolling average (e.g. 2.0 = 2x the avg). null if first run. */
+  cost_vs_avg: number | null;
 }
 
 export interface BatchScore {
@@ -67,6 +69,8 @@ export interface BatchScore {
   runs: RunScore[];
   /** Per-mode effectiveness breakdown */
   mode_breakdown: ModeStats[];
+  /** Number of runs flagged as cost anomalies (>= 2x rolling avg) */
+  cost_anomaly_count: number;
   /** Post-hoc merge results (populated by postHocScoreBatch) */
   post_hoc?: PostHocBatchResult;
 }
@@ -119,9 +123,20 @@ export interface PostHocBatchResult {
 }
 
 /** Score a single run from RunMetrics (stored in state.run_history). */
-export function scoreRunMetrics(metrics: RunMetrics): RunScore {
+export function scoreRunMetrics(
+  metrics: RunMetrics,
+  priorHistory?: RunMetrics[],
+): RunScore {
   const prCount = metrics.prs.length;
   const cost = metrics.cost_usd;
+
+  let costVsAvg: number | null = null;
+  if (priorHistory && priorHistory.length > 0) {
+    const avgCost =
+      priorHistory.reduce((s, r) => s + r.cost_usd, 0) / priorHistory.length;
+    costVsAvg = avgCost > 0 ? cost / avgCost : null;
+  }
+
   return {
     success: metrics.exit_code === 0 && prCount > 0,
     cost_usd: cost,
@@ -136,6 +151,7 @@ export function scoreRunMetrics(metrics: RunMetrics): RunScore {
     mode: metrics.mode ?? 'exploit',
     lines_deleted: metrics.lines_deleted ?? 0,
     issues_pruned: metrics.issues_pruned ?? 0,
+    cost_vs_avg: costVsAvg,
   };
 }
 
@@ -145,9 +161,18 @@ export function scoreRunResult(
   exitCode: number,
   durationSeconds: number,
   mode: string = 'exploit',
+  priorHistory?: RunMetrics[],
 ): RunScore {
   const prCount = result.prs.length;
   const cost = result.cost;
+
+  let costVsAvg: number | null = null;
+  if (priorHistory && priorHistory.length > 0) {
+    const avgCost =
+      priorHistory.reduce((s, r) => s + r.cost_usd, 0) / priorHistory.length;
+    costVsAvg = avgCost > 0 ? cost / avgCost : null;
+  }
+
   return {
     success: exitCode === 0 && prCount > 0,
     cost_usd: cost,
@@ -162,12 +187,15 @@ export function scoreRunResult(
     mode,
     lines_deleted: result.linesDeleted,
     issues_pruned: result.issuesPruned,
+    cost_vs_avg: costVsAvg,
   };
 }
 
 /** Score an entire batch from run_history. */
 export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
-  const runs = runHistory.map(scoreRunMetrics);
+  const runs = runHistory.map((m, i) =>
+    scoreRunMetrics(m, i > 0 ? runHistory.slice(0, i) : undefined),
+  );
   const successfulRuns = runs.filter((r) => r.success);
 
   const totalCost = runs.reduce((s, r) => s + r.cost_usd, 0);
@@ -185,6 +213,10 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     (s, r) => s + r.issues_pruned,
     0,
   );
+
+  const costAnomalyCount = runs.filter(
+    (r) => r.cost_vs_avg !== null && r.cost_vs_avg >= 2,
+  ).length;
 
   return {
     total_runs: runs.length,
@@ -205,6 +237,49 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     overall_efficiency: totalCost > 0 ? totalPrs / totalCost : 0,
     runs,
     mode_breakdown: scoreModeBreakdown(runs),
+    cost_anomaly_count: costAnomalyCount,
+  };
+}
+
+export type CostAnomalySeverity = 'normal' | 'warning' | 'anomaly';
+
+export interface CostAnomalyResult {
+  severity: CostAnomalySeverity;
+  cost_vs_avg: number;
+  rolling_avg: number;
+  run_cost: number;
+}
+
+/**
+ * Detect cost anomalies by comparing a run's cost to the rolling average.
+ *
+ * Thresholds:
+ *   - warning: cost >= 2x rolling average
+ *   - anomaly: cost >= 4x rolling average
+ *   - normal: below 2x
+ *
+ * Returns null if there's no prior history to compare against.
+ */
+export function detectCostAnomaly(
+  runCost: number,
+  priorHistory: RunMetrics[],
+): CostAnomalyResult | null {
+  if (priorHistory.length === 0) return null;
+
+  const avgCost =
+    priorHistory.reduce((s, r) => s + r.cost_usd, 0) / priorHistory.length;
+  if (avgCost <= 0) return null;
+
+  const ratio = runCost / avgCost;
+  let severity: CostAnomalySeverity = 'normal';
+  if (ratio >= 4) severity = 'anomaly';
+  else if (ratio >= 2) severity = 'warning';
+
+  return {
+    severity,
+    cost_vs_avg: ratio,
+    rolling_avg: avgCost,
+    run_cost: runCost,
   };
 }
 
@@ -227,6 +302,9 @@ export function formatRunScoreLine(score: RunScore): string {
   }
   if (score.issues_pruned > 0) {
     parts.push(`${score.issues_pruned} pruned`);
+  }
+  if (score.cost_vs_avg != null) {
+    parts.push(`${score.cost_vs_avg.toFixed(1)}x avg`);
   }
   return parts.join(' | ');
 }
@@ -257,6 +335,9 @@ export function formatBatchScoreTable(score: BatchScore): string {
   ];
   if (modeStr) {
     lines.push(`| **Modes** | ${modeStr} |`);
+  }
+  if (score.cost_anomaly_count > 0) {
+    lines.push(`| **Cost anomalies** | ${score.cost_anomaly_count} runs >= 2x avg |`);
   }
   if (score.post_hoc) {
     const ph = score.post_hoc;
