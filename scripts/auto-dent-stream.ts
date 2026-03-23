@@ -209,6 +209,22 @@ export function extractContemplationRecommendations(text: string): string[] {
   return recs;
 }
 
+/**
+ * Extract structured reflection insights from reflect-mode run output.
+ *
+ * Parses lines matching: REFLECTION_INSIGHT: <insight text>
+ * These are emitted by reflect-batch.md runs to feed back
+ * analysis insights into subsequent batch runs (#699).
+ */
+export function extractReflectionInsights(text: string): string[] {
+  const insights: string[] = [];
+  for (const match of text.matchAll(/^REFLECTION_INSIGHT:[^\S\n]*(.+)$/gm)) {
+    const insight = match[1].trim();
+    if (insight) insights.push(insight);
+  }
+  return insights;
+}
+
 export function checkStopSignal(text: string, result: RunResult): void {
   // Primary: structured phase marker format (preferred, avoids in-band ambiguity).
   // AUTO_DENT_PHASE: STOP | reason=<text>
@@ -346,6 +362,12 @@ export function processStreamMessage(
               if (!result.contemplationRecs) result.contemplationRecs = [];
               result.contemplationRecs.push(...recs);
             }
+            // Extract reflection insights (#699)
+            const insights = extractReflectionInsights(block.text);
+            if (insights.length > 0) {
+              if (!result.reflectionInsights) result.reflectionInsights = [];
+              result.reflectionInsights.push(...insights);
+            }
             for (const marker of parsePhaseMarkers(block.text)) {
               console.log(`  [${elapsed}]  ${formatPhaseMarker(marker)}`);
               if (ctx) ctx.lastPhase = formatPhaseMarker(marker);
@@ -369,6 +391,11 @@ export function processStreamMessage(
         if (recs.length > 0) {
           if (!result.contemplationRecs) result.contemplationRecs = [];
           result.contemplationRecs.push(...recs);
+        }
+        const insights = extractReflectionInsights(msg.result);
+        if (insights.length > 0) {
+          if (!result.reflectionInsights) result.reflectionInsights = [];
+          result.reflectionInsights.push(...insights);
         }
       }
       {
