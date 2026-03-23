@@ -24,6 +24,30 @@ export function ghExec(cmd: string): string {
   }
 }
 
+// Issue label lookup
+
+/**
+ * Fetch labels for a GitHub issue by number.
+ * Returns an array of label names, or empty array on failure.
+ * Best-effort: never throws.
+ */
+export function fetchIssueLabels(issueRef: string, repo: string): string[] {
+  // issueRef may be "#123" or "123" or a full URL
+  const numMatch = issueRef.match(/(\d+)/);
+  if (!numMatch) return [];
+  const issueNum = numMatch[1];
+  try {
+    const json = ghExec(
+      `gh issue view ${issueNum} --repo ${repo} --json labels`,
+    );
+    if (!json) return [];
+    const data = JSON.parse(json);
+    return (data.labels || []).map((l: { name: string }) => l.name);
+  } catch {
+    return [];
+  }
+}
+
 // Merge status
 
 export type MergeStatus =

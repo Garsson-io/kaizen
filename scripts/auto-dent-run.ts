@@ -39,6 +39,7 @@ export {
   extractLinkedIssue,
   isIssueClosed,
   cleanupSupersededPRs,
+  fetchIssueLabels,
   type MergeStatus,
   type SweepAction,
   type SweepResult,
@@ -81,6 +82,7 @@ import {
   sweepBatchPRs,
   labelArtifacts,
   queueAutoMerge,
+  fetchIssueLabels,
 } from './auto-dent-github.js';
 import {
   color,
@@ -1466,8 +1468,10 @@ async function main(): Promise<void> {
     // Extract picked issue from log phase markers
     try {
       const logContent = readFileSync(logFile, 'utf8');
+      const repo = state.kaizen_repo || state.host_repo || '';
       for (const marker of parsePhaseMarkers(logContent)) {
         if (marker.phase === 'PICK' && marker.fields.issue) {
+          const labels = repo ? fetchIssueLabels(marker.fields.issue, repo) : [];
           events.emit({
             type: 'run.issue_picked',
             run_id: runId,
@@ -1475,6 +1479,7 @@ async function main(): Promise<void> {
             run_num: runNum,
             issue: marker.fields.issue,
             title: marker.fields.title || '',
+            labels,
           });
         }
       }

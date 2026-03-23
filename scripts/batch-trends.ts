@@ -31,6 +31,8 @@ export interface BatchDataPoint {
   avg_run_duration_minutes: number;
   total_lifecycle_violations: number;
   failure_classes: Record<string, number>;
+  horizon_distribution: Record<string, number>;
+  area_distribution: Record<string, number>;
 }
 
 export interface TrendReport {
@@ -105,6 +107,8 @@ export function toDataPoint(summary: BatchSummary, timestamp: string): BatchData
     avg_run_duration_minutes: summary.avg_run_duration_minutes,
     total_lifecycle_violations: summary.total_lifecycle_violations,
     failure_classes: summary.failure_classes,
+    horizon_distribution: summary.horizon_distribution,
+    area_distribution: summary.area_distribution,
   };
 }
 

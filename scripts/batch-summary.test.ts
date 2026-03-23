@@ -123,6 +123,9 @@ describe('summarizeEvents', () => {
     expect(summary.total_runs).toBe(0);
     expect(summary.batch_id).toBe('unknown');
     expect(summary.total_cost_usd).toBe(0);
+    expect(summary.label_distribution).toEqual({});
+    expect(summary.horizon_distribution).toEqual({});
+    expect(summary.area_distribution).toEqual({});
   });
 
   it('computes cost_per_pr correctly', () => {
@@ -148,6 +151,42 @@ describe('summarizeEvents', () => {
     ];
     const summary = summarizeEvents(events);
     expect(summary.total_lifecycle_violations).toBe(4);
+  });
+
+  it('computes label distribution from issue_picked events', () => {
+    const events: EventEnvelope[] = [
+      makeEnvelope({ type: 'run.issue_picked', run_id: 'b/run-1', batch_id: 'b', run_num: 1, issue: '#10', title: 'A', labels: ['kaizen', 'area/hooks', 'horizon/observability'] }),
+      makeEnvelope({ type: 'run.issue_picked', run_id: 'b/run-2', batch_id: 'b', run_num: 2, issue: '#20', title: 'B', labels: ['kaizen', 'area/hooks', 'horizon/resilience'] }),
+      makeEnvelope({ type: 'run.issue_picked', run_id: 'b/run-3', batch_id: 'b', run_num: 3, issue: '#30', title: 'C', labels: ['kaizen', 'area/skills'] }),
+    ];
+
+    const summary = summarizeEvents(events);
+    expect(summary.label_distribution).toEqual({
+      'kaizen': 3,
+      'area/hooks': 2,
+      'area/skills': 1,
+      'horizon/observability': 1,
+      'horizon/resilience': 1,
+    });
+    expect(summary.horizon_distribution).toEqual({
+      'horizon/observability': 1,
+      'horizon/resilience': 1,
+    });
+    expect(summary.area_distribution).toEqual({
+      'area/hooks': 2,
+      'area/skills': 1,
+    });
+  });
+
+  it('handles issue_picked events without labels', () => {
+    const events: EventEnvelope[] = [
+      makeEnvelope({ type: 'run.issue_picked', run_id: 'b/run-1', batch_id: 'b', run_num: 1, issue: '#10', title: 'A' }),
+    ];
+
+    const summary = summarizeEvents(events);
+    expect(summary.label_distribution).toEqual({});
+    expect(summary.horizon_distribution).toEqual({});
+    expect(summary.area_distribution).toEqual({});
   });
 });
 
@@ -210,5 +249,28 @@ describe('formatPlainLanguage', () => {
     const text = formatPlainLanguage(summary);
     expect(text).toContain('30m');
     expect(text).not.toContain('0h');
+  });
+
+  it('shows domain distribution when labels present', () => {
+    const events: EventEnvelope[] = [
+      makeCompleteEvent({ run_num: 1 }),
+      makeEnvelope({ type: 'run.issue_picked', run_id: 'batch-test/run-1', batch_id: 'batch-test', run_num: 1, issue: '#10', title: 'A', labels: ['area/hooks', 'horizon/observability'] }),
+      makeEnvelope({ type: 'run.issue_picked', run_id: 'batch-test/run-1', batch_id: 'batch-test', run_num: 1, issue: '#20', title: 'B', labels: ['area/hooks', 'horizon/resilience'] }),
+    ];
+    const summary = summarizeEvents(events);
+    const text = formatPlainLanguage(summary);
+
+    expect(text).toContain('### Domain Distribution');
+    expect(text).toContain('horizon/observability: 1 issue');
+    expect(text).toContain('horizon/resilience: 1 issue');
+    expect(text).toContain('area/hooks: 2 issues');
+  });
+
+  it('omits domain distribution when no labels', () => {
+    const summary = summarizeEvents([
+      makeCompleteEvent({ run_num: 1 }),
+    ]);
+    const text = formatPlainLanguage(summary);
+    expect(text).not.toContain('### Domain Distribution');
   });
 });
