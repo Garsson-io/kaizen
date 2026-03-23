@@ -12,22 +12,26 @@ A process improvement methodology implemented as a Claude Code plugin. Kaizen pr
 
 ## Installation
 
-The simplest way — just tell Claude:
+The simplest way — tell Claude:
 
 > Claude, install kaizen https://github.com/Garsson-io/kaizen in my project
 
-Or manually in any Claude Code session:
+Claude will install the plugin and tell you to restart. After restarting, run `/kaizen-setup`.
 
+### Manual installation
+
+**Step 1:** Install the plugin (in Claude Code):
 ```
 /plugin marketplace add Garsson-io/kaizen
 /plugin install kaizen@kaizen
-/reload-plugins
 ```
 
-Then run `/kaizen-setup` to configure your project. This creates:
-1. `kaizen.config.json` — project configuration
-2. `.claude/kaizen/policies-local.md` — project-specific policies
-3. Appends a kaizen section to `CLAUDE.md`
+**Step 2:** Exit and restart Claude Code. Skills only load on startup.
+
+**Step 3:** Run `/kaizen-setup` to configure your project. This creates:
+- `kaizen.config.json` — project configuration
+- `.claude/kaizen/policies-local.md` — project-specific policies
+- Kaizen section in `CLAUDE.md`
 
 **No Node.js required in your host project.** Kaizen runs from its own plugin directory.
 
