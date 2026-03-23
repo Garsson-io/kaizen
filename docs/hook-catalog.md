@@ -67,19 +67,18 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 
 | Hook | Level | Blocking | Purpose |
 |------|-------|----------|---------|
-| `kaizen-enforce-pr-review-stop.sh` | L3 | Yes (block) | Blocks stop when PR review pending. Issue #46. |
-| `kaizen-enforce-post-merge-stop.sh` | L2 | Yes (block) | Blocks stop when post-merge steps pending. Issues #96, #279. |
-| `kaizen-verify-before-stop.sh` | L2 | Yes (block) | Runs `tsc --noEmit` + `vitest run` on modified TS. Capped at 2 workers. |
+| `kaizen-stop-gate.sh` → `stop-gate.ts` | L3 | Yes (block) | Unified stop gate — reads all pending gates (review, reflection, post-merge) and shows one rich message. Supports `KAIZEN_UNFINISHED` escape. Issue #775. |
+| `kaizen-verify-before-stop.sh` | L2 | No (advisory) | Reminds about `npm test` / `tsc --noEmit` for modified TS files. |
 | `kaizen-check-cleanup-on-stop.sh` | L1 | No (advisory) | Warns about orphaned worktrees. |
-| `kaizen-enforce-reflect-stop.sh` | L2 | Yes (block) | Blocks stop when kaizen reflection pending. Issue #312. |
 
 ## Gate Pattern Summary
 
 | Gate | Set by | Cleared by | Enforced by (Pre) | Enforced by (Stop) |
 |------|--------|------------|-------------------|-------------------|
-| `needs_review` | `pr-review-loop-ts.sh` | `pr-review-loop-ts.sh` | `enforce-pr-review.sh`, `enforce-pr-review-tools.sh` | `enforce-pr-review-stop.sh` |
-| `needs_pr_kaizen` | `kaizen-reflect-ts.sh` | `pr-kaizen-clear-ts.sh` | `enforce-pr-reflect.sh` | `enforce-reflect-stop.sh` |
-| `needs_post_merge` | `kaizen-reflect-ts.sh` | `post-merge-clear.sh` | — | `enforce-post-merge-stop.sh` |
+| `needs_review` | `pr-review-loop-ts.sh` | `pr-review-loop-ts.sh` | `enforce-pr-review.ts` | `stop-gate.ts` |
+| `needs_pr_kaizen` | `kaizen-reflect-ts.sh` | `pr-kaizen-clear-ts.sh` | `enforce-pr-reflect.ts` | `stop-gate.ts` |
+| `needs_post_merge` | `kaizen-reflect-ts.sh` | `post-merge-clear.sh` | — | `stop-gate.ts` |
+| All gates | — | `KAIZEN_UNFINISHED` (via `pr-kaizen-clear.ts`) | — | `stop-gate.ts` shows escape option |
 
 ## TS Migration Status
 

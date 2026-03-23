@@ -359,11 +359,12 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const prUrl = "https://github.com/Garsson-io/test-project/pull/42";
       stateDir.createReviewState(prUrl);
 
+      // npm test is now allowed as diagnostic (kaizen #775), use npm install instead
       const result = runKaizenHook(
-        "kaizen-enforce-pr-review.sh",
-        bashPre("npm test"),
+        "kaizen-enforce-pr-review-ts.sh",
+        bashPre("npm install lodash"),
       );
-      expect(denies(result), `Should block npm test during review: ${result.stdout}`).toBe(true);
+      expect(denies(result), `Should block npm install during review: ${result.stdout}`).toBe(true);
     });
 
     it("allows review commands when review state is active", () => {
@@ -371,7 +372,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       stateDir.createReviewState(prUrl);
 
       const result = runKaizenHook(
-        "kaizen-enforce-pr-review.sh",
+        "kaizen-enforce-pr-review-ts.sh",
         bashPre("gh pr diff 42"),
       );
       expect(allows(result), `Should allow gh pr diff during review: ${result.stdout}`).toBe(true);
@@ -379,7 +380,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
 
     it("allows everything when no review state exists", () => {
       const result = runKaizenHook(
-        "kaizen-enforce-pr-review.sh",
+        "kaizen-enforce-pr-review-ts.sh",
         bashPre("npm test"),
       );
       expect(allows(result)).toBe(true);
@@ -401,7 +402,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       stateDir.createReviewState(prUrl);
 
       const result = runKaizenHook(
-        "kaizen-enforce-pr-review-stop.sh",
+        "kaizen-stop-gate.sh",
         stopEvent(),
       );
       expect(blocks(result), `Should block Stop during review: ${result.stdout}`).toBe(true);
@@ -425,9 +426,10 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       const prUrl = "https://github.com/Garsson-io/test-project/pull/77";
       stateDir.createKaizenState(prUrl);
 
+      // npm test is now allowed as diagnostic (kaizen #775), use npm install instead
       const result = runKaizenHook(
-        "kaizen-enforce-pr-reflect.sh",
-        bashPre("npm test"),
+        "kaizen-enforce-pr-reflect-ts.sh",
+        bashPre("npm install lodash"),
       );
       expect(denies(result), `Should block during kaizen reflection: ${result.stdout}`).toBe(true);
     });
@@ -437,7 +439,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       stateDir.createKaizenState(prUrl);
 
       const result = runKaizenHook(
-        "kaizen-enforce-pr-reflect.sh",
+        "kaizen-enforce-pr-reflect-ts.sh",
         bashPre("gh issue create --title 'kaizen: found issue' --repo Garsson-io/kaizen"),
       );
       expect(allows(result), `Should allow gh issue create during reflection: ${result.stdout}`).toBe(true);
@@ -479,7 +481,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       stateDir.createKaizenState(prUrl);
 
       const result = runKaizenHook(
-        "kaizen-enforce-reflect-stop.sh",
+        "kaizen-stop-gate.sh",
         stopEvent(),
       );
       expect(blocks(result), `Should block Stop during reflection: ${result.stdout}`).toBe(true);
@@ -537,19 +539,20 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       );
       expect(reflectResult.stdout).toContain("KAIZEN");
 
-      // Phase 4: Agent tries to run tests → blocked by review gate
+      // Phase 4: Agent tries to install packages → blocked by review gate
+      // (npm test is now allowed as diagnostic — kaizen #775)
       const npmResult = runKaizenHook(
-        "kaizen-enforce-pr-review.sh",
-        bashPre("npm test"),
+        "kaizen-enforce-pr-review-ts.sh",
+        bashPre("npm install lodash"),
       );
       // Review gate should block
       if (stateDir.hasFile("Garsson-io_test-project_99")) {
-        expect(denies(npmResult), "npm test blocked during review").toBe(true);
+        expect(denies(npmResult), "npm install blocked during review").toBe(true);
       }
 
       // Phase 5: Agent reads PR diff (allowed during review)
       const diffResult = runKaizenHook(
-        "kaizen-enforce-pr-review.sh",
+        "kaizen-enforce-pr-review-ts.sh",
         bashPre("gh pr diff 99"),
       );
       expect(allows(diffResult), "gh pr diff allowed during review").toBe(true);
@@ -557,7 +560,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       // Phase 6: Agent tries to stop → blocked by reflection gate
       if (stateDir.hasFile("pr-kaizen-")) {
         const stopResult = runKaizenHook(
-          "kaizen-enforce-reflect-stop.sh",
+          "kaizen-stop-gate.sh",
           stopEvent(),
         );
         expect(blocks(stopResult), "Stop blocked during reflection").toBe(true);

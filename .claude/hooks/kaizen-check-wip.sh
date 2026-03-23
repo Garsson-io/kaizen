@@ -6,6 +6,25 @@
 # Outputs a reminder so the agent is aware of existing WIP.
 # Also warns strongly when running on main — agents should use worktrees.
 
+# Show deferred items from previous session's KAIZEN_UNFINISHED escape (kaizen #775)
+DEFERRED_FILE="${STATE_DIR:-/tmp/.pr-review-state}/.kaizen-deferred-items.json"
+if [ -f "$DEFERRED_FILE" ]; then
+  DEFERRED_REASON=$(jq -r '.reason // "unknown"' "$DEFERRED_FILE" 2>/dev/null)
+  DEFERRED_ITEMS=$(jq -r '.items[]?.label // empty' "$DEFERRED_FILE" 2>/dev/null)
+  DEFERRED_BRANCH=$(jq -r '.branch // "unknown"' "$DEFERRED_FILE" 2>/dev/null)
+  if [ -n "$DEFERRED_ITEMS" ]; then
+    echo "DEFERRED from previous session (branch: $DEFERRED_BRANCH):"
+    echo "Reason: $DEFERRED_REASON"
+    echo "$DEFERRED_ITEMS" | while read -r item; do
+      echo "  - $item"
+    done
+    echo ""
+    echo "These items were skipped via KAIZEN_UNFINISHED. Consider completing them."
+    echo ""
+  fi
+  rm -f "$DEFERRED_FILE" 2>/dev/null
+fi
+
 # Only run in main checkout, not worktrees
 GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)
 if [ "$GIT_COMMON" != ".git" ]; then

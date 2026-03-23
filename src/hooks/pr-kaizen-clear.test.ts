@@ -1111,3 +1111,101 @@ describe('processHookInput PRD blocking gate (kaizen #683, upgraded from #694)',
     expect(stateContent).toContain('needs_pr_kaizen');
   });
 });
+
+// ── KAIZEN_UNFINISHED tests (kaizen #775) ───────────────────────────
+
+describe('pr-kaizen-clear: KAIZEN_UNFINISHED escape', () => {
+  function unfinishedInput(reason: string): object {
+    return {
+      tool_name: 'Bash',
+      tool_input: { command: `echo 'KAIZEN_UNFINISHED: ${reason}'` },
+      tool_response: {
+        stdout: `KAIZEN_UNFINISHED: ${reason}`,
+        stderr: '',
+        exit_code: '0',
+      },
+    };
+  }
+
+  it('clears kaizen gate and reports escape', () => {
+    const result = processHookInput(unfinishedInput('session timeout'), {
+      stateDir: testStateDir,
+      postComment: () => {},
+    });
+    expect(result).toContain('KAIZEN_UNFINISHED');
+    expect(result).toContain('All gates cleared');
+    expect(result).toContain('session timeout');
+    expect(gateExists()).toBe(false);
+  });
+
+  it('clears all gate types (review + reflection + post-merge)', () => {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf-8',
+    }).trim();
+    // Add review and post-merge gates
+    fs.writeFileSync(
+      path.join(testStateDir, 'review-state'),
+      `PR_URL=https://github.com/org/repo/pull/99\nSTATUS=needs_review\nBRANCH=${branch}\nROUND=1\n`,
+    );
+    fs.writeFileSync(
+      path.join(testStateDir, 'post-merge-state'),
+      `PR_URL=https://github.com/org/repo/pull/99\nSTATUS=needs_post_merge\nBRANCH=${branch}\n`,
+    );
+
+    processHookInput(unfinishedInput('context switch'), {
+      stateDir: testStateDir,
+      postComment: () => {},
+    });
+
+    // All gates should be cleared
+    const remaining = fs.readdirSync(testStateDir).filter(
+      (f) => !f.startsWith('.kaizen-deferred'),
+    );
+    expect(remaining).toHaveLength(0);
+  });
+
+  it('writes deferred items file', () => {
+    processHookInput(unfinishedInput('too tired'), {
+      stateDir: testStateDir,
+      postComment: () => {},
+    });
+
+    const deferredFile = path.join(testStateDir, '.kaizen-deferred-items.json');
+    expect(fs.existsSync(deferredFile)).toBe(true);
+    const deferred = JSON.parse(fs.readFileSync(deferredFile, 'utf-8'));
+    expect(deferred.reason).toBe('too tired');
+    expect(deferred.items.length).toBeGreaterThan(0);
+  });
+
+  it('works even without active kaizen gate (review-only)', () => {
+    // Remove the kaizen gate, leave only a review gate
+    fs.unlinkSync(path.join(testStateDir, 'pr-kaizen-Garsson-io_kaizen_42'));
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf-8',
+    }).trim();
+    fs.writeFileSync(
+      path.join(testStateDir, 'review-state'),
+      `PR_URL=https://github.com/org/repo/pull/99\nSTATUS=needs_review\nBRANCH=${branch}\nROUND=1\n`,
+    );
+
+    const result = processHookInput(unfinishedInput('session timeout'), {
+      stateDir: testStateDir,
+      postComment: () => {},
+    });
+    expect(result).toContain('KAIZEN_UNFINISHED');
+    expect(result).toContain('All gates cleared');
+  });
+
+  it('handles no reason gracefully', () => {
+    const input = {
+      tool_name: 'Bash',
+      tool_input: { command: "echo 'KAIZEN_UNFINISHED:'" },
+      tool_response: { stdout: 'KAIZEN_UNFINISHED:', stderr: '', exit_code: '0' },
+    };
+    const result = processHookInput(input, {
+      stateDir: testStateDir,
+      postComment: () => {},
+    });
+    expect(result).toContain('no reason given');
+  });
+});
