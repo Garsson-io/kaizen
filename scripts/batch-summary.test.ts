@@ -103,6 +103,20 @@ describe('summarizeEvents', () => {
     expect(summary.failure_classes).toEqual({ 'hook-timeout': 2 });
   });
 
+  it('counts empty_success outcomes separately from success and failure', () => {
+    const events = [
+      makeCompleteEvent({ run_num: 1, outcome: 'success' }),
+      makeCompleteEvent({ run_num: 2, outcome: 'empty_success' }),
+      makeCompleteEvent({ run_num: 3, outcome: 'empty_success' }),
+      makeCompleteEvent({ run_num: 4, outcome: 'failure' }),
+    ];
+
+    const summary = summarizeEvents(events);
+    expect(summary.successful_runs).toBe(1);
+    expect(summary.empty_success_runs).toBe(2);
+    expect(summary.failed_runs).toBe(1);
+  });
+
   it('deduplicates issues and PRs', () => {
     const events: EventEnvelope[] = [
       makeEnvelope({ type: 'run.issue_picked', run_id: 'b/run-1', batch_id: 'b', run_num: 1, issue: '#10', title: 'A' }),

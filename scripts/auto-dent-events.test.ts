@@ -220,6 +220,81 @@ describe('EventEmitter', () => {
     }
   });
 
+  it('emitAt uses the provided timestamp instead of now', () => {
+    const pastDate = new Date('2026-01-15T10:30:00.000Z');
+    emitter.emitAt(pastDate, {
+      type: 'run.start',
+      run_id: 'batch-test/run-1',
+      batch_id: 'batch-test',
+      run_num: 1,
+      mode: 'exploit',
+      mode_reason: 'schedule',
+      prompt_template: 'test.md',
+      prompt_hash: 'abc',
+      start_epoch: 1736935800,
+    });
+
+    const events = readEvents(emitter.getFilePath());
+    expect(events).toHaveLength(1);
+    expect(events[0].timestamp).toBe('2026-01-15T10:30:00.000Z');
+    expect((events[0].event as any).start_epoch).toBe(1736935800);
+  });
+
+  it('emits run.complete with empty_success outcome', () => {
+    emitter.emit({
+      type: 'run.complete',
+      run_id: 'batch-test/run-1',
+      batch_id: 'batch-test',
+      run_num: 1,
+      duration_ms: 120000,
+      exit_code: 0,
+      cost_usd: 1.0,
+      tool_calls: 30,
+      prs_created: 0,
+      issues_filed: 0,
+      issues_closed: 0,
+      stop_requested: false,
+      lifecycle_violations: 0,
+      outcome: 'empty_success',
+      mode: 'exploit',
+    });
+
+    const events = readEvents(emitter.getFilePath());
+    expect(events[0].event).toMatchObject({
+      type: 'run.complete',
+      outcome: 'empty_success',
+      mode: 'exploit',
+    });
+  });
+
+  it('emits run.complete with mode field for explore runs', () => {
+    emitter.emit({
+      type: 'run.complete',
+      run_id: 'batch-test/run-2',
+      batch_id: 'batch-test',
+      run_num: 2,
+      duration_ms: 180000,
+      exit_code: 0,
+      cost_usd: 2.0,
+      tool_calls: 50,
+      prs_created: 0,
+      issues_filed: 3,
+      issues_closed: 0,
+      stop_requested: false,
+      lifecycle_violations: 0,
+      outcome: 'success',
+      mode: 'explore',
+    });
+
+    const events = readEvents(emitter.getFilePath());
+    expect(events[0].event).toMatchObject({
+      type: 'run.complete',
+      outcome: 'success',
+      mode: 'explore',
+      issues_filed: 3,
+    });
+  });
+
   it('silently handles write errors without throwing', () => {
     // Point at a non-existent deep path — appendFileSync will fail
     const badEmitter = new EventEmitter('/nonexistent/deeply/nested/path');
