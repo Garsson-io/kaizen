@@ -104,6 +104,54 @@ done < <(find "$SKILLS_DIR" -name "SKILL.md" -print0)
 
 assert_eq "No hardcoded repo names in gh issue commands" "" "$hardcoded"
 
+# Test 7: Functional — read real kaizen.config.json (self-dogfood)
+echo "--- Functional: self-dogfood config resolves correctly ---"
+
+SELF_CONFIG="$REPO_ROOT/kaizen.config.json"
+if [ -f "$SELF_CONFIG" ]; then
+  KAIZEN_REPO=$(jq -r '.kaizen.repo' "$SELF_CONFIG")
+  HOST_REPO=$(jq -r '.host.repo' "$SELF_CONFIG")
+
+  if [ "$KAIZEN_REPO" = "$HOST_REPO" ]; then
+    ISSUES_REPO="$KAIZEN_REPO"
+    ISSUES_LABEL=""
+  else
+    ISSUES_REPO="$HOST_REPO"
+    ISSUES_LABEL="--label kaizen"
+  fi
+
+  # Self-dogfood: both repos are Garsson-io/kaizen, so ISSUES_REPO should equal KAIZEN_REPO
+  assert_eq "Real self-dogfood config: ISSUES_REPO == KAIZEN_REPO" "$KAIZEN_REPO" "$ISSUES_REPO"
+  assert_eq "Real self-dogfood config: ISSUES_LABEL empty" "" "$ISSUES_LABEL"
+else
+  echo "  SKIP: kaizen.config.json not found at $SELF_CONFIG"
+fi
+
+# Test 8: Functional — read real host project config (if available)
+echo "--- Functional: host project config resolves correctly ---"
+
+# Look for a known host project config
+HOST_CONFIG="/home/aviadr1/projects/langsmith-cli/kaizen.config.json"
+if [ -f "$HOST_CONFIG" ]; then
+  KAIZEN_REPO=$(jq -r '.kaizen.repo' "$HOST_CONFIG")
+  HOST_REPO=$(jq -r '.host.repo' "$HOST_CONFIG")
+
+  if [ "$KAIZEN_REPO" = "$HOST_REPO" ]; then
+    ISSUES_REPO="$KAIZEN_REPO"
+    ISSUES_LABEL=""
+  else
+    ISSUES_REPO="$HOST_REPO"
+    ISSUES_LABEL="--label kaizen"
+  fi
+
+  # Host project: repos differ, ISSUES_REPO should be HOST_REPO
+  assert_eq "Real host config: ISSUES_REPO == HOST_REPO" "$HOST_REPO" "$ISSUES_REPO"
+  assert_eq "Real host config: ISSUES_REPO != KAIZEN_REPO" "" "$([ "$ISSUES_REPO" != "$KAIZEN_REPO" ] && echo '' || echo 'SAME')"
+  assert_eq "Real host config: ISSUES_LABEL has kaizen" "--label kaizen" "$ISSUES_LABEL"
+else
+  echo "  SKIP: host project config not found at $HOST_CONFIG"
+fi
+
 # Summary
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
