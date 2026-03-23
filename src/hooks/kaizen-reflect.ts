@@ -25,6 +25,10 @@ import {
   prUrlToStateKey,
   writeStateFile,
 } from './state-utils.js';
+import {
+  countChangedFiles,
+  emitSessionEvent,
+} from './session-telemetry.js';
 
 /** Detect the GitHub repo from the origin remote URL. */
 function detectGhRepo(): string | undefined {
@@ -332,6 +336,7 @@ export function processHookInput(
     mainCheckout?: string;
     changedFiles?: string;
     sendNotification?: (text: string) => void;
+    telemetryDir?: string;
   } = {},
 ): string | null {
   const command = input.tool_input?.command ?? '';
@@ -375,6 +380,16 @@ export function processHookInput(
     STATUS: 'needs_pr_kaizen',
     BRANCH: branch,
   });
+
+  // Emit session telemetry (kaizen #671 — interactive observability)
+  const sessionId = input.session_id ?? 'unknown';
+  const fileCount = countChangedFiles(changed);
+  emitSessionEvent(
+    isCreate
+      ? { type: 'session.pr_created', session_id: sessionId, pr_url: prUrl, branch, changed_files_count: fileCount }
+      : { type: 'session.pr_merged', session_id: sessionId, pr_url: prUrl, branch, changed_files_count: fileCount },
+    { telemetryDir: options.telemetryDir },
+  );
 
   const transcriptPath = input.transcript_path;
 

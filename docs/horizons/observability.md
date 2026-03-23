@@ -28,7 +28,7 @@ Without observability:
 
 **L2 (partial).** Auto-dent provides structured telemetry for batch operations: per-run `RunScore` with cost, duration, tool calls, PR count, efficiency metrics, and failure classification. `BatchScore` aggregates across runs. Phase markers (`AUTO_DENT_PHASE`) emit structured progress during runs. Heartbeat monitoring and watchdog detect stalled sessions. Cost anomaly detection flags runs that exceed rolling averages. Post-hoc scoring evaluates PR quality after creation. Structured JSON stream output from each run is parsed and scored.
 
-Gaps: No cross-batch analytics queryable from a single interface. No decision tracing (why the agent chose approach A over B). Interactive sessions outside auto-dent have no telemetry.
+Gaps: No cross-batch analytics queryable from a single interface. No decision tracing (why the agent chose approach A over B). Interactive session telemetry is minimal (PR create/merge events only — see `src/hooks/session-telemetry.ts`).
 
 ## What Exists
 
@@ -46,6 +46,7 @@ Gaps: No cross-batch analytics queryable from a single interface. No decision tr
 | Post-hoc PR scoring | L2 | `scripts/auto-dent-run.ts` (`runPostHocScoring`) |
 | In-flight PR comment updates | L1 | `scripts/auto-dent-run.ts` |
 | Batch reflection summary | L1 | `scripts/auto-dent-ctl.ts` (`buildBatchReflection`) |
+| Interactive session telemetry | L2 | `src/hooks/session-telemetry.ts` (emits via `kaizen-reflect.ts`) |
 
 ## L2→L3: Decision Tracing (next step)
 
