@@ -81,6 +81,9 @@ The tool you can't question is the tool that will fail you.
 Productivity without strategic diversity is local optimization.
 Twenty PRs in the wrong direction is worse than two in the right one.
 
+The fastest path to better is shorter loops.
+A system that learns from its actions in minutes improves faster than one that learns in hours.
+
 The goal is not to be done. The goal is to be better at not being done.
 ```
 
@@ -245,6 +248,17 @@ The expanded taxonomy adds two levels that address this gap:
 
 The full enforcement stack: L1 (instructions) → L1.5 (expectations) → L2 (gates) → L2.5 (tools) → L3 (architecture) → L3.5 (post-hoc correction). Each level catches what the level below misses. Each addresses a different bypass mode.
 
+
+### Feedback latency — the hidden multiplier
+
+Feedback latency — the time between action and knowing whether it succeeded — is the hidden multiplier on all improvement. A batch that ships 20 PRs but only learns which ones worked after the batch ends is flying blind. A system that gets outcome data after each run can adapt mid-flight.
+
+This principle is the natural extension of "compound interest." Compounding is faster when cycles are shorter. A daily improvement loop compounds 365 times per year; a weekly loop compounds 52 times. But the principle goes deeper than frequency — it is about *closing the loop*. An action without observed outcome is not a learning opportunity. It is a guess.
+
+The evidence is throughout the system: adaptive mode selection works because it gets outcome data after each run. Intra-batch reflection feeds learnings into subsequent runs — a shorter loop than post-batch analysis. Run regression detection catches problems before they compound. Contemplation feedback feeds strategic insights into remaining runs. All of these share the same mechanism: faster feedback enables faster improvement.
+
+The anti-pattern is batch-terminal learning: doing all the work, then evaluating all at once. Post-mortems are valuable, but they are the slowest feedback loop. The fastest loop is inline: act, observe, adjust, repeat. Every mechanism that shortens this loop — structured telemetry, run-level metrics, intra-batch reflection — multiplies the rate of improvement.
+
 ### The goal
 
 The goal of this system is fully automated development that gets better at fully automated development. Not "AI-assisted development." Not "copilot." Autonomous agents that ship code, verify it, reflect on friction, file improvements, and implement those improvements — in a loop that runs without human intervention for the routine cases, and escalates to humans only for genuine judgment calls.
@@ -287,4 +301,5 @@ Each principle traces back to a specific observation, incident, or conversation.
 | *Parallel work produces overlap* | Multiple agents picking same issue | Parallel coordination |
 | *The framework that can't evolve becomes the ceiling* | #559, #561 — the improvement framework itself must be evolvable | Recursive self-improvement, philosophical evolution |
 | *Productivity without strategic diversity is local optimization* | #548, #561 — auto-dent batches producing many PRs in one mode without cognitive diversity | Tunnel vision, mode balance |
+| *The fastest path to better is shorter loops* | #646 — contemplation run 59 surfaced implicit pattern across adaptive selection, intra-batch reflection, regression detection | Feedback latency, learning rate |
 | *The goal is not to be done* | Founding principle | Infinite game orientation |
