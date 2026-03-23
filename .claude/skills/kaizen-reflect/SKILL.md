@@ -54,6 +54,45 @@ Reflection happens at these mandatory checkpoints:
 | Incident (human time wasted) | What failed, why the process didn't catch it | Immediate escalation assessment |
 | Periodic review | Kaizen backlog triage, pattern detection | Priority adjustments |
 
+### 1.5. CONSULT TELEMETRY — data before anecdote (kaizen #670)
+
+**If running inside an auto-dent batch**, consult structured telemetry before identifying impediments. Anecdotal impressions ("this felt slow") are less reliable than measured data ("this run cost 3x the rolling average"). Data first, narratives second.
+
+**How to check:** Look for the environment variable `AUTO_DENT_BATCH_DIR` or the batch state file. The telemetry lives in the batch output directory.
+
+```bash
+# Find the current batch's events file
+BATCH_DIR="${AUTO_DENT_BATCH_DIR:-}"
+if [ -z "$BATCH_DIR" ]; then
+  # Fallback: look for events.jsonl in recent batch dirs
+  BATCH_DIR=$(ls -td /tmp/auto-dent-*/batch-* 2>/dev/null | head -1)
+fi
+
+if [ -n "$BATCH_DIR" ] && [ -f "$BATCH_DIR/events.jsonl" ]; then
+  # Read the current run's events
+  cat "$BATCH_DIR/events.jsonl" | tail -20
+
+  # Generate batch summary for comparison baselines
+  npx tsx scripts/batch-summary.ts "$BATCH_DIR" --json 2>/dev/null | head -50
+fi
+```
+
+**What to look for in telemetry:**
+
+| Signal | Question to ask | Implication |
+|--------|----------------|-------------|
+| `cost_usd` >> rolling average | Was the scope too large or did the agent loop? | Scope discipline or stuck-detection needed |
+| `duration_ms` >> average | What took extra time — research, debugging, hooks? | Identify time sinks |
+| `outcome: empty_success` | Why did the run produce nothing? | Issue selection or evaluation failure |
+| `failure_class: hook_rejection` | Which hook blocked and why? | Hook may be too strict, or agent didn't prepare |
+| `lifecycle_violations > 0` | What lifecycle steps were skipped? | Workflow discipline gap |
+| `tool_calls` >> average | Was the agent stuck in a loop? | Need circuit breakers or better prompts |
+| Mode underperformance | Does this cognitive mode consistently cost more per PR? | Adjust mode weights |
+
+**Surface data-driven observations** alongside conversation-based impressions. If the data contradicts your impression, trust the data.
+
+**If not in a batch context** (interactive session), skip this step — there is no structured telemetry yet (see #671).
+
 ### 2. IDENTIFY impediments — patterns first, then details (kaizen #241, #351)
 
 **Lead with categories, not symptoms.** The most common reflection failure mode is dispositioning each impediment individually and never noticing they share a root cause. Reverse the order: name the patterns first, then drill into individual items.
@@ -377,6 +416,7 @@ Create these tasks at skill start using TaskCreate:
 | # | Task | Description |
 |---|------|-------------|
 | 1 | Reflect on work | Review what happened: impediments, friction, near-misses, what slowed down, what went well |
+| 1.5 | Consult telemetry | If in auto-dent batch: read events.jsonl, compare cost/duration/outcome against baselines. Data before anecdote. |
 | 2 | Identify impediments — patterns first | 2a: List all impediments. 2b: Name categories before dispositioning. 2c: New pattern or recurrence? Recurrence must escalate. |
 | 2.4 | Multi-PR quality check | Is this the 2nd+ PR for the same feature? What pre-flight discipline was missing? See signals table. |
 | 2.5 | Amplify positive findings | What techniques worked? What was surprising? Document non-obvious successes for future agents. Disposition: amplified or no-action. |
