@@ -4,6 +4,7 @@ import {
   scoreRunResult,
   scoreBatch,
   scoreModeBreakdown,
+  computeModeDiversity,
   formatRunScoreLine,
   formatBatchScoreTable,
   formatModeBreakdown,
@@ -364,6 +365,7 @@ describe('formatBatchScoreTable', () => {
         { mode: 'explore', runs: 1, successes: 0, success_rate: 0, cost_usd: 1, prs: 0, avg_cost: 1, efficiency: 0, lines_deleted: 0, issues_pruned: 0 },
       ],
       cost_anomaly_count: 0,
+      mode_diversity: 0,
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Runs** | 3 (2 successful) |');
@@ -396,6 +398,7 @@ describe('formatBatchScoreTable', () => {
       runs: [],
       mode_breakdown: [],
       cost_anomaly_count: 0,
+      mode_diversity: 0,
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Avg cost/success** | N/A |');
@@ -419,6 +422,7 @@ describe('formatBatchScoreTable', () => {
       runs: [],
       mode_breakdown: [],
       cost_anomaly_count: 0,
+      mode_diversity: 0,
       post_hoc: {
         prs: [
           { url: 'https://github.com/org/repo/pull/1', status: 'merged' },
@@ -455,6 +459,7 @@ describe('formatBatchScoreTable', () => {
       runs: [],
       mode_breakdown: [],
       cost_anomaly_count: 0,
+      mode_diversity: 0,
     };
     const table = formatBatchScoreTable(score);
     expect(table).not.toContain('merge rate');
@@ -604,6 +609,98 @@ describe('scoreBatch mode_breakdown integration', () => {
     const score = scoreBatch(history);
     const table = formatBatchScoreTable(score);
     expect(table).not.toContain('Per-mode effectiveness');
+  });
+});
+
+describe('computeModeDiversity', () => {
+  function makeRunScore(mode: string): RunScore {
+    return {
+      run: 1,
+      mode,
+      success: true,
+      cost_usd: 1.0,
+      duration_seconds: 60,
+      pr_count: 1,
+      issues_closed_count: 0,
+      cost_vs_avg: null,
+      lines_deleted: 0,
+      issues_pruned: 0,
+    };
+  }
+
+  it('returns 0 for empty runs', () => {
+    expect(computeModeDiversity([])).toBe(0);
+  });
+
+  it('returns 0 for single mode', () => {
+    const runs = [makeRunScore('exploit'), makeRunScore('exploit'), makeRunScore('exploit')];
+    expect(computeModeDiversity(runs)).toBe(0);
+  });
+
+  it('returns 1 for perfectly even distribution', () => {
+    const runs = [
+      makeRunScore('exploit'),
+      makeRunScore('explore'),
+      makeRunScore('reflect'),
+      makeRunScore('subtract'),
+    ];
+    expect(computeModeDiversity(runs)).toBeCloseTo(1.0, 5);
+  });
+
+  it('returns value between 0 and 1 for uneven distribution', () => {
+    const runs = [
+      makeRunScore('exploit'),
+      makeRunScore('exploit'),
+      makeRunScore('exploit'),
+      makeRunScore('explore'),
+    ];
+    const diversity = computeModeDiversity(runs);
+    expect(diversity).toBeGreaterThan(0);
+    expect(diversity).toBeLessThan(1);
+  });
+
+  it('higher diversity for more even distributions', () => {
+    // Uneven: 7 exploit, 1 explore
+    const uneven = [
+      ...Array(7).fill(null).map(() => makeRunScore('exploit')),
+      makeRunScore('explore'),
+    ];
+    // Even: 4 exploit, 4 explore
+    const even = [
+      ...Array(4).fill(null).map(() => makeRunScore('exploit')),
+      ...Array(4).fill(null).map(() => makeRunScore('explore')),
+    ];
+    expect(computeModeDiversity(even)).toBeGreaterThan(computeModeDiversity(uneven));
+  });
+});
+
+describe('scoreBatch mode_diversity integration', () => {
+  it('includes mode_diversity in batch score', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, mode: 'exploit' }),
+      makeRunMetrics({ run: 2, mode: 'explore', prs: [], exit_code: 1 }),
+    ];
+    const score = scoreBatch(history);
+    expect(score.mode_diversity).toBeCloseTo(1.0, 5);
+  });
+
+  it('mode_diversity is 0 for single-mode batch', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, mode: 'exploit' }),
+      makeRunMetrics({ run: 2, mode: 'exploit' }),
+    ];
+    const score = scoreBatch(history);
+    expect(score.mode_diversity).toBe(0);
+  });
+
+  it('shows mode diversity in batch score table', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, mode: 'exploit' }),
+      makeRunMetrics({ run: 2, mode: 'explore', prs: [], exit_code: 1 }),
+    ];
+    const score = scoreBatch(history);
+    const table = formatBatchScoreTable(score);
+    expect(table).toContain('Mode diversity');
   });
 });
 
@@ -849,6 +946,7 @@ describe('cost_vs_avg in scoring', () => {
       runs: [],
       mode_breakdown: [],
       cost_anomaly_count: 2,
+      mode_diversity: 0,
     };
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Cost anomalies** | 2 runs >= 2x avg |');
@@ -871,6 +969,7 @@ describe('cost_vs_avg in scoring', () => {
       runs: [],
       mode_breakdown: [],
       cost_anomaly_count: 0,
+      mode_diversity: 0,
     };
     const table = formatBatchScoreTable(score);
     expect(table).not.toContain('Cost anomalies');
