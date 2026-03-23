@@ -105,6 +105,36 @@ export interface BatchAnalysis {
   globalWastePatterns: Array<{ type: string; description: string; totalCount: number; runCount: number }>;
   /** Batch-level reflection recommendations */
   recommendations: string[];
+  /** Regression reports for underperforming runs */
+  regressions: RegressionReport[];
+}
+
+export type RegressionSeverity = 'none' | 'warning' | 'regression';
+
+export interface RegressionReport {
+  /** Run index (0-based) within the batch */
+  runIndex: number;
+  /** Run file name */
+  runFile: string;
+  /** Overall severity */
+  severity: RegressionSeverity;
+  /** Individual regression signals detected */
+  signals: RegressionSignal[];
+  /** Human-readable summary */
+  summary: string;
+}
+
+export interface RegressionSignal {
+  /** What metric regressed */
+  metric: 'success' | 'cost' | 'duration' | 'completeness' | 'waste' | 'consecutive_failures';
+  /** Severity of this specific signal */
+  severity: RegressionSeverity;
+  /** Human-readable explanation */
+  message: string;
+  /** Observed value */
+  observed: number;
+  /** Expected/baseline value (rolling average or threshold) */
+  baseline: number;
 }
 
 // Parsing helpers
@@ -309,6 +339,165 @@ export function generateRecommendations(
   }
 
   return recs;
+}
+
+/**
+ * Detect regression in a run by comparing it against prior runs in the batch.
+ *
+ * Signals:
+ * - consecutive_failures: N consecutive runs with no PRs (threshold: 3)
+ * - duration: run duration >= 3x the rolling average (5x = regression)
+ * - completeness: run completeness drops below 50% of prior average
+ * - waste: wasted calls exceed 30% of total tool calls (50% = regression)
+ *
+ * Returns a RegressionReport. severity='none' if no signals triggered.
+ */
+export function detectRunRegression(
+  runIndex: number,
+  run: RunAnalysis,
+  priorRuns: RunAnalysis[],
+): RegressionReport {
+  const signals: RegressionSignal[] = [];
+
+  // Consecutive failures: count how many recent prior runs also had no PR phase
+  if (priorRuns.length >= 2) {
+    const hasPR = run.completeness.phasesPresent.includes('PR') ||
+      run.completeness.phasesPresent.includes('MERGE');
+    if (!hasPR) {
+      let streak = 0;
+      for (let i = priorRuns.length - 1; i >= 0; i--) {
+        const prior = priorRuns[i];
+        const priorHasPR = prior.completeness.phasesPresent.includes('PR') ||
+          prior.completeness.phasesPresent.includes('MERGE');
+        if (!priorHasPR) streak++;
+        else break;
+      }
+      if (streak >= 2) {
+        // This run makes it streak+1 consecutive failures
+        const total = streak + 1;
+        signals.push({
+          metric: 'consecutive_failures',
+          severity: total >= 4 ? 'regression' : 'warning',
+          message: `${total} consecutive runs without PR/MERGE phase`,
+          observed: total,
+          baseline: 0,
+        });
+      }
+    }
+  }
+
+  // Cost regression (need at least 2 prior runs for meaningful average)
+  if (priorRuns.length >= 2) {
+    const priorDurations = priorRuns.map(r => r.totalDurationSec).filter(d => d > 0);
+    if (priorDurations.length > 0) {
+      const avgDuration = priorDurations.reduce((s, d) => s + d, 0) / priorDurations.length;
+      if (avgDuration > 0 && run.totalDurationSec > 0) {
+        const ratio = run.totalDurationSec / avgDuration;
+        if (ratio >= 3) {
+          signals.push({
+            metric: 'duration',
+            severity: ratio >= 5 ? 'regression' : 'warning',
+            message: `Duration ${ratio.toFixed(1)}x the rolling average (${run.totalDurationSec.toFixed(0)}s vs avg ${avgDuration.toFixed(0)}s)`,
+            observed: run.totalDurationSec,
+            baseline: avgDuration,
+          });
+        }
+      }
+    }
+  }
+
+  // Completeness drop
+  if (priorRuns.length >= 2) {
+    const priorCompleteness = priorRuns.map(r => r.completeness.score);
+    const avgCompleteness = priorCompleteness.reduce((s, c) => s + c, 0) / priorCompleteness.length;
+    if (avgCompleteness > 0) {
+      const ratio = run.completeness.score / avgCompleteness;
+      if (ratio < 0.5 && avgCompleteness >= 0.3) {
+        signals.push({
+          metric: 'completeness',
+          severity: ratio < 0.25 ? 'regression' : 'warning',
+          message: `Completeness dropped to ${(run.completeness.score * 100).toFixed(0)}% (avg ${(avgCompleteness * 100).toFixed(0)}%)`,
+          observed: run.completeness.score,
+          baseline: avgCompleteness,
+        });
+      }
+    }
+  }
+
+  // Waste threshold: > 30% of tool calls wasted
+  if (run.toolCalls > 5) {
+    const wasteRatio = run.totalWastedCalls / run.toolCalls;
+    if (wasteRatio > 0.3) {
+      signals.push({
+        metric: 'waste',
+        severity: wasteRatio > 0.5 ? 'regression' : 'warning',
+        message: `${(wasteRatio * 100).toFixed(0)}% of tool calls wasted (${run.totalWastedCalls}/${run.toolCalls})`,
+        observed: wasteRatio,
+        baseline: 0.3,
+      });
+    }
+  }
+
+  // Determine overall severity
+  let severity: RegressionSeverity = 'none';
+  if (signals.some(s => s.severity === 'regression')) severity = 'regression';
+  else if (signals.some(s => s.severity === 'warning')) severity = 'warning';
+
+  const summary = signals.length === 0
+    ? 'No regression detected'
+    : signals.map(s => s.message).join('; ');
+
+  return {
+    runIndex,
+    runFile: run.runFile,
+    severity,
+    signals,
+    summary,
+  };
+}
+
+/**
+ * Detect regressions across all runs in a batch.
+ * Each run is compared against all prior runs.
+ */
+export function detectBatchRegressions(runs: RunAnalysis[]): RegressionReport[] {
+  const reports: RegressionReport[] = [];
+  for (let i = 0; i < runs.length; i++) {
+    const report = detectRunRegression(i, runs[i], runs.slice(0, i));
+    if (report.severity !== 'none') {
+      reports.push(report);
+    }
+  }
+  return reports;
+}
+
+/**
+ * Format regression reports as markdown.
+ */
+export function formatRegressionReports(reports: RegressionReport[]): string {
+  if (reports.length === 0) return '';
+
+  const lines = [
+    '',
+    '### Regression Detection',
+    '',
+    `${reports.length} run(s) flagged:`,
+    '',
+  ];
+
+  for (const r of reports) {
+    const icon = r.severity === 'regression' ? 'REGRESSION' : 'WARNING';
+    lines.push(`- **[${icon}] ${r.runFile}** (run ${r.runIndex + 1}): ${r.summary}`);
+  }
+
+  // Check for systematic regression (3+ consecutive flagged runs at end of batch)
+  const lastThree = reports.filter(r => r.runIndex >= reports[reports.length - 1].runIndex - 2);
+  if (lastThree.length >= 3 && lastThree.some(r => r.severity === 'regression')) {
+    lines.push('');
+    lines.push('**Systematic regression detected** — consider halting the batch for investigation.');
+  }
+
+  return lines.join('\n');
 }
 
 /**
@@ -580,6 +769,9 @@ export function analyzeBatch(batchDir: string): BatchAnalysis {
   // Recommendations
   const recommendations = generateRecommendations(runs, avg, globalWastePatterns);
 
+  // Regression detection
+  const regressions = detectBatchRegressions(runs);
+
   return {
     batchDir,
     batchId,
@@ -596,6 +788,7 @@ export function analyzeBatch(batchDir: string): BatchAnalysis {
     totalWastedCalls,
     globalWastePatterns,
     recommendations,
+    regressions,
   };
 }
 
@@ -712,6 +905,11 @@ export function formatBatchAnalysis(batch: BatchAnalysis): string {
         `| ${w.type} | ${w.totalCount} | ${w.runCount}/${batch.runs.length} |`,
       );
     }
+  }
+
+  // Regressions
+  if (batch.regressions.length > 0) {
+    lines.push(formatRegressionReports(batch.regressions));
   }
 
   // Recommendations
