@@ -1476,4 +1476,35 @@ describe('selectMode', () => {
     expect(mode).toBe('exploit');
     expect(template).toBe('test-task.md');
   });
+
+  it('selects contemplate for run 14 (mod 15 === 14)', () => {
+    const { mode, template } = selectMode(makeBatchState(), 14);
+    expect(mode).toBe('contemplate');
+    expect(template).toBe('contemplate-strategy.md');
+  });
+
+  it('selects contemplate for run 29 (mod 15 === 14)', () => {
+    const { mode, template } = selectMode(makeBatchState(), 29);
+    expect(mode).toBe('contemplate');
+    expect(template).toBe('contemplate-strategy.md');
+  });
+
+  it('contemplate overlay takes precedence over base cycle', () => {
+    // Run 14 would be slot 4 (exploit) in base cycle, but contemplate overlay wins
+    const { mode } = selectMode(makeBatchState(), 14);
+    expect(mode).toBe('contemplate');
+  });
+
+  it('forces mode:contemplate from guidance', () => {
+    const state = makeBatchState({ guidance: 'review batch mode:contemplate' });
+    const { mode, template } = selectMode(state, 1);
+    expect(mode).toBe('contemplate');
+    expect(template).toBe('contemplate-strategy.md');
+  });
+
+  it('does not contemplate on run 0', () => {
+    // Run 0 should not trigger contemplate even though 0 % 15 !== 14
+    const { mode } = selectMode(makeBatchState(), 0);
+    expect(mode).toBe('exploit');
+  });
 });
