@@ -227,6 +227,20 @@ Read the spec with the incidents in hand. Evaluate:
 - **Is the most important question buried?** Specs sometimes bury the pivotal decision as an "open question" instead of resolving it first.
 - **Is there a simpler framing?** Sometimes the spec is solving the wrong problem at the right scope, or the right problem at the wrong scope.
 
+#### Solution evaluation — is this the right fix? (kaizen #714)
+
+Scope evaluation asks "should we do this?" Solution evaluation asks "is this the right thing to do?" Both are required. Before accepting a spec's proposed solution, answer:
+
+1. **What failure mode does this spec address? Is that the right failure mode?** The spec may describe a symptom while the root cause is elsewhere.
+2. **Is the proposed mechanism the simplest one that addresses it? What alternatives exist?** A lint hook, a test, a SKILL.md update, and an architectural change all address "bad code gets committed" — but at very different costs.
+3. **Would a simpler fix (one level lower: L3→L2→L1) address the same failure mode?** Don't build L2 enforcement when L1 instructions would suffice. Don't build L3 architecture when L2 hooks would work.
+4. **Is this failure mode expected to recur? If not, is prevention worth the overhead?** A one-time incident doesn't necessarily justify a permanent mechanism.
+5. **What is the cost of the proposed mechanism?** Maintenance burden, false positives, performance impact, cognitive load on agents. Every mechanism has ongoing cost.
+
+**If any answer raises doubt, surface it before implementing.** Do not ship a correct implementation of the wrong spec. The goal is to catch #685-style mistakes (perfect implementation, wrong solution) before they consume implementation time.
+
+**Red flag:** The spec's solution section reads like a task list ("add hook X, modify file Y, create test Z") instead of describing the desired outcome. That's a sign the solution was the first idea, not the best one.
+
 **If this case is one phase of a larger spec**, also assess the spec's progressive detail:
 - Is the current phase detailed enough to implement without guessing?
 - Are distant phases over-specified with solution details that will be wrong by the time we get there?
