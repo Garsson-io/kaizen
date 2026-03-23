@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
-import { writeFileSync, unlinkSync, mkdtempSync } from 'fs';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { writeFileSync, unlinkSync, mkdtempSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -29,6 +29,8 @@ import {
   weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
+  readState,
+  writeState,
   color,
   type BatchState,
   type CleanupResult,
@@ -2290,5 +2292,86 @@ describe('buildPromptWithMetadata', () => {
     const meta = buildPromptWithMetadata(state, 3);
     const prompt = buildPrompt(state, 3);
     expect(meta.prompt).toBe(prompt);
+  });
+});
+
+describe('atomic state I/O', () => {
+  let dir: string;
+  let stateFile: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'state-io-'));
+    stateFile = join(dir, 'state.json');
+  });
+
+  it('writeState creates atomic temp-then-rename', () => {
+    const state = makeBatchState({ run: 3 });
+    writeState(stateFile, state);
+
+    const read = JSON.parse(readFileSync(stateFile, 'utf8'));
+    expect(read.run).toBe(3);
+    // No lingering .tmp file
+    expect(existsSync(stateFile + '.tmp')).toBe(false);
+  });
+
+  it('writeState creates backup of previous state', () => {
+    const state1 = makeBatchState({ run: 1 });
+    writeState(stateFile, state1);
+
+    const state2 = makeBatchState({ run: 2 });
+    writeState(stateFile, state2);
+
+    // Backup should contain state1
+    const bak = JSON.parse(readFileSync(stateFile + '.bak', 'utf8'));
+    expect(bak.run).toBe(1);
+    // Primary should contain state2
+    const primary = JSON.parse(readFileSync(stateFile, 'utf8'));
+    expect(primary.run).toBe(2);
+  });
+
+  it('readState reads normal state file', () => {
+    const state = makeBatchState({ run: 5 });
+    writeState(stateFile, state);
+
+    const read = readState(stateFile);
+    expect(read.run).toBe(5);
+  });
+
+  it('readState falls back to .bak correctly after two writes', () => {
+    const state1 = makeBatchState({ run: 1 });
+    writeState(stateFile, state1);
+
+    const state2 = makeBatchState({ run: 2 });
+    writeState(stateFile, state2);
+
+    // Corrupt primary
+    writeFileSync(stateFile, 'not-json!!!');
+
+    const read = readState(stateFile);
+    expect(read.run).toBe(1); // Falls back to backup (state before run=2)
+  });
+
+  it('readState throws when both primary and backup are missing', () => {
+    expect(() => readState(stateFile)).toThrow('corrupt and no backup');
+  });
+
+  it('readState throws when primary is corrupt and no backup exists', () => {
+    writeFileSync(stateFile, '{bad json');
+    expect(() => readState(stateFile)).toThrow('corrupt and no backup');
+  });
+
+  it('writeState round-trip preserves all BatchState fields', () => {
+    const state = makeBatchState({
+      run: 10,
+      prs: ['https://example.com/pr/1'],
+      issues_filed: ['#100'],
+      stop_reason: 'budget exhausted',
+    });
+    writeState(stateFile, state);
+    const read = readState(stateFile);
+    expect(read.run).toBe(10);
+    expect(read.prs).toEqual(['https://example.com/pr/1']);
+    expect(read.issues_filed).toEqual(['#100']);
+    expect(read.stop_reason).toBe('budget exhausted');
   });
 });

@@ -22,7 +22,7 @@
 
 import { spawn, execSync } from 'child_process';
 import { createHash } from 'crypto';
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, renameSync, copyFileSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
@@ -162,12 +162,32 @@ export interface RunResult {
 
 // State I/O
 
-function readState(stateFile: string): BatchState {
-  return JSON.parse(readFileSync(stateFile, 'utf8'));
+export function readState(stateFile: string): BatchState {
+  try {
+    return JSON.parse(readFileSync(stateFile, 'utf8'));
+  } catch {
+    // Primary file corrupt/missing — try backup
+    const bak = stateFile + '.bak';
+    if (existsSync(bak)) {
+      console.error(`[state-io] Primary state corrupt, falling back to ${bak}`);
+      return JSON.parse(readFileSync(bak, 'utf8'));
+    }
+    throw new Error(`State file corrupt and no backup available: ${stateFile}`);
+  }
 }
 
-function writeState(stateFile: string, state: BatchState): void {
-  writeFileSync(stateFile, JSON.stringify(state, null, 2) + '\n');
+export function writeState(stateFile: string, state: BatchState): void {
+  const tmp = stateFile + '.tmp';
+  const content = JSON.stringify(state, null, 2) + '\n';
+  // Validate we can round-trip before writing
+  JSON.parse(content);
+  // Backup current state before overwriting
+  if (existsSync(stateFile)) {
+    copyFileSync(stateFile, stateFile + '.bak');
+  }
+  // Atomic write: write to temp, then rename
+  writeFileSync(tmp, content);
+  renameSync(tmp, stateFile);
 }
 
 // Resolve repo root
