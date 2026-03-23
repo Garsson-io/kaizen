@@ -40,10 +40,14 @@ export {
   isIssueClosed,
   cleanupSupersededPRs,
   fetchIssueLabels,
+  syncEpicChecklists,
+  verifyIssuesClosed,
   type MergeStatus,
   type SweepAction,
   type SweepResult,
   type CleanupResult,
+  type EpicSyncResult,
+  type VerifyCloseResult,
 } from './auto-dent-github.js';
 
 export {
@@ -1643,6 +1647,40 @@ async function main(): Promise<void> {
       console.log(
         `  [sweep] updated ${updated.length} stale PR branch(es)`,
       );
+    }
+  }
+
+  // Verify issues claimed by merged PRs are actually closed (#730, Gap 2)
+  // Must run before epic sync so force-closed issues are included
+  const allBatchPRsForVerify = [...new Set([...state.prs, ...result.prs])];
+  if (allBatchPRsForVerify.length > 0) {
+    const verifyResults = verifyIssuesClosed(allBatchPRsForVerify, state.kaizen_repo);
+    const forceClosed = verifyResults.flatMap((r) => r.forceClosed);
+    if (forceClosed.length > 0) {
+      console.log(`  [verify-close] force-closed ${forceClosed.length} issue(s): ${forceClosed.join(', ')}`);
+      // Add force-closed issues to the result so they're tracked in state
+      for (const issue of forceClosed) {
+        const num = issue.replace('#', '');
+        const url = `https://github.com/${state.kaizen_repo}/issues/${num}`;
+        if (!result.issuesClosed.includes(url) && !result.issuesClosed.includes(issue)) {
+          result.issuesClosed.push(url);
+        }
+      }
+    }
+  }
+
+  // Sync epic checklists for all closed issues in this batch (#730, Gap 1)
+  const allClosedNums = [...new Set([
+    ...state.issues_closed,
+    ...result.issuesClosed,
+  ])].map((ref) => {
+    const m = ref.match(/(\d+)/);
+    return m ? m[1] : '';
+  }).filter(Boolean);
+  if (allClosedNums.length > 0) {
+    const epicResults = syncEpicChecklists(allClosedNums, state.kaizen_repo);
+    for (const er of epicResults) {
+      console.log(`  [epic-sync] ${er.epic}: ${er.issuesChecked.length} newly checked, ${er.alreadyChecked.length} already checked`);
     }
   }
 
