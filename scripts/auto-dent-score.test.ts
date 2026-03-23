@@ -14,7 +14,6 @@ import {
   type BatchScore,
   type ModeStats,
   type PostHocBatchResult,
-  type CostAnomalyResult,
 } from './auto-dent-score.js';
 import type { RunMetrics, RunResult } from './auto-dent-run.js';
 
