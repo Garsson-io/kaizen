@@ -12,9 +12,13 @@ import {
   analyzeRunLog,
   analyzeBatch,
   computeToolPhaseFractions,
+  computeRunCompleteness,
+  detectWastePatterns,
+  generateRecommendations,
   formatRunAnalysis,
   formatBatchAnalysis,
 } from './auto-dent-analyze.js';
+import type { PhaseEvent, ToolEvent, RunAnalysis } from './auto-dent-analyze.js';
 
 // Synthetic log builders
 
@@ -333,6 +337,234 @@ describe('formatBatchAnalysis', () => {
 
     expect(output).toContain('## Auto-Dent Batch Analysis');
     expect(output).toContain('Cold-Start Summary');
+    expect(output).toContain('Run Completeness');
     expect(output).toContain('Per-Run Details');
+  });
+});
+
+describe('computeRunCompleteness', () => {
+  it('returns full score when all expected phases are present', () => {
+    const phases: PhaseEvent[] = [
+      { offsetSec: 0, phase: 'PICK' },
+      { offsetSec: 10, phase: 'EVALUATE' },
+      { offsetSec: 20, phase: 'IMPLEMENT' },
+      { offsetSec: 30, phase: 'TEST' },
+      { offsetSec: 40, phase: 'PR' },
+      { offsetSec: 50, phase: 'MERGE' },
+      { offsetSec: 60, phase: 'REFLECT' },
+    ];
+
+    const result = computeRunCompleteness(phases);
+    expect(result.score).toBe(1);
+    expect(result.phasesMissing).toHaveLength(0);
+    expect(result.orderedCorrectly).toBe(true);
+  });
+
+  it('returns partial score when phases are missing', () => {
+    const phases: PhaseEvent[] = [
+      { offsetSec: 0, phase: 'PICK' },
+      { offsetSec: 10, phase: 'IMPLEMENT' },
+      { offsetSec: 20, phase: 'PR' },
+    ];
+
+    const result = computeRunCompleteness(phases);
+    expect(result.score).toBeCloseTo(3 / 7);
+    expect(result.phasesMissing).toContain('EVALUATE');
+    expect(result.phasesMissing).toContain('TEST');
+    expect(result.phasesMissing).toContain('MERGE');
+    expect(result.phasesMissing).toContain('REFLECT');
+    expect(result.orderedCorrectly).toBe(true);
+  });
+
+  it('detects out-of-order phases', () => {
+    const phases: PhaseEvent[] = [
+      { offsetSec: 0, phase: 'IMPLEMENT' },
+      { offsetSec: 10, phase: 'PICK' },
+      { offsetSec: 20, phase: 'TEST' },
+    ];
+
+    const result = computeRunCompleteness(phases);
+    expect(result.orderedCorrectly).toBe(false);
+  });
+
+  it('returns zero score for empty phases', () => {
+    const result = computeRunCompleteness([]);
+    expect(result.score).toBe(0);
+    expect(result.phasesMissing).toHaveLength(7);
+    expect(result.orderedCorrectly).toBe(true);
+  });
+
+  it('ignores STOP phase in scoring (it is not expected)', () => {
+    const phases: PhaseEvent[] = [
+      { offsetSec: 0, phase: 'PICK' },
+      { offsetSec: 10, phase: 'STOP' },
+    ];
+
+    const result = computeRunCompleteness(phases);
+    expect(result.score).toBeCloseTo(1 / 7);
+    expect(result.phasesPresent).toContain('STOP');
+  });
+});
+
+describe('detectWastePatterns', () => {
+  it('detects repeated search patterns (3+ identical Grep)', () => {
+    const toolEvents: ToolEvent[] = [
+      { offsetSec: 0, name: 'Grep', summary: 'Grep "test"' },
+      { offsetSec: 1, name: 'Grep', summary: 'Grep "test"' },
+      { offsetSec: 2, name: 'Grep', summary: 'Grep "test"' },
+      { offsetSec: 3, name: 'Edit', summary: 'Edit foo.ts' },
+    ];
+    const phases: PhaseEvent[] = [{ offsetSec: 0, phase: 'IMPLEMENT' }];
+
+    const result = detectWastePatterns(toolEvents, phases);
+    const repeated = result.find(w => w.type === 'repeated_search');
+    expect(repeated).toBeDefined();
+    expect(repeated!.count).toBe(3);
+    expect(repeated!.wastedCalls).toBe(2);
+  });
+
+  it('detects redundant reads (3+ of same file)', () => {
+    const toolEvents: ToolEvent[] = [
+      { offsetSec: 0, name: 'Read', summary: 'Read foo.ts' },
+      { offsetSec: 1, name: 'Read', summary: 'Read foo.ts' },
+      { offsetSec: 2, name: 'Read', summary: 'Read foo.ts' },
+    ];
+    const phases: PhaseEvent[] = [];
+
+    const result = detectWastePatterns(toolEvents, phases);
+    const redundant = result.find(w => w.type === 'redundant_read');
+    expect(redundant).toBeDefined();
+    expect(redundant!.count).toBe(3);
+    expect(redundant!.wastedCalls).toBe(1); // first two are OK
+  });
+
+  it('detects abandoned approach (coding with no TEST/PR/MERGE phase)', () => {
+    const toolEvents: ToolEvent[] = [
+      { offsetSec: 0, name: 'Edit', summary: 'Edit foo.ts' },
+      { offsetSec: 1, name: 'Write', summary: 'Write bar.ts' },
+    ];
+    const phases: PhaseEvent[] = [
+      { offsetSec: 0, phase: 'PICK' },
+      { offsetSec: 5, phase: 'IMPLEMENT' },
+    ];
+
+    const result = detectWastePatterns(toolEvents, phases);
+    const abandoned = result.find(w => w.type === 'abandoned_approach');
+    expect(abandoned).toBeDefined();
+    expect(abandoned!.wastedCalls).toBe(2);
+  });
+
+  it('does not flag abandoned approach when TEST phase is present', () => {
+    const toolEvents: ToolEvent[] = [
+      { offsetSec: 0, name: 'Edit', summary: 'Edit foo.ts' },
+    ];
+    const phases: PhaseEvent[] = [
+      { offsetSec: 0, phase: 'IMPLEMENT' },
+      { offsetSec: 5, phase: 'TEST' },
+    ];
+
+    const result = detectWastePatterns(toolEvents, phases);
+    expect(result.find(w => w.type === 'abandoned_approach')).toBeUndefined();
+  });
+
+  it('returns empty array when no waste detected', () => {
+    const toolEvents: ToolEvent[] = [
+      { offsetSec: 0, name: 'Grep', summary: 'Grep "a"' },
+      { offsetSec: 1, name: 'Grep', summary: 'Grep "b"' },
+      { offsetSec: 2, name: 'Edit', summary: 'Edit foo.ts' },
+    ];
+    const phases: PhaseEvent[] = [
+      { offsetSec: 0, phase: 'IMPLEMENT' },
+      { offsetSec: 5, phase: 'TEST' },
+    ];
+
+    const result = detectWastePatterns(toolEvents, phases);
+    expect(result).toHaveLength(0);
+  });
+});
+
+describe('generateRecommendations', () => {
+  function makeMinimalRun(overrides: Partial<RunAnalysis> = {}): RunAnalysis {
+    return {
+      runFile: 'run-1.log',
+      coldStartSec: 30,
+      totalDurationSec: 600,
+      toolCalls: 50,
+      phaseDurations: {},
+      toolCategoryFractions: { discovery: 0.4, coding: 0.2, testing: 0.2, shipping: 0.1, other: 0.1 },
+      topPatterns: [],
+      toolEvents: [],
+      phaseEvents: [],
+      completeness: { score: 1, phasesPresent: [], phasesMissing: [], orderedCorrectly: true },
+      wastePatterns: [],
+      totalWastedCalls: 0,
+      ...overrides,
+    };
+  }
+
+  it('recommends plan pre-pass for high cold-start', () => {
+    const runs = [makeMinimalRun(), makeMinimalRun()];
+    const recs = generateRecommendations(runs, 180, []);
+    expect(recs.some(r => r.includes('cold-start'))).toBe(true);
+  });
+
+  it('recommends phase clarity for low completeness', () => {
+    const runs = [
+      makeMinimalRun({ completeness: { score: 0.3, phasesPresent: ['PICK', 'IMPLEMENT'], phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'], orderedCorrectly: true } }),
+      makeMinimalRun({ completeness: { score: 0.3, phasesPresent: ['PICK', 'IMPLEMENT'], phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'], orderedCorrectly: true } }),
+    ];
+    const recs = generateRecommendations(runs, 30, []);
+    expect(recs.some(r => r.includes('completeness'))).toBe(true);
+  });
+
+  it('recommends investigating abandoned approaches', () => {
+    const runs = [makeMinimalRun(), makeMinimalRun()];
+    const waste = [{ type: 'abandoned_approach', totalCount: 3, runCount: 2 }];
+    const recs = generateRecommendations(runs, 30, waste);
+    expect(recs.some(r => r.includes('coding but never reached TEST'))).toBe(true);
+  });
+
+  it('returns empty for healthy batch', () => {
+    const runs = [makeMinimalRun()];
+    const recs = generateRecommendations(runs, 30, []);
+    expect(recs).toHaveLength(0);
+  });
+});
+
+describe('integration: completeness and waste in batch analysis', () => {
+  it('includes completeness and waste in batch analysis output', () => {
+    const batchDir = createTmpBatch([
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantText('AUTO_DENT_PHASE: PICK | issue=#123'),
+        assistantToolUse('Grep', { pattern: 'x' }),
+        assistantToolUse('Grep', { pattern: 'x' }),
+        assistantToolUse('Grep', { pattern: 'x' }),
+        userMsg('2026-03-22T22:01:00.000Z'),
+        assistantText('AUTO_DENT_PHASE: IMPLEMENT | case=test'),
+        assistantToolUse('Edit', { file_path: '/a.ts' }),
+        userMsg('2026-03-22T22:02:00.000Z'),
+        assistantText('AUTO_DENT_PHASE: TEST | result=pass'),
+        assistantText('AUTO_DENT_PHASE: PR | url=https://github.com/test/test/pull/1'),
+        userMsg('2026-03-22T22:03:00.000Z'),
+      ],
+    ]);
+
+    const result = analyzeBatch(batchDir);
+
+    // Should have completeness data
+    expect(result.avgCompleteness).toBeGreaterThan(0);
+    expect(result.runs[0].completeness.phasesPresent).toContain('PICK');
+    expect(result.runs[0].completeness.phasesPresent).toContain('TEST');
+
+    // Should detect repeated search waste
+    expect(result.totalWastedCalls).toBeGreaterThan(0);
+    expect(result.globalWastePatterns.length).toBeGreaterThan(0);
+
+    // Format should include new sections
+    const output = formatBatchAnalysis(result);
+    expect(output).toContain('Run Completeness');
+    expect(output).toContain('Waste Patterns');
   });
 });

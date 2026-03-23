@@ -34,6 +34,28 @@ export interface PhaseEvent {
   phase: string;
 }
 
+export interface RunCompleteness {
+  /** Fraction of expected phases actually emitted (0..1) */
+  score: number;
+  /** Phases present in this run */
+  phasesPresent: string[];
+  /** Expected phases that were missing */
+  phasesMissing: string[];
+  /** Whether phases occurred in the expected lifecycle order */
+  orderedCorrectly: boolean;
+}
+
+export interface WastePattern {
+  /** Type of waste detected */
+  type: 'repeated_search' | 'error_tool' | 'abandoned_approach' | 'redundant_read';
+  /** Human-readable description */
+  description: string;
+  /** Number of occurrences */
+  count: number;
+  /** Tool calls wasted by this pattern */
+  wastedCalls: number;
+}
+
 export interface RunAnalysis {
   runFile: string;
   /** Seconds from session init to first Edit/Write tool call (NaN if none) */
@@ -52,6 +74,12 @@ export interface RunAnalysis {
   toolEvents: ToolEvent[];
   /** All phase events for further analysis */
   phaseEvents: PhaseEvent[];
+  /** Run completeness — how much of the expected lifecycle was covered */
+  completeness: RunCompleteness;
+  /** Waste patterns detected */
+  wastePatterns: WastePattern[];
+  /** Total tool calls attributable to waste */
+  totalWastedCalls: number;
 }
 
 export interface BatchAnalysis {
@@ -69,6 +97,14 @@ export interface BatchAnalysis {
   globalTopPatterns: Array<{ pattern: string; count: number; runCount: number }>;
   /** Phase breakdown across all runs (fraction of total time) */
   globalPhaseFractions: Record<string, number>;
+  /** Average run completeness across all runs */
+  avgCompleteness: number;
+  /** Total wasted tool calls across all runs */
+  totalWastedCalls: number;
+  /** Waste patterns aggregated across all runs */
+  globalWastePatterns: Array<{ type: string; description: string; totalCount: number; runCount: number }>;
+  /** Batch-level reflection recommendations */
+  recommendations: string[];
 }
 
 // Parsing helpers
@@ -116,6 +152,163 @@ function categorizeToolPhase(
   }
   if (name === 'Skill') return 'other';
   return 'other';
+}
+
+// Phase lifecycle — the expected progression for a productive exploit run
+const EXPECTED_PHASES = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
+// Explore/reflect/subtract/contemplate modes may have different phase expectations,
+// but the core lifecycle is a good baseline for all modes.
+
+/**
+ * Compute run completeness: how much of the expected phase lifecycle was covered.
+ */
+export function computeRunCompleteness(phaseEvents: PhaseEvent[]): RunCompleteness {
+  const phasesPresent = [...new Set(phaseEvents.map(e => e.phase))];
+  const phasesMissing = EXPECTED_PHASES.filter(p => !phasesPresent.includes(p));
+
+  // Check ordering: phases that ARE present should appear in lifecycle order
+  const presentInOrder = phasesPresent.filter(p => EXPECTED_PHASES.includes(p));
+  let orderedCorrectly = true;
+  for (let i = 1; i < presentInOrder.length; i++) {
+    const prevIdx = EXPECTED_PHASES.indexOf(presentInOrder[i - 1]);
+    const currIdx = EXPECTED_PHASES.indexOf(presentInOrder[i]);
+    if (currIdx < prevIdx) {
+      orderedCorrectly = false;
+      break;
+    }
+  }
+
+  // Score: fraction of expected phases present (STOP doesn't count against completeness)
+  const score = phasesPresent.filter(p => EXPECTED_PHASES.includes(p)).length / EXPECTED_PHASES.length;
+
+  return { score, phasesPresent, phasesMissing, orderedCorrectly };
+}
+
+/**
+ * Detect waste patterns in a run's tool events.
+ *
+ * Waste categories:
+ * - repeated_search: identical Grep/Glob patterns called 3+ times
+ * - redundant_read: same file Read 3+ times (suggests context loss)
+ * - abandoned_approach: sequence of Edit/Write followed by no testing or PR
+ */
+export function detectWastePatterns(
+  toolEvents: ToolEvent[],
+  phaseEvents: PhaseEvent[],
+): WastePattern[] {
+  const patterns: WastePattern[] = [];
+
+  // Repeated searches: same Grep/Glob pattern 3+ times
+  const searchCounts = new Map<string, number>();
+  for (const e of toolEvents) {
+    if (e.name === 'Grep' || e.name === 'Glob') {
+      searchCounts.set(e.summary, (searchCounts.get(e.summary) || 0) + 1);
+    }
+  }
+  for (const [summary, count] of searchCounts) {
+    if (count >= 3) {
+      patterns.push({
+        type: 'repeated_search',
+        description: `"${summary}" searched ${count} times`,
+        count,
+        wastedCalls: count - 1, // first call is legitimate
+      });
+    }
+  }
+
+  // Redundant reads: same file Read 3+ times
+  const readCounts = new Map<string, number>();
+  for (const e of toolEvents) {
+    if (e.name === 'Read') {
+      readCounts.set(e.summary, (readCounts.get(e.summary) || 0) + 1);
+    }
+  }
+  for (const [summary, count] of readCounts) {
+    if (count >= 3) {
+      patterns.push({
+        type: 'redundant_read',
+        description: `"${summary}" read ${count} times`,
+        count,
+        wastedCalls: count - 2, // first two reads may be legitimate (initial + re-check)
+      });
+    }
+  }
+
+  // Abandoned approach: coding tools present but no TEST/PR/MERGE phases
+  const hasCoding = toolEvents.some(e => CODING_TOOLS.has(e.name));
+  const hasTestOrPR = phaseEvents.some(e => ['TEST', 'PR', 'MERGE'].includes(e.phase));
+  if (hasCoding && !hasTestOrPR) {
+    const codingCalls = toolEvents.filter(e => CODING_TOOLS.has(e.name)).length;
+    patterns.push({
+      type: 'abandoned_approach',
+      description: `${codingCalls} coding tool calls with no TEST/PR/MERGE phase`,
+      count: 1,
+      wastedCalls: codingCalls,
+    });
+  }
+
+  return patterns;
+}
+
+/**
+ * Generate batch-level recommendations based on aggregate analysis.
+ */
+export function generateRecommendations(
+  runs: RunAnalysis[],
+  avgColdStart: number,
+  globalWaste: Array<{ type: string; totalCount: number; runCount: number }>,
+): string[] {
+  const recs: string[] = [];
+
+  // Cold-start recommendation
+  if (!isNaN(avgColdStart) && avgColdStart > 120) {
+    recs.push(
+      `High average cold-start (${avgColdStart.toFixed(0)}s). Consider pre-computing a plan.json to skip discovery.`,
+    );
+  }
+
+  // Completeness recommendation
+  const avgCompleteness = runs.reduce((s, r) => s + r.completeness.score, 0) / (runs.length || 1);
+  if (avgCompleteness < 0.5 && runs.length > 1) {
+    recs.push(
+      `Low average phase completeness (${(avgCompleteness * 100).toFixed(0)}%). Runs are not completing the full lifecycle. Check if prompts are clear about expected phases.`,
+    );
+  }
+
+  // Missing REFLECT is especially notable
+  const reflectMissing = runs.filter(r => r.completeness.phasesMissing.includes('REFLECT')).length;
+  if (reflectMissing > runs.length * 0.5 && runs.length > 1) {
+    recs.push(
+      `${reflectMissing}/${runs.length} runs missing REFLECT phase. Insights are likely evaporating.`,
+    );
+  }
+
+  // Waste recommendations
+  const repeatedSearchRuns = globalWaste.find(w => w.type === 'repeated_search');
+  if (repeatedSearchRuns && repeatedSearchRuns.runCount > runs.length * 0.3) {
+    recs.push(
+      `Repeated search patterns detected in ${repeatedSearchRuns.runCount}/${runs.length} runs. Consider caching common search results in the prompt.`,
+    );
+  }
+
+  const abandonedRuns = globalWaste.find(w => w.type === 'abandoned_approach');
+  if (abandonedRuns && abandonedRuns.runCount > 1) {
+    recs.push(
+      `${abandonedRuns.runCount} runs started coding but never reached TEST/PR. Investigate whether runs are timing out or hitting errors.`,
+    );
+  }
+
+  // Coding fraction recommendation
+  const avgCodingFraction = runs.reduce(
+    (s, r) => s + (r.toolCategoryFractions.coding || 0), 0,
+  ) / (runs.length || 1);
+  if (avgCodingFraction < 0.1 && runs.length > 1) {
+    recs.push(
+      `Very low coding fraction (${(avgCodingFraction * 100).toFixed(0)}%). Most time spent on discovery. Consider better issue scoping or plan pre-pass.`,
+    );
+  }
+
+  return recs;
 }
 
 /**
@@ -215,6 +408,13 @@ export function analyzeRunLog(logPath: string): RunAnalysis {
   // Tool-category phase fractions
   const toolCategoryFractions = computeToolPhaseFractions(toolEvents, toolInputs);
 
+  // Run completeness
+  const completeness = computeRunCompleteness(phaseEvents);
+
+  // Waste detection
+  const wastePatterns = detectWastePatterns(toolEvents, phaseEvents);
+  const totalWastedCalls = wastePatterns.reduce((s, w) => s + w.wastedCalls, 0);
+
   return {
     runFile: basename(logPath),
     coldStartSec,
@@ -225,6 +425,9 @@ export function analyzeRunLog(logPath: string): RunAnalysis {
     topPatterns,
     toolEvents,
     phaseEvents,
+    completeness,
+    wastePatterns,
+    totalWastedCalls,
   };
 }
 
@@ -340,6 +543,43 @@ export function analyzeBatch(batchDir: string): BatchAnalysis {
     } catch { /* use dir name */ }
   }
 
+  // Completeness aggregate
+  const avgCompleteness = runs.length > 0
+    ? runs.reduce((s, r) => s + r.completeness.score, 0) / runs.length
+    : 0;
+
+  // Waste aggregate
+  const totalWastedCalls = runs.reduce((s, r) => s + r.totalWastedCalls, 0);
+
+  // Aggregate waste patterns across runs
+  const wasteAgg = new Map<string, { type: string; description: string; totalCount: number; runs: Set<string> }>();
+  for (const run of runs) {
+    for (const w of run.wastePatterns) {
+      const key = w.type;
+      const existing = wasteAgg.get(key);
+      if (existing) {
+        existing.totalCount += w.count;
+        existing.runs.add(run.runFile);
+      } else {
+        wasteAgg.set(key, {
+          type: w.type,
+          description: w.description,
+          totalCount: w.count,
+          runs: new Set([run.runFile]),
+        });
+      }
+    }
+  }
+  const globalWastePatterns = [...wasteAgg.values()].map(({ type, description, totalCount, runs: rs }) => ({
+    type,
+    description,
+    totalCount,
+    runCount: rs.size,
+  }));
+
+  // Recommendations
+  const recommendations = generateRecommendations(runs, avg, globalWastePatterns);
+
   return {
     batchDir,
     batchId,
@@ -352,6 +592,10 @@ export function analyzeBatch(batchDir: string): BatchAnalysis {
       coldStarts.length > 0 ? Math.max(...coldStarts) : NaN,
     globalTopPatterns,
     globalPhaseFractions,
+    avgCompleteness,
+    totalWastedCalls,
+    globalWastePatterns,
+    recommendations,
   };
 }
 
@@ -396,6 +640,23 @@ export function formatRunAnalysis(run: RunAnalysis): string {
     }
   }
 
+  // Completeness
+  lines.push('', `**Completeness:** ${(run.completeness.score * 100).toFixed(0)}%`);
+  if (run.completeness.phasesMissing.length > 0) {
+    lines.push(`- Missing: ${run.completeness.phasesMissing.join(', ')}`);
+  }
+  if (!run.completeness.orderedCorrectly) {
+    lines.push(`- Phases out of expected order`);
+  }
+
+  // Waste
+  if (run.wastePatterns.length > 0) {
+    lines.push('', `**Waste patterns** (${run.totalWastedCalls} wasted calls):`);
+    for (const w of run.wastePatterns) {
+      lines.push(`- [${w.type}] ${w.description}`);
+    }
+  }
+
   return lines.join('\n');
 }
 
@@ -432,6 +693,32 @@ export function formatBatchAnalysis(batch: BatchAnalysis): string {
       lines.push(
         `| \`${p.pattern.slice(0, 60)}\` | ${p.count} | ${p.runCount}/${batch.runs.length} |`,
       );
+    }
+  }
+
+  // Completeness and waste summary
+  lines.push('', '### Run Completeness', '');
+  lines.push(`Average lifecycle completeness: **${(batch.avgCompleteness * 100).toFixed(0)}%**`);
+  if (batch.totalWastedCalls > 0) {
+    lines.push(`Total wasted tool calls: **${batch.totalWastedCalls}**`);
+  }
+
+  if (batch.globalWastePatterns.length > 0) {
+    lines.push('', '### Waste Patterns (across all runs)', '');
+    lines.push('| Type | Occurrences | Runs |');
+    lines.push('|------|------------|------|');
+    for (const w of batch.globalWastePatterns) {
+      lines.push(
+        `| ${w.type} | ${w.totalCount} | ${w.runCount}/${batch.runs.length} |`,
+      );
+    }
+  }
+
+  // Recommendations
+  if (batch.recommendations.length > 0) {
+    lines.push('', '### Recommendations', '');
+    for (const rec of batch.recommendations) {
+      lines.push(`- ${rec}`);
     }
   }
 
