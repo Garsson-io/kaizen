@@ -28,7 +28,7 @@ export function stripHeredocBody(command: string): string {
  * Split a command line by pipe/chain operators (|, &&, ||, ;)
  * and return individual segments trimmed.
  */
-function splitCommandSegments(cmdLine: string): string[] {
+export function splitCommandSegments(cmdLine: string): string[] {
   return cmdLine
     .split(/[|;&]{1,2}/)
     .map((s) => s.trim())
