@@ -121,18 +121,29 @@ For each impediment:
   Required labels: `kaizen` + level (`level-1`/`level-2`/`level-3`) + area (`area/hooks`, `area/skills`, `area/cases`, `area/deploy`, `area/testing`, `area/container`, `area/worktree`). Add `horizon/{name}` if it maps to a known horizon.
 - **Trivial / not worth filing** → Note the reason
 
-### 6. Report results
-When done, output a structured summary that the main agent can use to clear the kaizen gate:
+### 6. Clear the kaizen gate (MANDATORY final step)
 
-```
-KAIZEN_BG_RESULTS:
-- impediment: "description"
-  disposition: filed | incident | fixed-in-pr
-  ref: "#NNN" (if filed or incident)
-  reason: "why" (if type is positive with no-action)
+As your **final action**, run an echo command with the structured impediments JSON.
+This fires the pr-kaizen-clear hook and clears the gate mechanistically (kaizen #794).
+
+```bash
+echo 'KAIZEN_IMPEDIMENTS:' && cat <<'IMPEDIMENTS'
+[
+  {"impediment": "description", "disposition": "filed", "ref": "#NNN"},
+  {"impediment": "description", "disposition": "incident", "ref": "#NNN"},
+  {"finding": "description", "type": "positive", "disposition": "no-action", "reason": "why"}
+]
+IMPEDIMENTS
 ```
 
-The main agent will use this to construct the KAIZEN_IMPEDIMENTS declaration and clear the gate.
+If no impediments were found:
+```bash
+echo 'KAIZEN_IMPEDIMENTS: [] no friction observed in this session'
+```
+
+**This echo IS the gate-clearing mechanism.** The pr-kaizen-clear PostToolUse hook
+detects KAIZEN_IMPEDIMENTS in your Bash output and clears the gate automatically.
+Do NOT skip this step — without it, the main agent stays gated.
 
 ### 7. Verifiable meta-questions (aggregate health check)
 

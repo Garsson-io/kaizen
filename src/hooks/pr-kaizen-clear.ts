@@ -281,6 +281,32 @@ function extractImpedimentsJson(
   return { json: null, emptyReason: '' };
 }
 
+// ── KAIZEN_BG_RESULTS extraction (kaizen #794) ──────────────────────
+
+/**
+ * Extract structured impediments from KAIZEN_BG_RESULTS output.
+ *
+ * The kaizen-bg agent outputs results as JSON (same format as KAIZEN_IMPEDIMENTS):
+ *   KAIZEN_BG_RESULTS: [{"impediment": "...", "disposition": "filed", "ref": "#NNN"}]
+ *
+ * This reuses the same JSON extraction logic as KAIZEN_IMPEDIMENTS, just
+ * with a different marker tag. The hook validates and persists identically.
+ */
+export function extractBgResults(
+  stdout: string,
+  cmdLine: string,
+): { json: unknown[] | null; emptyReason: string } {
+  // Rewrite KAIZEN_BG_RESULTS → KAIZEN_IMPEDIMENTS and reuse existing extraction
+  const retagged = (text: string) =>
+    text.replace(/KAIZEN_BG_RESULTS:/g, 'KAIZEN_IMPEDIMENTS:');
+
+  return extractImpedimentsJson(
+    stdout ? retagged(stdout) : '',
+    cmdLine ? retagged(cmdLine) : '',
+    '',
+  );
+}
+
 // ── KAIZEN_NO_ACTION ─────────────────────────────────────────────────
 
 const VALID_NO_ACTION_CATEGORIES = new Set([
@@ -520,6 +546,37 @@ export function processHookInput(
       allPassive = items.every((i) => i.disposition === 'no-action');
       shouldClear = true;
       clearReason = `${items.length} finding(s) addressed`;
+    }
+  }
+
+  // ── Trigger 1b: KAIZEN_BG_RESULTS (kaizen #794) ────────────────
+  // The kaizen-bg background agent outputs structured JSON results. If we
+  // detect them, clear the gate without requiring the main agent to relay.
+  if (
+    !shouldClear &&
+    (/KAIZEN_BG_RESULTS:/.test(cmdLine) || /KAIZEN_BG_RESULTS:/.test(stdout))
+  ) {
+    const { json: bgJson, emptyReason: bgEmptyReason } = extractBgResults(stdout, cmdLine);
+
+    if (bgJson !== null) {
+      if (bgJson.length === 0) {
+        if (!bgEmptyReason) {
+          return "\nKAIZEN_BG_RESULTS: Empty array requires a reason.\n  echo 'KAIZEN_BG_RESULTS: [] straightforward bug fix'\n";
+        }
+        logNoAction('bg-empty-array', bgEmptyReason, gatePrUrl);
+        shouldClear = true;
+        clearReason = `no impediments from kaizen-bg (${bgEmptyReason})`;
+      } else {
+        const bgItems = bgJson as Impediment[];
+        const errors = validateImpediments(bgItems);
+        if (errors.length > 0) {
+          return `\nKAIZEN_BG_RESULTS: Validation failed:\n${errors.join('\n')}\n\nThe background agent produced invalid results. Fix and resubmit.\n`;
+        }
+        validatedItems = bgItems;
+        allPassive = bgItems.every((i) => i.disposition === 'no-action');
+        shouldClear = true;
+        clearReason = `${bgItems.length} finding(s) from kaizen-bg agent`;
+      }
     }
   }
 

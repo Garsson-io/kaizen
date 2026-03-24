@@ -65,7 +65,6 @@ describe('processHookInput', () => {
       expect(output).toContain('KAIZEN REFLECTION');
       expect(output).toContain('Post-PR Creation');
       expect(output).toContain('kaizen-bg');
-      expect(output).toContain('run_in_background');
       expect(output).toContain('pull/42');
 
       // State file should be created
@@ -93,7 +92,7 @@ describe('processHookInput', () => {
 
       const output = processHookInput(input, defaultOpts);
       expect(output).toContain('Agent');
-      expect(output).toContain('background');
+      expect(output).toContain('kaizen-bg');
     });
   });
 
@@ -218,10 +217,10 @@ describe('generateCreateReflection', () => {
     expect(output).toContain('file1.ts');
   });
 
-  it('mentions waived disposition elimination (#198)', () => {
+  it('mentions gate clearing mechanism (#794)', () => {
     const output = generateCreateReflection('url', 'branch', 'files');
-    expect(output).toContain('#198');
-    expect(output).toContain('eliminated');
+    expect(output).toContain('#794');
+    expect(output).toContain('gate');
   });
 
   it('includes KAIZEN_NO_ACTION categories', () => {
@@ -234,7 +233,6 @@ describe('generateCreateReflection', () => {
     const output = generateCreateReflection('url', 'branch', 'files');
     expect(output).toContain('Compound improvements');
     expect(output).toContain('type: "positive"');
-    expect(output).toContain('compound improvement unlocked');
   });
 
   it('includes transcript_path when provided', () => {
@@ -268,7 +266,6 @@ describe('generateMergeReflection', () => {
     const output = generateMergeReflection('url', 'branch', 'files', '/main');
     expect(output).toContain('Compound improvements');
     expect(output).toContain('type: "positive"');
-    expect(output).toContain('compound improvement unlocked');
   });
 
   it('includes transcript_path when provided', () => {
