@@ -621,7 +621,7 @@ Flags:
   const deps = defaultDeps();
 
   console.log("");
-  console.log(`${BOLD}NanoClaw Worktree DU${NC}${opts.fast ? " (fast)" : ""}`);
+  console.log(`${BOLD}Kaizen Worktree DU${NC}${opts.fast ? " (fast)" : ""}`);
   console.log(`${DIM}${paths.projectRoot}${NC}`);
   console.log("");
 

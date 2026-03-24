@@ -127,7 +127,7 @@ describe("kaizen-setup", () => {
 
 ## Reference Implementation
 
-NanoClaw's `/setup` skill demonstrates this pattern:
+Kaizen's `/kaizen-setup` skill demonstrates this pattern:
 - Skill markdown describes the flow and decision points
 - `bash setup.sh` handles bootstrap (Node.js, deps)
 - `npx tsx setup/index.ts --step <name>` handles each mechanical step

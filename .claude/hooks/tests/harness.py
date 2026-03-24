@@ -377,7 +377,7 @@ class MockBinDir:
         return f"{self.dir}:{self._original_path}"
 
     def add_git_mock(self, branch: str = "wt/test", status_output: str = "",
-                     diff_output: str = "", remote_url: str = "https://github.com/Garsson-io/nanoclaw.git",
+                     diff_output: str = "", remote_url: str = "https://github.com/Garsson-io/kaizen.git",
                      simulate_main_checkout: bool = False):
         """Create a mock git binary.
 
@@ -466,9 +466,9 @@ EOF
 
     "git_push_simple": "git push",
 
-    "pr_merge_squash": "gh pr merge 47 --repo Garsson-io/nanoclaw --squash --delete-branch",
+    "pr_merge_squash": "gh pr merge 47 --repo Garsson-io/kaizen --squash --delete-branch",
 
-    "pr_diff": "gh pr diff 47 --repo Garsson-io/nanoclaw",
+    "pr_diff": "gh pr diff 47 --repo Garsson-io/kaizen",
 
     "chained_commit_push": 'git add src/index.ts && git commit -m "fix: update routing" && git push origin wt/test',
 
