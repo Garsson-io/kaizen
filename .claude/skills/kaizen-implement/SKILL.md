@@ -90,6 +90,7 @@ Every requirement in the spec was added by someone smart at some point. That doe
 - Is this still needed? Has the problem been partially solved by other work?
 - Who added this requirement? (Check git blame on the spec.) Are they still the right person to validate it?
 - What happens if we just... don't do this part?
+- **Is there dead code related to this issue?** Removing dead code simplifies the fix and prevents it from causing future confusion. Deletion is a feature, not a risk.
 
 **Concrete actions:**
 - Re-read the spec's problem statement. Do the incidents it cites still reproduce?
