@@ -13,7 +13,7 @@ import { resolveProjectPaths, type ProjectPaths } from "./lib/resolve-project-ro
 
 // ── Types ──
 
-export type LockClass = "active" | "stale" | "orphaned" | "none";
+type LockClass = "active" | "stale" | "orphaned" | "none";
 export type MergeStatus = "merged" | "squash-merged" | "at-main" | "unmerged";
 
 export interface LockFile {
@@ -22,7 +22,7 @@ export interface LockFile {
   started_at?: string;
 }
 
-export interface WorktreeInfo {
+interface WorktreeInfo {
   name: string;
   path: string;
   branch: string;
@@ -35,7 +35,7 @@ export interface WorktreeInfo {
   caseInfo: string | null;
 }
 
-export interface AnalyzeSummary {
+interface AnalyzeSummary {
   count: number;
   totalSize: number;
   activeLocks: number;
@@ -44,7 +44,7 @@ export interface AnalyzeSummary {
   dirty: number;
 }
 
-export interface BranchSummary {
+interface BranchSummary {
   total: number;
   merged: number;
   unmerged: number;
@@ -93,7 +93,7 @@ export function defaultDeps(): Deps {
 
 const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
-export function readLockFile(wtPath: string, deps: Deps): LockFile | null {
+function readLockFile(wtPath: string, deps: Deps): LockFile | null {
   const lockPath = join(wtPath, ".worktree-lock.json");
   if (!deps.exists(lockPath)) return null;
   try {
@@ -103,7 +103,7 @@ export function readLockFile(wtPath: string, deps: Deps): LockFile | null {
   }
 }
 
-export function classifyLockFromData(lock: LockFile | null, deps: Deps): LockClass {
+function classifyLockFromData(lock: LockFile | null, deps: Deps): LockClass {
   if (!lock) return "none";
 
   const pid = lock.pid;
@@ -330,7 +330,7 @@ export interface CleanupResult {
   actions: CleanupAction[];
 }
 
-export interface CleanupAction {
+interface CleanupAction {
   type: "skip" | "remove" | "remove-lock" | "fail";
   target: string;
   reason: string;
@@ -569,7 +569,7 @@ function printCleanup(result: CleanupResult, dryRun: boolean) {
 
 // ── CLI ──
 
-export interface CliOptions {
+interface CliOptions {
   mode: "analyze" | "cleanup";
   fast: boolean;
   dryRun: boolean;

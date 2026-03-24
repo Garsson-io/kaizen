@@ -45,14 +45,14 @@ export interface Issue {
   closedAt?: string;
 }
 
-export interface CreateIssueOpts {
+interface CreateIssueOpts {
   title: string;
   body: string;
   labels?: string[];
   repo?: string;
 }
 
-export interface ListIssuesOpts {
+interface ListIssuesOpts {
   state?: "open" | "closed" | "all";
   labels?: string[];
   search?: string;
@@ -61,7 +61,7 @@ export interface ListIssuesOpts {
   json?: string[];
 }
 
-export interface EditIssueOpts {
+interface EditIssueOpts {
   number: number;
   addLabels?: string[];
   removeLabels?: string[];
@@ -69,20 +69,20 @@ export interface EditIssueOpts {
   repo?: string;
 }
 
-export interface CommentOpts {
+interface CommentOpts {
   number: number;
   body: string;
   repo?: string;
 }
 
-export interface CreateResult {
+interface CreateResult {
   number: number;
   url: string;
 }
 
 // ── Backend Interface ──
 
-export interface IssueBackend {
+interface IssueBackend {
   readonly name: string;
 
   create(opts: CreateIssueOpts): CreateResult;

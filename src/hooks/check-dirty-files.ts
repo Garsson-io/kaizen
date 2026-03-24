@@ -56,7 +56,7 @@ export function detectTrigger(cmdLine: string): TriggerType {
   return 'none';
 }
 
-export interface DirtyFileReport {
+interface DirtyFileReport {
   staged: string[];
   modified: string[];
   untracked: string[];

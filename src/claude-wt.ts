@@ -14,7 +14,7 @@ import { analyzeWorktrees, defaultDeps } from "./worktree-du.js";
 
 // ── Arg parsing (exported for tests) ──
 
-export interface ParsedArgs {
+interface ParsedArgs {
   skipPermissions: boolean;
   claudeArgs: string[];
 }
