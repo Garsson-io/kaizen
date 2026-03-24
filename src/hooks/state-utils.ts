@@ -17,7 +17,7 @@ import {
 import { join } from 'node:path';
 
 export const DEFAULT_STATE_DIR = process.env.STATE_DIR || '/tmp/.pr-review-state';
-export const DEFAULT_MAX_STATE_AGE = 7200; // 2 hours
+const DEFAULT_MAX_STATE_AGE = 7200; // 2 hours
 
 // Default audit directory. Override via AUDIT_DIR env var for test isolation (kaizen #429).
 export const DEFAULT_AUDIT_DIR = new URL(
@@ -91,7 +91,7 @@ export function writeStateFile(
 /**
  * Check if a state file belongs to the current worktree and is not stale.
  */
-export function isStateForCurrentWorktree(
+function isStateForCurrentWorktree(
   filepath: string,
   now: number,
   currentBranch: string,

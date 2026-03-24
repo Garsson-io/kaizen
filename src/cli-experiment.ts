@@ -23,14 +23,14 @@ import { parseExperimentSpec } from './experiment-spec-parser.js';
 
 // --- Types ---
 
-export type ExperimentStatus =
+type ExperimentStatus =
   | 'pending'
   | 'running'
   | 'completed'
   | 'falsified'
   | 'inconclusive';
-export type ExperimentResult = 'supported' | 'falsified' | 'inconclusive';
-export type ExperimentPattern =
+type ExperimentResult = 'supported' | 'falsified' | 'inconclusive';
+type ExperimentPattern =
   | 'a-b-compare'
   | 'probe-and-observe'
   | 'toggle-and-measure';
@@ -49,7 +49,7 @@ export interface ExperimentFrontmatter {
   measurements: ExperimentMeasurement[];
 }
 
-export interface ExperimentMeasurement {
+interface ExperimentMeasurement {
   name: string;
   method: string;
   expected: string;

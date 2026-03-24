@@ -23,7 +23,7 @@ import {
   stripHeredocBody,
 } from './parse-command.js';
 
-export type CommandType = 'pr_create' | 'pr_merge' | 'git_commit' | 'none';
+type CommandType = 'pr_create' | 'pr_merge' | 'git_commit' | 'none';
 
 export function detectCommandType(cmdLine: string): CommandType {
   if (isGhPrCommand(cmdLine, 'create')) return 'pr_create';
@@ -32,7 +32,7 @@ export function detectCommandType(cmdLine: string): CommandType {
   return 'none';
 }
 
-export interface RunnerOptions {
+interface RunnerOptions {
   exec?: (cmd: string) => string;
   fileExists?: (path: string) => boolean;
   readFile?: (path: string) => string;
@@ -71,7 +71,7 @@ export function getChangedFiles(
 }
 
 // Check 1: Test coverage
-export interface TestCoverageResult {
+interface TestCoverageResult {
   srcCount: number;
   testCount: number;
   uncoveredFiles: string[];
@@ -297,7 +297,7 @@ Full checklist: .claude/kaizen/practices.md`;
 }
 
 // Check 4: Code quality warnings
-export interface CodeQualityResult {
+interface CodeQualityResult {
   warnings: string[];
 }
 
@@ -365,7 +365,7 @@ See: Zen of Kaizen \u2014 "Avoiding overengineering is not a license to undereng
 }
 
 // Main orchestrator
-export interface QualityCheckOutput {
+interface QualityCheckOutput {
   messages: string[];
 }
 

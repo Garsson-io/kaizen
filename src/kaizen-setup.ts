@@ -52,7 +52,7 @@ export interface ScaffoldResult {
   reason?: string;
 }
 
-export interface VerifyCheck {
+interface VerifyCheck {
   name: string;
   ok: boolean;
   detail?: string;
@@ -141,7 +141,7 @@ Add project-specific enforcement rules here.
   return { step: "scaffold", status: "ok", path };
 }
 
-export interface PluginContractCheck {
+interface PluginContractCheck {
   hookPaths: VerifyCheck[];
   skillDirs: VerifyCheck[];
   matchers: VerifyCheck[];
@@ -276,13 +276,13 @@ export function verifySetup(cwd: string, opts?: { pluginRoot?: string }): Verify
   return { step: "verify", status: failed > 0 ? "failed" : "ok", checks, passed, failed };
 }
 
-export interface ValidateCheck {
+interface ValidateCheck {
   name: string;
   ok: boolean;
   output?: string;
 }
 
-export interface ValidateResult {
+interface ValidateResult {
   step: "post-update-validate";
   status: "ok" | "failed";
   checks: ValidateCheck[];

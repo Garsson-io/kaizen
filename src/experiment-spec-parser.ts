@@ -6,17 +6,17 @@
 
 // Types
 
-export interface ExperimentVariant {
+interface ExperimentVariant {
   name: string;
   value: string;
 }
 
-export interface ExperimentMetric {
+interface ExperimentMetric {
   type: 'primary' | 'secondary';
   name: string;
 }
 
-export interface ExperimentBudget {
+interface ExperimentBudget {
   runsPerVariant: number | null;
   maxCostPerRun: number | null;
 }

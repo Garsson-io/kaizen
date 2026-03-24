@@ -48,7 +48,7 @@ export interface Signal {
   evidence: string;
 }
 
-export interface TranscriptAnalysis {
+interface TranscriptAnalysis {
   signals: Signal[];
   summary: {
     totalEntries: number;
@@ -177,7 +177,7 @@ export function parseTranscript(content: string): TranscriptEntry[] {
 }
 
 /** Read and parse a transcript file. */
-export function readTranscript(filePath: string): TranscriptEntry[] {
+function readTranscript(filePath: string): TranscriptEntry[] {
   const content = readFileSync(filePath, 'utf-8');
   return parseTranscript(content);
 }

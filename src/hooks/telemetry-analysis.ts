@@ -23,7 +23,7 @@ export interface HookTelemetryRecord {
   case_id: string;
 }
 
-export interface HookStats {
+interface HookStats {
   hook: string;
   count: number;
   avg_ms: number;
@@ -33,7 +33,7 @@ export interface HookStats {
   failures: number;
 }
 
-export interface TelemetryReport {
+interface TelemetryReport {
   total_records: number;
   time_range: { first: string; last: string } | null;
   hooks: HookStats[];
