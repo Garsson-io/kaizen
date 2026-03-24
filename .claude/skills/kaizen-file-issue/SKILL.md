@@ -93,6 +93,17 @@ Use the three-way routing from `/kaizen-reflect`:
 
 **Area labels** (pick one): `area/hooks`, `area/skills`, `area/cases`, `area/deploy`, `area/testing`, `area/container`, `area/worktree`, `area/observability`, `area/auto-dent`
 
+
+### Step 4b: Validate minimum labels
+
+Before filing, verify the issue will have **at minimum** these labels:
+- `kaizen` (always required)
+- One `area/*` label (e.g. `area/hooks`, `area/skills`, `area/testing`)
+
+If a level was determined, also include the `level-N` label. Issues filed without labels are invisible to `/kaizen-pick`, `/kaizen-audit-issues`, and filtered views — #757 sat unlabeled for 24+ hours as an installation blocker because it had no labels.
+
+**Hard rule:** Never pass an empty `--label` argument to `gh issue create`. If you cannot determine the area, default to the most likely area based on the incident description, or ask the user.
+
 ### Step 5: File the issue
 
 ```bash
@@ -141,6 +152,7 @@ Before filing, verify the issue body passes these checks:
 - [ ] **Title** starts with `[L1]`, `[L2]`, or `[L3]`
 - [ ] **No solution collapse** — the body doesn't prescribe "add hook X" or "change prompt Y"
 - [ ] **Duplicate search was done** — confirmed no existing issue covers this
+- [ ] **Labels present** — issue has at least `kaizen` + one `area/*` label. Never file without labels.
 
 ## Example Output
 
