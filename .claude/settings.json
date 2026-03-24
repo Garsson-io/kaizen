@@ -92,7 +92,7 @@
           },
           {
             "type": "command",
-            "command": "./.claude/hooks/kaizen-enforce-pr-review-tools.sh",
+            "command": "./.claude/hooks/kaizen-enforce-pr-review-ts.sh",
             "timeout": 10
           }
         ]
@@ -102,7 +102,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./.claude/hooks/kaizen-enforce-pr-review-tools.sh",
+            "command": "./.claude/hooks/kaizen-enforce-pr-review-ts.sh",
             "timeout": 10
           }
         ]

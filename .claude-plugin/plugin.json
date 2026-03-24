@@ -113,7 +113,7 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-tools.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-ts.sh",
             "timeout": 10
           }
         ]
@@ -123,7 +123,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-tools.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-ts.sh",
             "timeout": 10
           }
         ]

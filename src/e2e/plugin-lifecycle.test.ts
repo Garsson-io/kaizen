@@ -391,7 +391,7 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
       stateDir.createReviewState(prUrl);
 
       const writeResult = runKaizenHook(
-        "kaizen-enforce-pr-review-tools.sh",
+        "kaizen-enforce-pr-review-ts.sh",
         writePre("/some/file.ts"),
       );
       expect(denies(writeResult), `Should block Write during review: ${writeResult.stdout}`).toBe(true);

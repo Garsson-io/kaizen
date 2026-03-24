@@ -25,7 +25,7 @@ ENFORCE_PR_KAIZEN="$HOOKS_DIR/kaizen-enforce-pr-reflect-ts.sh"
 PR_KAIZEN_CLEAR="$HOOKS_DIR/kaizen-pr-reflect-clear.sh"
 require_file "$PR_KAIZEN_CLEAR" "hook migrated to TS" || exit 0
 ENFORCE_PR_REVIEW="$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh"
-ENFORCE_PR_REVIEW_TOOLS="$HOOKS_DIR/kaizen-enforce-pr-review-tools.sh"
+ENFORCE_PR_REVIEW_TOOLS="$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh"
 PR_REVIEW_LOOP="$HOOKS_DIR/kaizen-pr-review-loop.sh"
 KAIZEN_REFLECT="$HOOKS_DIR/kaizen-reflect.sh"
 
@@ -221,7 +221,7 @@ assert_eq "lifecycle: npm build allowed after gate cleared" "" "$OUTPUT"
 
 # ================================================================
 # INTERACTION PAIR 2: enforce-pr-review + enforce-pr-review-tools
-# Gate: kaizen-enforce-pr-review-ts.sh (PreToolUse/Bash) + kaizen-enforce-pr-review-tools.sh (PreToolUse/Edit|Write|Agent)
+# Gate: kaizen-enforce-pr-review-ts.sh (PreToolUse/Bash) + kaizen-enforce-pr-review-ts.sh (PreToolUse/Edit|Write|Agent)
 # Clear: kaizen-pr-review-loop.sh (PostToolUse/Bash) via gh pr diff
 # ================================================================
 

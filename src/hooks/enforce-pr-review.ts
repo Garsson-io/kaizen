@@ -1,15 +1,16 @@
 /**
- * enforce-pr-review.ts — PreToolUse gate: blocks Bash commands until PR review is done.
+ * enforce-pr-review.ts — PreToolUse gate: blocks tools until PR review is done.
  *
- * TypeScript port of .claude/hooks/kaizen-enforce-pr-review.sh (kaizen #775).
+ * Handles ALL tool types during review enforcement (kaizen #775, #789):
+ *   - Bash: allowlist-based (review commands like gh pr diff, git diff pass through)
+ *   - Edit/Write: always blocked during review (write tools, not useful for reviewing)
+ *   - Agent: blocked except kaizen-bg subagent (background reflection, kaizen #151)
+ *   - Read-only tools (Read, Glob, Grep): not registered — useful for reviewing code
  *
- * When a needs_review state file exists for the current branch, only review-related
- * commands are allowed through. All others are denied.
- *
- * Fast path: allowed commands exit immediately without checking state.
+ * Fast path: allowed commands/tools exit immediately without checking state.
  * Slow path: blocked commands check state before denying.
  *
- * Part of kAIzen Agent Control Flow — kaizen #775
+ * Part of kAIzen Agent Control Flow — kaizen #775, #789
  */
 
 import { getCurrentBranch, readHookInput } from './hook-io.js';
@@ -17,11 +18,62 @@ import { isReviewCommand } from './lib/allowlist.js';
 import { stripHeredocBody } from './parse-command.js';
 import { findStateWithStatus } from './state-utils.js';
 
+/** Tools that are always blocked during review (no allowlist). */
+const BLOCKED_TOOLS = new Set(['Edit', 'Write']);
+
+function buildDenyMessage(toolLabel: string, prUrl: string, round: string): string {
+  return `BLOCKED: ${toolLabel} is not allowed during PR review.
+
+You have an active PR review that must be completed first:
+  PR: ${prUrl} (round ${round})
+
+Run \`gh pr diff ${prUrl}\` to review the diff, then work through the
+self-review checklist. Only after reviewing can you proceed with other work.
+
+Allowed commands during review:
+  gh pr diff, gh pr view, gh pr comment, gh pr edit
+  gh api, gh run view/list/watch
+  git diff, git log, git show, git status, git branch
+  npm test, npx, grep, rg (diagnostic commands)`;
+}
+
+export interface ToolContext {
+  toolName?: string;
+  toolInput?: { command?: string; subagent_type?: string; [key: string]: unknown };
+}
+
 export function processPreToolUse(
   command: string,
   currentBranch: string,
   stateDir?: string,
+  context?: ToolContext,
 ): { allowed: boolean; reason?: string } {
+  const toolName = context?.toolName ?? '';
+
+  // For Edit/Write/Agent: no command allowlist — go straight to state check
+  if (BLOCKED_TOOLS.has(toolName) || toolName === 'Agent') {
+    // Agent(kaizen-bg) is always allowed (background reflection, kaizen #151)
+    if (toolName === 'Agent' && context?.toolInput?.subagent_type === 'kaizen-bg') {
+      return { allowed: true };
+    }
+
+    const reviewState = findStateWithStatus('needs_review', currentBranch, stateDir);
+    if (!reviewState) return { allowed: true };
+
+    const prUrl = reviewState.prUrl;
+    const round = reviewState.round ?? '1';
+
+    return {
+      allowed: false,
+      reason: buildDenyMessage(
+        toolName || 'This tool',
+        prUrl,
+        round,
+      ),
+    };
+  }
+
+  // For Bash (or unspecified): use command allowlist
   if (!command) return { allowed: true };
 
   const cmdLine = stripHeredocBody(command);
@@ -42,23 +94,11 @@ export function processPreToolUse(
   }
 
   const prUrl = reviewState.prUrl;
-  const round = '1'; // Round info is in the state file content
+  const round = reviewState.round ?? '1';
 
   return {
     allowed: false,
-    reason: `BLOCKED: PR review required before proceeding.
-
-You have an active PR review that must be completed first:
-  PR: ${prUrl} (round ${round})
-
-Run \`gh pr diff ${prUrl}\` to review the diff, then work through the
-self-review checklist. Only after reviewing can you proceed with other work.
-
-Allowed commands during review:
-  gh pr diff, gh pr view, gh pr comment, gh pr edit
-  gh api, gh run view/list/watch
-  git diff, git log, git show, git status, git branch
-  npm test, npx, grep, rg (diagnostic commands)`,
+    reason: buildDenyMessage('PR review required before proceeding', prUrl, round),
   };
 }
 
@@ -69,7 +109,10 @@ async function main(): Promise<void> {
   const command = input.tool_input?.command ?? '';
   const branch = getCurrentBranch();
 
-  const result = processPreToolUse(command, branch);
+  const result = processPreToolUse(command, branch, undefined, {
+    toolName: input.tool_name,
+    toolInput: input.tool_input as ToolContext['toolInput'],
+  });
 
   if (!result.allowed) {
     const output = JSON.stringify({

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeStateFile } from './state-utils.js';
 import { processPreToolUse } from './enforce-pr-review.js';
+import type { ToolContext } from './enforce-pr-review.js';
 
 const TEST_STATE_DIR = '/tmp/.test-enforce-pr-review';
 const TEST_BRANCH = 'worktree-review-test';
@@ -24,7 +25,7 @@ afterEach(() => {
   if (existsSync(TEST_STATE_DIR)) rmSync(TEST_STATE_DIR, { recursive: true });
 });
 
-describe('enforce-pr-review PreToolUse', () => {
+describe('enforce-pr-review PreToolUse — Bash commands', () => {
   it('allows all commands when no review gate is active', () => {
     const result = processPreToolUse('npm install lodash', TEST_BRANCH, TEST_STATE_DIR);
     expect(result.allowed).toBe(true);
@@ -44,7 +45,6 @@ describe('enforce-pr-review PreToolUse', () => {
     const result = processPreToolUse('npm install lodash', TEST_BRANCH, TEST_STATE_DIR);
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('BLOCKED');
-    expect(result.reason).toContain('PR review required');
     expect(result.reason).toContain('pull/42');
   });
 
@@ -67,6 +67,114 @@ describe('enforce-pr-review PreToolUse', () => {
       ROUND: '1',
     });
     const result = processPreToolUse('npm install', TEST_BRANCH, TEST_STATE_DIR);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('includes round from state file in deny message', () => {
+    createReviewGate('https://github.com/org/repo/pull/42', '3');
+    const result = processPreToolUse('npm install lodash', TEST_BRANCH, TEST_STATE_DIR);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('round 3');
+  });
+});
+
+describe('enforce-pr-review PreToolUse — Edit/Write tools (kaizen #789)', () => {
+  it('allows Edit when no review gate is active', () => {
+    const ctx: ToolContext = { toolName: 'Edit', toolInput: { file_path: '/some/file.ts' } };
+    const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('blocks Edit during active review', () => {
+    createReviewGate('https://github.com/org/repo/pull/42');
+    const ctx: ToolContext = { toolName: 'Edit', toolInput: { file_path: '/some/file.ts' } };
+    const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('BLOCKED');
+    expect(result.reason).toContain('Edit');
+    expect(result.reason).toContain('pull/42');
+  });
+
+  it('blocks Write during active review', () => {
+    createReviewGate('https://github.com/org/repo/pull/42');
+    const ctx: ToolContext = { toolName: 'Write', toolInput: { file_path: '/some/file.ts' } };
+    const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('Write');
+  });
+
+  it('allows Edit/Write when review passed', () => {
+    writeStateFile(TEST_STATE_DIR, 'review-passed', {
+      PR_URL: 'https://github.com/org/repo/pull/42',
+      STATUS: 'passed',
+      BRANCH: TEST_BRANCH,
+      ROUND: '1',
+    });
+    const ctx: ToolContext = { toolName: 'Edit', toolInput: { file_path: '/some/file.ts' } };
+    const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('does not block Edit from other branches review', () => {
+    writeStateFile(TEST_STATE_DIR, 'other-review', {
+      PR_URL: 'https://github.com/org/repo/pull/99',
+      STATUS: 'needs_review',
+      BRANCH: 'other-branch',
+      ROUND: '1',
+    });
+    const ctx: ToolContext = { toolName: 'Edit', toolInput: { file_path: '/some/file.ts' } };
+    const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('includes round in deny message for tools', () => {
+    createReviewGate('https://github.com/org/repo/pull/99', '3');
+    const ctx: ToolContext = { toolName: 'Edit', toolInput: {} };
+    const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('round 3');
+    expect(result.reason).toContain('pull/99');
+  });
+});
+
+describe('enforce-pr-review PreToolUse — Agent tool (kaizen #789)', () => {
+  it('blocks Agent during active review', () => {
+    createReviewGate('https://github.com/org/repo/pull/42');
+    const ctx: ToolContext = {
+      toolName: 'Agent',
+      toolInput: { prompt: 'do something', subagent_type: 'general-purpose' },
+    };
+    const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('Agent');
+  });
+
+  it('allows Agent(kaizen-bg) during active review (kaizen #151)', () => {
+    createReviewGate('https://github.com/org/repo/pull/42');
+    const ctx: ToolContext = {
+      toolName: 'Agent',
+      toolInput: { prompt: 'reflect on impediments', subagent_type: 'kaizen-bg' },
+    };
+    const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('blocks Agent without subagent_type during review', () => {
+    createReviewGate('https://github.com/org/repo/pull/42');
+    const ctx: ToolContext = {
+      toolName: 'Agent',
+      toolInput: { prompt: 'do something' },
+    };
+    const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
+    expect(result.allowed).toBe(false);
+  });
+
+  it('allows Agent when no review gate is active', () => {
+    const ctx: ToolContext = {
+      toolName: 'Agent',
+      toolInput: { prompt: 'do something', subagent_type: 'general-purpose' },
+    };
+    const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
     expect(result.allowed).toBe(true);
   });
 });
