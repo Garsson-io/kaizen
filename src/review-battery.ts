@@ -20,8 +20,8 @@ import { resolve, dirname } from 'node:path';
 // This schema is the contract between:
 //   - Review prompts (must emit this JSON)
 //   - parseReviewOutput (must parse it)
-//   - Harness fix loop (must interpret verdict/findings)
-//   - Skill integration (must know what "passing" means)
+//   - Auto-dent harness (advisory post-run review)
+//   - Skill integration (agent iterates until passing)
 //
 // Review prompts are instructed to output a JSON block fenced with
 // ```json ... ``` containing this structure.
@@ -67,10 +67,10 @@ export interface BatteryResult {
   costUsd: number;
 }
 
-// ── Fix Loop Policy ─────────────────────────────────────────────────
+// ── Review Policy Constants ─────────────────────────────────────────
 //
-// These constants govern the fix loop that wraps review batteries.
-// The loop runs: review → fix → review → fix → ... until pass or limit.
+// These constants guide the agent's review-fix iteration in skills.
+// The agent IS the loop — these are stop conditions, not code-level loops.
 
 /** Maximum fix iterations before escalating to human */
 export const MAX_FIX_ROUNDS = 3;
@@ -308,9 +308,8 @@ export interface BatteryOptions {
 export function reviewBattery(opts: BatteryOptions): BatteryResult {
   const start = Date.now();
 
-  // Run reviews in parallel using child processes
-  // (spawnSync is blocking, so we simulate parallelism by launching all and collecting)
-  // For true parallelism, we'd need async spawn — but spawnSync is simpler for v1
+  // Run reviews sequentially (spawnSync is blocking).
+  // For true parallelism, we'd need async spawn — sequential is simpler for v1.
   const results = opts.dimensions.map(dimension => {
     return spawnReview({
       dimension,
