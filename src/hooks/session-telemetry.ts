@@ -42,10 +42,23 @@ export interface SessionReflectionEvent {
   impediments_count: number;
 }
 
+export interface SessionStopGateEvent {
+  type: 'session.stop_gate';
+  branch: string;
+  decision: 'block' | 'allow';
+  gates_count: number;
+  gate_types: string[];
+  total_state_files: number;
+  included_files: number;
+  excluded_files: number;
+  exclude_reasons: Record<string, number>;
+}
+
 export type SessionEvent =
   | SessionPrCreatedEvent
   | SessionPrMergedEvent
-  | SessionReflectionEvent;
+  | SessionReflectionEvent
+  | SessionStopGateEvent;
 
 export interface SessionEventEnvelope {
   timestamp: string;

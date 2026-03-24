@@ -13,7 +13,8 @@
  */
 
 import { getCurrentBranch, readHookInput } from './hook-io.js';
-import { readAllPendingGates } from './lib/gate-manager.js';
+import { readAllPendingGates, scanStateDirectoryDiagnostics } from './lib/gate-manager.js';
+import { emitSessionEvent } from './session-telemetry.js';
 
 async function main(): Promise<void> {
   // Read hook input (required by Claude Code protocol)
@@ -26,6 +27,24 @@ async function main(): Promise<void> {
   }
 
   const report = readAllPendingGates(branch);
+
+  // Emit telemetry for cross-session debugging (kaizen #792)
+  try {
+    const diagnostics = scanStateDirectoryDiagnostics(branch);
+    emitSessionEvent({
+      type: 'session.stop_gate',
+      branch,
+      decision: report.shouldBlock ? 'block' : 'allow',
+      gates_count: report.gates.length,
+      gate_types: report.gates.map((g) => g.type),
+      total_state_files: diagnostics.totalFiles,
+      included_files: diagnostics.includedFiles,
+      excluded_files: diagnostics.excludedFiles,
+      exclude_reasons: diagnostics.excludeReasons,
+    });
+  } catch {
+    // Telemetry is best-effort — never break the gate
+  }
 
   if (!report.shouldBlock) {
     // No pending gates — allow stop (empty stdout)

@@ -7,6 +7,7 @@ import {
   type SessionEventEnvelope,
   type SessionPrCreatedEvent,
   type SessionReflectionEvent,
+  type SessionStopGateEvent,
 } from './session-telemetry.js';
 
 describe('emitSessionEvent', () => {
@@ -59,6 +60,36 @@ describe('emitSessionEvent', () => {
       { telemetryDir: nested },
     );
     expect(existsSync(join(nested, 'events.jsonl'))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes a stop_gate event with diagnostics', () => {
+    const dir = `/tmp/.test-st-${Date.now()}-sg`;
+    emitSessionEvent(
+      {
+        type: 'session.stop_gate',
+        branch: 'feat/test-branch',
+        decision: 'block',
+        gates_count: 2,
+        gate_types: ['review', 'reflection'],
+        total_state_files: 5,
+        included_files: 2,
+        excluded_files: 3,
+        exclude_reasons: { stale: 1, no_branch: 0, wrong_branch: 2, read_error: 0 },
+      },
+      { telemetryDir: dir, now: new Date('2026-03-24T10:00:00Z') },
+    );
+    const content = readFileSync(join(dir, 'events.jsonl'), 'utf-8').trim();
+    const envelope = JSON.parse(content) as SessionEventEnvelope;
+    expect(envelope.source).toBe('interactive');
+    const event = envelope.event as SessionStopGateEvent;
+    expect(event.type).toBe('session.stop_gate');
+    expect(event.decision).toBe('block');
+    expect(event.gates_count).toBe(2);
+    expect(event.gate_types).toEqual(['review', 'reflection']);
+    expect(event.total_state_files).toBe(5);
+    expect(event.excluded_files).toBe(3);
+    expect(event.exclude_reasons.wrong_branch).toBe(2);
     rmSync(dir, { recursive: true, force: true });
   });
 
