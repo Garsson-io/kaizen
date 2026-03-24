@@ -3,4 +3,4 @@
 
 source "$(dirname "$0")/lib/scope-guard.sh"
 KAIZEN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-exec npx --prefix "$KAIZEN_DIR" tsx "$KAIZEN_DIR/src/hooks/enforce-pr-reflect.ts" 2>/dev/null
+exec npx --prefix "$KAIZEN_DIR" tsx "$KAIZEN_DIR/src/hooks/enforce-pr-reflect.ts"
