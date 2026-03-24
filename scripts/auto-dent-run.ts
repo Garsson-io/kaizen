@@ -30,7 +30,6 @@ import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js
 import {
   reviewBattery,
   formatBatteryReport,
-  type BatteryResult,
   type ReviewDimension,
 } from '../src/review-battery.js';
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
