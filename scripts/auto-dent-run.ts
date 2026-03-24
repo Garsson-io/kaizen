@@ -930,6 +930,24 @@ export function cleanGuidanceForTitle(guidance: string): string {
 
 // Batch progress issue management
 
+/**
+ * Search GitHub for an existing batch progress issue by batch ID.
+ * Returns the issue URL if found, empty string otherwise.
+ */
+export function findExistingProgressIssue(batchId: string, kaizenRepo: string): string {
+  const result = ghExec(
+    `gh issue list --repo ${kaizenRepo} --label auto-dent --search ${JSON.stringify(batchId)} --json url --limit 1`,
+  );
+  if (!result) return '';
+  try {
+    const issues = JSON.parse(result) as Array<{ url: string }>;
+    if (issues.length > 0) return issues[0].url;
+  } catch {
+    // JSON parse failed — no match
+  }
+  return '';
+}
+
 export function ensureBatchProgressIssue(
   state: BatchState,
   stateFile: string,
@@ -938,6 +956,16 @@ export function ensureBatchProgressIssue(
 
   const kaizenRepo = state.kaizen_repo;
   if (!kaizenRepo) return '';
+
+  // Search for an existing progress issue to avoid duplicates (#726)
+  const existing = findExistingProgressIssue(state.batch_id, kaizenRepo);
+  if (existing) {
+    console.log(`  [hygiene] found existing batch progress issue: ${existing}`);
+    const freshState = readState(stateFile);
+    freshState.progress_issue = existing;
+    writeState(stateFile, freshState);
+    return existing;
+  }
 
   const cleanGuidance = cleanGuidanceForTitle(state.guidance);
   const title = `[Auto-Dent] ${truncateAtWord(cleanGuidance, 70)} (${state.batch_id})`;
