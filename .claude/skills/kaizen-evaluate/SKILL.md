@@ -183,6 +183,7 @@ Before accepting work, assess whether you have the right tools to do it well. Ba
 | Can we test this E2E? | No harness exists → **building the harness is IN SCOPE, not a follow-up** |
 | What existing patterns in the codebase should we reuse? | None found → grep before writing |
 | What test infrastructure do we need? | Nothing planned → mock helpers, fixtures, shared setup must be scoped |
+| What dead code or legacy paths exist in this area? | Working around dead code instead of deleting it → identify and remove dead code as part of the fix |
 
 **The critical rule:** If the E2E test harness doesn't exist, building it is part of this work. Deferring testability is how we get the 4-PR pattern (#400). "Tests later" = no tests. "Harness in a follow-up" = no harness.
 
