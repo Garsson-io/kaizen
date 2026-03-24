@@ -79,18 +79,21 @@ is_state_for_current_worktree() {
 
   [ -f "$f" ] || return 1
 
-  # Staleness check removed — prune_stale_state_files() handles this upfront (kaizen #452).
-  # This eliminates per-file stat calls during iteration.
-
-  # Skip state files from other branches (prevents cross-worktree contamination)
-  local file_branch
-  file_branch=$(grep -E '^BRANCH=' "$f" 2>/dev/null | head -1 | cut -d= -f2-)
-  if [ -n "$file_branch" ] && [ -n "$current_branch" ] && [ "$file_branch" != "$current_branch" ]; then
+  # If we can't determine the current branch, skip all state files (kaizen #786).
+  # Without a branch, we can't scope — fail closed to prevent cross-session contamination.
+  if [ -z "$current_branch" ]; then
     return 1
   fi
 
   # Skip legacy state files without BRANCH — can't be safely attributed
+  local file_branch
+  file_branch=$(grep -E '^BRANCH=' "$f" 2>/dev/null | head -1 | cut -d= -f2-)
   if [ -z "$file_branch" ]; then
+    return 1
+  fi
+
+  # Skip state files from other branches (prevents cross-worktree contamination)
+  if [ "$file_branch" != "$current_branch" ]; then
     return 1
   fi
 
