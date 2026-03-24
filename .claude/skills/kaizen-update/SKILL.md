@@ -61,7 +61,24 @@ For submodule installs, compare skills in `.kaizen/.claude/skills/` against syml
 
 For plugin installs, skills are served directly from the plugin — no symlinks needed.
 
-## Step 5: Show changelog
+## Step 5: Validate update
+
+Run post-update validation to verify the update didn't break anything:
+
+```bash
+npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" \
+  --step post-update-validate \
+  --plugin-root "$CLAUDE_PLUGIN_ROOT"
+```
+
+This runs `npm run build` and `npm test` against the plugin. If validation fails:
+1. Show the user which check failed and the error output
+2. Recommend rolling back: `cd "$CLAUDE_PLUGIN_ROOT" && git checkout HEAD~1`
+3. Stop the update — do not proceed to the changelog step
+
+If validation passes, continue to Step 6.
+
+## Step 6: Show changelog
 
 ```bash
 # For submodule:
@@ -84,6 +101,7 @@ Create these tasks at skill start using TaskCreate:
 |---|------|-------------|
 | 1 | Pull updates | `git submodule update --remote` or `git pull` |
 | 2 | Install and re-setup | `npm install`, re-run symlinks/hooks (idempotent) |
-| 3 | Show changelog | `git log --oneline -10`, report new skills |
+| 3 | Validate update | Run post-update-validate, abort if build/tests fail |
+| 4 | Show changelog | `git log --oneline -10`, report new skills |
 
 **What comes next:** Nothing — standalone update. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

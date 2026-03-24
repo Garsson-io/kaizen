@@ -10,6 +10,7 @@ import {
   scaffoldPolicies,
   verifySetup,
   verifyPluginContract,
+  postUpdateValidate,
 } from "./kaizen-setup.js";
 
 let tempDir: string;
@@ -287,5 +288,66 @@ describe("verifyPluginContract", () => {
     expect(failedHooks).toEqual([]);
     expect(failedSkills).toEqual([]);
     expect(failedMatchers).toEqual([]);
+  });
+});
+
+describe("postUpdateValidate", () => {
+  it("succeeds when build and test pass", () => {
+    writeFileSync(join(tempDir, "package.json"), JSON.stringify({
+      scripts: { build: "echo ok", test: "echo ok" },
+    }));
+
+    const result = postUpdateValidate(tempDir);
+    expect(result.step).toBe("post-update-validate");
+    expect(result.status).toBe("ok");
+    expect(result.checks).toHaveLength(2);
+    expect(result.checks[0]).toEqual({ name: "build", ok: true });
+    expect(result.checks[1]).toEqual({ name: "test", ok: true });
+  });
+
+  it("reports failure when build fails", () => {
+    writeFileSync(join(tempDir, "package.json"), JSON.stringify({
+      scripts: { build: "echo 'compile error' >&2 && exit 1", test: "echo ok" },
+    }));
+
+    const result = postUpdateValidate(tempDir);
+    expect(result.status).toBe("failed");
+    expect(result.checks[0].name).toBe("build");
+    expect(result.checks[0].ok).toBe(false);
+    expect(result.checks[0].output).toContain("compile error");
+  });
+
+  it("reports failure when tests fail", () => {
+    writeFileSync(join(tempDir, "package.json"), JSON.stringify({
+      scripts: { build: "echo ok", test: "echo 'test failure' >&2 && exit 1" },
+    }));
+
+    const result = postUpdateValidate(tempDir);
+    expect(result.status).toBe("failed");
+    expect(result.checks[0]).toEqual({ name: "build", ok: true });
+    expect(result.checks[1].name).toBe("test");
+    expect(result.checks[1].ok).toBe(false);
+    expect(result.checks[1].output).toContain("test failure");
+  });
+
+  it("reports both failures when build and test both fail", () => {
+    writeFileSync(join(tempDir, "package.json"), JSON.stringify({
+      scripts: { build: "exit 1", test: "exit 1" },
+    }));
+
+    const result = postUpdateValidate(tempDir);
+    expect(result.status).toBe("failed");
+    expect(result.checks.filter(c => !c.ok)).toHaveLength(2);
+  });
+
+  it("truncates long error output", () => {
+    const longOutput = "x".repeat(1000);
+    writeFileSync(join(tempDir, "package.json"), JSON.stringify({
+      scripts: { build: `echo '${longOutput}' >&2 && exit 1`, test: "echo ok" },
+    }));
+
+    const result = postUpdateValidate(tempDir);
+    expect(result.checks[0].ok).toBe(false);
+    expect(result.checks[0].output!.length).toBeLessThanOrEqual(500);
   });
 });

@@ -15,6 +15,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { execSync } from "child_process";
 import { join } from "path";
 import { parseArgs } from "util";
 
@@ -275,6 +276,49 @@ export function verifySetup(cwd: string, opts?: { pluginRoot?: string }): Verify
   return { step: "verify", status: failed > 0 ? "failed" : "ok", checks, passed, failed };
 }
 
+export interface ValidateCheck {
+  name: string;
+  ok: boolean;
+  output?: string;
+}
+
+export interface ValidateResult {
+  step: "post-update-validate";
+  status: "ok" | "failed";
+  checks: ValidateCheck[];
+}
+
+/**
+ * Run post-update validation: build + quick tests.
+ * Used by /kaizen-update to verify an update didn't break anything.
+ */
+export function postUpdateValidate(pluginRoot: string): ValidateResult {
+  const checks: ValidateCheck[] = [];
+
+  // Check 1: npm run build
+  try {
+    execSync("npm run build", { cwd: pluginRoot, stdio: "pipe", timeout: 60_000 });
+    checks.push({ name: "build", ok: true });
+  } catch (e: unknown) {
+    const err = e as { stderr?: Buffer; stdout?: Buffer };
+    const output = (err.stderr?.toString() ?? err.stdout?.toString() ?? "unknown error").slice(0, 500);
+    checks.push({ name: "build", ok: false, output });
+  }
+
+  // Check 2: npm test (fast subset)
+  try {
+    execSync("npm test -- --run", { cwd: pluginRoot, stdio: "pipe", timeout: 120_000 });
+    checks.push({ name: "test", ok: true });
+  } catch (e: unknown) {
+    const err = e as { stderr?: Buffer; stdout?: Buffer };
+    const output = (err.stderr?.toString() ?? err.stdout?.toString() ?? "unknown error").slice(0, 500);
+    checks.push({ name: "test", ok: false, output });
+  }
+
+  const failed = checks.some(c => !c.ok);
+  return { step: "post-update-validate", status: failed ? "failed" : "ok", checks };
+}
+
 // ── CLI ──
 // Called by the /kaizen-setup skill:
 //   npx --prefix $CLAUDE_PLUGIN_ROOT tsx $CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts --step <name> [args]
@@ -325,9 +369,15 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       break;
     }
 
+    case "post-update-validate": {
+      const validationRoot = values["plugin-root"] ?? process.env.CLAUDE_PLUGIN_ROOT ?? cwd;
+      console.log(JSON.stringify(postUpdateValidate(validationRoot)));
+      break;
+    }
+
     default:
       console.error(`Unknown step: ${values.step}`);
-      console.error("Steps: detect, config, scaffold, verify");
+      console.error("Steps: detect, config, scaffold, verify, post-update-validate");
       process.exit(1);
   }
 }
