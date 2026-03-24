@@ -144,6 +144,37 @@ if [ -d "$HOOKS_DIR" ]; then
 fi
 
 echo ""
+echo "--- Sync: settings.json <-> plugin.json hook parity (kaizen #793) ---"
+# Both files should declare the same set of hooks (normalized).
+# settings.json uses ./ prefix, plugin.json uses ${CLAUDE_PLUGIN_ROOT}/.
+SETTINGS_JSON="$PROJECT_ROOT/.claude/settings.json"
+PLUGIN_JSON="$PROJECT_ROOT/.claude-plugin/plugin.json"
+if [ -f "$SETTINGS_JSON" ] && [ -f "$PLUGIN_JSON" ]; then
+  # Extract and normalize: strip prefix to get relative path
+  settings_hooks=$(jq -r '.. | .command? // empty' "$SETTINGS_JSON" | sed 's|^\./||' | sort -u)
+  plugin_hooks=$(jq -r '.. | .command? // empty' "$PLUGIN_JSON" | sed 's|${CLAUDE_PLUGIN_ROOT}/||; s|^\./||' | sort -u)
+
+  only_settings=$(comm -23 <(echo "$settings_hooks") <(echo "$plugin_hooks"))
+  only_plugin=$(comm -13 <(echo "$settings_hooks") <(echo "$plugin_hooks"))
+
+  if [ -n "$only_settings" ]; then
+    echo "::error::[sync] Hooks in settings.json but NOT in plugin.json:"
+    echo "$only_settings"
+    ((ERRORS++))
+  fi
+  if [ -n "$only_plugin" ]; then
+    echo "::error::[sync] Hooks in plugin.json but NOT in settings.json:"
+    echo "$only_plugin"
+    ((ERRORS++))
+  fi
+  if [ -z "$only_settings" ] && [ -z "$only_plugin" ]; then
+    echo "  OK: settings.json and plugin.json hooks are in sync"
+  fi
+else
+  echo "  Skipped: one or both config files not found"
+fi
+
+echo ""
 echo "Checked $CHECKED hook commands, $ERRORS errors."
 
 if [ "$ERRORS" -gt 0 ]; then

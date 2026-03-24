@@ -21,6 +21,7 @@ import {
   extractGitCPath,
   isGhPrCommand,
   isGitCommand,
+  splitCommandSegments,
   stripHeredocBody,
 } from './parse-command.js';
 
@@ -28,9 +29,29 @@ const EXEC_OPTS: ExecSyncOptions = { encoding: 'utf-8' as const, stdio: ['pipe',
 
 type TriggerType = 'pr_create' | 'git_push' | 'pr_merge' | 'none';
 
+/**
+ * Check if a compound command has `git commit` before `git push`.
+ * When the user runs `git add -A && git commit -m '...' && git push`,
+ * dirty files will be committed before push runs — so the dirty-files
+ * check would be a false positive (kaizen #721).
+ */
+export function hasCommitBeforePush(cmdLine: string): boolean {
+  const segments = splitCommandSegments(cmdLine);
+  let foundCommit = false;
+  for (const seg of segments) {
+    if (/^git\s+(-C\s+\S+\s+)?commit\b/.test(seg)) foundCommit = true;
+    if (/^git\s+(-C\s+\S+\s+)?push\b/.test(seg) && foundCommit) return true;
+  }
+  return false;
+}
+
 export function detectTrigger(cmdLine: string): TriggerType {
   if (isGhPrCommand(cmdLine, 'create')) return 'pr_create';
-  if (isGitCommand(cmdLine, 'push')) return 'git_push';
+  if (isGitCommand(cmdLine, 'push')) {
+    // Skip false positive when commit precedes push in compound command (kaizen #721)
+    if (hasCommitBeforePush(cmdLine)) return 'none';
+    return 'git_push';
+  }
   if (isGhPrCommand(cmdLine, 'merge')) return 'pr_merge';
   return 'none';
 }

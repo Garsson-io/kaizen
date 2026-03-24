@@ -38,6 +38,10 @@ const EXCLUSIONS: Record<string, string> = {
   // TS splits extractPrUrl from reconstructPrUrl; bash inlines the grep
   extractPrUrl:
     'ts-only: extracted helper, bash inlines grep in reconstruct_pr_url',
+
+  // TS internal utility for splitting compound commands; bash uses IFS/sed inline
+  splitCommandSegments:
+    'ts-only: internal helper, bash splits on operators inline',
 };
 
 /** Extract function names from a bash script (matches `function_name() {`). */

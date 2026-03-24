@@ -3,6 +3,7 @@ import {
   checkDirtyFiles,
   detectTrigger,
   formatFileList,
+  hasCommitBeforePush,
   parseDirtyFiles,
 } from './check-dirty-files.js';
 
@@ -22,6 +23,41 @@ describe('detectTrigger', () => {
   it('returns none for other commands', () => {
     expect(detectTrigger('npm test')).toBe('none');
     expect(detectTrigger('git diff')).toBe('none');
+  });
+
+  it('returns none when git commit precedes git push in compound command (kaizen #721)', () => {
+    expect(detectTrigger('git add -A && git commit -m "fix" && git push')).toBe('none');
+    expect(detectTrigger('git commit -m "msg" && git push origin main')).toBe('none');
+  });
+
+  it('still detects standalone git push', () => {
+    expect(detectTrigger('git push origin feature')).toBe('git_push');
+    expect(detectTrigger('git push')).toBe('git_push');
+  });
+
+  it('still detects git push after non-commit commands', () => {
+    expect(detectTrigger('npm test && git push')).toBe('git_push');
+    expect(detectTrigger('echo done && git push origin main')).toBe('git_push');
+  });
+});
+
+describe('hasCommitBeforePush', () => {
+  it('detects commit before push in compound command', () => {
+    expect(hasCommitBeforePush('git commit -m "fix" && git push')).toBe(true);
+    expect(hasCommitBeforePush('git add -A && git commit -m "msg" && git push origin main')).toBe(true);
+  });
+
+  it('returns false for push without preceding commit', () => {
+    expect(hasCommitBeforePush('git push origin main')).toBe(false);
+    expect(hasCommitBeforePush('npm test && git push')).toBe(false);
+  });
+
+  it('returns false when push comes before commit', () => {
+    expect(hasCommitBeforePush('git push && git commit -m "fix"')).toBe(false);
+  });
+
+  it('handles git -C path variants', () => {
+    expect(hasCommitBeforePush('git -C /foo commit -m "x" && git -C /foo push')).toBe(true);
   });
 });
 
@@ -97,6 +133,13 @@ describe('checkDirtyFiles', () => {
     });
     expect(result.action).toBe('warn');
     expect(result.message).toContain('merging a PR');
+  });
+
+  it('allows compound commit+push even when dirty (kaizen #721)', () => {
+    const result = checkDirtyFiles('git add -A && git commit -m "fix" && git push', {
+      gitRunner: mockGit(' M src/hooks/test.ts'),
+    });
+    expect(result.action).toBe('allow');
   });
 
   it('skips during merge resolution (kaizen #775)', () => {
