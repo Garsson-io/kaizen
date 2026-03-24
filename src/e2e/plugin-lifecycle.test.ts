@@ -199,6 +199,24 @@ describe("Part 2: All hooks are registered and executable", () => {
     expect(matchers).toContain("Edit|Write");
     expect(matchers).toContain("Agent");
   });
+
+  // Reverse check: every .sh hook file on disk must be registered in plugin.json
+  const registeredFilenames = new Set(
+    allHookCommands.map((cmd) => cmd.split("/").pop()!),
+  );
+
+  const hookFilesOnDisk = readdirSync(HOOKS_DIR).filter(
+    (f) => f.endsWith(".sh") && statSync(join(HOOKS_DIR, f)).isFile(),
+  );
+
+  for (const file of hookFilesOnDisk) {
+    it(`${file} is registered in plugin.json (no unwired hooks)`, () => {
+      expect(
+        registeredFilenames.has(file),
+        `Hook file ${file} exists on disk but is not registered in plugin.json. Either register it or remove it.`,
+      ).toBe(true);
+    });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════
