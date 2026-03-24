@@ -12,12 +12,11 @@
  * The test normalizes both to compare.
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const HOOKS_LIB_DIR = join(__dirname, '../../.claude/hooks/lib');
-const HOOKS_DIR = join(__dirname, '../../.claude/hooks');
 const HOOKS_TS_DIR = __dirname;
 
 // Functions intentionally present in only one version.
@@ -151,40 +150,42 @@ describe('bash/TS shared library parity', () => {
   });
 });
 
-describe('shell source lint', () => {
-  // state-utils.sh was deleted in kaizen #790. Any new bash hook that accidentally
-  // re-introduces `source state-utils.sh` would fail at runtime with a cryptic error.
-  // This lint catches it at CI time with a clear message. (#790 gap fix)
-  it('no .sh file sources state-utils.sh', () => {
-    const sourcePattern = /\bsource\s+.*state-utils\.sh|\.\s+.*state-utils\.sh/;
-
-    function collectShFiles(dir: string): string[] {
-      const entries = readdirSync(dir, { withFileTypes: true });
-      const files: string[] = [];
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          files.push(...collectShFiles(join(dir, entry.name)));
-        } else if (entry.name.endsWith('.sh')) {
-          files.push(join(dir, entry.name));
-        }
-      }
-      return files;
+/** Recursively find all .sh files under a directory, skipping paths that contain any of the excludeSubstrings. */
+function findShFiles(dir: string, excludeSubstrings: string[]): string[] {
+  const results: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = join(dir, entry.name);
+    if (excludeSubstrings.some((s) => fullPath.includes(s))) continue;
+    if (entry.isDirectory()) {
+      results.push(...findShFiles(fullPath, excludeSubstrings));
+    } else if (entry.name.endsWith('.sh')) {
+      results.push(fullPath);
     }
+  }
+  return results;
+}
 
-    const shFiles = collectShFiles(HOOKS_DIR);
+describe('state-utils.sh deletion guard (#790)', () => {
+  it('no .sh file sources state-utils.sh', () => {
+    const repoRoot = join(__dirname, '../..');
+    const shFiles = findShFiles(repoRoot, [
+      '/node_modules/',
+      '/.git/',
+      '/.claude/worktrees/',
+    ]);
+
     const violators: string[] = [];
-
-    for (const filepath of shFiles) {
-      const content = readFileSync(filepath, 'utf-8');
-      if (sourcePattern.test(content)) {
-        violators.push(filepath);
+    for (const file of shFiles) {
+      const content = readFileSync(file, 'utf-8');
+      // Match both `source ./path/state-utils.sh` and `. ./path/state-utils.sh`
+      if (/(?:^|\bsource\b\s+|\.\s+)\S*state-utils\.sh/m.test(content)) {
+        violators.push(file.replace(repoRoot + '/', ''));
       }
     }
 
     expect(
       violators,
-      `These .sh files source state-utils.sh, which was deleted in #790. ` +
-        `Use TS state functions (src/hooks/state-utils.ts) instead: ${violators.join(', ')}`,
+      `These .sh files source state-utils.sh (deleted in #790 — use TypeScript state-utils.ts instead): ${violators.join(', ')}`,
     ).toEqual([]);
   });
 });
