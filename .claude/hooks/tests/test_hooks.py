@@ -134,7 +134,7 @@ class TestRealWorldCommands:
         mocks.add_git_mock()
         harness.set_env("PATH", mocks.path_with_mocks)
 
-        result = harness.run_hook("kaizen-check-verification.sh", PreToolUseInput.bash(REAL_COMMANDS["pr_create_heredoc"]))
+        result = harness.run_hook("kaizen-pr-quality-checks-ts.sh", PreToolUseInput.bash(REAL_COMMANDS["pr_create_heredoc"]))
         assert result.allows(), f"Heredoc with verification denied: {result.deny_reason()}"
 
     def test_heredoc_body_no_false_positive(self, review_harness):
@@ -147,7 +147,7 @@ class TestRealWorldCommands:
         mocks.add_git_mock()
         harness.set_env("PATH", mocks.path_with_mocks)
 
-        result = harness.run_hook("kaizen-check-verification.sh", PreToolUseInput.bash(REAL_COMMANDS["pr_create_piped"]))
+        result = harness.run_hook("kaizen-pr-quality-checks-ts.sh", PreToolUseInput.bash(REAL_COMMANDS["pr_create_piped"]))
         assert result.allows()
 
     def test_chained_git_commands_on_wt_branch(self, harness, mocks):
@@ -170,7 +170,7 @@ class TestRealWorldCommands:
         mocks.add_git_mock()
         harness.set_env("PATH", mocks.path_with_mocks)
 
-        result = harness.run_hook("kaizen-check-verification.sh", PreToolUseInput.bash(REAL_COMMANDS["complex_multiline"]))
+        result = harness.run_hook("kaizen-pr-quality-checks-ts.sh", PreToolUseInput.bash(REAL_COMMANDS["complex_multiline"]))
         assert result.allows()
 
 
@@ -183,8 +183,7 @@ class TestEdgeCases:
         "kaizen-enforce-pr-review-ts.sh",
         "kaizen-enforce-case-worktree.sh",
         "kaizen-check-dirty-files-ts.sh",
-        "kaizen-check-verification.sh",
-        "kaizen-check-test-coverage.sh",
+        "kaizen-pr-quality-checks-ts.sh",
     ])
     def test_empty_command(self, review_harness, hook):
         result = review_harness.run_hook(hook, PreToolUseInput.bash(""))
@@ -194,7 +193,7 @@ class TestEdgeCases:
         "kaizen-enforce-pr-review-ts.sh",
         "kaizen-enforce-case-worktree.sh",
         "kaizen-check-dirty-files-ts.sh",
-        "kaizen-check-verification.sh",
+        "kaizen-pr-quality-checks-ts.sh",
     ])
     def test_missing_tool_input(self, review_harness, hook):
         """Missing tool_input entirely — hook should not crash."""
@@ -206,7 +205,7 @@ class TestEdgeCases:
         "kaizen-enforce-pr-review-ts.sh",
         "kaizen-enforce-case-worktree.sh",
         "kaizen-check-dirty-files-ts.sh",
-        "kaizen-check-verification.sh",
+        "kaizen-pr-quality-checks-ts.sh",
     ])
     def test_malformed_json(self, review_harness, hook):
         result = review_harness.run_hook(hook, "not json at all")
@@ -215,13 +214,13 @@ class TestEdgeCases:
 
     def test_special_characters_in_command(self, review_harness):
         cmd = 'gh pr create --title \'fix: handle $PATH & "quotes"\' --body \'## Verification\\n- test\''
-        result = review_harness.run_hook("kaizen-check-verification.sh", PreToolUseInput.bash(cmd))
+        result = review_harness.run_hook("kaizen-pr-quality-checks-ts.sh", PreToolUseInput.bash(cmd))
         assert result.exit_code == 0
 
     def test_very_long_command(self, review_harness):
         long_body = "x" * 10000
         cmd = f'gh pr create --title test --body "## Verification\\n{long_body}"'
-        result = review_harness.run_hook("kaizen-check-verification.sh", PreToolUseInput.bash(cmd))
+        result = review_harness.run_hook("kaizen-pr-quality-checks-ts.sh", PreToolUseInput.bash(cmd))
         assert result.exit_code == 0
 
 
@@ -317,8 +316,7 @@ class TestParallelExecution:
         hooks = [
             "kaizen-enforce-pr-review-ts.sh",
             "kaizen-enforce-case-worktree.sh",
-            "kaizen-check-test-coverage.sh",
-            "kaizen-check-verification.sh",
+            "kaizen-pr-quality-checks-ts.sh",
             "kaizen-check-dirty-files-ts.sh",
         ]
         for hook in hooks:

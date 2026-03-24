@@ -94,7 +94,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 
 **Hooks that fire during implementation:**
 - **PreToolUse(Edit/Write):** `enforce-case-exists` (blocks edits without case), `enforce-worktree-writes` (blocks edits in main checkout)
-- **PreToolUse(Bash):** `check-test-coverage` (warns on source commits without tests), `check-dirty-files` (blocks push with dirty files), `block-git-rebase`
+- **PreToolUse(Bash):** `pr-quality-checks` (warns on source commits without tests, checks verification, practices, code quality), `check-dirty-files` (blocks push with dirty files), `block-git-rebase`
 - **PostToolUse(Bash):** `pr-review-loop` (initiates review after PR create), `reflect` (prompts for reflection)
 - **Stop:** `stop-gate.ts` (unified gate — blocks stop with any pending gate: review, reflection, post-merge), `verify-before-stop` (reminds about tsc + vitest)
 

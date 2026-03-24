@@ -61,7 +61,7 @@ The gap: hooks enforce hard rules. Practices are soft — they need judgment abo
 | CM-1 | **Display URLs**                | Surface all links (PRs, issues, CI runs) in response text. Traceability requires clickable references.               | HIGH — kaizen #206: agents omit URLs when filing issues or creating PRs. Costs human time to find the link. |
 | CM-2 | **Evidence Over Summaries**     | Paste actual data, logs, error messages — not descriptions of them. "The test failed" vs pasting the failure output. | HIGH — kaizen #205: decorative kaizen reflections with no real data.                                        |
 | CM-3 | **Commit Messages Explain Why** | The diff shows what changed. The commit message explains why. Include issue references.                              | LOW — generally followed; git hooks help.                                                                   |
-| CM-4 | **PR Body as Contract**         | PR body is the specification of what was done, why, and how to verify. Not an afterthought.                          | MEDIUM — check-verification.sh prompts for Verification section, but overall quality varies.                |
+| CM-4 | **PR Body as Contract**         | PR body is the specification of what was done, why, and how to verify. Not an afterthought.                          | MEDIUM — pr-quality-checks.ts prompts for Verification section, but overall quality varies.                |
 
 ### 2.4 Architecture & Design Practices
 
@@ -115,7 +115,7 @@ The gap: hooks enforce hard rules. Practices are soft — they need judgment abo
 | --------------------------------- | ------------------------- | ---------------------------------------------------------------------------- |
 | T-4 TDD                           | CLAUDE.md policy #7       | Instructions only — no hook prompts for "did you write tests first?"         |
 | T-5 Test Exception Accountability | pr-policy CI check        | CI enforces presence, not quality of justification                           |
-| CM-4 PR Body as Contract          | check-verification.sh     | Prompts for Verification section, but doesn't check quality                  |
+| CM-4 PR Body as Contract          | pr-quality-checks.ts     | Prompts for Verification section, but doesn't check quality                  |
 | AD-1 Dependency Declaration       | CLAUDE.md policy #9       | Instructions only — CI catches missing deps at build time                    |
 | AD-2 Harness vs Vertical          | CLAUDE.md policy #4       | Instructions only — requires judgment                                        |
 | AG-3 Kaizen Level Assessment      | kaizen-reflect.sh prompts | Prompted but quality varies; pr-kaizen-clear.sh validates JSON but not depth |
@@ -189,7 +189,7 @@ The file is NOT a copy of CLAUDE.md. CLAUDE.md is policy ("thou shalt"). Practic
 
 ### 5.2 Advisory Hook Integration
 
-**Hook:** `check-practices.sh` — advisory (non-blocking)
+**Hook:** `pr-quality-checks.ts` — advisory (non-blocking)
 
 **Trigger:** `gh pr create` (PreToolUse Bash)
 

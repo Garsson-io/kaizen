@@ -24,12 +24,9 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 |------|-------|----------|---------|
 | `kaizen-enforce-pr-review-ts.sh` → `enforce-pr-review.ts` | L3 | Yes (deny) | **Gate**: Blocks Bash commands when PR review is pending (`needs_review` state). Issue #775. |
 | `kaizen-enforce-case-worktree.sh` | L1 | No (advisory) | Warns on `git commit`/`push` outside a worktree. |
-| `kaizen-check-test-coverage.sh` | L1 | No (advisory) | Warns when changed source files lack test coverage. Issue #8. |
-| `kaizen-check-verification.sh` | L1 | No (advisory) | Warns when PR body lacks Verification section. Issue #10. |
+| `kaizen-pr-quality-checks-ts.sh` → `pr-quality-checks.ts` | L1 | No (advisory) | Consolidated PR quality advisories: test coverage (#8), verification (#10), code quality (#89), practices (#210). Consolidation #800. |
 | `kaizen-check-dirty-files-ts.sh` → `check-dirty-files.ts` | L3 | Yes (deny on PR create) / Warn (push/merge) | Dirty file check. Push downgraded to warn. Skips during merge. Issue #775. |
 | `kaizen-enforce-pr-reflect-ts.sh` → `enforce-pr-reflect.ts` | L3 | Yes (deny) | **Gate**: Blocks Bash until kaizen reflection is done (`needs_pr_kaizen` state). Issue #775. |
-| `kaizen-warn-code-quality.sh` | L1 | No (advisory) | Warns about excessive mocks, large files, duplicate code. Issue #89. |
-| `kaizen-check-practices.sh` | L1 | No (advisory) | Shows relevant practices before PR creation. Issue #210. |
 | `kaizen-block-git-rebase.sh` | L2 | Yes (deny) | Blocks `git rebase`. Allows `--abort`/`--continue`/`--skip`. Issue #296. |
 | `kaizen-bump-plugin-version-ts.sh` → `bump-plugin-version.ts` | L1 | No (advisory) | Auto-bumps plugin version before PR. **Kaizen repo only** (settings.json). Issue #775. |
 
@@ -96,6 +93,7 @@ All enforcement hooks are now in TypeScript. Each `-ts.sh` shim is a thin bash w
 | `kaizen-bump-plugin-version-ts.sh` | `src/hooks/bump-plugin-version.ts` | 5 |
 | `kaizen-post-merge-clear-ts.sh` | `src/hooks/post-merge-clear.ts` | — |
 | `kaizen-session-cleanup-ts.sh` | `src/hooks/session-cleanup.ts` | — |
+| `kaizen-pr-quality-checks-ts.sh` | `src/hooks/pr-quality-checks.ts` | — |
 
 Shared TS libraries: `src/hooks/hook-io.ts` (stdin/stdout, getCurrentBranch), `src/hooks/lib/allowlist.ts` (command allowlists, 35 tests), `src/hooks/lib/gate-manager.ts` (unified gate reading/formatting).
 

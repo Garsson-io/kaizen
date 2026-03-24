@@ -120,8 +120,8 @@ All hooks prefixed `kaizen-`:
 | `enforce-case-worktree.sh` | `kaizen-enforce-case-worktree.sh` |
 | `enforce-worktree-writes.sh` | `kaizen-enforce-worktree-writes.sh` |
 | `enforce-case-exists.sh` | `kaizen-enforce-case-exists.sh` |
-| `check-test-coverage.sh` | `kaizen-check-test-coverage.sh` |
-| `check-verification.sh` | `kaizen-check-verification.sh` |
+| `check-test-coverage.sh` | `kaizen-pr-quality-checks-ts.sh` |
+| `check-verification.sh` | `kaizen-pr-quality-checks-ts.sh` |
 | `check-dirty-files.sh` | `kaizen-check-dirty-files.sh` |
 | `verify-before-stop.sh` | `kaizen-verify-before-stop.sh` |
 | `check-cleanup-on-stop.sh` | `kaizen-check-cleanup-on-stop.sh` |
@@ -134,8 +134,8 @@ All hooks prefixed `kaizen-`:
 | `enforce-kaizen-stop.sh` | `kaizen-enforce-reflect-stop.sh` |
 | `block-git-rebase.sh` | `kaizen-block-git-rebase.sh` |
 | `capture-worktree-context.sh` | `kaizen-capture-worktree-context.sh` |
-| `check-practices.sh` | `kaizen-check-practices.sh` |
-| `warn-code-quality.sh` | `kaizen-warn-code-quality.sh` |
+| `check-practices.sh` | `kaizen-pr-quality-checks-ts.sh` |
+| `warn-code-quality.sh` | `kaizen-pr-quality-checks-ts.sh` |
 | `check-wip.sh` | `kaizen-check-wip.sh` |
 
 Hook libraries under `hooks/lib/` keep short names (they're internal):
@@ -181,8 +181,8 @@ garsson-io/kaizen/
 │   │   ├── kaizen-enforce-case-worktree.sh
 │   │   ├── kaizen-enforce-worktree-writes.sh
 │   │   ├── kaizen-enforce-case-exists.sh
-│   │   ├── kaizen-check-test-coverage.sh
-│   │   ├── kaizen-check-verification.sh
+│   │   ├── kaizen-pr-quality-checks-ts.sh
+│   │   ├── kaizen-pr-quality-checks-ts.sh
 │   │   ├── kaizen-check-dirty-files.sh
 │   │   ├── kaizen-verify-before-stop.sh
 │   │   ├── kaizen-check-cleanup-on-stop.sh
@@ -195,8 +195,8 @@ garsson-io/kaizen/
 │   │   ├── kaizen-enforce-reflect-stop.sh
 │   │   ├── kaizen-block-git-rebase.sh
 │   │   ├── kaizen-capture-worktree-context.sh
-│   │   ├── kaizen-check-practices.sh
-│   │   ├── kaizen-warn-code-quality.sh
+│   │   ├── kaizen-pr-quality-checks-ts.sh
+│   │   ├── kaizen-pr-quality-checks-ts.sh
 │   │   ├── kaizen-check-wip.sh
 │   │   ├── lib/
 │   │   │   ├── parse-command.sh

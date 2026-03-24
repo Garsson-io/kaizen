@@ -162,7 +162,7 @@ This section grows over time. Each entry is a pattern discovered through kaizen 
 
 The `src/analysis/` module provides deterministic detectors for FM-8 through FM-12. The code enum uses short names (`FM1:DRY_VIOLATION` etc.) while the docs use sequential FM-N numbering. Both reference the same taxonomy from epic #441. These complement the LLM-based review:
 
-- **Runtime:** `kaizen-warn-code-quality.sh` runs jscpd at PR create time (FM-3/DRY)
+- **Runtime:** `kaizen-pr-quality-checks-ts.sh` runs code quality checks at PR create time (FM-3/DRY)
 - **Synthetic testing:** `npx vitest run src/analysis/` validates detectors against known-bad and known-good scenarios
 - **Gap analysis:** `/kaizen-gaps` Phase 2.7 runs detectors against real PRs and reports detection coverage
 

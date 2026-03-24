@@ -57,12 +57,9 @@ const DEFAULT_HOOKS = {
   PreToolUseBash: [
     "kaizen-enforce-pr-review-ts.sh",
     "kaizen-enforce-case-worktree.sh",
-    "kaizen-check-test-coverage.sh",
-    "kaizen-check-verification.sh",
+    "kaizen-pr-quality-checks-ts.sh",
     "kaizen-check-dirty-files-ts.sh",
     "kaizen-enforce-pr-reflect-ts.sh",
-    "kaizen-warn-code-quality.sh",
-    "kaizen-check-practices.sh",
     "kaizen-block-git-rebase.sh",
     "kaizen-search-before-file.sh",
   ],

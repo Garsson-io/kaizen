@@ -42,14 +42,14 @@ TypeScript wins: already the primary language, established test framework, ~200m
 | `enforce-pr-review-tools.sh` | 59    | L1    | Guard                                |
 | `verify-before-stop.sh`      | 65    | L2    | Pattern match on compile/test output |
 | `enforce-worktree-writes.sh` | 78    | L2    | Path matching                        |
-| `check-verification.sh`      | 87    | L2    | Pattern match on PR body             |
+| `pr-quality-checks.ts`      | 87    | L2    | Pattern match on PR body             |
 | `enforce-pr-review.sh`       | 90    | L2    | State + pattern                      |
 | `post-merge-clear.sh`        | 91    | L2    | State management                     |
-| `check-practices.sh`         | 116   | L2    | Category matching                    |
-| `check-test-coverage.sh`     | 119   | L2    | File pair matching                   |
+| `pr-quality-checks.ts`         | 116   | L2    | Category matching                    |
+| `pr-quality-checks.ts`     | 119   | L2    | File pair matching                   |
 | `check-dirty-files.sh`       | 120   | L2    | Status parsing                       |
 | `enforce-pr-kaizen.sh`       | 121   | L2    | State + pattern                      |
-| `warn-code-quality.sh`       | 121   | L2    | Pattern warnings                     |
+| `pr-quality-checks.ts`       | 121   | L2    | Pattern warnings                     |
 | `check-wip.sh`               | 126   | L2    | Multi-source check                   |
 | `enforce-case-exists.sh`     | 138   | L2    | DB query + guard                     |
 
