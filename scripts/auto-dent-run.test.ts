@@ -44,7 +44,10 @@ import {
   type SweepResult,
   type PromptMetadata,
   validateRunLifecycle,
+  findExistingProgressIssue,
+  ensureBatchProgressIssue,
 } from './auto-dent-run.js';
+import * as github from './auto-dent-github.js';
 
 function makeBatchState(overrides: Partial<BatchState> = {}): BatchState {
   return {
@@ -2773,5 +2776,111 @@ describe('module wiring: re-exported symbols used locally must be imported', () 
     }
 
     expect(missing).toEqual([]);
+  });
+});
+
+describe('findExistingProgressIssue', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns URL when GitHub search finds a matching issue', () => {
+    vi.spyOn(github, 'ghExec').mockReturnValue(JSON.stringify([{ url: 'https://github.com/Garsson-io/kaizen/issues/707' }]));
+    const result = findExistingProgressIssue('batch-260323-1405-5400', 'Garsson-io/kaizen');
+    expect(result).toBe('https://github.com/Garsson-io/kaizen/issues/707');
+  });
+
+  it('returns empty string when no matching issue found', () => {
+    vi.spyOn(github, 'ghExec').mockReturnValue('[]');
+    const result = findExistingProgressIssue('batch-nonexistent', 'Garsson-io/kaizen');
+    expect(result).toBe('');
+  });
+
+  it('returns empty string when ghExec returns empty string', () => {
+    vi.spyOn(github, 'ghExec').mockReturnValue('');
+    const result = findExistingProgressIssue('batch-123', 'Garsson-io/kaizen');
+    expect(result).toBe('');
+  });
+
+  it('returns empty string when ghExec returns invalid JSON', () => {
+    vi.spyOn(github, 'ghExec').mockReturnValue('not-json');
+    const result = findExistingProgressIssue('batch-123', 'Garsson-io/kaizen');
+    expect(result).toBe('');
+  });
+
+  it('passes batch ID in search query', () => {
+    const spy = vi.spyOn(github, 'ghExec').mockReturnValue('[]');
+    findExistingProgressIssue('batch-260323-1405-5400', 'Garsson-io/kaizen');
+    expect(spy).toHaveBeenCalledOnce();
+    expect(spy.mock.calls[0][0]).toContain('batch-260323-1405-5400');
+    expect(spy.mock.calls[0][0]).toContain('--repo Garsson-io/kaizen');
+    expect(spy.mock.calls[0][0]).toContain('--label auto-dent');
+  });
+});
+
+describe('ensureBatchProgressIssue', () => {
+  let tmpDir: string;
+  let stateFile: string;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    tmpDir = mkdtempSync(join(tmpdir(), 'progress-issue-'));
+    stateFile = join(tmpDir, 'state.json');
+  });
+
+  afterEach(() => {
+    try { unlinkSync(stateFile); } catch {}
+  });
+
+  it('returns cached progress_issue without calling GitHub', () => {
+    const spy = vi.spyOn(github, 'ghExec');
+    const state = makeBatchState({ progress_issue: 'https://github.com/o/r/issues/42' });
+    writeState(stateFile, state);
+    const result = ensureBatchProgressIssue(state, stateFile);
+    expect(result).toBe('https://github.com/o/r/issues/42');
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('returns empty string when kaizen_repo is empty', () => {
+    const spy = vi.spyOn(github, 'ghExec');
+    const state = makeBatchState({ kaizen_repo: '' });
+    writeState(stateFile, state);
+    const result = ensureBatchProgressIssue(state, stateFile);
+    expect(result).toBe('');
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('reuses existing issue found via search instead of creating duplicate', () => {
+    const existingUrl = 'https://github.com/Garsson-io/kaizen/issues/707';
+    const spy = vi.spyOn(github, 'ghExec')
+      .mockReturnValueOnce(JSON.stringify([{ url: existingUrl }]));
+    const state = makeBatchState({ progress_issue: undefined });
+    writeState(stateFile, state);
+
+    const result = ensureBatchProgressIssue(state, stateFile);
+
+    expect(result).toBe(existingUrl);
+    expect(spy).toHaveBeenCalledOnce(); // only search, no create
+    expect(spy.mock.calls[0][0]).toContain('issue list');
+    const saved = readState(stateFile);
+    expect(saved.progress_issue).toBe(existingUrl);
+  });
+
+  it('creates new issue when search finds nothing', () => {
+    const newUrl = 'https://github.com/Garsson-io/kaizen/issues/800';
+    const spy = vi.spyOn(github, 'ghExec')
+      .mockReturnValueOnce('[]')       // search returns empty
+      .mockReturnValueOnce(newUrl);     // create returns new URL
+    const state = makeBatchState({ progress_issue: undefined });
+    writeState(stateFile, state);
+
+    const result = ensureBatchProgressIssue(state, stateFile);
+
+    expect(result).toBe(newUrl);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[0][0]).toContain('issue list');   // search
+    expect(spy.mock.calls[1][0]).toContain('issue create'); // create
+    const saved = readState(stateFile);
+    expect(saved.progress_issue).toBe(newUrl);
   });
 });
