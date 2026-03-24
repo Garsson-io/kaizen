@@ -69,7 +69,7 @@ const DEFAULT_HOOKS = {
   PreToolUseWrite: [
     "kaizen-enforce-worktree-writes.sh",
     "kaizen-enforce-case-exists.sh",
-    "kaizen-enforce-pr-review-tools.sh",
+    "kaizen-enforce-pr-review-ts.sh",
   ],
   PostToolUseBash: [
     "kaizen-post-merge-clear.sh",

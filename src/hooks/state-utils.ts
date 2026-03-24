@@ -249,6 +249,7 @@ export function listStateFilesForCurrentWorktree(
 export interface StateQueryResult {
   prUrl: string;
   status: string;
+  round?: string;
   filepath: string;
 }
 
@@ -269,7 +270,7 @@ export function findStateWithStatus(
   )) {
     const state = parseStateFile(readFileSync(filepath, 'utf-8'));
     if (state.STATUS === wantedStatus) {
-      return { prUrl: state.PR_URL ?? '', status: state.STATUS, filepath };
+      return { prUrl: state.PR_URL ?? '', status: state.STATUS, round: state.ROUND, filepath };
     }
   }
   return null;
