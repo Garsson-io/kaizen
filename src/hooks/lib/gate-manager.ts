@@ -12,7 +12,14 @@
  * Part of kAIzen Agent Control Flow — kaizen #775
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import {
   type StateQueryResult,
@@ -205,4 +212,128 @@ function readStateFromFile(filepath: string): Record<string, string> {
 function extractPrNumber(prUrl: string): string {
   const match = prUrl.match(/\/pull\/(\d+)/);
   return match ? match[1] : prUrl;
+}
+
+// Diagnostics for telemetry (kaizen #792)
+
+export type ExcludeReason = 'stale' | 'no_branch' | 'wrong_branch' | 'read_error';
+
+export interface StateFileDiagnostic {
+  filename: string;
+  status?: string;
+  branch?: string;
+  included: boolean;
+  excludeReason?: ExcludeReason;
+  ageSeconds?: number;
+}
+
+export interface GateDiagnostics {
+  totalFiles: number;
+  includedFiles: number;
+  excludedFiles: number;
+  excludeReasons: Record<ExcludeReason, number>;
+  files: StateFileDiagnostic[];
+}
+
+/**
+ * Scan the state directory and produce diagnostics showing why each file
+ * was included or excluded. Used by stop-gate telemetry (kaizen #792).
+ */
+export function scanStateDirectoryDiagnostics(
+  currentBranch: string,
+  stateDir: string = DEFAULT_STATE_DIR,
+  maxAge: number = 7200,
+): GateDiagnostics {
+  const diagnostics: StateFileDiagnostic[] = [];
+  const excludeReasons: Record<ExcludeReason, number> = {
+    stale: 0,
+    no_branch: 0,
+    wrong_branch: 0,
+    read_error: 0,
+  };
+
+  if (!existsSync(stateDir)) {
+    return { totalFiles: 0, includedFiles: 0, excludedFiles: 0, excludeReasons, files: [] };
+  }
+
+  const now = Date.now() / 1000;
+  let entries: string[];
+  try {
+    entries = readdirSync(stateDir);
+  } catch {
+    return { totalFiles: 0, includedFiles: 0, excludedFiles: 0, excludeReasons, files: [] };
+  }
+
+  for (const entry of entries) {
+    const filepath = join(stateDir, entry);
+    let content: string;
+    let mtime: number;
+
+    try {
+      content = readFileSync(filepath, 'utf-8');
+      mtime = statSync(filepath).mtimeMs / 1000;
+    } catch {
+      diagnostics.push({ filename: entry, included: false, excludeReason: 'read_error' });
+      excludeReasons.read_error++;
+      continue;
+    }
+
+    const state = parseStateFile(content);
+    const ageSeconds = Math.round(now - mtime);
+
+    if (ageSeconds > maxAge) {
+      diagnostics.push({
+        filename: entry,
+        status: state.STATUS,
+        branch: state.BRANCH,
+        included: false,
+        excludeReason: 'stale',
+        ageSeconds,
+      });
+      excludeReasons.stale++;
+      continue;
+    }
+
+    if (!state.BRANCH) {
+      diagnostics.push({
+        filename: entry,
+        status: state.STATUS,
+        included: false,
+        excludeReason: 'no_branch',
+        ageSeconds,
+      });
+      excludeReasons.no_branch++;
+      continue;
+    }
+
+    if (state.BRANCH !== currentBranch) {
+      diagnostics.push({
+        filename: entry,
+        status: state.STATUS,
+        branch: state.BRANCH,
+        included: false,
+        excludeReason: 'wrong_branch',
+        ageSeconds,
+      });
+      excludeReasons.wrong_branch++;
+      continue;
+    }
+
+    diagnostics.push({
+      filename: entry,
+      status: state.STATUS,
+      branch: state.BRANCH,
+      included: true,
+      ageSeconds,
+    });
+  }
+
+  const includedFiles = diagnostics.filter((d) => d.included).length;
+  return {
+    totalFiles: diagnostics.length,
+    includedFiles,
+    excludedFiles: diagnostics.length - includedFiles,
+    excludeReasons,
+    files: diagnostics,
+  };
 }

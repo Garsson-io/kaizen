@@ -8,6 +8,7 @@ import {
   handleUnfinishedEscape,
   readAllPendingGates,
   readDeferredItems,
+  scanStateDirectoryDiagnostics,
 } from './gate-manager.js';
 
 const TEST_STATE_DIR = '/tmp/.test-gate-manager';
@@ -191,6 +192,75 @@ describe('handleUnfinishedEscape', () => {
     const cleared = handleUnfinishedEscape('nothing to do', TEST_BRANCH, TEST_STATE_DIR);
     expect(cleared).toHaveLength(0);
     expect(readDeferredItems(TEST_STATE_DIR)).toBeNull();
+  });
+});
+
+describe('scanStateDirectoryDiagnostics', () => {
+  it('returns empty diagnostics when state dir is empty', () => {
+    const diag = scanStateDirectoryDiagnostics(TEST_BRANCH, TEST_STATE_DIR);
+    expect(diag.totalFiles).toBe(0);
+    expect(diag.includedFiles).toBe(0);
+    expect(diag.excludedFiles).toBe(0);
+    expect(diag.files).toEqual([]);
+  });
+
+  it('returns empty diagnostics when state dir does not exist', () => {
+    const diag = scanStateDirectoryDiagnostics(TEST_BRANCH, '/tmp/.nonexistent-gate-diag');
+    expect(diag.totalFiles).toBe(0);
+  });
+
+  it('includes files matching current branch', () => {
+    createState('review-1', 'needs_review', 'https://github.com/org/repo/pull/42', { ROUND: '1' });
+    const diag = scanStateDirectoryDiagnostics(TEST_BRANCH, TEST_STATE_DIR);
+    expect(diag.totalFiles).toBe(1);
+    expect(diag.includedFiles).toBe(1);
+    expect(diag.excludedFiles).toBe(0);
+    expect(diag.files[0].included).toBe(true);
+    expect(diag.files[0].status).toBe('needs_review');
+    expect(diag.files[0].branch).toBe(TEST_BRANCH);
+  });
+
+  it('excludes files from other branches with reason wrong_branch', () => {
+    writeStateFile(TEST_STATE_DIR, 'other-review', {
+      PR_URL: 'https://github.com/org/repo/pull/99',
+      STATUS: 'needs_review',
+      BRANCH: 'other-branch',
+      ROUND: '1',
+    });
+    const diag = scanStateDirectoryDiagnostics(TEST_BRANCH, TEST_STATE_DIR);
+    expect(diag.totalFiles).toBe(1);
+    expect(diag.includedFiles).toBe(0);
+    expect(diag.excludedFiles).toBe(1);
+    expect(diag.excludeReasons.wrong_branch).toBe(1);
+    expect(diag.files[0].excludeReason).toBe('wrong_branch');
+    expect(diag.files[0].branch).toBe('other-branch');
+  });
+
+  it('excludes files without BRANCH with reason no_branch', () => {
+    writeStateFile(TEST_STATE_DIR, 'legacy-state', {
+      PR_URL: 'https://github.com/org/repo/pull/10',
+      STATUS: 'needs_review',
+      BRANCH: '',
+    });
+    const diag = scanStateDirectoryDiagnostics(TEST_BRANCH, TEST_STATE_DIR);
+    expect(diag.excludeReasons.no_branch).toBe(1);
+    expect(diag.files[0].excludeReason).toBe('no_branch');
+  });
+
+  it('reports mixed included and excluded files', () => {
+    createState('review-1', 'needs_review', 'https://github.com/org/repo/pull/42', { ROUND: '1' });
+    createState('kaizen-1', 'needs_pr_kaizen', 'https://github.com/org/repo/pull/42');
+    writeStateFile(TEST_STATE_DIR, 'other-review', {
+      PR_URL: 'https://github.com/org/repo/pull/99',
+      STATUS: 'needs_review',
+      BRANCH: 'other-branch',
+      ROUND: '1',
+    });
+    const diag = scanStateDirectoryDiagnostics(TEST_BRANCH, TEST_STATE_DIR);
+    expect(diag.totalFiles).toBe(3);
+    expect(diag.includedFiles).toBe(2);
+    expect(diag.excludedFiles).toBe(1);
+    expect(diag.excludeReasons.wrong_branch).toBe(1);
   });
 });
 
