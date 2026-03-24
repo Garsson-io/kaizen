@@ -52,7 +52,7 @@ const HOOKS_DIR = join(KAIZEN_ROOT, ".claude", "hooks");
 const DEFAULT_HOOKS = {
   SessionStart: [
     "kaizen-check-wip.sh",
-    "kaizen-session-cleanup.sh",
+    "kaizen-session-cleanup-ts.sh",
   ],
   PreToolUseBash: [
     "kaizen-enforce-pr-review-ts.sh",
@@ -72,7 +72,7 @@ const DEFAULT_HOOKS = {
     "kaizen-enforce-pr-review-ts.sh",
   ],
   PostToolUseBash: [
-    "kaizen-post-merge-clear.sh",
+    "kaizen-post-merge-clear-ts.sh",
     "kaizen-pr-kaizen-clear-fallback.sh",
     "kaizen-capture-worktree-context.sh",
   ],

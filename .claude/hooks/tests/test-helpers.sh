@@ -2,8 +2,12 @@
 # Shared test helpers for hook tests.
 # Source from test files: source "$(dirname "$0")/test-helpers.sh"
 
-# Source shared libraries so test helpers can use pr_url_to_state_key()
-source "$(dirname "$0")/../lib/state-utils.sh" 2>/dev/null || true
+# Inline pr_url_to_state_key — the only function test helpers need from the
+# deleted state-utils.sh.  All state management now lives in TypeScript.
+pr_url_to_state_key() {
+  local url="$1"
+  echo "$url" | sed 's|https://github\.com/||;s|/pull/|_|;s|/|_|g'
+}
 
 # Portable repo root — use git instead of fragile ../../../ counting
 # Technique: portable path resolution (works from any directory depth)
@@ -195,7 +199,7 @@ setup_test_env() {
   export DEBUG_LOG="/dev/null"
 
   # Isolate audit log from repo (kaizen #429, #438)
-  # Set AUDIT_DIR (used by state-utils.sh to derive AUDIT_LOG) so both
+  # Set AUDIT_DIR so both
   # bash hooks and TS hooks write to the temp dir, not the repo.
   TEST_AUDIT_DIR="/tmp/.kaizen-audit-test-$$"
   rm -rf "$TEST_AUDIT_DIR"

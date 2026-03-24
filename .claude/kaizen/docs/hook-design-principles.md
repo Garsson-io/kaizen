@@ -156,11 +156,11 @@ Multiple Claude agents can run in different worktrees simultaneously. Each has i
 
 Implementation:
 1. State files include a `BRANCH=` field
-2. All hooks use `list_state_files_for_current_worktree()` from `lib/state-utils.sh`
+2. All hooks use `listStateFilesForCurrentWorktree()` from `src/hooks/state-utils.ts`
 3. Files without `BRANCH=` are skipped (legacy safety)
 4. Files older than `MAX_STATE_AGE` are skipped (staleness safety)
 
-**Rule**: NEVER iterate state files directly. Always go through `state-utils.sh`.
+**Rule**: NEVER iterate state files directly. Always go through `state-utils.ts`.
 
 ## Hook Registration Checklist
 
@@ -172,7 +172,7 @@ When adding enforcement for a new behavior:
 - [ ] **PreToolUse on Agent** — Can Claude escape by spawning a subagent?
 - [ ] **Allowlist** — What actions SHOULD Claude take? (these must pass through)
 - [ ] **State cleanup** — When does the enforcement end?
-- [ ] **Cross-worktree** — Does it use `state-utils.sh`?
+- [ ] **Cross-worktree** — Does it use `state-utils.ts`?
 - [ ] **Staleness** — Does old state expire?
 - [ ] **Tests** — Unit tests for each hook + E2E test for the full lifecycle
 

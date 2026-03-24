@@ -16,7 +16,7 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 | Hook | Level | Blocking | Source | Purpose |
 |------|-------|----------|--------|---------|
 | `kaizen-check-wip.sh` | L1 | No | plugin.json | Detects in-progress work (dirty worktrees, open PRs) when starting a new session in the main checkout. |
-| `kaizen-session-cleanup.sh` | L2 | No | plugin.json | Clears stale state files for merged/closed PRs. Moved out of PreToolUse hot path in #452. |
+| `kaizen-session-cleanup-ts.sh` → `session-cleanup.ts` | L2 | No | plugin.json | Clears stale state files for merged/closed PRs. Migrated to TS in #786. |
 
 ## PreToolUse Hooks — Bash Matcher
 
@@ -53,7 +53,7 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 |------|-------|------|---------|
 | `pr-review-loop-ts.sh` | L2 | TypeScript | Multi-round PR self-review. Triggers on `gh pr create`/`git push`/`gh pr diff`/`gh pr merge`. Issue #29. |
 | `kaizen-reflect-ts.sh` | L2 | TypeScript | Triggers kaizen reflection after PR create/merge. Sets `needs_pr_kaizen` gate. Issue #9. |
-| `kaizen-post-merge-clear.sh` | L2 | Bash | Clears post-merge gate when `/kaizen-reflect` is invoked. Issue #96. |
+| `kaizen-post-merge-clear-ts.sh` → `post-merge-clear.ts` | L2 | TypeScript | Clears post-merge gate when `/kaizen-reflect` is invoked. Migrated to TS in #786. |
 | `pr-kaizen-clear-ts.sh` | L3 | TypeScript | Clears `needs_pr_kaizen` gate on valid `KAIZEN_IMPEDIMENTS` JSON. Issues #57, #113, #140, #162. |
 | `kaizen-capture-worktree-context.sh` | L1 | Bash | Writes `.worktree-context.json` on PR creation. |
 
@@ -61,7 +61,7 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 
 | Hook | Level | Purpose |
 |------|-------|---------|
-| `kaizen-post-merge-clear.sh` | L2 | Also fires on Skill to clear gate for `/kaizen-reflect`. |
+| `kaizen-post-merge-clear-ts.sh` | L2 | Also fires on Skill to clear gate for `/kaizen-reflect`. |
 
 ## Stop Hooks
 
@@ -77,7 +77,7 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 |------|--------|------------|-------------------|-------------------|
 | `needs_review` | `pr-review-loop-ts.sh` | `pr-review-loop-ts.sh` | `enforce-pr-review.ts` | `stop-gate.ts` |
 | `needs_pr_kaizen` | `kaizen-reflect-ts.sh` | `pr-kaizen-clear-ts.sh` | `enforce-pr-reflect.ts` | `stop-gate.ts` |
-| `needs_post_merge` | `kaizen-reflect-ts.sh` | `post-merge-clear.sh` | — | `stop-gate.ts` |
+| `needs_post_merge` | `kaizen-reflect-ts.sh` | `post-merge-clear.ts` | — | `stop-gate.ts` |
 | All gates | — | `KAIZEN_UNFINISHED` (via `pr-kaizen-clear.ts`) | — | `stop-gate.ts` shows escape option |
 
 ## TS Migration Status
@@ -94,6 +94,8 @@ All enforcement hooks are now in TypeScript. Each `-ts.sh` shim is a thin bash w
 | `kaizen-enforce-pr-reflect-ts.sh` | `src/hooks/enforce-pr-reflect.ts` | 8 |
 | `kaizen-check-dirty-files-ts.sh` | `src/hooks/check-dirty-files.ts` | 13 |
 | `kaizen-bump-plugin-version-ts.sh` | `src/hooks/bump-plugin-version.ts` | 5 |
+| `kaizen-post-merge-clear-ts.sh` | `src/hooks/post-merge-clear.ts` | — |
+| `kaizen-session-cleanup-ts.sh` | `src/hooks/session-cleanup.ts` | — |
 
 Shared TS libraries: `src/hooks/hook-io.ts` (stdin/stdout, getCurrentBranch), `src/hooks/lib/allowlist.ts` (command allowlists, 35 tests), `src/hooks/lib/gate-manager.ts` (unified gate reading/formatting).
 
@@ -107,7 +109,6 @@ All hook libraries are in `.claude/hooks/lib/`:
 | `parse-command.sh` | Parses hook stdin JSON, extracts command. |
 | `input-utils.sh` | `read_hook_input`, `get_command` helpers. |
 | `hook-output.sh` | `emit_deny()`, `emit_stop_block()`, `render_prompt()`. |
-| `state-utils.sh` | State file management for gates. |
 | `allowlist.sh` | Command allowlisting for gate enforcement. |
 | `read-config.sh` | Reads `kaizen.config.json`. |
 | `resolve-main-checkout.sh` | Resolves main checkout path from a worktree. |

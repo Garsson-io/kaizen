@@ -98,7 +98,6 @@ assert_fails "tsconfig.json blocked" is_allowed_runtime_dir "tsconfig.json"
 echo ""
 echo "=== pr_url_to_state_key: URL conversion ==="
 
-source "$(dirname "$0")/../lib/state-utils.sh"
 
 RESULT=$(pr_url_to_state_key "https://github.com/Garsson-io/kaizen/pull/42")
 assert_eq "standard PR URL" "Garsson-io_kaizen_42" "$RESULT"

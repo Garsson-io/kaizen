@@ -1,5 +1,5 @@
 /**
- * state-utils.ts — TypeScript port of .claude/kaizen/hooks/lib/state-utils.sh
+ * state-utils.ts — Canonical state management for kaizen hooks (bash predecessor deleted in #790).
  *
  * Manages workflow gate state files for kaizen hooks. Provides typed,
  * atomic state operations replacing fragile bash grep/sed/printf chains.
@@ -219,7 +219,7 @@ export function isReflectionDone(
 }
 
 // ---------------------------------------------------------------------------
-// Branch-scoped state queries (parity with bash state-utils.sh — kaizen #333)
+// Branch-scoped state queries (kaizen #333)
 // ---------------------------------------------------------------------------
 
 /**

@@ -1,10 +1,12 @@
 /**
  * bash-ts-parity.test.ts — CI sync check for bash/TS shared library parity.
  *
- * Ensures that functions in the bash shared libraries (state-utils.sh,
- * parse-command.sh) have corresponding TypeScript implementations, and
- * vice versa. Drift between the two was undetected until manual comparison
- * (kaizen #347).
+ * Ensures that functions in the bash shared libraries (parse-command.sh)
+ * have corresponding TypeScript implementations, and vice versa.
+ * Drift between the two was undetected until manual comparison (kaizen #347).
+ *
+ * state-utils.sh was deleted in kaizen #790 — all state management is now
+ * TypeScript-only. Only parse-command parity remains.
  *
  * Naming convention: bash uses snake_case, TS uses camelCase.
  * The test normalizes both to compare.
@@ -20,28 +22,13 @@ const HOOKS_TS_DIR = __dirname;
 // Functions intentionally present in only one version.
 // Each entry must have a comment explaining WHY it's excluded.
 const EXCLUSIONS: Record<string, string> = {
-  // Requires `gh` CLI calls — intentionally stays bash-only (shell orchestration)
-  auto_close_kaizen_issues: 'bash-only: requires gh CLI for PR state checks',
-  // Requires `gh` CLI for PR state lookup + auto-clear — bash-only orchestration
-  find_needs_review_state:
-    'bash-only: requires gh CLI for merged/closed PR auto-clear',
-  // Lazy cleanup of merged/closed PR review states — bash-only (kaizen #452)
-  cleanup_merged_review_states:
-    'bash-only: requires gh CLI for PR state checks, called from SessionStart/Stop not hot path',
-
-  // TS internal helpers with no bash equivalent (TS uses structured objects)
-  parseStateFile: 'ts-only: internal helper, bash uses grep/cut inline',
-  serializeStateFile: 'ts-only: internal helper, bash uses printf inline',
-  ensureStateDir: 'ts-only: internal helper, bash uses mkdir -p inline',
-  writeStateFile: 'ts-only: internal helper for atomic writes',
+  // TS internal utility for splitting compound commands; bash uses IFS/sed inline
+  splitCommandSegments:
+    'ts-only: internal helper, bash splits on operators inline',
 
   // TS splits extractPrUrl from reconstructPrUrl; bash inlines the grep
   extractPrUrl:
     'ts-only: extracted helper, bash inlines grep in reconstruct_pr_url',
-
-  // TS internal utility for splitting compound commands; bash uses IFS/sed inline
-  splitCommandSegments:
-    'ts-only: internal helper, bash splits on operators inline',
 };
 
 /** Extract function names from a bash script (matches `function_name() {`). */
@@ -108,33 +95,6 @@ function checkParity(bashFile: string, tsFile: string) {
 }
 
 describe('bash/TS shared library parity', () => {
-  describe('state-utils', () => {
-    it('all bash functions have TS equivalents (or are excluded)', () => {
-      const { missingInTs } = checkParity('state-utils.sh', 'state-utils.ts');
-      expect(
-        missingInTs,
-        `Bash functions missing TS equivalent: ${missingInTs.join(', ')}. Either port them or add to EXCLUSIONS with a reason.`,
-      ).toEqual([]);
-    });
-
-    it('all TS functions have bash equivalents (or are excluded)', () => {
-      const { missingInBash } = checkParity('state-utils.sh', 'state-utils.ts');
-      expect(
-        missingInBash,
-        `TS functions missing bash equivalent: ${missingInBash.join(', ')}. Either port them or add to EXCLUSIONS with a reason.`,
-      ).toEqual([]);
-    });
-
-    it('extracts functions from both files', () => {
-      const { bashFns, tsFns } = checkParity(
-        'state-utils.sh',
-        'state-utils.ts',
-      );
-      expect(bashFns.length).toBeGreaterThan(5);
-      expect(tsFns.length).toBeGreaterThan(5);
-    });
-  });
-
   describe('parse-command', () => {
     it('all bash functions have TS equivalents (or are excluded)', () => {
       const { missingInTs } = checkParity(
@@ -170,25 +130,17 @@ describe('bash/TS shared library parity', () => {
 
   describe('exclusions are valid', () => {
     it('all excluded functions actually exist in their source', () => {
-      const stateUtilsBash = extractBashFunctions(
-        join(HOOKS_LIB_DIR, 'state-utils.sh'),
-      );
       const parseCommandBash = extractBashFunctions(
         join(HOOKS_LIB_DIR, 'parse-command.sh'),
       );
-      const allBash = [...stateUtilsBash, ...parseCommandBash];
 
-      const stateUtilsTs = extractTsFunctions(
-        join(HOOKS_TS_DIR, 'state-utils.ts'),
-      );
       const parseCommandTs = extractTsFunctions(
         join(HOOKS_TS_DIR, 'parse-command.ts'),
       );
-      const allTs = [...stateUtilsTs, ...parseCommandTs];
 
       for (const excluded of Object.keys(EXCLUSIONS)) {
-        const existsInBash = allBash.includes(excluded);
-        const existsInTs = allTs.includes(excluded);
+        const existsInBash = parseCommandBash.includes(excluded);
+        const existsInTs = parseCommandTs.includes(excluded);
         expect(
           existsInBash || existsInTs,
           `Exclusion '${excluded}' doesn't exist in either bash or TS — remove stale exclusion`,

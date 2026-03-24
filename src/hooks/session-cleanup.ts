@@ -4,8 +4,8 @@
  * Moved out of find_needs_review_state() hot path in kaizen #452 —
  * was adding ~400ms per PreToolUse call due to gh pr view HTTP roundtrip.
  *
- * Replaces: .claude/hooks/kaizen-session-cleanup.sh
  * Part of kAIzen Agent Control Flow — kaizen #786
+ * Bash predecessor deleted in #790.
  */
 
 import { execSync } from 'node:child_process';
