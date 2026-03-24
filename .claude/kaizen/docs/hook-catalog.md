@@ -109,9 +109,6 @@ All hook libraries are in `.claude/hooks/lib/`:
 | `hook-output.sh` | `emit_deny()`, `emit_stop_block()`, `render_prompt()`. |
 | `allowlist.sh` | Command allowlisting for gate enforcement. |
 | `read-config.sh` | Reads `kaizen.config.json`. |
-| `resolve-main-checkout.sh` | Resolves main checkout path from a worktree. |
-| `resolve-project-root.sh` | Resolves project root (handles worktrees). |
-| `send-notification.sh` | Telegram notifications via IPC. |
 | `hook-timing-sentinel.sh` | Performance monitoring for hook execution time. |
 
 ## The Three Levels
