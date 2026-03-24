@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   checkDirtyFiles,
   detectTrigger,
@@ -6,6 +8,11 @@ import {
   hasCommitBeforePush,
   parseDirtyFiles,
 } from './check-dirty-files.js';
+
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+  return { ...actual, existsSync: vi.fn(actual.existsSync) };
+});
 
 describe('detectTrigger', () => {
   it('detects gh pr create', () => {
@@ -142,15 +149,38 @@ describe('checkDirtyFiles', () => {
     expect(result.action).toBe('allow');
   });
 
-  it('skips during merge resolution (kaizen #775)', () => {
+  it('skips during merge resolution when MERGE_HEAD exists (kaizen #773)', () => {
+    const mockedExistsSync = vi.mocked(existsSync);
+    mockedExistsSync.mockImplementation((p) => {
+      if (String(p) === join('/fake/.git/worktrees/my-wt', 'MERGE_HEAD')) return true;
+      return false;
+    });
+
     const mergeGit = (args: string) => {
+      if (args.includes('rev-parse --git-dir')) return '/fake/.git/worktrees/my-wt';
       if (args.includes('status --porcelain')) return ' M conflict.ts';
-      if (args.includes('rev-parse --show-toplevel')) return '/tmp/.test-merge-repo';
       return '';
     };
-    // Can't easily test MERGE_HEAD existence without filesystem,
-    // but we test the trigger detection and clean paths work
-    const result = checkDirtyFiles('gh pr create --title "test"', { gitRunner: (args) => '' });
+
+    const result = checkDirtyFiles('gh pr create --title "test"', { gitRunner: mergeGit });
     expect(result.action).toBe('allow');
+
+    mockedExistsSync.mockRestore();
+  });
+
+  it('blocks pr create when not in merge resolution (kaizen #773)', () => {
+    const mockedExistsSync = vi.mocked(existsSync);
+    mockedExistsSync.mockImplementation(() => false);
+
+    const noMergeGit = (args: string) => {
+      if (args.includes('rev-parse --git-dir')) return '/fake/.git';
+      if (args.includes('status --porcelain')) return ' M conflict.ts';
+      return '';
+    };
+
+    const result = checkDirtyFiles('gh pr create --title "test"', { gitRunner: noMergeGit });
+    expect(result.action).toBe('deny');
+
+    mockedExistsSync.mockRestore();
   });
 });

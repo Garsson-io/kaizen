@@ -113,9 +113,11 @@ export function checkDirtyFiles(
     }
   });
 
-  // Skip during merge resolution (kaizen #775)
-  const toplevel = git('rev-parse --show-toplevel');
-  if (toplevel && existsSync(join(toplevel, '.git', 'MERGE_HEAD'))) {
+  // Skip during merge resolution (kaizen #773, #775)
+  // Use --git-dir instead of .git/MERGE_HEAD — in worktrees, .git is a file,
+  // not a directory, so the naive path doesn't work.
+  const gitDir = git('rev-parse --git-dir');
+  if (gitDir && existsSync(join(gitDir, 'MERGE_HEAD'))) {
     return { action: 'allow' };
   }
 
