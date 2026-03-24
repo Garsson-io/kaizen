@@ -41,17 +41,6 @@ _time_hook() {
   echo $(( end - start ))
 }
 
-# Get the list of hook scripts from settings.json.
-# Returns unique hook paths, one per line.
-_list_hooks_from_settings() {
-  local settings_file
-  local hook_dir
-  hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  settings_file="$(cd "$hook_dir/../.." && pwd)/.claude/settings.json"
-  [ -f "$settings_file" ] || return 1
-  jq -r '.. | .command? // empty' "$settings_file" 2>/dev/null | sort -u
-}
-
 # Run the full hook benchmark. Outputs a formatted report if any hook
 # exceeds the warning threshold. Outputs nothing if all hooks are fast.
 #
@@ -67,7 +56,7 @@ run_hook_benchmark() {
   local project_root
   project_root="$(cd "$hook_dir/../.." && pwd)"
 
-  for hook_path in "$hook_dir"/kaizen-*.sh; do
+  for hook_path in "$hook_dir"/*.sh; do
     [ -f "$hook_path" ] && [ -x "$hook_path" ] && hooks+=("$hook_path")
   done
 
