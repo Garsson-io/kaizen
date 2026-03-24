@@ -12,7 +12,7 @@
  * The test normalizes both to compare.
  */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -147,5 +147,45 @@ describe('bash/TS shared library parity', () => {
         ).toBe(true);
       }
     });
+  });
+});
+
+/** Recursively find all .sh files under a directory, skipping paths that contain any of the excludeSubstrings. */
+function findShFiles(dir: string, excludeSubstrings: string[]): string[] {
+  const results: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = join(dir, entry.name);
+    if (excludeSubstrings.some((s) => fullPath.includes(s))) continue;
+    if (entry.isDirectory()) {
+      results.push(...findShFiles(fullPath, excludeSubstrings));
+    } else if (entry.name.endsWith('.sh')) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
+
+describe('state-utils.sh deletion guard (#790)', () => {
+  it('no .sh file sources state-utils.sh', () => {
+    const repoRoot = join(__dirname, '../..');
+    const shFiles = findShFiles(repoRoot, [
+      '/node_modules/',
+      '/.git/',
+      '/.claude/worktrees/',
+    ]);
+
+    const violators: string[] = [];
+    for (const file of shFiles) {
+      const content = readFileSync(file, 'utf-8');
+      // Match both `source ./path/state-utils.sh` and `. ./path/state-utils.sh`
+      if (/(?:^|\bsource\b\s+|\.\s+)\S*state-utils\.sh/m.test(content)) {
+        violators.push(file.replace(repoRoot + '/', ''));
+      }
+    }
+
+    expect(
+      violators,
+      `These .sh files source state-utils.sh (deleted in #790 — use TypeScript state-utils.ts instead): ${violators.join(', ')}`,
+    ).toEqual([]);
   });
 });
