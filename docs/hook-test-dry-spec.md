@@ -204,6 +204,7 @@ bash .claude/kaizen/hooks/tests/run-all-tests.sh
 - Added 7 shared functions to `test-helpers.sh`: `setup_test_env`, `reset_state`, `cleanup_test_env`, `create_state`, `is_denied`, `is_blocked`, `backdate_file`, `setup_default_gh_mock`
 - Updated 7 test files to use shared helpers: `test-enforce-pr-review.sh`, `test-enforce-pr-review-tools.sh`, `test-enforce-pr-review-stop.sh`, `test-state-utils.sh`, `test-pr-review-loop.sh`, `test-review-enforcement-e2e.sh`, `test-integration-pr-lifecycle.sh`
 - Net change: +114 / -206 lines (92 lines removed)
+- **Note:** All 7 bash test files were later deleted during the TS hook migration (#801, #803, #809). The hooks they tested were migrated to TypeScript with vitest coverage.
 
 **Verification:** Baseline 321 pass / 14 fail → After refactoring 321 pass / 14 fail. Same failed files, same pre-existing failures. Zero regressions.
 

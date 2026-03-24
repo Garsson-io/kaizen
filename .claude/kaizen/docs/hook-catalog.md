@@ -36,13 +36,13 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 |------|-------|----------|---------|
 | `kaizen-enforce-worktree-writes.sh` | L3 | Yes (deny) | Blocks source edits in main checkout on main branch. |
 | `kaizen-enforce-case-exists.sh` | L2 | Yes (deny) | Blocks edits in worktrees without a kaizen case. Issue #94. |
-| `kaizen-enforce-pr-review-tools.sh` | L3 | Yes (deny) | **Gate**: Blocks Edit/Write during PR review. Issue #46. |
+| `kaizen-enforce-pr-review-ts.sh` → `enforce-pr-review.ts` | L3 | Yes (deny) | **Gate**: Blocks Edit/Write during PR review. Issue #775. |
 
 ## PreToolUse Hooks — Agent Matcher
 
 | Hook | Level | Blocking | Purpose |
 |------|-------|----------|---------|
-| `kaizen-enforce-pr-review-tools.sh` | L3 | Yes (deny) | Blocks Agent tool during PR review. |
+| `kaizen-enforce-pr-review-ts.sh` → `enforce-pr-review.ts` | L3 | Yes (deny) | Blocks Agent tool during PR review (except `kaizen-bg` subagent). Issue #775. |
 
 ## PostToolUse Hooks — Bash Matcher
 
