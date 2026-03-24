@@ -28,6 +28,24 @@ PRs already created in this batch (avoid overlapping work): {{prs}}
 {{contemplation_recommendations}}
 {{/contemplation_recommendations}}
 
+## External Research Phase
+
+Before running gap analysis, spend 5 minutes researching one external topic using WebSearch.
+Rotate through these focus areas based on run number ({{run_num}} mod 6):
+
+| run_num mod 6 | Topic |
+|---------------|-------|
+| 0 | "Claude Code skills ecosystem" — superpowers, awesome-claude-skills, Agent Skills standard |
+| 1 | "Autonomous coding agents" — Devin, SWE-agent, OpenHands, Codex CLI architectures |
+| 2 | "LLM observability platforms" — Langfuse, LangSmith, Arize Phoenix |
+| 3 | "Experiment frameworks for AI" — autoresearch, DSPy, prompt optimization |
+| 4 | "Agent architecture patterns" — hooks vs subagents, skill composition, multi-agent coordination |
+| 5 | "Recursive self-improvement" — LessWrong, alignment forum, research papers |
+
+Use WebSearch to find 2-3 relevant repos or articles for your assigned topic.
+For each discovery: assess relevance to kaizen. If high-relevance, file an issue
+with labels `source:ecosystem-research` and `kaizen`.
+
 ## Exploration Tasks
 
 Pick the highest-value exploration from this list:
@@ -42,11 +60,7 @@ Pick the highest-value exploration from this list:
 3. **Horizon blind spots**: Which horizons have no recent activity?
    Check `docs/horizons/README.md` and compare against recent issues/PRs.
 
-4. **External ecosystem**: Use WebSearch to find relevant repos, techniques, or tools
-   that could benefit the kaizen system. Look for agent frameworks, batch automation
-   patterns, or autonomous development approaches.
-
-5. **Issue backlog analysis**: Read the oldest 20 open issues. Are any obsolete?
+4. **Issue backlog analysis**: Read the oldest 20 open issues. Are any obsolete?
    Are there clusters that suggest an unnamed problem dimension?
 
 ## Output
