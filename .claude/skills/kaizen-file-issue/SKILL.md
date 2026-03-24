@@ -38,6 +38,8 @@ This skill prevents both by enforcing structure (incident → problem space → 
 ```bash
 KAIZEN_REPO=$(jq -r '.kaizen.repo' kaizen.config.json)
 HOST_REPO=$(jq -r '.host.repo' kaizen.config.json)
+ISSUES_REPO=$(jq -r '.issues.repo // .host.repo' kaizen.config.json)
+ISSUES_LABEL=$(jq -r '.issues.label // ""' kaizen.config.json)
 ```
 
 ### Step 1: Gather the incident

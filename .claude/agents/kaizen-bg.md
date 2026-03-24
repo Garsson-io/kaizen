@@ -14,8 +14,12 @@ Before running any commands, read the host configuration:
 ```bash
 KAIZEN_REPO=$(jq -r '.kaizen.repo' kaizen.config.json)
 HOST_REPO=$(jq -r '.host.repo' kaizen.config.json)
+ISSUES_REPO=$(jq -r '.issues.repo // .host.repo' kaizen.config.json)
+ISSUES_LABEL=$(jq -r '.issues.label // ""' kaizen.config.json)
 ```
-Use `$KAIZEN_REPO` for kaizen issue operations and `$HOST_REPO` for host project operations.
+Use `$ISSUES_REPO` for all kaizen issue operations (search, comment, create). When `$ISSUES_LABEL` is non-empty, add `--label "$ISSUES_LABEL"` to `gh issue list` commands.
+Use `$HOST_REPO` for PR operations.
+Use `$KAIZEN_REPO` only when explicitly filing meta-kaizen issues (issues about kaizen itself).
 You are a background kaizen reflection agent. Your job is to thoroughly reflect on the work that just completed and produce actionable improvements — while the main agent continues working.
 
 You have MORE TIME than inline reflection, so do a BETTER job:
@@ -89,11 +93,11 @@ For each piece of friction:
 For EACH impediment, search existing kaizen issues with multiple query strategies:
 ```bash
 # Search by keywords
-gh issue list --repo "$KAIZEN_REPO" --state open --search "<keywords>" --json number,title
+gh issue list --repo "$ISSUES_REPO" --state open --search "<keywords>" --json number,title
 # Search by related concepts
-gh issue list --repo "$KAIZEN_REPO" --state open --search "<alternative keywords>" --json number,title
+gh issue list --repo "$ISSUES_REPO" --state open --search "<alternative keywords>" --json number,title
 # Check the epic issues for related sub-issues
-gh issue list --repo "$KAIZEN_REPO" --state open --label "epic" --json number,title
+gh issue list --repo "$ISSUES_REPO" --state open --label "epic" --json number,title
 ```
 
 Finding an existing issue and adding an incident comment is MORE VALUABLE than filing a new issue. Duplicate issues fragment evidence and make prioritization harder.
@@ -102,14 +106,14 @@ Finding an existing issue and adding an incident comment is MORE VALUABLE than f
 For each impediment:
 - **Match found** → Add an incident comment to the existing issue (THIS IS THE HIGHEST-VALUE ACTION):
   ```bash
-  gh issue comment {N} --repo "$KAIZEN_REPO" --body "## Incident ($(date +%Y-%m-%d))
+  gh issue comment {N} --repo "$ISSUES_REPO" --body "## Incident ($(date +%Y-%m-%d))
   **PR/Context:** {PR_URL}
   **Impact:** [time wasted | blocked | wrong output]
   **Details:** [what happened, why it matters]"
   ```
 - **No match** → File a new kaizen issue with REQUIRED labels:
   ```bash
-  gh issue create --repo "$KAIZEN_REPO" \
+  gh issue create --repo "$ISSUES_REPO" \
     --title "[LN] description" \
     --label "kaizen,level-{N},area/{subsystem}" \
     --body "..."
@@ -136,19 +140,19 @@ Before reporting results, run these aggregate queries and include the answers in
 
 ```bash
 # How many open issues have zero incident comments?
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 200 --json number,comments \
+gh issue list --repo "$ISSUES_REPO" --state open --limit 200 --json number,comments \
   --jq '[.[] | select((.comments | length) == 0 or (.comments | map(.body) | join(" ") | test("## Incident") | not))] | length'
 
 # Label coverage: how many open issues are missing required labels (kaizen + level + area)?
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 200 --json number,title,labels \
+gh issue list --repo "$ISSUES_REPO" --state open --limit 200 --json number,title,labels \
   --jq '[.[] | select((.labels | map(.name) | (any(test("^kaizen$")) and any(test("^level-")) and any(test("^area/"))) | not))] | {count: length, issues: [.[:5][] | "\(.number): \(.title)"]}'
 
 # Issue velocity: how many issues were filed in the last 7 days vs closed?
-gh issue list --repo "$KAIZEN_REPO" --state all --limit 200 --json number,state,createdAt,closedAt \
+gh issue list --repo "$ISSUES_REPO" --state all --limit 200 --json number,state,createdAt,closedAt \
   --jq '{filed_7d: [.[] | select(.createdAt > (now - 604800 | strftime("%Y-%m-%dT%H:%M:%SZ")))] | length, closed_7d: [.[] | select(.closedAt != null and .closedAt > (now - 604800 | strftime("%Y-%m-%dT%H:%M:%SZ")))] | length}'
 
 # Horizon distribution: open issues per horizon
-gh issue list --repo "$KAIZEN_REPO" --state open --limit 200 --json number,labels \
+gh issue list --repo "$ISSUES_REPO" --state open --limit 200 --json number,labels \
   --jq '[.[].labels[].name | select(startswith("horizon/"))] | group_by(.) | map({horizon: .[0], count: length}) | sort_by(-.count)'
 ```
 
@@ -176,7 +180,7 @@ The kaizen system currently has zero recorded incidents across all issues, makin
 3. If you genuinely cannot find friction in the current PR, look at the **aggregate health data** from step 6 — unlabeled issues, stale epics, and missing horizons are all valid incidents against meta-level kaizen issues (#235, #237).
 4. Record the incident using the standard format:
    ```bash
-   gh issue comment {N} --repo "$KAIZEN_REPO" --body "## Incident ($(date +%Y-%m-%d))
+   gh issue comment {N} --repo "$ISSUES_REPO" --body "## Incident ($(date +%Y-%m-%d))
    **PR/Context:** {PR_URL}
    **Impact:** [time wasted | blocked | wrong output | data gap]
    **Details:** [what happened, why it matters]"
