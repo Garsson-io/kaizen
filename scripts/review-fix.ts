@@ -22,8 +22,8 @@
  * --dry-run: review only, print the fix prompt, don't spawn fix session
  */
 
-import { spawnSync, execSync } from 'node:child_process';
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { spawn as asyncSpawn, spawnSync, execSync } from 'node:child_process';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   reviewBattery,
@@ -46,6 +46,10 @@ interface ReviewFixState {
   currentRound: number;
   totalCostUsd: number;
   startedAt: string;
+  /** Current phase within a round */
+  phase: 'needs_review' | 'needs_fix' | 'fix_running' | 'done';
+  /** Active fix session (when phase is fix_running) */
+  activeFix?: { pid: number; logFile: string; promptFile: string };
   rounds: Array<{
     round: number;
     phase: 'review' | 'fix' | 'done';
@@ -229,42 +233,89 @@ Be surgical. Fix gaps, don't refactor. Minimum viable fix for each finding.`;
 
 // ── Fix session ─────────────────────────────────────────────────────
 
-function spawnFix(prompt: string): { success: boolean; costUsd: number; output: string } {
-  // Pass prompt via stdin to avoid shell argument length limits
-  const result = spawnSync('claude', [
-    '-p',
-    '--output-format', 'json',
-    '--dangerously-skip-permissions',
-    '--model', 'sonnet',
+/**
+ * Launch a fix session as a detached background process.
+ * Returns immediately with the PID and log path.
+ * The caller should save these to state and exit.
+ * On --resume, call checkFixResult() to see if it's done.
+ */
+function launchFix(prompt: string, logDir: string, round: number): { pid: number; logFile: string; promptFile: string } {
+  const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+  const promptFile = join(logDir, `fix-round${round}-${timestamp}.prompt.txt`);
+  const logFile = join(logDir, `fix-round${round}-${timestamp}.log`);
+
+  writeFileSync(promptFile, prompt);
+
+  // Spawn claude as a detached process — survives parent exit
+  const out = openSync(logFile, 'w');
+  const err = openSync(logFile + '.stderr', 'w');
+
+  const child = asyncSpawn('bash', [
+    '-c',
+    `cat "${promptFile}" | claude -p --output-format json --dangerously-skip-permissions --model sonnet`,
   ], {
-    input: prompt,
-    encoding: 'utf8',
-    timeout: 600_000,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    detached: true,
+    stdio: ['pipe', out, err],
   });
 
-  if (result.error) {
-    console.log(`  Fix spawn error: ${result.error.message}`);
-    return { success: false, costUsd: 0, output: '' };
-  }
-  if (result.stderr) {
-    console.log(`  Fix stderr: ${result.stderr.slice(0, 200)}`);
-  }
-  if (result.status !== 0) {
-    console.log(`  Fix exit code: ${result.status}`);
-    console.log(`  Fix stdout (first 200): ${(result.stdout ?? '').slice(0, 200)}`);
+  child.unref();
+  const pid = child.pid ?? 0;
+
+  // Write a PID file for monitoring
+  writeFileSync(logFile + '.pid', String(pid));
+
+  console.log(`  Fix session launched (detached)`);
+  console.log(`  PID: ${pid}`);
+  console.log(`  Prompt: ${promptFile}`);
+  console.log(`  Log: ${logFile}`);
+  console.log(`  Monitor: tail -f ${logFile}`);
+
+  return { pid, logFile, promptFile };
+}
+
+/**
+ * Check if a detached fix session has completed.
+ * Returns null if still running, or the result if done.
+ */
+function checkFixResult(logFile: string, pid: number): { done: boolean; success: boolean; costUsd: number; output: string } {
+  // Check if process is still running
+  let running = false;
+  try {
+    process.kill(pid, 0); // signal 0 = check if alive
+    running = true;
+  } catch {
+    running = false;
   }
 
+  if (!existsSync(logFile)) {
+    return { done: !running, success: false, costUsd: 0, output: '' };
+  }
+
+  const stdout = readFileSync(logFile, 'utf8');
+
+  // If process is still running and no result yet, it's in progress
+  if (running && stdout.trim().length === 0) {
+    return { done: false, success: false, costUsd: 0, output: '' };
+  }
+
+  // Try to parse JSON result (claude -p --output-format json writes one JSON object)
   let costUsd = 0, output = '';
   try {
-    const parsed = JSON.parse(result.stdout);
+    const parsed = JSON.parse(stdout.trim());
     output = parsed.result ?? '';
     costUsd = parsed.cost_usd ?? parsed.total_cost_usd ?? 0;
+    return { done: true, success: true, costUsd, output };
   } catch {
-    output = result.stdout ?? '';
+    // Not valid JSON — either still running or failed
+    if (running) {
+      return { done: false, success: false, costUsd: 0, output: '' };
+    }
+    // Process exited but no valid JSON — failure
+    const stderrFile = logFile + '.stderr';
+    const stderr = existsSync(stderrFile) ? readFileSync(stderrFile, 'utf8').slice(0, 500) : '';
+    console.log(`  Fix stderr: ${stderr}`);
+    return { done: true, success: false, costUsd: 0, output: stdout.slice(0, 500) };
   }
-
-  return { success: result.status === 0, costUsd, output };
 }
 
 // ── Main ────────────────────────────────────────────────────────────
@@ -278,7 +329,8 @@ function main() {
   const existing = loadState(opts.prUrl);
   if (opts.resume && existing && !existing.outcome) {
     state = existing;
-    console.log(`\n=== review-fix: RESUMING from round ${state.currentRound} ===`);
+    console.log(`\n=== review-fix: RESUMING ===`);
+    console.log(`  Phase: ${state.phase} | Round: ${state.currentRound}`);
     console.log(`  Previous cost: $${state.totalCostUsd.toFixed(2)} | Rounds completed: ${state.rounds.length}`);
   } else {
     state = {
@@ -290,21 +342,60 @@ function main() {
       currentRound: 1,
       totalCostUsd: 0,
       startedAt: new Date().toISOString(),
+      phase: 'needs_review',
       rounds: [],
     };
   }
 
   console.log(`\n=== review-fix: ${opts.prUrl} vs #${opts.issueNum} ===\n`);
 
+  const statePath = join(stateDir(), stateKey(opts.prUrl) + '.json');
   const ctx = prefetch(opts.prUrl, opts.issueNum, opts.repo);
   state.prBranch = ctx.prBranch;
   state.isMerged = ctx.isMerged;
   saveState(state);
-  console.log(`  State: ${join(stateDir(), stateKey(opts.prUrl) + '.json')}`);
+  console.log(`  State: ${statePath}`);
   console.log('');
 
+  // ── Check if a fix session is still running ──
+  if (state.phase === 'fix_running' && state.activeFix) {
+    const { pid, logFile } = state.activeFix;
+    console.log(`--- Checking fix session (PID ${pid}) ---`);
+    const result = checkFixResult(logFile, pid);
+
+    if (!result.done) {
+      console.log(`  Fix session still running (PID ${pid})`);
+      console.log(`  Monitor: tail -f ${logFile}`);
+      console.log(`  Re-run with --resume to check again.`);
+      finish(state, startTime);
+      return;
+    }
+
+    // Fix session completed
+    state.totalCostUsd += result.costUsd;
+    console.log(`  Fix session completed | Cost: $${result.costUsd.toFixed(2)} | Success: ${result.success}`);
+    state.rounds.push({
+      round: state.currentRound, phase: 'fix',
+      verdict: result.success ? 'fixed' : 'fix_failed',
+      gaps: 0, reviewCost: 0, fixCost: result.costUsd,
+    });
+    state.activeFix = undefined;
+
+    if (result.success) {
+      state.currentRound++;
+      state.phase = 'needs_review';
+    } else {
+      state.phase = 'needs_review'; // retry review anyway — maybe partial fixes landed
+      state.currentRound++;
+    }
+    saveState(state);
+  }
+
+  // ── Main review-fix loop ──
   for (let round = state.currentRound; round <= opts.maxRounds; round++) {
     state.currentRound = round;
+    state.phase = 'needs_review';
+    saveState(state);
 
     // ── REVIEW ──
     console.log(`--- Round ${round}/${opts.maxRounds}: REVIEW ---`);
@@ -329,7 +420,7 @@ function main() {
 
     // ── REVIEW FAILED? ──
     if (battery.dimensions.length === 0) {
-      console.log('  Review produced no results (timeout or parse failure). Retrying...');
+      console.log('  Review failed (timeout or parse). Run with --resume to retry.');
       state.rounds.push({ round, phase: 'review', verdict: 'review_failed', gaps: -1, reviewCost: battery.costUsd, fixCost: 0 });
       saveState(state);
       continue;
@@ -347,6 +438,7 @@ function main() {
       console.log(`\n=== PASS after ${round} round(s) ===\n`);
       console.log(formatBatteryReport(battery));
       state.outcome = 'pass';
+      state.phase = 'done';
       saveState(state);
       finish(state, startTime);
       return;
@@ -356,6 +448,7 @@ function main() {
     if (state.totalCostUsd >= opts.budgetCap) {
       console.log(`\nBudget exceeded ($${state.totalCostUsd.toFixed(2)} >= $${opts.budgetCap})`);
       state.outcome = 'budget_exceeded';
+      state.phase = 'done';
       saveState(state);
       finish(state, startTime);
       return;
@@ -366,6 +459,7 @@ function main() {
       console.log('\n--dry-run: showing fix prompt, not executing\n');
       console.log(buildFixPrompt(opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged));
       state.outcome = 'dry_run';
+      state.phase = 'done';
       saveState(state);
       finish(state, startTime);
       return;
@@ -376,36 +470,27 @@ function main() {
       console.log(`\nMax rounds (${opts.maxRounds}) reached with ${gaps.length} remaining gaps`);
       console.log(formatBatteryReport(battery));
       state.outcome = 'max_rounds';
+      state.phase = 'done';
       saveState(state);
       finish(state, startTime);
       return;
     }
 
-    // ── FIX ──
-    console.log(`\n--- Round ${round}/${opts.maxRounds}: FIX (${gaps.length} gaps) ---`);
+    // ── LAUNCH FIX (detached) ──
+    console.log(`\n--- Round ${round}/${opts.maxRounds}: LAUNCHING FIX (${gaps.length} gaps) ---`);
     const fixPrompt = buildFixPrompt(
       opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged,
     );
-    const fix = spawnFix(fixPrompt);
-    state.totalCostUsd += fix.costUsd;
-
-    console.log(`  Fix cost: $${fix.costUsd.toFixed(2)} | Success: ${fix.success}`);
-    state.rounds.push({
-      round, phase: 'fix', verdict: fix.success ? 'fixed' : 'fix_failed',
-      gaps: gaps.length, reviewCost: battery.costUsd, fixCost: fix.costUsd,
-    });
-    state.currentRound = round + 1; // Next round starts at review
+    const fixInfo = launchFix(fixPrompt, stateDir(), round);
+    state.phase = 'fix_running';
+    state.activeFix = fixInfo;
     saveState(state);
 
-    if (!fix.success) {
-      console.log('Fix session failed. Run with --resume to retry.');
-      state.outcome = 'fix_failed';
-      saveState(state);
-      finish(state, startTime);
-      return;
-    }
-
-    console.log('Fix session done. Re-reviewing...\n');
+    console.log(`\n  Fix session is running in the background.`);
+    console.log(`  Run \`tail -f ${fixInfo.logFile}\` to observe.`);
+    console.log(`  Run \`npx tsx scripts/review-fix.ts --pr ${opts.prUrl} --issue ${opts.issueNum} --repo ${opts.repo} --resume\` when done.`);
+    finish(state, startTime);
+    return;
   }
 }
 
