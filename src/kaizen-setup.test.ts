@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { tmpdir } from "os";
 import { rmSync } from "fs";
+import { fileURLToPath } from "url";
 import {
   detectInstall,
   generateConfig,
   scaffoldPolicies,
   verifySetup,
+  verifyPluginContract,
 } from "./kaizen-setup.js";
 
 let tempDir: string;
@@ -159,5 +161,131 @@ describe("verifySetup", () => {
     const result = verifySetup(tempDir);
     const check = result.checks.find(c => c.name === "claudemd-kaizen");
     expect(check?.ok).toBe(false);
+  });
+
+  it("includes plugin contract checks when pluginRoot is provided", () => {
+    const pluginRoot = join(tempDir, "plugin");
+    mkdirSync(join(pluginRoot, ".claude-plugin"), { recursive: true });
+    mkdirSync(join(pluginRoot, ".claude", "hooks"), { recursive: true });
+    mkdirSync(join(pluginRoot, ".claude", "skills", "my-skill"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".claude", "hooks", "my-hook.sh"), "#!/bin/bash\nexit 0");
+    writeFileSync(join(pluginRoot, ".claude", "skills", "my-skill", "SKILL.md"), "# My Skill");
+    writeFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), JSON.stringify({
+      skills: "./.claude/skills/",
+      hooks: {
+        PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/my-hook.sh" }] }],
+      },
+    }));
+
+    writeFileSync(join(tempDir, "kaizen.config.json"), JSON.stringify({ host: { name: "p", repo: "o/r" }, kaizen: { repo: "g/k" } }));
+    mkdirSync(join(tempDir, ".claude", "kaizen"), { recursive: true });
+    writeFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "# Policies");
+    writeFileSync(join(tempDir, "CLAUDE.md"), "# kaizen");
+
+    const result = verifySetup(tempDir, { pluginRoot });
+    expect(result.status).toBe("ok");
+    expect(result.checks.some(c => c.name.startsWith("hook-"))).toBe(true);
+    expect(result.checks.some(c => c.name.startsWith("skill-"))).toBe(true);
+    expect(result.checks.some(c => c.name.startsWith("matcher-"))).toBe(true);
+  });
+});
+
+describe("verifyPluginContract", () => {
+  it("returns failure when plugin.json is missing", () => {
+    const result = verifyPluginContract(tempDir);
+    expect(result.hookPaths).toHaveLength(1);
+    expect(result.hookPaths[0].ok).toBe(false);
+    expect(result.hookPaths[0].detail).toContain("not found");
+  });
+
+  it("returns failure for invalid plugin.json", () => {
+    mkdirSync(join(tempDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(join(tempDir, ".claude-plugin", "plugin.json"), "not json");
+    const result = verifyPluginContract(tempDir);
+    expect(result.hookPaths).toHaveLength(1);
+    expect(result.hookPaths[0].ok).toBe(false);
+    expect(result.hookPaths[0].detail).toContain("invalid JSON");
+  });
+
+  it("validates hook command paths exist", () => {
+    mkdirSync(join(tempDir, ".claude-plugin"), { recursive: true });
+    mkdirSync(join(tempDir, ".claude", "hooks"), { recursive: true });
+    writeFileSync(join(tempDir, ".claude", "hooks", "good-hook.sh"), "#!/bin/bash");
+    writeFileSync(join(tempDir, ".claude-plugin", "plugin.json"), JSON.stringify({
+      hooks: {
+        Stop: [{ hooks: [
+          { type: "command", command: "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/good-hook.sh" },
+          { type: "command", command: "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/missing-hook.sh" },
+        ] }],
+      },
+    }));
+
+    const result = verifyPluginContract(tempDir);
+    expect(result.hookPaths).toHaveLength(2);
+    expect(result.hookPaths[0].ok).toBe(true);
+    expect(result.hookPaths[1].ok).toBe(false);
+    expect(result.hookPaths[1].detail).toContain("missing");
+  });
+
+  it("validates skill directories contain SKILL.md", () => {
+    mkdirSync(join(tempDir, ".claude-plugin"), { recursive: true });
+    mkdirSync(join(tempDir, ".claude", "skills", "good-skill"), { recursive: true });
+    mkdirSync(join(tempDir, ".claude", "skills", "bad-skill"), { recursive: true });
+    writeFileSync(join(tempDir, ".claude", "skills", "good-skill", "SKILL.md"), "# Skill");
+    writeFileSync(join(tempDir, ".claude-plugin", "plugin.json"), JSON.stringify({
+      skills: "./.claude/skills/",
+      hooks: {},
+    }));
+
+    const result = verifyPluginContract(tempDir);
+    expect(result.skillDirs).toHaveLength(2);
+    const good = result.skillDirs.find(c => c.name === "skill-good-skill");
+    const bad = result.skillDirs.find(c => c.name === "skill-bad-skill");
+    expect(good?.ok).toBe(true);
+    expect(bad?.ok).toBe(false);
+    expect(bad?.detail).toContain("missing SKILL.md");
+  });
+
+  it("validates matcher regex patterns compile", () => {
+    mkdirSync(join(tempDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(join(tempDir, ".claude-plugin", "plugin.json"), JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          { matcher: "Bash|Edit", hooks: [] },
+          { matcher: "[invalid(regex", hooks: [] },
+        ],
+      },
+    }));
+
+    const result = verifyPluginContract(tempDir);
+    expect(result.matchers).toHaveLength(2);
+    expect(result.matchers[0].ok).toBe(true);
+    expect(result.matchers[1].ok).toBe(false);
+    expect(result.matchers[1].detail).toContain("invalid regex");
+  });
+
+  it("reports missing skills directory", () => {
+    mkdirSync(join(tempDir, ".claude-plugin"), { recursive: true });
+    writeFileSync(join(tempDir, ".claude-plugin", "plugin.json"), JSON.stringify({
+      skills: "./.claude/skills/",
+      hooks: {},
+    }));
+
+    const result = verifyPluginContract(tempDir);
+    expect(result.skillDirs).toHaveLength(1);
+    expect(result.skillDirs[0].ok).toBe(false);
+    expect(result.skillDirs[0].detail).toContain("not found");
+  });
+
+  it("validates the real kaizen plugin.json", () => {
+    const thisFile = fileURLToPath(import.meta.url);
+    const projectRoot = resolve(thisFile, "../..");
+    const result = verifyPluginContract(projectRoot);
+    const failedHooks = result.hookPaths.filter(c => !c.ok);
+    const failedSkills = result.skillDirs.filter(c => !c.ok);
+    const failedMatchers = result.matchers.filter(c => !c.ok);
+    expect(failedHooks).toEqual([]);
+    expect(failedSkills).toEqual([]);
+    expect(failedMatchers).toEqual([]);
   });
 });

@@ -14,7 +14,7 @@
  *   2. .claude/kaizen/policies-local.md — host-specific policies
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { parseArgs } from "util";
 
@@ -140,7 +140,86 @@ Add project-specific enforcement rules here.
   return { step: "scaffold", status: "ok", path };
 }
 
-export function verifySetup(cwd: string): VerifyResult {
+export interface PluginContractCheck {
+  hookPaths: VerifyCheck[];
+  skillDirs: VerifyCheck[];
+  matchers: VerifyCheck[];
+}
+
+export function verifyPluginContract(pluginRoot: string): PluginContractCheck {
+  const result: PluginContractCheck = { hookPaths: [], skillDirs: [], matchers: [] };
+  const pluginJsonPath = join(pluginRoot, ".claude-plugin", "plugin.json");
+
+  if (!existsSync(pluginJsonPath)) {
+    result.hookPaths.push({ name: "plugin-json", ok: false, detail: "plugin.json not found" });
+    return result;
+  }
+
+  let manifest: Record<string, unknown>;
+  try {
+    manifest = JSON.parse(readFileSync(pluginJsonPath, "utf-8"));
+  } catch {
+    result.hookPaths.push({ name: "plugin-json", ok: false, detail: "invalid JSON" });
+    return result;
+  }
+
+  // Validate hook command paths
+  const hooks = manifest.hooks as Record<string, unknown[]> | undefined;
+  if (hooks) {
+    for (const [event, entries] of Object.entries(hooks)) {
+      for (const entry of entries as Array<{ matcher?: string; hooks?: Array<{ command?: string }> }>) {
+        // Validate matcher regex
+        if (entry.matcher) {
+          try {
+            new RegExp(entry.matcher);
+            result.matchers.push({ name: `matcher-${event}`, ok: true, detail: entry.matcher });
+          } catch (e) {
+            result.matchers.push({ name: `matcher-${event}`, ok: false, detail: `invalid regex: ${entry.matcher} — ${e}` });
+          }
+        }
+
+        // Validate hook command paths
+        if (entry.hooks) {
+          for (const hook of entry.hooks) {
+            if (!hook.command) continue;
+            const resolved = hook.command.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pluginRoot);
+            const hookExists = existsSync(resolved);
+            result.hookPaths.push({
+              name: `hook-${event}`,
+              ok: hookExists,
+              detail: hookExists ? resolved : `missing: ${resolved}`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Validate skill directories
+  const skillsPath = manifest.skills as string | undefined;
+  if (skillsPath) {
+    const resolvedSkillsDir = join(pluginRoot, skillsPath);
+    if (existsSync(resolvedSkillsDir)) {
+      const entries = readdirSync(resolvedSkillsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const skillMdPath = join(resolvedSkillsDir, entry.name, "SKILL.md");
+        const hasSkillMd = existsSync(skillMdPath);
+        result.skillDirs.push({
+          name: `skill-${entry.name}`,
+          ok: hasSkillMd,
+          detail: hasSkillMd ? undefined : `missing SKILL.md in ${entry.name}`,
+        });
+      }
+    } else {
+      result.skillDirs.push({ name: "skills-dir", ok: false, detail: `skills directory not found: ${resolvedSkillsDir}` });
+    }
+  }
+
+  return result;
+}
+
+export function verifySetup(cwd: string, opts?: { pluginRoot?: string }): VerifyResult {
   const checks: VerifyCheck[] = [];
 
   // Config
@@ -183,6 +262,13 @@ export function verifySetup(cwd: string): VerifyResult {
     checks.push({ name: "claudemd-exists", ok: false, detail: "not found" });
   }
 
+  // Plugin contract validation
+  const pluginRoot = opts?.pluginRoot;
+  if (pluginRoot) {
+    const contract = verifyPluginContract(pluginRoot);
+    checks.push(...contract.hookPaths, ...contract.skillDirs, ...contract.matchers);
+  }
+
   const passed = checks.filter((c) => c.ok).length;
   const failed = checks.filter((c) => !c.ok).length;
 
@@ -206,6 +292,7 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       channel: { type: "string" },
       method: { type: "string" },
       cwd: { type: "string" },
+      "plugin-root": { type: "string" },
     },
     strict: false,
   }) as { values: Record<string, string | undefined> };
@@ -232,9 +319,11 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       console.log(JSON.stringify(scaffoldPolicies(cwd)));
       break;
 
-    case "verify":
-      console.log(JSON.stringify(verifySetup(cwd)));
+    case "verify": {
+      const pluginRoot = values["plugin-root"] ?? process.env.CLAUDE_PLUGIN_ROOT;
+      console.log(JSON.stringify(verifySetup(cwd, { pluginRoot })));
       break;
+    }
 
     default:
       console.error(`Unknown step: ${values.step}`);
