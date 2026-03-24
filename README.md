@@ -106,3 +106,4 @@ npm run test:hooks  # Run shell hook tests
 ## License
 
 MIT
+canary test
