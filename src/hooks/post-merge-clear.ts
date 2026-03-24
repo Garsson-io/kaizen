@@ -7,8 +7,8 @@
  *   1. Skill: /kaizen or /kaizen-reflect invoked → clear all post-merge gates
  *   2. Bash: gh pr view shows MERGED → promote awaiting_merge to needs_post_merge
  *
- * Replaces: .claude/hooks/kaizen-post-merge-clear.sh
  * Part of kAIzen Agent Control Flow — kaizen #786
+ * Bash predecessor deleted in #790.
  */
 
 import { execSync } from 'node:child_process';

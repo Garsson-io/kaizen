@@ -169,7 +169,7 @@ Read-only mounts, mandatory worktree launcher, protected wrappers. Use when huma
 - **Fields:** `PR_URL`, `ROUND`, `STATUS` (needs_review|passed|escalated), `BRANCH`
 - **Keyed by:** PR URL (not branch — PRs can target different repos)
 - **Staleness:** Files older than 2 hours are ignored
-- **Isolation:** `state-utils.sh` filters by BRANCH field matching current git branch
+- **Isolation:** `state-utils.ts` filters by BRANCH field matching current git branch
 
 ### PR creation / merge kaizen state (kaizen #57, #108)
 
@@ -194,7 +194,7 @@ Read-only mounts, mandatory worktree launcher, protected wrappers. Use when huma
 
 ### Cross-worktree isolation rule
 
-A hook running in worktree A must NEVER read, modify, or block based on state from worktree B. All state file iteration MUST go through `state-utils.sh` functions. Files without a BRANCH field are skipped.
+A hook running in worktree A must NEVER read, modify, or block based on state from worktree B. All state file iteration MUST go through `state-utils.ts` functions. Files without a BRANCH field are skipped.
 
 ## Relationship to the Cases System
 

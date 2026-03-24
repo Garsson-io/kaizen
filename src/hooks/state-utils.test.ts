@@ -156,7 +156,7 @@ describe('markReflectionDone / isReflectionDone', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Branch-scoped queries (kaizen #333 — parity with bash state-utils.sh)
+// Branch-scoped queries (kaizen #333)
 // ---------------------------------------------------------------------------
 
 describe('listStateFilesForCurrentWorktree', () => {
