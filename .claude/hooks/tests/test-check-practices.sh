@@ -86,7 +86,7 @@ assert_contains "shows interaction test for shell" "interaction" "$STDERR"
 echo ""
 echo "=== Hook changes show isolation practices ==="
 
-setup_git_diff_mock ".claude/hooks/kaizen-enforce-pr-review.sh"
+setup_git_diff_mock ".claude/hooks/kaizen-enforce-pr-review-ts.sh"
 
 STDERR=$(run_hook_stderr "$HOOK" "gh pr create --title 'test' --body 'stuff'")
 assert_contains "shows Worktree isolation for hooks" "isolation" "$STDERR"

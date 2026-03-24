@@ -64,9 +64,9 @@ MOCK
 chmod +x "$MOCK_DIR/gh"
 
 VERIFY="$HOOKS_DIR/kaizen-check-verification.sh"
-DIRTY="$HOOKS_DIR/kaizen-check-dirty-files.sh"
+DIRTY="$HOOKS_DIR/kaizen-check-dirty-files-ts.sh"
 ENFORCE_CASE="$HOOKS_DIR/kaizen-enforce-case-worktree.sh"
-PR_REVIEW="$HOOKS_DIR/kaizen-enforce-pr-review.sh"
+PR_REVIEW="$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh"
 PARSE_CMD="$HOOKS_DIR/lib/parse-command.sh"
 PR_LOOP="$HOOKS_DIR/kaizen-pr-review-loop.sh"
 require_file "$PR_LOOP" "hook migrated to TS" || exit 0

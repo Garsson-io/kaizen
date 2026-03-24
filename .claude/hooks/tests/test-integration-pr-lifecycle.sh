@@ -8,7 +8,7 @@
 #   4. gh pr merge → pr-review-loop cleans up → enforce-pr-review allows all
 #
 # INVARIANT: The PR review lifecycle transitions correctly across hooks.
-# SUT: kaizen-enforce-pr-review.sh + kaizen-pr-review-loop.sh interacting via state files.
+# SUT: kaizen-enforce-pr-review-ts.sh + kaizen-pr-review-loop.sh interacting via state files.
 
 set -u
 
@@ -22,7 +22,7 @@ mkdir -p "$STATE_DIR"
 export STATE_DIR
 export DEBUG_LOG="$HARNESS_TEMP/debug.log"
 
-ENFORCE="$HOOKS_DIR/kaizen-enforce-pr-review.sh"
+ENFORCE="$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh"
 LOOP="$HOOKS_DIR/kaizen-pr-review-loop.sh"
 require_file "$LOOP" "hook migrated to TS" || exit 0
 
@@ -80,7 +80,7 @@ else
   ls -la "$STATE_DIR/" 2>&1
 fi
 
-# PreToolUse: kaizen-enforce-pr-review.sh should now block non-review commands
+# PreToolUse: kaizen-enforce-pr-review-ts.sh should now block non-review commands
 run_pre_hook "npm test"
 if validate_deny_output "$HOOK_STDOUT"; then
   echo "  PASS: npm test blocked after PR create (gate active)"

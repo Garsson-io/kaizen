@@ -35,11 +35,11 @@ INPUT=$(build_pre_tool_use_input "Bash" '{"command":"npm test"}')
 
 # Run each hook individually to verify they all allow
 HOOKS=(
-  "$HOOKS_DIR/kaizen-enforce-pr-review.sh"
+  "$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh"
   "$HOOKS_DIR/kaizen-enforce-case-worktree.sh"
   "$HOOKS_DIR/kaizen-check-test-coverage.sh"
   "$HOOKS_DIR/kaizen-check-verification.sh"
-  "$HOOKS_DIR/kaizen-check-dirty-files.sh"
+  "$HOOKS_DIR/kaizen-check-dirty-files-ts.sh"
 )
 
 all_allow=true
@@ -108,11 +108,12 @@ for hook in "${HOOKS[@]}"; do
   fi
 done
 
-if [ ${#denying_hooks[@]} -eq 1 ] && [ "${denying_hooks[0]}" = "kaizen-check-dirty-files.sh" ]; then
-  echo "  PASS: only check-dirty-files denies git push with dirty files"
+# kaizen #775: git push is now WARN (not deny), so no hooks should deny
+if [ ${#denying_hooks[@]} -eq 0 ]; then
+  echo "  PASS: no hooks deny git push (push downgraded to warn — kaizen #775)"
   ((PASS++))
 else
-  echo "  FAIL: expected only check-dirty-files to deny"
+  echo "  FAIL: expected no denials for git push (kaizen #775 downgraded to warn)"
   echo "    denying hooks: ${denying_hooks[*]:-none}"
   ((FAIL++))
 fi
@@ -195,7 +196,7 @@ echo "=== Stdin isolation: parallel hooks each get their own copy ==="
 INPUT=$(build_pre_tool_use_input "Bash" '{"command":"gh pr create --title test --body \"## Verification\ntest\""}')
 
 outputs=()
-for hook in "$HOOKS_DIR/kaizen-enforce-pr-review.sh" "$HOOKS_DIR/kaizen-check-verification.sh"; do
+for hook in "$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh" "$HOOKS_DIR/kaizen-check-verification.sh"; do
   run_single_hook "$hook" "$INPUT" 10 "$(printf 'STATE_DIR=%s\nPATH=%s' "$STATE_DIR" "$MOCK_DIR:$PATH")"
   outputs+=("exit=$HOOK_EXIT")
 done

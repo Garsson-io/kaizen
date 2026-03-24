@@ -29,36 +29,15 @@ Everything in this directory is part of kAIzen. Components outside this director
 
 ### Claude Hooks (`hooks/`)
 
-These are registered in `.claude/settings.json` and fire on Claude Code tool-use events.
+Registered in `.claude-plugin/plugin.json` (all projects) and `.claude/settings.json` (kaizen repo only).
 
-| Hook | Event | Type | Blocks? | Purpose |
-|------|-------|------|---------|---------|
-| `check-wip.sh` | SessionStart | Advisory | No | Surface existing WIP at session start |
-| `enforce-pr-review.sh` | PreToolUse(Bash) | Gate | Yes | Block non-review commands during PR review |
-| `enforce-pr-review-tools.sh` | PreToolUse(Edit/Write/Agent) | Gate | Yes | Block editing/agents during PR review |
-| `enforce-pr-review-stop.sh` | Stop | Gate | Yes | Block agent from finishing with pending review |
-| `enforce-case-worktree.sh` | PreToolUse(Bash) | Advisory | No | Warn before commit/push outside worktree |
-| `enforce-worktree-writes.sh` | PreToolUse(Edit/Write) | Gate | Yes | Block source edits in main checkout |
-| `enforce-case-exists.sh` | PreToolUse(Edit/Write) | Gate | Yes | Block source edits in worktrees without a case |
-| `check-test-coverage.sh` | PreToolUse(Bash) | Advisory | No | Warn when source changes lack tests |
-| `check-verification.sh` | PreToolUse(Bash) | Advisory | No | Warn about missing verification section |
-| `check-dirty-files.sh` | PreToolUse(Bash) | Gate | Yes | Block push/PR create with dirty files |
-| `verify-before-stop.sh` | Stop | Gate | Yes (if fail) | Run tsc/vitest before agent finishes |
-| `check-cleanup-on-stop.sh` | Stop | Advisory | No | Warn about orphaned worktree state |
-| `pr-review-loop.sh` | PostToolUse(Bash) | State machine | No | Multi-round PR self-review with state tracking |
-| `kaizen-reflect.sh` | PostToolUse(Bash) | State machine | No | Trigger kaizen reflection; set `needs_pr_kaizen` state on PR create and merge |
-| `enforce-pr-kaizen.sh` | PreToolUse(Bash) | Gate | Yes | Block non-kaizen commands until kaizen action is complete |
-| `pr-kaizen-clear.sh` | PostToolUse(Bash) | State machine | No | Clear PR kaizen gate on `gh issue create` or `KAIZEN_NO_ACTION` |
-| `enforce-post-merge-stop.sh` | Stop | Gate | Yes | Block agent from finishing with pending post-merge workflow |
-| `post-merge-clear.sh` | PostToolUse(Bash,Skill) | State machine | No | Clear post-merge gate on /kaizen; promote awaiting_merge on merge confirmation |
+**See [`hook-catalog.md`](docs/hook-catalog.md) for the complete hook inventory** — every hook, event type, enforcement level, gate pattern, and TS migration status.
 
-### Shared Libraries (`hooks/lib/`)
-
-| Library | Purpose |
-|---------|---------|
-| `parse-command.sh` | Command parsing: heredoc stripping, `gh`/`git` subcommand detection, PR number extraction |
-| `state-utils.sh` | Worktree-scoped state isolation. All state file iteration MUST go through this library |
-| `send-telegram-ipc.sh` | Telegram message helper for escalation notifications |
+Key architectural points:
+- All enforcement logic is in **TypeScript** (bash shims are ~5-line trampolines)
+- **One unified stop gate** (`stop-gate.ts`) replaces 3 separate stop hooks (kaizen #775)
+- **KAIZEN_UNFINISHED** escape clears all gates — always available, can't deadlock
+- **Three gate types:** `needs_review`, `needs_pr_kaizen`, `needs_post_merge` — all enforced by PreToolUse + Stop hooks
 
 ### Test Infrastructure (`hooks/tests/`)
 
@@ -211,7 +190,7 @@ Read-only mounts, mandatory worktree launcher, protected wrappers. Use when huma
   1. `gh pr merge` → `pr-review-loop.sh` writes `needs_post_merge` (direct merge) or `awaiting_merge` (`--auto`)
   2. `gh pr view` confirms MERGED → `post-merge-clear.sh` promotes `awaiting_merge` to `needs_post_merge`
   3. Agent runs `/kaizen` → `post-merge-clear.sh` clears state
-  4. `enforce-post-merge-stop.sh` blocks Stop while `needs_post_merge` exists
+  4. `stop-gate.ts` blocks Stop while any gate exists (review, reflection, post-merge)
 
 ### Cross-worktree isolation rule
 

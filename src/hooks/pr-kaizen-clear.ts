@@ -23,11 +23,13 @@ import {
 import {
   DEFAULT_AUDIT_DIR,
   DEFAULT_STATE_DIR,
+  clearAllStatesWithStatus,
   clearStateWithStatusAnyBranch,
   findNewestStateWithStatusAnyBranch,
   markReflectionDone,
   prUrlToStateKey,
 } from './state-utils.js';
+import { handleUnfinishedEscape } from './lib/gate-manager.js';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -444,6 +446,31 @@ export function processHookInput(
   const cmdLine = stripHeredocBody(command);
   const stateDir =
     options.stateDir ?? process.env.STATE_DIR ?? DEFAULT_STATE_DIR;
+
+  // ── Trigger 0: KAIZEN_UNFINISHED (kaizen #775) ────────────────
+  // Check BEFORE the kaizen gate check — KAIZEN_UNFINISHED clears ALL gates
+  // (review, reflection, post-merge), even if no kaizen reflection gate exists.
+  if (/KAIZEN_UNFINISHED:/.test(cmdLine) || /KAIZEN_UNFINISHED:/.test(stdout)) {
+    const reasonMatch = (stdout || cmdLine).match(/KAIZEN_UNFINISHED:\s*(.*)/);
+    const reason = reasonMatch?.[1]?.trim().replace(/^['"]/, '').replace(/['"]$/, '').trim() || 'no reason given';
+
+    const branch = currentBranch();
+    const cleared = handleUnfinishedEscape(reason, branch, stateDir);
+
+    // Also clear any-branch kaizen gates in case of cross-worktree state
+    clearAllStatesWithStatus('needs_review', branch, stateDir);
+    clearAllStatesWithStatus('needs_pr_kaizen', branch, stateDir);
+    clearAllStatesWithStatus('needs_post_merge', branch, stateDir);
+
+    const itemList = cleared.map((g) => `  - ${g.label}`).join('\n');
+    const deferredMsg = cleared.length > 0
+      ? `\nDeferred ${cleared.length} item(s) — will show in next SessionStart:\n${itemList}\n`
+      : '';
+
+    logNoAction('unfinished-escape', reason, 'all-gates');
+
+    return `\nKAIZEN_UNFINISHED: All gates cleared. Reason: ${reason}${deferredMsg}\nYou may now stop.\n`;
+  }
 
   // Check for active kaizen gate
   const gateState = findNewestStateWithStatusAnyBranch(

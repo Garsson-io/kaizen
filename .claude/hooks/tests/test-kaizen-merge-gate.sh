@@ -176,13 +176,13 @@ MERGE_INPUT2=$(jq -n '{
 OUTPUT=$(echo "$MERGE_INPUT2" | IPC_DIR="$TEST_IPC_DIR" PATH="$MOCK_DIR_CUSTOM:$PATH" bash "$HOOK" 2>/dev/null)
 
 assert_contains "merge prompt mentions GATED" "GATED" "$OUTPUT"
-# Note: "BLOCKED" comes from kaizen-enforce-pr-reflect.sh (PreToolUse gate), not kaizen-reflect.sh (PostToolUse).
+# Note: "BLOCKED" comes from kaizen-enforce-pr-reflect-ts.sh (PreToolUse gate), not kaizen-reflect.sh (PostToolUse).
 # The SUT here is kaizen-reflect.sh which uses "GATED" vocabulary.
 assert_contains "merge prompt mentions KAIZEN_IMPEDIMENTS" "KAIZEN_IMPEDIMENTS" "$OUTPUT"
 assert_contains "merge prompt mentions KAIZEN_NO_ACTION" "KAIZEN_NO_ACTION" "$OUTPUT"
 
 echo ""
-echo "=== Existing kaizen-enforce-pr-reflect.sh blocks after merge gate set ==="
+echo "=== Existing kaizen-enforce-pr-reflect-ts.sh blocks after merge gate set ==="
 
 setup
 setup_gh_mock "Test PR"
@@ -199,8 +199,8 @@ MERGE_INPUT3=$(jq -n '{
 
 echo "$MERGE_INPUT3" | IPC_DIR="$TEST_IPC_DIR" PATH="$MOCK_DIR_CUSTOM:$PATH" bash "$HOOK" 2>/dev/null
 
-# Now verify kaizen-enforce-pr-reflect.sh blocks a non-kaizen command
-ENFORCE_HOOK="$(dirname "$0")/../kaizen-enforce-pr-reflect.sh"
+# Now verify kaizen-enforce-pr-reflect-ts.sh blocks a non-kaizen command
+ENFORCE_HOOK="$(dirname "$0")/../kaizen-enforce-pr-reflect-ts.sh"
 BLOCK_INPUT=$(jq -n '{"tool_input":{"command":"npm run build"}}')
 BLOCK_OUTPUT=$(echo "$BLOCK_INPUT" | PATH="$MOCK_DIR_CUSTOM:$PATH" bash "$ENFORCE_HOOK" 2>/dev/null)
 
