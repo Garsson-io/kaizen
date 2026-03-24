@@ -12,11 +12,12 @@
  * The test normalizes both to compare.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const HOOKS_LIB_DIR = join(__dirname, '../../.claude/hooks/lib');
+const HOOKS_DIR = join(__dirname, '../../.claude/hooks');
 const HOOKS_TS_DIR = __dirname;
 
 // Functions intentionally present in only one version.
@@ -147,5 +148,43 @@ describe('bash/TS shared library parity', () => {
         ).toBe(true);
       }
     });
+  });
+});
+
+describe('shell source lint', () => {
+  // state-utils.sh was deleted in kaizen #790. Any new bash hook that accidentally
+  // re-introduces `source state-utils.sh` would fail at runtime with a cryptic error.
+  // This lint catches it at CI time with a clear message. (#790 gap fix)
+  it('no .sh file sources state-utils.sh', () => {
+    const sourcePattern = /\bsource\s+.*state-utils\.sh|\.\s+.*state-utils\.sh/;
+
+    function collectShFiles(dir: string): string[] {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      const files: string[] = [];
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          files.push(...collectShFiles(join(dir, entry.name)));
+        } else if (entry.name.endsWith('.sh')) {
+          files.push(join(dir, entry.name));
+        }
+      }
+      return files;
+    }
+
+    const shFiles = collectShFiles(HOOKS_DIR);
+    const violators: string[] = [];
+
+    for (const filepath of shFiles) {
+      const content = readFileSync(filepath, 'utf-8');
+      if (sourcePattern.test(content)) {
+        violators.push(filepath);
+      }
+    }
+
+    expect(
+      violators,
+      `These .sh files source state-utils.sh, which was deleted in #790. ` +
+        `Use TS state functions (src/hooks/state-utils.ts) instead: ${violators.join(', ')}`,
+    ).toEqual([]);
   });
 });
