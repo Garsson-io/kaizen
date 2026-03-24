@@ -69,6 +69,7 @@ function runWrapper(
           STATE_DIR: tmpDir,
           AUDIT_DIR: path.join(tmpDir, 'audit'),
           IPC_DIR: path.join(tmpDir, 'ipc'),
+          HOOK_TIMING_SENTINEL_DISABLED: 'true',
           ...extraEnv,
         },
         stdio: ['pipe', 'pipe', 'pipe'],
