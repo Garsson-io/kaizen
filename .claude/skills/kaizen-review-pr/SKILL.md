@@ -131,8 +131,7 @@ Create these tasks at skill start using TaskCreate:
 
 **Hooks enforcing review:**
 - `pr-review-loop-ts.sh` — state machine tracking review rounds
-- `enforce-pr-review-ts.sh` → `enforce-pr-review.ts` — blocks non-review commands during review
-- `enforce-pr-review-tools.sh` — blocks edits during review phase
+- `enforce-pr-review-ts.sh` → `enforce-pr-review.ts` — blocks non-review commands, edits, and subagents during review
 - `kaizen-stop-gate.sh` → `stop-gate.ts` — unified stop gate (blocks stop with any pending gate)
 
 **What comes next:** After review is clean → merge (squash). After merge → `/kaizen-reflect` is mandatory (stop hook blocks without it). See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

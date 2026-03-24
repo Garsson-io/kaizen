@@ -24,7 +24,7 @@ PR Creation (gh pr create)
   │  pr-review-loop.ts (PostToolUse) writes STATUS=needs_review
   │  stop-gate.ts (Stop) — unified gate, blocks stop with ANY pending gate
   │  enforce-pr-review.ts (PreToolUse/Bash) blocks non-review commands
-  │  enforce-pr-review-tools.sh (PreToolUse/Edit|Write|Agent) blocks edits
+  │  enforce-pr-review.ts (PreToolUse/Edit|Write|Agent) also blocks edits and subagents
   │  ─── agent is FORCED to run gh pr diff and complete review ───
   │  Up to 4 rounds of review. If issues remain → escalate to human.
   ▼
@@ -204,13 +204,12 @@ Plain text output on stdout. Gets appended to tool result. Exit 0 always.
 
 ## The PR Review Enforcement System
 
-Four hooks working together (see [`hook-catalog.md`](hook-catalog.md) for full inventory):
+Three hooks working together (see [`hook-catalog.md`](hook-catalog.md) for full inventory):
 
 | Hook | Event | Role |
 |------|-------|------|
 | `pr-review-loop.ts` | PostToolUse (Bash) | State management: creates/updates/cleans state files |
-| `enforce-pr-review.ts` | PreToolUse (Bash) | Blocks non-review Bash commands when `needs_review` |
-| `enforce-pr-review-tools.sh` | PreToolUse (Edit\|Write, Agent) | Blocks file edits and subagents when `needs_review` |
+| `enforce-pr-review.ts` | PreToolUse (Bash, Edit\|Write, Agent) | Blocks non-review commands, file edits, and subagents when `needs_review` |
 | `stop-gate.ts` | Stop | Unified gate — blocks stop with ANY pending gate (review, reflection, post-merge) |
 
 The Stop hook is the **keystone** — without it, Claude can simply respond with text and stop, never triggering any PreToolUse hooks. The unified stop gate (kaizen #775) replaced 3 separate stop hooks with one that shows all pending items in a single rich message, with `KAIZEN_UNFINISHED` as a deadlock-proof escape.

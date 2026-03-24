@@ -33,50 +33,53 @@ TypeScript wins: already the primary language, established test framework, ~200m
 
 ### Bash — Appropriate (L1-L2)
 
-| Hook                         | Lines | Level | Notes                                |
-| ---------------------------- | ----- | ----- | ------------------------------------ |
-| `enforce-case-worktree.sh`   | 30    | L1    | Simple guard                         |
-| `check-cleanup-on-stop.sh`   | 40    | L1    | Advisory                             |
-| `enforce-post-merge-stop.sh` | 42    | L1    | State check                          |
-| `enforce-pr-review-stop.sh`  | 48    | L1    | State check                          |
-| `enforce-pr-review-tools.sh` | 59    | L1    | Guard                                |
-| `verify-before-stop.sh`      | 65    | L2    | Pattern match on compile/test output |
-| `enforce-worktree-writes.sh` | 78    | L2    | Path matching                        |
-| `pr-quality-checks.ts`      | 87    | L2    | Pattern match on PR body             |
-| `enforce-pr-review.sh`       | 90    | L2    | State + pattern                      |
-| `post-merge-clear.sh`        | 91    | L2    | State management                     |
-| `pr-quality-checks.ts`         | 116   | L2    | Category matching                    |
-| `pr-quality-checks.ts`     | 119   | L2    | File pair matching                   |
-| `check-dirty-files.sh`       | 120   | L2    | Status parsing                       |
-| `enforce-pr-kaizen.sh`       | 121   | L2    | State + pattern                      |
-| `pr-quality-checks.ts`       | 121   | L2    | Pattern warnings                     |
-| `check-wip.sh`               | 126   | L2    | Multi-source check                   |
-| `enforce-case-exists.sh`     | 138   | L2    | DB query + guard                     |
+| Hook                          | Lines | Level | Notes                                    |
+| ----------------------------- | ----- | ----- | ---------------------------------------- |
+| `enforce-case-worktree.sh`    | 41    | L1    | Simple guard — advisory only             |
+| `check-cleanup-on-stop.sh`    | 43    | L1    | Advisory worktree cleanup reminder       |
+| `verify-before-stop.sh`       | 43    | L1    | Advisory test/typecheck reminder         |
+| `capture-worktree-context.sh` | 69    | L1    | Writes `.worktree-context.json`          |
+| `block-git-rebase.sh`         | 78    | L2    | Command interception                     |
+| `pr-kaizen-clear-fallback.sh` | 81    | L2    | Fallback for clear gate edge cases       |
+| `enforce-worktree-writes.sh`  | 82    | L2    | Path matching                            |
+| `enforce-case-exists.sh`      | 114   | L2    | Git/case system integration              |
+| `search-before-file.sh`       | 122   | L2    | Regex matching, config parsing           |
+| `check-wip.sh`                | 145   | L2    | Multi-source WIP check                   |
 
 ### TypeScript — Migrated (L3-L4)
 
-| Hook                       | Lines (TS) | Level | Migration                                                  |
-| -------------------------- | ---------- | ----- | ---------------------------------------------------------- |
-| `kaizen-reflect.ts`        | ~250       | L3    | Migrated in kaizen #320. Wrapper: `kaizen-reflect-ts.sh`   |
+| Hook                     | Lines (TS) | Level | Migration                                                     |
+| ------------------------ | ---------- | ----- | ------------------------------------------------------------- |
+| `stop-gate.ts`           | 64         | L3    | Unified stop gate. #775. Wrapper: `kaizen-stop-gate.sh`       |
+| `session-cleanup.ts`     | 71         | L2    | Stale state cleanup. #786. Wrapper: `kaizen-session-cleanup-ts.sh` |
+| `enforce-pr-reflect.ts`  | 91         | L3    | Reflection gate enforcement. #775                             |
+| `bump-plugin-version.ts` | 97         | L1    | Auto-bumps version before PR. #775                            |
+| `post-merge-clear.ts`    | 121        | L2    | Clears post-merge gate. #786                                  |
+| `enforce-pr-review.ts`   | 135        | L3    | Blocks all tools during review (Bash, Edit, Write, Agent). #775 |
+| `check-dirty-files.ts`   | 192        | L3    | Dirty file check (block PR create, warn push). #775           |
+| `pr-review-loop.ts`      | 336        | L4    | Multi-round PR self-review state machine. #320                |
+| `kaizen-reflect.ts`      | 427        | L3    | Triggers reflection, sets gates, Telegram IPC. #320           |
+| `pr-quality-checks.ts`   | 438        | L2    | Consolidated PR quality advisories (#8, #10, #89, #210). #800 |
+| `pr-kaizen-clear.ts`     | 774        | L3    | Clears reflection gate on valid impediments JSON. #320        |
 
 ### Bash — Candidates for TypeScript Migration (L3-L4)
 
-| Hook/Script                | Lines | Level | Migration Signal                                           |
-| -------------------------- | ----- | ----- | ---------------------------------------------------------- |
-| `pr-kaizen-clear.sh`       | 290   | L3    | State machine, multi-line parsing, validation              |
-| `pr-review-loop.sh`        | 452   | L4    | Complex state machine, round tracking, multi-format output |
-| `scripts/worktree-du.sh`   | ~300  | L3    | Arithmetic, data aggregation, caused the incident          |
-| `scripts/run-all-tests.sh` | ~200  | L4    | Test runner, error classification, hand-rolled try/catch   |
+| Hook/Script              | Lines | Level | Migration Signal                                  |
+| ------------------------ | ----- | ----- | ------------------------------------------------- |
+| `scripts/worktree-du.sh` | ~300  | L3    | Arithmetic, data aggregation, caused an incident  |
 
-### Shared Libraries
+### Shared Bash Libraries
 
-| Library                              | Lines | Status                                     |
-| ------------------------------------ | ----- | ------------------------------------------ |
-| `hooks/lib/parse-command.sh`         | 167   | L2 — regex matching, appropriate for bash  |
-| `hooks/lib/state-utils.sh`           | 171   | L2 — file I/O + key derivation, borderline |
-| `hooks/lib/allowlist.sh`             | 73    | L2 — pattern matching, appropriate         |
-| `hooks/lib/send-telegram-ipc.sh`     | 45    | L1 — simple file write                     |
-| `hooks/lib/resolve-main-checkout.sh` | 10    | L1 — one-liner                             |
+| Library                        | Lines | Status                                    |
+| ------------------------------ | ----- | ----------------------------------------- |
+| `hooks/lib/read-config.sh`     | 36    | L1 — reads `kaizen.config.json`           |
+| `hooks/lib/input-utils.sh`     | 69    | L1 — `read_hook_input`, `get_command`     |
+| `hooks/lib/allowlist.sh`       | 74    | L2 — pattern matching, appropriate        |
+| `hooks/lib/hook-output.sh`     | 66    | L1 — `emit_deny`, `render_prompt`         |
+| `hooks/lib/scope-guard.sh`     | 79    | L1 — double-install protection            |
+| `hooks/lib/hook-telemetry.sh`  | 102   | L1 — telemetry reporting                  |
+| `hooks/lib/hook-timing-sentinel.sh` | 139 | L1 — performance monitoring            |
+| `hooks/lib/parse-command.sh`   | 181   | L2 — regex matching, appropriate for bash |
 
 ### TypeScript Shared Libraries (new)
 
@@ -98,19 +101,25 @@ TypeScript wins: already the primary language, established test framework, ~200m
 - [x] This document (`docs/hook-language-boundaries.md`)
 - [x] CLAUDE.md policy section
 
-### Phase 3: Migrate highest-value targets (DONE — kaizen #320)
+### Phase 3: Migrate highest-value targets (DONE)
 
-Priority order based on complexity, incident history, and test burden:
+All high-complexity hooks migrated across kaizen #320, #775, #786, #800:
 
-1. **`pr-review-loop.sh` (452 lines)** — **MIGRATED** → `src/hooks/pr-review-loop.ts` + vitest tests. Old bash deleted.
-2. **`pr-kaizen-clear.sh` (290 lines)** — **MIGRATED** → `src/hooks/pr-kaizen-clear.ts` + typed JSON validation. Old bash deleted.
-3. **`kaizen-reflect.sh` (197 lines)** — **MIGRATED** → `src/hooks/kaizen-reflect.ts` + Telegram IPC. Old bash deleted.
-4. **`worktree-du.sh` (~300 lines)** — Not yet migrated. Lower priority because bugs were fixed.
+1. **`pr-review-loop.sh` (452 lines)** — **MIGRATED** → `src/hooks/pr-review-loop.ts` (336 lines) + vitest tests.
+2. **`pr-kaizen-clear.sh` (290 lines)** — **MIGRATED** → `src/hooks/pr-kaizen-clear.ts` (774 lines) + typed JSON validation.
+3. **`kaizen-reflect.sh` (197 lines)** — **MIGRATED** → `src/hooks/kaizen-reflect.ts` (427 lines) + Telegram IPC.
+4. **`enforce-pr-review.sh` + `enforce-pr-review-tools.sh`** — **MIGRATED** → `src/hooks/enforce-pr-review.ts` (135 lines). Unified Bash/Edit/Write/Agent blocking.
+5. **`enforce-pr-kaizen.sh`** — **MIGRATED** → `src/hooks/enforce-pr-reflect.ts` (91 lines).
+6. **`check-dirty-files.sh`** — **MIGRATED** → `src/hooks/check-dirty-files.ts` (192 lines).
+7. **3 stop hooks consolidated** — **MIGRATED** → `src/hooks/stop-gate.ts` (64 lines) + `src/hooks/lib/gate-manager.ts`.
+8. **`post-merge-clear.sh`** — **MIGRATED** → `src/hooks/post-merge-clear.ts` (121 lines).
+9. **PR quality checks (4 hooks)** — **MIGRATED** → `src/hooks/pr-quality-checks.ts` (438 lines). Consolidated.
+10. **`worktree-du.sh` (~300 lines)** — Not yet migrated. Lower priority because bugs were fixed.
 
 Shared infrastructure created:
 - `src/hooks/hook-io.ts` — Stdin JSON parsing, git helpers, shell execution
 - `src/hooks/parse-command.ts` — Command parsing (port of lib/parse-command.sh)
-- `src/hooks/state-utils.ts` — State file management with atomic writes (port of lib/state-utils.sh)
+- `src/hooks/state-utils.ts` — State file management with atomic writes
 
 Migration approach per script:
 

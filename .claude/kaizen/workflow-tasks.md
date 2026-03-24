@@ -112,7 +112,6 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 **Hooks enforcing review:**
 - `pr-review-loop-ts.sh` — state machine tracking review rounds
 - `enforce-pr-review-ts.sh` → `enforce-pr-review.ts` — blocks non-review commands during review
-- `enforce-pr-review-tools.sh` — blocks edits during review phase
 - `kaizen-stop-gate.sh` → `stop-gate.ts` — unified stop gate (blocks stop with any pending gate)
 
 **What comes next:** After review is clean → merge. After merge → `/kaizen-reflect` is mandatory (stop hook blocks without it).
