@@ -41,6 +41,7 @@ import {
   classifyReflectionQuality,
   detectFixableFiledImpediments,
   detectPrdWithoutFiledIssues,
+  extractBgResults,
   formatReflectionComment,
   hasPrdFiles,
   matchesWaiverBlocklist,
@@ -1207,5 +1208,106 @@ describe('pr-kaizen-clear: KAIZEN_UNFINISHED escape', () => {
       postComment: () => {},
     });
     expect(result).toContain('no reason given');
+  });
+});
+
+// ── KAIZEN_BG_RESULTS tests (kaizen #794) ─────────────────────────────
+
+function bgResultsInput(resultsJson: string): object {
+  return {
+    tool_name: 'Bash',
+    tool_input: { command: `echo 'KAIZEN_BG_RESULTS: ${resultsJson}'` },
+    tool_response: {
+      stdout: `KAIZEN_BG_RESULTS: ${resultsJson}`,
+      stderr: '',
+      exit_code: '0',
+    },
+  };
+}
+
+describe('extractBgResults', () => {
+  it('extracts JSON from KAIZEN_BG_RESULTS tag', () => {
+    const json = JSON.stringify([
+      { impediment: 'slow tests', disposition: 'filed', ref: '#100' },
+    ]);
+    const result = extractBgResults(`KAIZEN_BG_RESULTS: ${json}`, '');
+    expect(result.json).toEqual([
+      { impediment: 'slow tests', disposition: 'filed', ref: '#100' },
+    ]);
+  });
+
+  it('returns null when no KAIZEN_BG_RESULTS tag present', () => {
+    const result = extractBgResults('some other output', '');
+    expect(result.json).toBeNull();
+  });
+
+  it('handles empty array with reason', () => {
+    const result = extractBgResults(
+      'KAIZEN_BG_RESULTS: [] no friction observed',
+      '',
+    );
+    expect(result.json).toEqual([]);
+    expect(result.emptyReason).toBe('no friction observed');
+  });
+});
+
+describe('pr-kaizen-clear: KAIZEN_BG_RESULTS trigger', () => {
+  it('clears gate with valid bg results', () => {
+    const json = JSON.stringify([
+      { impediment: 'slow tests', disposition: 'filed', ref: '#100' },
+    ]);
+    const result = processHookInput(bgResultsInput(json), {
+      stateDir: testStateDir,
+      postComment: () => {},
+    });
+    expect(result).toContain('kaizen-bg agent');
+    expect(result).toContain('gate cleared');
+    expect(gateExists()).toBe(false);
+  });
+
+  it('rejects invalid bg results', () => {
+    const json = JSON.stringify([
+      { impediment: 'missing disposition' },
+    ]);
+    const result = processHookInput(bgResultsInput(json), {
+      stateDir: testStateDir,
+      postComment: () => {},
+    });
+    expect(result).toContain('Validation failed');
+    expect(gateExists()).toBe(true);
+  });
+
+  it('clears gate with empty bg results and reason', () => {
+    const result = processHookInput(
+      bgResultsInput('[] no friction observed'),
+      {
+        stateDir: testStateDir,
+        postComment: () => {},
+      },
+    );
+    expect(result).toContain('gate cleared');
+    expect(gateExists()).toBe(false);
+  });
+
+  it('rejects empty bg results without reason', () => {
+    const result = processHookInput(bgResultsInput('[]'), {
+      stateDir: testStateDir,
+      postComment: () => {},
+    });
+    expect(result).toContain('Empty array requires a reason');
+    expect(gateExists()).toBe(true);
+  });
+
+  it('does not trigger when no gate is active', () => {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kaizen-clear-test-'));
+    const json = JSON.stringify([
+      { impediment: 'test', disposition: 'filed', ref: '#1' },
+    ]);
+    const result = processHookInput(bgResultsInput(json), {
+      stateDir: testStateDir,
+      postComment: () => {},
+    });
+    expect(result).toBeNull();
   });
 });

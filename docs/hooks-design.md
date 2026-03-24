@@ -40,6 +40,46 @@ Gates are the primary control flow mechanism:
 
 This creates a "you must do X before you can do Y" enforcement.
 
+### Kaizen Reflection Flow (kaizen #794)
+
+The reflection gate uses the gate pattern with a subagent for automated issue filing:
+
+```mermaid
+sequenceDiagram
+    participant Agent as Main Agent
+    participant Hook1 as kaizen-reflect.ts<br/>(PostToolUse)
+    participant Gate as State File<br/>(needs_pr_kaizen)
+    participant Hook2 as enforce-pr-reflect.ts<br/>(PreToolUse)
+    participant BG as kaizen-bg<br/>(subagent)
+    participant Hook3 as pr-kaizen-clear.ts<br/>(PostToolUse)
+
+    Agent->>Agent: gh pr create/merge
+    Hook1->>Gate: Write state file
+    Hook1-->>Agent: "Spawn kaizen-bg subagent"
+
+    Note over Agent,Hook2: Agent is now GATED
+
+    Agent->>Agent: Any non-allowlisted command
+    Hook2->>Hook2: Check gate → DENY
+
+    Agent->>BG: Agent tool (foreground for create,<br/>background for merge)
+    BG->>BG: Analyze transcript
+    BG->>BG: Search existing issues
+    BG->>BG: File issues / add incidents
+    BG->>BG: echo 'KAIZEN_IMPEDIMENTS: [...]'
+    Hook3->>Hook3: Validate JSON
+    Hook3->>Gate: Clear state file
+    Hook3-->>BG: "Gate cleared"
+
+    Note over Agent,Hook2: Agent is now UNGATED
+```
+
+Key design decisions:
+- **PR create**: subagent runs in foreground (agent is fully gated, nothing else to do)
+- **PR merge**: subagent runs in background (agent can do allowlisted post-merge steps: main sync, deploy)
+- **kaizen-bg echoes KAIZEN_IMPEDIMENTS directly** — gate clears mechanistically without main agent relaying results (kaizen #794)
+- **KAIZEN_BG_RESULTS** accepted as alternate trigger format (fallback)
+
 ## Writing Hooks
 
 ### Language Boundaries

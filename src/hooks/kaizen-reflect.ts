@@ -194,14 +194,14 @@ export function generateCreateReflection(
 ): string {
   return `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔄 KAIZEN REFLECTION — Post-PR Creation (background)
+🔄 KAIZEN REFLECTION — Post-PR Creation
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Launch a background kaizen-bg subagent to handle reflection while you continue working.
+You are GATED — spawn a kaizen-bg subagent to handle reflection. It will clear the gate
+automatically by echoing KAIZEN_IMPEDIMENTS as its final step (kaizen #794).
 
 **Use the Agent tool** with these parameters:
 - subagent_type: "kaizen-bg"
-- run_in_background: true
 - prompt: Include this context:
   - Event: PR created
   - PR URL: ${prUrl}
@@ -217,34 +217,20 @@ ${transcriptInstruction(transcriptPath)}
     New issues MUST have labels: kaizen + level-N + area/{subsystem}.
     See docs/issue-taxonomy.md for the full policy.
 
-The kaizen-bg subagent will search for duplicate issues, file incidents, and
-create new kaizen issues as needed. It will report results back to you.
-
-**When the subagent completes**, use its results to clear the gate:
+⛔ You are GATED until the subagent clears the gate. Manual fallback:
 
 \`\`\`bash
 echo 'KAIZEN_IMPEDIMENTS:' && cat <<'IMPEDIMENTS'
 [
   {"impediment": "description", "disposition": "filed", "ref": "#NNN"},
-  {"impediment": "description", "disposition": "incident", "ref": "#NNN"},
-  {"impediment": "description", "disposition": "fixed-in-pr"},
-  {"finding": "description of unlocked improvement", "type": "positive", "disposition": "no-action", "reason": "compound improvement unlocked by this work"}
+  {"impediment": "description", "disposition": "fixed-in-pr"}
 ]
 IMPEDIMENTS
 \`\`\`
 
-If the subagent found no impediments: \`echo 'KAIZEN_IMPEDIMENTS: []'\`
+If no impediments: \`echo 'KAIZEN_IMPEDIMENTS: [] straightforward bug fix'\`
 
-⛔ You are GATED until you submit a valid KAIZEN_IMPEDIMENTS declaration.
-Allowed commands: gh issue/pr, gh api, gh run, git read-only, ls/cat.
-
-⚠️ **"Waived" disposition is eliminated (kaizen #198).** Every impediment must be
-filed (\`disposition: "filed"\`) or fixed in this PR (\`disposition: "fixed-in-pr"\`).
-If something is not real friction, reclassify as \`type: "positive"\` with \`disposition: "no-action"\`.
-When in doubt, file — it takes 2 minutes; implementation is a separate decision.
-
-For trivial changes (typo, formatting, docs-only), you may also use:
-  \`echo 'KAIZEN_NO_ACTION [docs-only]: updated README formatting'\`
+For trivial changes: \`echo 'KAIZEN_NO_ACTION [docs-only]: reason'\`
 Valid categories: docs-only, formatting, typo, config-only, test-only, trivial-refactor
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `;
@@ -260,11 +246,12 @@ export function generateMergeReflection(
 ): string {
   return `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔄 KAIZEN REFLECTION — Post-Merge (background)
+🔄 KAIZEN REFLECTION — Post-Merge
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Launch a background kaizen-bg subagent to handle reflection while you continue
-with post-merge steps (deploy verification, main sync, case closure).
+Spawn a kaizen-bg subagent **in background** to handle reflection while you complete
+post-merge steps. It will clear the gate automatically by echoing KAIZEN_IMPEDIMENTS
+as its final step (kaizen #794).
 
 **Use the Agent tool** with these parameters:
 - subagent_type: "kaizen-bg"
@@ -285,37 +272,23 @@ ${transcriptInstruction(transcriptPath)}
     New issues MUST have labels: kaizen + level-N + area/{subsystem}.
     See docs/issue-taxonomy.md for the full policy.
 
-The kaizen-bg subagent will search for duplicate issues, file incidents, and
-create new kaizen issues as needed. It will report results back to you.
-
-**When the subagent completes**, use its results to clear the gate:
+⛔ You are GATED until the subagent clears the gate. Manual fallback:
 
 \`\`\`bash
 echo 'KAIZEN_IMPEDIMENTS:' && cat <<'IMPEDIMENTS'
 [
   {"impediment": "description", "disposition": "filed", "ref": "#NNN"},
-  {"impediment": "description", "disposition": "incident", "ref": "#NNN"},
-  {"impediment": "description", "disposition": "fixed-in-pr"},
-  {"finding": "description of unlocked improvement", "type": "positive", "disposition": "no-action", "reason": "compound improvement unlocked by this work"}
+  {"impediment": "description", "disposition": "fixed-in-pr"}
 ]
 IMPEDIMENTS
 \`\`\`
 
-If the subagent found no impediments: \`echo 'KAIZEN_IMPEDIMENTS: []'\`
+If no impediments: \`echo 'KAIZEN_IMPEDIMENTS: [] straightforward bug fix'\`
 
-⛔ You are GATED until you submit a valid KAIZEN_IMPEDIMENTS declaration.
-Allowed commands: gh issue/pr, gh api, gh run, git read-only, ls/cat.
-
-⚠️ **"Waived" disposition is eliminated (kaizen #198).** Every impediment must be
-filed (\`disposition: "filed"\`) or fixed in this PR (\`disposition: "fixed-in-pr"\`).
-If something is not real friction, reclassify as \`type: "positive"\` with \`disposition: "no-action"\`.
-When in doubt, file — it takes 2 minutes; implementation is a separate decision.
-
-For trivial changes (typo, formatting, docs-only), you may also use:
-  \`echo 'KAIZEN_NO_ACTION [docs-only]: updated README formatting'\`
+For trivial changes: \`echo 'KAIZEN_NO_ACTION [docs-only]: reason'\`
 Valid categories: docs-only, formatting, typo, config-only, test-only, trivial-refactor
 
-**Also complete post-merge steps** (these are NOT delegated to the subagent):
+**Also complete post-merge steps** (while the subagent runs reflection):
 - Follow Post-Merge deployment procedure in CLAUDE.md
 - Sync main: \`git -C ${mainCheckout} fetch origin main && git -C ${mainCheckout} merge --ff-only origin/main\`
 - Close resolved kaizen issues
