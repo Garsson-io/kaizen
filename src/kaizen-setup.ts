@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { execSync } from "child_process";
 import { join } from "path";
 import { parseArgs } from "util";
+import { loadAllSkillMetadata, validateSkillDependencies, validateSkillVersions } from "./skill-metadata.js";
 
 // ── Types ──
 
@@ -268,6 +269,48 @@ export function verifySetup(cwd: string, opts?: { pluginRoot?: string }): Verify
   if (pluginRoot) {
     const contract = verifyPluginContract(pluginRoot);
     checks.push(...contract.hookPaths, ...contract.skillDirs, ...contract.matchers);
+
+    // Skill metadata validation
+    const pluginJsonPath = join(pluginRoot, ".claude-plugin", "plugin.json");
+    const skillsPath = existsSync(pluginJsonPath)
+      ? (JSON.parse(readFileSync(pluginJsonPath, "utf-8")).skills as string | undefined)
+      : undefined;
+
+    if (skillsPath) {
+      const skillsDir = join(pluginRoot, skillsPath);
+      const skills = loadAllSkillMetadata(skillsDir);
+
+      const depIssues = validateSkillDependencies(skills);
+      for (const issue of depIssues) {
+        checks.push({
+          name: `skill-dep-${issue.skill}`,
+          ok: false,
+          detail: `missing dependency: ${issue.missing_dependency}`,
+        });
+      }
+      if (depIssues.length === 0 && skills.size > 0) {
+        checks.push({ name: "skill-dependencies", ok: true });
+      }
+
+      let pluginVersion: string | undefined;
+      try {
+        pluginVersion = JSON.parse(readFileSync(pluginJsonPath, "utf-8")).version as string;
+      } catch { /* ignore */ }
+
+      if (pluginVersion) {
+        const versionIssues = validateSkillVersions(skills, pluginVersion);
+        for (const issue of versionIssues) {
+          checks.push({
+            name: `skill-version-${issue.skill}`,
+            ok: false,
+            detail: `requires ${issue.min_version}, plugin is ${issue.current_version}`,
+          });
+        }
+        if (versionIssues.length === 0 && skills.size > 0) {
+          checks.push({ name: "skill-versions", ok: true });
+        }
+      }
+    }
   }
 
   const passed = checks.filter((c) => c.ok).length;

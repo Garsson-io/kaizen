@@ -351,3 +351,91 @@ describe("postUpdateValidate", () => {
     expect(result.checks[0].output!.length).toBeLessThanOrEqual(500);
   });
 });
+
+describe("verifySetup — skill metadata validation", () => {
+  it("detects missing skill dependencies", () => {
+    const pluginRoot = join(tempDir, "plugin");
+    mkdirSync(join(pluginRoot, ".claude-plugin"), { recursive: true });
+    mkdirSync(join(pluginRoot, ".claude", "skills", "skill-a"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".claude", "skills", "skill-a", "SKILL.md"), `---
+name: skill-a
+description: A skill
+depends_on: [skill-b]
+---
+# Skill A`);
+    writeFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), JSON.stringify({
+      version: "1.0.78",
+      skills: "./.claude/skills/",
+      hooks: {},
+    }));
+
+    writeFileSync(join(tempDir, "kaizen.config.json"), JSON.stringify({ host: { name: "p", repo: "o/r" }, kaizen: { repo: "g/k" } }));
+    mkdirSync(join(tempDir, ".claude", "kaizen"), { recursive: true });
+    writeFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "# Policies");
+    writeFileSync(join(tempDir, "CLAUDE.md"), "# kaizen");
+
+    const result = verifySetup(tempDir, { pluginRoot });
+    const depCheck = result.checks.find(c => c.name === "skill-dep-skill-a");
+    expect(depCheck).toBeDefined();
+    expect(depCheck!.ok).toBe(false);
+    expect(depCheck!.detail).toContain("skill-b");
+  });
+
+  it("passes when skill dependencies are satisfied", () => {
+    const pluginRoot = join(tempDir, "plugin");
+    mkdirSync(join(pluginRoot, ".claude-plugin"), { recursive: true });
+    mkdirSync(join(pluginRoot, ".claude", "skills", "skill-a"), { recursive: true });
+    mkdirSync(join(pluginRoot, ".claude", "skills", "skill-b"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".claude", "skills", "skill-a", "SKILL.md"), `---
+name: skill-a
+description: A
+depends_on: [skill-b]
+---`);
+    writeFileSync(join(pluginRoot, ".claude", "skills", "skill-b", "SKILL.md"), `---
+name: skill-b
+description: B
+---`);
+    writeFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), JSON.stringify({
+      version: "1.0.78",
+      skills: "./.claude/skills/",
+      hooks: {},
+    }));
+
+    writeFileSync(join(tempDir, "kaizen.config.json"), JSON.stringify({ host: { name: "p", repo: "o/r" }, kaizen: { repo: "g/k" } }));
+    mkdirSync(join(tempDir, ".claude", "kaizen"), { recursive: true });
+    writeFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "# Policies");
+    writeFileSync(join(tempDir, "CLAUDE.md"), "# kaizen");
+
+    const result = verifySetup(tempDir, { pluginRoot });
+    const depCheck = result.checks.find(c => c.name === "skill-dependencies");
+    expect(depCheck).toBeDefined();
+    expect(depCheck!.ok).toBe(true);
+  });
+
+  it("detects incompatible skill versions", () => {
+    const pluginRoot = join(tempDir, "plugin");
+    mkdirSync(join(pluginRoot, ".claude-plugin"), { recursive: true });
+    mkdirSync(join(pluginRoot, ".claude", "skills", "future-skill"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".claude", "skills", "future-skill", "SKILL.md"), `---
+name: future-skill
+description: Needs newer version
+min_version: "2.0.0"
+---`);
+    writeFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), JSON.stringify({
+      version: "1.0.78",
+      skills: "./.claude/skills/",
+      hooks: {},
+    }));
+
+    writeFileSync(join(tempDir, "kaizen.config.json"), JSON.stringify({ host: { name: "p", repo: "o/r" }, kaizen: { repo: "g/k" } }));
+    mkdirSync(join(tempDir, ".claude", "kaizen"), { recursive: true });
+    writeFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "# Policies");
+    writeFileSync(join(tempDir, "CLAUDE.md"), "# kaizen");
+
+    const result = verifySetup(tempDir, { pluginRoot });
+    const versionCheck = result.checks.find(c => c.name === "skill-version-future-skill");
+    expect(versionCheck).toBeDefined();
+    expect(versionCheck!.ok).toBe(false);
+    expect(versionCheck!.detail).toContain("2.0.0");
+  });
+});
