@@ -104,17 +104,19 @@ export function isStateForCurrentWorktree(
   const age = now - mtime;
   if (age > maxAge) return false;
 
+  // If we can't determine the current branch, skip all state files (kaizen #786).
+  // Without a branch, we can't scope — fail closed to prevent cross-session contamination.
+  if (!currentBranch) return false;
+
   // Read and parse
   const content = readFileSync(filepath, 'utf-8');
   const state = parseStateFile(content);
 
-  // Skip state files from other branches
-  if (state.BRANCH && currentBranch && state.BRANCH !== currentBranch) {
-    return false;
-  }
-
   // Skip legacy state files without BRANCH
   if (!state.BRANCH) return false;
+
+  // Skip state files from other branches
+  if (state.BRANCH !== currentBranch) return false;
 
   return true;
 }

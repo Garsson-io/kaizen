@@ -397,3 +397,54 @@ describe('findNewestStateWithStatusAnyBranch', () => {
     ).toBeNull();
   });
 });
+
+// Cross-session isolation (kaizen #786)
+describe('cross-session isolation — empty branch fails closed', () => {
+  it('listStateFilesForCurrentWorktree returns nothing when branch is empty', () => {
+    writeStateFile(TEST_STATE_DIR, 'state-1', {
+      PR_URL: 'url1',
+      STATUS: 'needs_review',
+      BRANCH: 'some-branch',
+    });
+    const files = listStateFilesForCurrentWorktree('', TEST_STATE_DIR);
+    expect(files).toEqual([]);
+  });
+
+  it('findStateWithStatus returns null when branch is empty', () => {
+    writeStateFile(TEST_STATE_DIR, 'state-1', {
+      PR_URL: 'url1',
+      STATUS: 'needs_review',
+      BRANCH: 'some-branch',
+    });
+    expect(findStateWithStatus('needs_review', '', TEST_STATE_DIR)).toBeNull();
+  });
+
+  it('findAllStatesWithStatus returns empty when branch is empty', () => {
+    writeStateFile(TEST_STATE_DIR, 'state-1', {
+      PR_URL: 'url1',
+      STATUS: 'needs_review',
+      BRANCH: 'some-branch',
+    });
+    expect(findAllStatesWithStatus('needs_review', '', TEST_STATE_DIR)).toEqual([]);
+  });
+
+  it('clearAllStatesWithStatus clears nothing when branch is empty', () => {
+    writeStateFile(TEST_STATE_DIR, 'state-1', {
+      PR_URL: 'url1',
+      STATUS: 'needs_review',
+      BRANCH: 'some-branch',
+    });
+    expect(clearAllStatesWithStatus('needs_review', '', TEST_STATE_DIR)).toBe(0);
+    expect(existsSync(join(TEST_STATE_DIR, 'state-1'))).toBe(true);
+  });
+
+  it('different branch never matches (strict equality)', () => {
+    writeStateFile(TEST_STATE_DIR, 'state-1', {
+      PR_URL: 'url1',
+      STATUS: 'needs_post_merge',
+      BRANCH: 'worktree-session-A',
+    });
+    const files = listStateFilesForCurrentWorktree('worktree-session-B', TEST_STATE_DIR);
+    expect(files).toEqual([]);
+  });
+});

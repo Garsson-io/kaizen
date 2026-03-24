@@ -31,7 +31,7 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-session-cleanup.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-session-cleanup-ts.sh",
             "timeout": 15
           }
         ]
@@ -43,7 +43,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-bump-plugin-version-ts.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-ts.sh",
             "timeout": 10
           },
           {
@@ -63,12 +68,12 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-dirty-files.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-dirty-files-ts.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-reflect.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-reflect-ts.sh",
             "timeout": 10
           },
           {
@@ -140,13 +145,18 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-post-merge-clear.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-post-merge-clear-ts.sh",
             "timeout": 10
           },
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/pr-kaizen-clear-ts.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-pr-kaizen-clear-fallback.sh",
+            "timeout": 5
           },
           {
             "type": "command",
@@ -160,7 +170,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-post-merge-clear.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-post-merge-clear-ts.sh",
             "timeout": 10
           }
         ]
@@ -171,13 +181,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-stop.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-post-merge-stop.sh",
-            "timeout": 10
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-stop-gate.sh",
+            "timeout": 15
           },
           {
             "type": "command",
@@ -187,11 +192,6 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-cleanup-on-stop.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-reflect-stop.sh",
             "timeout": 10
           }
         ]

@@ -10,7 +10,7 @@
           },
           {
             "type": "command",
-            "command": "./.claude/hooks/kaizen-session-cleanup.sh",
+            "command": "./.claude/hooks/kaizen-session-cleanup-ts.sh",
             "timeout": 15
           }
         ]
@@ -119,7 +119,7 @@
           },
           {
             "type": "command",
-            "command": "./.claude/hooks/kaizen-post-merge-clear.sh",
+            "command": "./.claude/hooks/kaizen-post-merge-clear-ts.sh",
             "timeout": 10
           },
           {
@@ -144,7 +144,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./.claude/hooks/kaizen-post-merge-clear.sh",
+            "command": "./.claude/hooks/kaizen-post-merge-clear-ts.sh",
             "timeout": 10
           }
         ]
