@@ -23,6 +23,8 @@
  */
 
 import { spawnSync, execSync } from 'node:child_process';
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   reviewBattery,
   formatBatteryReport,
@@ -33,6 +35,58 @@ import {
   type ReviewFinding,
 } from '../src/review-battery.js';
 
+// ── State persistence ───────────────────────────────────────────────
+
+interface ReviewFixState {
+  prUrl: string;
+  issueNum: string;
+  repo: string;
+  maxRounds: number;
+  budgetCap: number;
+  currentRound: number;
+  totalCostUsd: number;
+  startedAt: string;
+  rounds: Array<{
+    round: number;
+    phase: 'review' | 'fix' | 'done';
+    verdict: string;
+    gaps: number;
+    reviewCost: number;
+    fixCost: number;
+    findings?: ReviewFinding[];
+  }>;
+  outcome?: string;
+  prBranch?: string;
+  isMerged?: boolean;
+}
+
+function stateDir(): string {
+  const dir = join(process.cwd(), '.claude', 'review-fix');
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function stateKey(prUrl: string): string {
+  // Extract PR number from URL
+  const m = prUrl.match(/\/pull\/(\d+)/);
+  return m ? `pr-${m[1]}` : prUrl.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+function loadState(prUrl: string): ReviewFixState | null {
+  const path = join(stateDir(), `${stateKey(prUrl)}.json`);
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveState(state: ReviewFixState): void {
+  const path = join(stateDir(), `${stateKey(state.prUrl)}.json`);
+  writeFileSync(path, JSON.stringify(state, null, 2));
+}
+
 // ── CLI ─────────────────────────────────────────────────────────────
 
 interface CliArgs {
@@ -42,12 +96,13 @@ interface CliArgs {
   dryRun: boolean;
   maxRounds: number;
   budgetCap: number;
+  resume: boolean;
 }
 
 function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
   let prUrl = '', issueNum = '', repo = '';
-  let dryRun = false, maxRounds = MAX_FIX_ROUNDS, budgetCap = BUDGET_CAP_USD;
+  let dryRun = false, resume = false, maxRounds = MAX_FIX_ROUNDS, budgetCap = BUDGET_CAP_USD;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -55,6 +110,7 @@ function parseArgs(): CliArgs {
       case '--issue': issueNum = args[++i] ?? ''; break;
       case '--repo': repo = args[++i] ?? ''; break;
       case '--dry-run': dryRun = true; break;
+      case '--resume': resume = true; break;
       case '--max-rounds': maxRounds = parseInt(args[++i] ?? '3', 10); break;
       case '--budget': budgetCap = parseFloat(args[++i] ?? '2'); break;
     }
@@ -68,8 +124,12 @@ Usage:
 
 Options:
   --dry-run       Review only, show fix prompt, don't execute
+  --resume        Resume from last saved state (skips completed rounds)
   --max-rounds N  Max review-fix rounds (default: ${MAX_FIX_ROUNDS})
   --budget N      Budget cap in USD (default: ${BUDGET_CAP_USD})
+
+State is saved to .claude/review-fix/pr-<N>.json after each phase.
+Use --resume to pick up where you left off after a crash/timeout.
 
 Example:
   npx tsx scripts/review-fix.ts \\
@@ -78,7 +138,7 @@ Example:
     process.exit(1);
   }
 
-  return { prUrl, issueNum, repo, dryRun, maxRounds, budgetCap };
+  return { prUrl, issueNum, repo, dryRun, maxRounds, budgetCap, resume };
 }
 
 // ── Pre-fetch context ───────────────────────────────────────────────
@@ -170,16 +230,30 @@ Be surgical. Fix gaps, don't refactor. Minimum viable fix for each finding.`;
 // ── Fix session ─────────────────────────────────────────────────────
 
 function spawnFix(prompt: string): { success: boolean; costUsd: number; output: string } {
+  // Pass prompt via stdin to avoid shell argument length limits
   const result = spawnSync('claude', [
-    '-p', prompt,
+    '-p',
     '--output-format', 'json',
     '--dangerously-skip-permissions',
     '--model', 'sonnet',
   ], {
+    input: prompt,
     encoding: 'utf8',
     timeout: 600_000,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+
+  if (result.error) {
+    console.log(`  Fix spawn error: ${result.error.message}`);
+    return { success: false, costUsd: 0, output: '' };
+  }
+  if (result.stderr) {
+    console.log(`  Fix stderr: ${result.stderr.slice(0, 200)}`);
+  }
+  if (result.status !== 0) {
+    console.log(`  Fix exit code: ${result.status}`);
+    console.log(`  Fix stdout (first 200): ${(result.stdout ?? '').slice(0, 200)}`);
+  }
 
   let costUsd = 0, output = '';
   try {
@@ -187,7 +261,7 @@ function spawnFix(prompt: string): { success: boolean; costUsd: number; output: 
     output = parsed.result ?? '';
     costUsd = parsed.cost_usd ?? parsed.total_cost_usd ?? 0;
   } catch {
-    output = result.stdout;
+    output = result.stdout ?? '';
   }
 
   return { success: result.status === 0, costUsd, output };
@@ -197,16 +271,41 @@ function spawnFix(prompt: string): { success: boolean; costUsd: number; output: 
 
 function main() {
   const opts = parseArgs();
-  let totalCost = 0;
   const startTime = Date.now();
-  const rounds: Array<{ verdict: string; gaps: number; reviewCost: number; fixCost: number }> = [];
+
+  // Resume or start fresh
+  let state: ReviewFixState;
+  const existing = loadState(opts.prUrl);
+  if (opts.resume && existing && !existing.outcome) {
+    state = existing;
+    console.log(`\n=== review-fix: RESUMING from round ${state.currentRound} ===`);
+    console.log(`  Previous cost: $${state.totalCostUsd.toFixed(2)} | Rounds completed: ${state.rounds.length}`);
+  } else {
+    state = {
+      prUrl: opts.prUrl,
+      issueNum: opts.issueNum,
+      repo: opts.repo,
+      maxRounds: opts.maxRounds,
+      budgetCap: opts.budgetCap,
+      currentRound: 1,
+      totalCostUsd: 0,
+      startedAt: new Date().toISOString(),
+      rounds: [],
+    };
+  }
 
   console.log(`\n=== review-fix: ${opts.prUrl} vs #${opts.issueNum} ===\n`);
 
   const ctx = prefetch(opts.prUrl, opts.issueNum, opts.repo);
+  state.prBranch = ctx.prBranch;
+  state.isMerged = ctx.isMerged;
+  saveState(state);
+  console.log(`  State: ${join(stateDir(), stateKey(opts.prUrl) + '.json')}`);
   console.log('');
 
-  for (let round = 1; round <= opts.maxRounds; round++) {
+  for (let round = state.currentRound; round <= opts.maxRounds; round++) {
+    state.currentRound = round;
+
     // ── REVIEW ──
     console.log(`--- Round ${round}/${opts.maxRounds}: REVIEW ---`);
 
@@ -215,10 +314,10 @@ function main() {
       prUrl: opts.prUrl,
       issueNum: opts.issueNum,
       repo: opts.repo,
-      timeoutMs: 120_000,
+      timeoutMs: 180_000,
     });
 
-    totalCost += battery.costUsd;
+    state.totalCostUsd += battery.costUsd;
     const allFindings = battery.dimensions.flatMap(d => d.findings);
     const gaps = allFindings.filter(f => f.status !== 'DONE');
 
@@ -228,38 +327,57 @@ function main() {
       console.log(`  ${icon}: ${f.requirement}`);
     }
 
+    // ── REVIEW FAILED? ──
+    if (battery.dimensions.length === 0) {
+      console.log('  Review produced no results (timeout or parse failure). Retrying...');
+      state.rounds.push({ round, phase: 'review', verdict: 'review_failed', gaps: -1, reviewCost: battery.costUsd, fixCost: 0 });
+      saveState(state);
+      continue;
+    }
+
+    state.rounds.push({
+      round, phase: 'review', verdict: battery.verdict,
+      gaps: gaps.length, reviewCost: battery.costUsd, fixCost: 0,
+      findings: allFindings,
+    });
+    saveState(state);
+
     // ── PASS? ──
     if (battery.verdict === 'pass') {
-      rounds.push({ verdict: 'pass', gaps: 0, reviewCost: battery.costUsd, fixCost: 0 });
       console.log(`\n=== PASS after ${round} round(s) ===\n`);
       console.log(formatBatteryReport(battery));
-      finish(rounds, totalCost, startTime, 'pass');
+      state.outcome = 'pass';
+      saveState(state);
+      finish(state, startTime);
       return;
     }
 
     // ── BUDGET? ──
-    if (totalCost >= opts.budgetCap) {
-      rounds.push({ verdict: 'budget', gaps: gaps.length, reviewCost: battery.costUsd, fixCost: 0 });
-      console.log(`\nBudget exceeded ($${totalCost.toFixed(2)} >= $${opts.budgetCap})`);
-      finish(rounds, totalCost, startTime, 'budget_exceeded');
+    if (state.totalCostUsd >= opts.budgetCap) {
+      console.log(`\nBudget exceeded ($${state.totalCostUsd.toFixed(2)} >= $${opts.budgetCap})`);
+      state.outcome = 'budget_exceeded';
+      saveState(state);
+      finish(state, startTime);
       return;
     }
 
     // ── DRY RUN? ──
     if (opts.dryRun) {
-      rounds.push({ verdict: 'dry_run', gaps: gaps.length, reviewCost: battery.costUsd, fixCost: 0 });
       console.log('\n--dry-run: showing fix prompt, not executing\n');
       console.log(buildFixPrompt(opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged));
-      finish(rounds, totalCost, startTime, 'dry_run');
+      state.outcome = 'dry_run';
+      saveState(state);
+      finish(state, startTime);
       return;
     }
 
     // ── LAST ROUND? ──
     if (round === opts.maxRounds) {
-      rounds.push({ verdict: 'max_rounds', gaps: gaps.length, reviewCost: battery.costUsd, fixCost: 0 });
       console.log(`\nMax rounds (${opts.maxRounds}) reached with ${gaps.length} remaining gaps`);
       console.log(formatBatteryReport(battery));
-      finish(rounds, totalCost, startTime, 'max_rounds');
+      state.outcome = 'max_rounds';
+      saveState(state);
+      finish(state, startTime);
       return;
     }
 
@@ -269,14 +387,21 @@ function main() {
       opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged,
     );
     const fix = spawnFix(fixPrompt);
-    totalCost += fix.costUsd;
+    state.totalCostUsd += fix.costUsd;
 
     console.log(`  Fix cost: $${fix.costUsd.toFixed(2)} | Success: ${fix.success}`);
-    rounds.push({ verdict: 'fixed', gaps: gaps.length, reviewCost: battery.costUsd, fixCost: fix.costUsd });
+    state.rounds.push({
+      round, phase: 'fix', verdict: fix.success ? 'fixed' : 'fix_failed',
+      gaps: gaps.length, reviewCost: battery.costUsd, fixCost: fix.costUsd,
+    });
+    state.currentRound = round + 1; // Next round starts at review
+    saveState(state);
 
     if (!fix.success) {
-      console.log('Fix session failed. Stopping.');
-      finish(rounds, totalCost, startTime, 'fix_failed');
+      console.log('Fix session failed. Run with --resume to retry.');
+      state.outcome = 'fix_failed';
+      saveState(state);
+      finish(state, startTime);
       return;
     }
 
@@ -284,26 +409,22 @@ function main() {
   }
 }
 
-function finish(
-  rounds: Array<{ verdict: string; gaps: number; reviewCost: number; fixCost: number }>,
-  totalCost: number,
-  startTime: number,
-  outcome: string,
-) {
+function finish(state: ReviewFixState, startTime: number) {
   const duration = ((Date.now() - startTime) / 1000).toFixed(0);
   console.log(`\n=== review-fix summary ===`);
-  console.log(`Outcome: ${outcome}`);
-  console.log(`Rounds: ${rounds.length}`);
-  console.log(`Total cost: $${totalCost.toFixed(2)}`);
+  console.log(`Outcome: ${state.outcome}`);
+  console.log(`Rounds: ${state.rounds.length}`);
+  console.log(`Total cost: $${state.totalCostUsd.toFixed(2)}`);
   console.log(`Duration: ${duration}s`);
+  console.log(`State: ${join(stateDir(), stateKey(state.prUrl) + '.json')}`);
   console.log('');
-  console.log('| Round | Verdict | Gaps | Review$ | Fix$ |');
-  console.log('|-------|---------|------|---------|------|');
-  for (const [i, r] of rounds.entries()) {
-    console.log(`| ${i + 1} | ${r.verdict} | ${r.gaps} | $${r.reviewCost.toFixed(2)} | $${r.fixCost.toFixed(2)} |`);
+  console.log('| Round | Phase | Verdict | Gaps | Review$ | Fix$ |');
+  console.log('|-------|-------|---------|------|---------|------|');
+  for (const r of state.rounds) {
+    console.log(`| ${r.round} | ${r.phase} | ${r.verdict} | ${r.gaps} | $${r.reviewCost.toFixed(2)} | $${r.fixCost.toFixed(2)} |`);
   }
 
-  process.exit(outcome === 'pass' ? 0 : 1);
+  process.exit(state.outcome === 'pass' ? 0 : 1);
 }
 
 main();

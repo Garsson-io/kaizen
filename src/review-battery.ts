@@ -243,11 +243,12 @@ export function spawnReview(opts: SpawnReviewOptions): { review: DimensionReview
 
   const start = Date.now();
   const result = spawnSync('claude', [
-    '-p', prompt,
+    '-p',
     '--output-format', 'json',
     '--dangerously-skip-permissions',
     '--model', 'sonnet',
   ], {
+    input: prompt,
     encoding: 'utf8',
     cwd: opts.cwd,
     timeout: opts.timeoutMs ?? 120_000,
