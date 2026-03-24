@@ -93,6 +93,17 @@ git log --oneline -10
 
 Report what changed to the user.
 
+
+## Step 7: Restart notice
+
+**IMPORTANT:** Tell the user they must restart Claude Code for skill changes to take effect.
+
+Claude Code loads plugin skills into memory at session start. Updating files on disk does not cause a live reload. After the update completes, output this message:
+
+> **Update complete. Please restart Claude Code** (exit and re-launch) to pick up the new skill versions. Until you restart, skills will continue using the previous version's behavior.
+
+For plugin installs, this is especially important — the plugin cache is read once at startup.
+
 ## Workflow Tasks
 
 Create these tasks at skill start using TaskCreate:
@@ -103,5 +114,6 @@ Create these tasks at skill start using TaskCreate:
 | 2 | Install and re-setup | `npm install`, re-run symlinks/hooks (idempotent) |
 | 3 | Validate update | Run post-update-validate, abort if build/tests fail |
 | 4 | Show changelog | `git log --oneline -10`, report new skills |
+| 5 | Restart notice | Tell user to restart Claude Code for new skills to take effect |
 
 **What comes next:** Nothing — standalone update. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
