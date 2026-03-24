@@ -1,0 +1,386 @@
+/**
+ * review-battery.ts — Independent subagent review system.
+ *
+ * Spawns focused review agents that compare artifacts (plans, PRs, issues)
+ * and produce structured findings. Used by both auto-dent harness (between sessions)
+ * and interactive skills (via Agent tool).
+ *
+ * Core primitive: compare(artifact_a, artifact_b, adversarial_prompt) → findings[]
+ *
+ * Part of the review loop system — see docs/review-loop-spec.md
+ * Linear: ENG-6638
+ */
+
+import { spawnSync } from 'node:child_process';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+
+// ── Review Output Schema ────────────────────────────────────────────
+//
+// This schema is the contract between:
+//   - Review prompts (must emit this JSON)
+//   - parseReviewOutput (must parse it)
+//   - Harness fix loop (must interpret verdict/findings)
+//   - Skill integration (must know what "passing" means)
+//
+// Review prompts are instructed to output a JSON block fenced with
+// ```json ... ``` containing this structure.
+
+/** Status of a single requirement or criterion */
+export type FindingStatus = 'DONE' | 'PARTIAL' | 'MISSING';
+
+/** A single finding from a review dimension */
+export interface ReviewFinding {
+  /** The requirement or criterion being evaluated */
+  requirement: string;
+  /** Whether the requirement is met */
+  status: FindingStatus;
+  /** Explanation of the finding — what's done, what's missing, why */
+  detail: string;
+}
+
+/** Output from a single review dimension */
+export interface DimensionReview {
+  /** Which dimension was reviewed (e.g., "plan-coverage", "requirements") */
+  dimension: string;
+  /** Overall verdict: pass if all findings are DONE, fail otherwise */
+  verdict: 'pass' | 'fail';
+  /** Individual findings per requirement */
+  findings: ReviewFinding[];
+  /** One-line summary of the review */
+  summary: string;
+}
+
+/** Aggregated result from running multiple review dimensions */
+export interface BatteryResult {
+  /** Results per dimension */
+  dimensions: DimensionReview[];
+  /** Overall: pass only if ALL dimensions pass */
+  verdict: 'pass' | 'fail';
+  /** Total findings with status MISSING */
+  missingCount: number;
+  /** Total findings with status PARTIAL */
+  partialCount: number;
+  /** Wall-clock time for the full battery (ms) */
+  durationMs: number;
+  /** Total cost across all review agents (USD) */
+  costUsd: number;
+}
+
+// ── Fix Loop Policy ─────────────────────────────────────────────────
+//
+// These constants govern the fix loop that wraps review batteries.
+// The loop runs: review → fix → review → fix → ... until pass or limit.
+
+/** Maximum fix iterations before escalating to human */
+export const MAX_FIX_ROUNDS = 3;
+
+/** Budget cap per full battery run (USD). Abort if exceeded. */
+export const BUDGET_CAP_USD = 2.0;
+
+/**
+ * Passing threshold: a battery passes when missingCount === 0.
+ * PARTIAL findings are warnings, not blockers — they don't fail the battery.
+ * This matches the verdict logic in reviewBattery().
+ */
+export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
+
+// ── Review Dimensions ───────────────────────────────────────────────
+
+export type ReviewDimension = 'plan-coverage' | 'requirements';
+
+/** Map dimension names to their prompt template files */
+export const DIMENSION_TEMPLATES: Record<ReviewDimension, string> = {
+  'plan-coverage': 'review-plan-coverage.md',
+  'requirements': 'review-requirements.md',
+};
+
+// ── Output Parsing ──────────────────────────────────────────────────
+
+/**
+ * Parse structured review output from a review agent's response.
+ *
+ * The agent is instructed to emit a JSON block fenced with ```json ... ```
+ * We extract the first JSON block and parse it as a DimensionReview.
+ *
+ * Handles common failure modes:
+ *   - JSON wrapped in markdown fences
+ *   - JSON with preamble/postamble text
+ *   - Malformed JSON (returns null)
+ */
+export function parseReviewOutput(raw: string, dimension: string): DimensionReview | null {
+  // Try to extract JSON from markdown code fences first
+  const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  const jsonStr = fenceMatch ? fenceMatch[1].trim() : raw.trim();
+
+  // Try to find a JSON object in the text
+  const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return null;
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    // Validate required fields
+    if (!Array.isArray(parsed.findings)) return null;
+
+    const findings: ReviewFinding[] = parsed.findings.map((f: any) => ({
+      requirement: String(f.requirement ?? f.item ?? ''),
+      status: normalizeStatus(f.status),
+      detail: String(f.detail ?? f.description ?? ''),
+    }));
+
+    const hasFailure = findings.some(f => f.status !== 'DONE');
+
+    return {
+      dimension: parsed.dimension ?? dimension,
+      verdict: hasFailure ? 'fail' : 'pass',
+      findings,
+      summary: String(parsed.summary ?? ''),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeStatus(s: unknown): FindingStatus {
+  const str = String(s).toUpperCase().trim();
+  if (str === 'DONE' || str === 'PASS' || str === 'COMPLETE' || str === 'ADDRESSED') return 'DONE';
+  if (str === 'PARTIAL' || str === 'PARTIALLY') return 'PARTIAL';
+  return 'MISSING';
+}
+
+// ── Prompt Loading ──────────────────────────────────────────────────
+
+/**
+ * Resolve the prompts directory. Checks repo-root/prompts first,
+ * then falls back to the directory relative to this file.
+ */
+export function resolvePromptsDir(): string {
+  try {
+    const toplevel = spawnSync('git', ['rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+    }).stdout.trim();
+    const dir = resolve(toplevel, 'prompts');
+    if (existsSync(dir)) return dir;
+  } catch {
+    // Fall through
+  }
+  return resolve(dirname(new URL(import.meta.url).pathname), '..', 'prompts');
+}
+
+/**
+ * Load a review prompt template and substitute variables.
+ */
+export function loadReviewPrompt(
+  dimension: ReviewDimension,
+  vars: Record<string, string>,
+): string {
+  const templateFile = DIMENSION_TEMPLATES[dimension];
+  const promptsDir = resolvePromptsDir();
+  const templatePath = resolve(promptsDir, templateFile);
+
+  if (!existsSync(templatePath)) {
+    throw new Error(`Review prompt template not found: ${templatePath}`);
+  }
+
+  let content = readFileSync(templatePath, 'utf8');
+
+  // Mustache-style variable substitution
+  for (const [key, value] of Object.entries(vars)) {
+    content = content.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
+  }
+
+  return content;
+}
+
+// ── Review Spawning ─────────────────────────────────────────────────
+
+export interface SpawnReviewOptions {
+  /** Review dimension to run */
+  dimension: ReviewDimension;
+  /** PR URL (for implementation reviews) */
+  prUrl?: string;
+  /** Issue number (for requirement comparison) */
+  issueNum?: string;
+  /** GitHub repo (owner/name) */
+  repo?: string;
+  /** Plan text (for plan reviews) */
+  planText?: string;
+  /** Issue body text (pre-fetched to avoid subagent re-fetching) */
+  issueBody?: string;
+  /** PR body text (pre-fetched) */
+  prBody?: string;
+  /** PR diff stat (pre-fetched) */
+  prDiffStat?: string;
+  /** Working directory for the claude -p call */
+  cwd?: string;
+  /** Timeout in ms (default: 120000) */
+  timeoutMs?: number;
+}
+
+/**
+ * Spawn a single review agent via `claude -p`.
+ * Returns the parsed DimensionReview, or null if the review failed.
+ */
+export function spawnReview(opts: SpawnReviewOptions): { review: DimensionReview | null; costUsd: number; durationMs: number } {
+  const vars: Record<string, string> = {
+    pr_url: opts.prUrl ?? '',
+    issue_num: opts.issueNum ?? '',
+    repo: opts.repo ?? '',
+    plan_text: opts.planText ?? '',
+    issue_body: opts.issueBody ?? '',
+    pr_body: opts.prBody ?? '',
+    pr_diff_stat: opts.prDiffStat ?? '',
+  };
+
+  let prompt: string;
+  try {
+    prompt = loadReviewPrompt(opts.dimension, vars);
+  } catch (e: any) {
+    console.error(`  [review] failed to load prompt for ${opts.dimension}: ${e.message}`);
+    return { review: null, costUsd: 0, durationMs: 0 };
+  }
+
+  const start = Date.now();
+  const result = spawnSync('claude', [
+    '-p', prompt,
+    '--output-format', 'json',
+    '--dangerously-skip-permissions',
+    '--model', 'sonnet',
+  ], {
+    encoding: 'utf8',
+    cwd: opts.cwd,
+    timeout: opts.timeoutMs ?? 120_000,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  const durationMs = Date.now() - start;
+
+  if (result.status !== 0) {
+    console.error(`  [review] claude -p failed for ${opts.dimension}: exit ${result.status}`);
+    return { review: null, costUsd: 0, durationMs };
+  }
+
+  // Parse cost from JSON output
+  let costUsd = 0;
+  let responseText = '';
+  try {
+    const output = JSON.parse(result.stdout);
+    responseText = output.result ?? '';
+    costUsd = output.cost_usd ?? output.total_cost_usd ?? 0;
+  } catch {
+    responseText = result.stdout;
+  }
+
+  const review = parseReviewOutput(responseText, opts.dimension);
+  return { review, costUsd, durationMs };
+}
+
+// ── Battery Orchestration ───────────────────────────────────────────
+
+export interface BatteryOptions {
+  /** Dimensions to review */
+  dimensions: ReviewDimension[];
+  /** PR URL */
+  prUrl?: string;
+  /** Issue number */
+  issueNum?: string;
+  /** GitHub repo */
+  repo?: string;
+  /** Pre-fetched issue body */
+  issueBody?: string;
+  /** Pre-fetched PR body */
+  prBody?: string;
+  /** Pre-fetched PR diff stat */
+  prDiffStat?: string;
+  /** Plan text (for plan reviews) */
+  planText?: string;
+  /** Working directory */
+  cwd?: string;
+  /** Timeout per review in ms */
+  timeoutMs?: number;
+}
+
+/**
+ * Run a battery of review dimensions in parallel.
+ * Returns aggregated results with overall verdict.
+ */
+export function reviewBattery(opts: BatteryOptions): BatteryResult {
+  const start = Date.now();
+
+  // Run reviews in parallel using child processes
+  // (spawnSync is blocking, so we simulate parallelism by launching all and collecting)
+  // For true parallelism, we'd need async spawn — but spawnSync is simpler for v1
+  const results = opts.dimensions.map(dimension => {
+    return spawnReview({
+      dimension,
+      prUrl: opts.prUrl,
+      issueNum: opts.issueNum,
+      repo: opts.repo,
+      issueBody: opts.issueBody,
+      prBody: opts.prBody,
+      prDiffStat: opts.prDiffStat,
+      planText: opts.planText,
+      cwd: opts.cwd,
+      timeoutMs: opts.timeoutMs,
+    });
+  });
+
+  const dimensions = results
+    .map(r => r.review)
+    .filter((r): r is DimensionReview => r !== null);
+
+  const missingCount = dimensions.reduce(
+    (sum, d) => sum + d.findings.filter(f => f.status === 'MISSING').length, 0,
+  );
+  const partialCount = dimensions.reduce(
+    (sum, d) => sum + d.findings.filter(f => f.status === 'PARTIAL').length, 0,
+  );
+  const costUsd = results.reduce((sum, r) => sum + r.costUsd, 0);
+  const durationMs = Date.now() - start;
+
+  return {
+    dimensions,
+    verdict: missingCount === 0 && dimensions.length === opts.dimensions.length ? 'pass' : 'fail',
+    missingCount,
+    partialCount,
+    durationMs,
+    costUsd,
+  };
+}
+
+// ── Formatting ──────────────────────────────────────────────────────
+
+/**
+ * Format a BatteryResult as a markdown report suitable for PR comments
+ * or progress issue updates.
+ */
+export function formatBatteryReport(result: BatteryResult): string {
+  const lines: string[] = [
+    `### Review Battery: ${result.verdict.toUpperCase()}`,
+    '',
+    `| Metric | Value |`,
+    `|--------|-------|`,
+    `| Verdict | ${result.verdict} |`,
+    `| Dimensions | ${result.dimensions.length} |`,
+    `| Missing | ${result.missingCount} |`,
+    `| Partial | ${result.partialCount} |`,
+    `| Duration | ${(result.durationMs / 1000).toFixed(1)}s |`,
+    `| Cost | $${result.costUsd.toFixed(2)} |`,
+    '',
+  ];
+
+  for (const dim of result.dimensions) {
+    lines.push(`#### ${dim.dimension}: ${dim.verdict}`);
+    if (dim.summary) lines.push(`> ${dim.summary}`);
+    lines.push('');
+
+    for (const f of dim.findings) {
+      const icon = f.status === 'DONE' ? '[x]' : f.status === 'PARTIAL' ? '[-]' : '[ ]';
+      lines.push(`- ${icon} **${f.requirement}**: ${f.status} — ${f.detail}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}

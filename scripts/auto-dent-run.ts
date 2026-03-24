@@ -27,6 +27,12 @@ import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js';
+import {
+  reviewBattery,
+  formatBatteryReport,
+  type BatteryResult,
+  type ReviewDimension,
+} from '../src/review-battery.js';
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
 
 // Re-export from extracted modules for backward compatibility
@@ -166,6 +172,10 @@ export interface RunMetrics {
   failure_class?: string;
   /** Number of lifecycle ordering violations detected post-run */
   lifecycle_violations?: number;
+  /** Review battery verdict for PRs created in this run */
+  review_verdict?: 'pass' | 'fail' | 'skipped';
+  /** Review battery cost (USD) */
+  review_cost_usd?: number;
 }
 
 export interface RunResult {
@@ -1517,6 +1527,7 @@ async function main(): Promise<void> {
   printRunSummary(runNum, exitCode, duration, result);
 
   // Emit per-artifact events from stream results (#647)
+  let pickedIssue = '';
   {
     const runId = makeRunId(state.batch_id, runNum);
     // Extract picked issue from log phase markers
@@ -1525,6 +1536,7 @@ async function main(): Promise<void> {
       const repo = state.kaizen_repo || state.host_repo || '';
       for (const marker of parsePhaseMarkers(logContent)) {
         if (marker.phase === 'PICK' && marker.fields.issue) {
+          pickedIssue = marker.fields.issue;
           const labels = repo ? fetchIssueLabels(marker.fields.issue, repo) : [];
           events.emit({
             type: 'run.issue_picked',
@@ -1546,6 +1558,51 @@ async function main(): Promise<void> {
         run_num: runNum,
         pr_url: prUrl,
       });
+    }
+  }
+
+  // Post-run review battery (#ENG-6638) — advisory, not blocking
+  // Runs requirements review on each PR to detect gaps before merge.
+  let reviewVerdict: 'pass' | 'fail' | 'skipped' = 'skipped';
+  let reviewCostUsd = 0;
+  if (result.prs.length > 0 && pickedIssue) {
+    const repo = state.kaizen_repo || state.host_repo || '';
+    try {
+      console.log(`  ${color.dim('[review-battery]')} running requirements review for ${result.prs.length} PR(s)...`);
+      for (const prUrl of result.prs) {
+        const batteryResult = reviewBattery({
+          dimensions: ['requirements'] as ReviewDimension[],
+          prUrl,
+          issueNum: pickedIssue,
+          repo,
+          timeoutMs: 120_000,
+        });
+        reviewCostUsd += batteryResult.costUsd;
+        if (batteryResult.verdict === 'fail') {
+          reviewVerdict = 'fail';
+          const report = formatBatteryReport(batteryResult);
+          console.log(`  ${color.yellow('[review-battery]')} FAIL for ${prUrl}`);
+          for (const dim of batteryResult.dimensions) {
+            for (const f of dim.findings) {
+              if (f.status !== 'DONE') {
+                console.log(`    ${f.status}: ${f.requirement} — ${f.detail}`);
+              }
+            }
+          }
+          appendFileSync(logFile, `\n--- review-battery ---\n${report}\n`);
+          // Post review findings as PR comment (best effort)
+          try {
+            ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(`## Review Battery: FAIL\n\n${report}`)}`);
+          } catch { /* best effort */ }
+        } else if (reviewVerdict !== 'fail') {
+          reviewVerdict = 'pass';
+          console.log(`  ${color.green('[review-battery]')} PASS for ${prUrl}`);
+          appendFileSync(logFile, `\nreview_battery=pass pr=${prUrl} cost=$${batteryResult.costUsd.toFixed(2)}\n`);
+        }
+      }
+    } catch (e: any) {
+      console.log(`  ${color.dim('[review-battery]')} error: ${e.message}`);
+      appendFileSync(logFile, `\nreview_battery_error=${e.message}\n`);
     }
   }
 
@@ -1627,6 +1684,8 @@ async function main(): Promise<void> {
       stop_requested: result.stopRequested,
       failure_class: result.failureClass,
       lifecycle_violations: lifecycleViolationCount,
+      review_verdict: reviewVerdict,
+      review_cost_usd: reviewCostUsd,
       outcome,
       mode: runMode,
     });
@@ -1746,6 +1805,8 @@ async function main(): Promise<void> {
     prompt_template: promptMeta.template,
     prompt_hash: promptMeta.hash,
     lifecycle_violations: lifecycleViolationCount,
+    review_verdict: reviewVerdict,
+    review_cost_usd: reviewCostUsd,
   };
   // Classify failure: wall-clock timeout is authoritative (#686), then heuristics
   runMetrics.failure_class = result.timedOut ? 'timeout' : classifyFailure(runMetrics);
