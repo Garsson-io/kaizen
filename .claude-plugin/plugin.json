@@ -1,6 +1,6 @@
 {
   "name": "kaizen",
-  "version": "1.0.69",
+  "version": "1.0.70",
   "description": "Continuous improvement plugin for Claude Code — enforcement hooks, reflection workflows, dev workflow skills, and recursive self-improvement",
   "author": {
     "name": "Garsson-io",
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-ts.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review.sh",
             "timeout": 10
           },
           {
@@ -63,12 +63,12 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-dirty-files-ts.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-dirty-files.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-reflect-ts.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-reflect.sh",
             "timeout": 10
           },
           {
@@ -171,8 +171,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-stop-gate.sh",
-            "timeout": 15
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-review-stop.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-post-merge-stop.sh",
+            "timeout": 10
           },
           {
             "type": "command",
@@ -182,6 +187,11 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-cleanup-on-stop.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-reflect-stop.sh",
             "timeout": 10
           }
         ]

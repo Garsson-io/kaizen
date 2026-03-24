@@ -100,6 +100,10 @@ export function generateConfig(input: ConfigInput, cwd: string): ConfigResult {
       epicPrefix: "epic/",
       horizonPrefix: "horizon/",
     },
+    issues: {
+      repo: input.repo,
+      label: input.repo === (input.kaizenRepo ?? "Garsson-io/kaizen") ? "" : "kaizen",
+    },
     notifications: {
       channel: input.channel ?? "none",
     },

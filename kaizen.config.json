@@ -16,6 +16,8 @@
     "horizonPrefix": "horizon/"
   },
   "issues": {
+    "repo": "Garsson-io/kaizen",
+    "label": "",
     "backend": "github"
   },
   "notifications": {

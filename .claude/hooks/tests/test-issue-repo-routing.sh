@@ -87,7 +87,7 @@ echo "--- Config: header has routing docs ---"
 
 assert_contains "Config header has ISSUES_REPO" "ISSUES_REPO" "$(cat "$CONFIG_HEADER")"
 assert_contains "Config header has ISSUES_LABEL" "ISSUES_LABEL" "$(cat "$CONFIG_HEADER")"
-assert_contains "Config header compares repos" "KAIZEN_REPO.*HOST_REPO" "$(cat "$CONFIG_HEADER")"
+assert_contains "Config header reads issues.repo from config" "issues.repo" "$(cat "$CONFIG_HEADER")"
 
 # Test 6: No hardcoded repo names in gh issue commands
 echo "--- Lint: no hardcoded repo names in gh issue commands ---"
