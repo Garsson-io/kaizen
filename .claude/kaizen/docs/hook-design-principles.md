@@ -14,10 +14,10 @@ Worktree Creation
   ▼
 Development
   │  check-dirty-files.ts tracks uncommitted changes (push=warn, PR create=block)
-  │  check-verification.sh enforces path tracing before fixes
+  │  pr-quality-checks.ts enforces path tracing before fixes
   ▼
 Testing & Commit
-  │  check-test-coverage.sh blocks merges without tests
+  │  pr-quality-checks.ts blocks merges without tests
   │  verify-before-stop.sh reminds about test/typecheck (advisory)
   ▼
 PR Creation (gh pr create)

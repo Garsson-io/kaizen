@@ -164,8 +164,7 @@ ALLOW_TESTS=(
   "$HOOKS_DIR/kaizen-check-dirty-files-ts.sh:npm test:non-trigger command"
   "$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh:npm test:no active review"
   "$HOOKS_DIR/kaizen-enforce-case-worktree.sh:npm test:non-git command"
-  "$HOOKS_DIR/kaizen-check-verification.sh:npm test:non-pr command"
-  "$HOOKS_DIR/kaizen-check-test-coverage.sh:npm test:non-pr command"
+  "$HOOKS_DIR/kaizen-pr-quality-checks-ts.sh:npm test:non-pr command"
 )
 
 for test_spec in "${ALLOW_TESTS[@]}"; do

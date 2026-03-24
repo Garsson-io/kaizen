@@ -58,12 +58,7 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-test-coverage.sh",
-            "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-verification.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-pr-quality-checks-ts.sh",
             "timeout": 15
           },
           {
@@ -75,16 +70,6 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-pr-reflect-ts.sh",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-warn-code-quality.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-check-practices.sh",
-            "timeout": 15
           },
           {
             "type": "command",

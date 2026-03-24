@@ -37,8 +37,7 @@ INPUT=$(build_pre_tool_use_input "Bash" '{"command":"npm test"}')
 HOOKS=(
   "$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh"
   "$HOOKS_DIR/kaizen-enforce-case-worktree.sh"
-  "$HOOKS_DIR/kaizen-check-test-coverage.sh"
-  "$HOOKS_DIR/kaizen-check-verification.sh"
+  "$HOOKS_DIR/kaizen-pr-quality-checks-ts.sh"
   "$HOOKS_DIR/kaizen-check-dirty-files-ts.sh"
 )
 
@@ -196,7 +195,6 @@ echo "=== Stdin isolation: parallel hooks each get their own copy ==="
 INPUT=$(build_pre_tool_use_input "Bash" '{"command":"gh pr create --title test --body \"## Verification\ntest\""}')
 
 outputs=()
-for hook in "$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh" "$HOOKS_DIR/kaizen-check-verification.sh"; do
   run_single_hook "$hook" "$INPUT" 10 "$(printf 'STATE_DIR=%s\nPATH=%s' "$STATE_DIR" "$MOCK_DIR:$PATH")"
   outputs+=("exit=$HOOK_EXIT")
 done

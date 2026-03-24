@@ -63,7 +63,7 @@ exit 0
 MOCK
 chmod +x "$MOCK_DIR/gh"
 
-VERIFY="$HOOKS_DIR/kaizen-check-verification.sh"
+VERIFY="$HOOKS_DIR/kaizen-pr-quality-checks-ts.sh"
 DIRTY="$HOOKS_DIR/kaizen-check-dirty-files-ts.sh"
 ENFORCE_CASE="$HOOKS_DIR/kaizen-enforce-case-worktree.sh"
 PR_REVIEW="$HOOKS_DIR/kaizen-enforce-pr-review-ts.sh"

@@ -28,8 +28,8 @@ Move **enforcement** to portable layers (CI, git hooks, architecture). Keep Clau
 **What moves:** Test coverage check, verification section check.
 
 **Current state:**
-- `check-test-coverage.sh`: warns on `gh pr create`, blocks `gh pr merge`
-- `check-verification.sh`: blocks `gh pr create` without verification section, reminds on merge
+- `pr-quality-checks.ts`: warns on `gh pr create`, blocks `gh pr merge`
+- `pr-quality-checks.ts`: blocks `gh pr create` without verification section, reminds on merge
 
 **Target state:**
 - New CI job `pr-policy` runs on PRs: checks changed source files have test changes, checks PR body has verification section
@@ -124,8 +124,8 @@ After items 1-2 (this PR):
 
 | Hook | Current role | New role |
 |------|-------------|----------|
-| `check-test-coverage.sh` | Blocks merge | Advisory only (CI enforces) |
-| `check-verification.sh` | Blocks PR create | Advisory only (CI enforces) |
+| `pr-quality-checks.ts` | Blocks merge | Advisory only (CI enforces) |
+| `pr-quality-checks.ts` | Blocks PR create | Advisory only (CI enforces) |
 | `enforce-case-worktree.sh` | Blocks commit/push | Advisory only (git hooks enforce) |
 | `enforce-worktree-writes.sh` | Blocks source edits | **Unchanged** (no portable equivalent yet) |
 | `check-dirty-files.sh` | Blocks push/PR create | **Unchanged** (no git hook equivalent for `gh` commands) |

@@ -88,7 +88,7 @@ See [`hook-language-boundaries.md`](hook-language-boundaries.md) for the full po
 
 - **TypeScript** is the default for all hook logic. Testable, type-safe, and maintainable.
 - **Bash shims** (~5 lines) are the execution entry point that Claude Code invokes. They delegate to TS.
-- **Remaining bash hooks** (advisory-only: check-test-coverage, check-verification, etc.) are simple enough to stay in bash. Any hook with branching logic or state management should be in TypeScript.
+- **Remaining bash hooks (advisory-only) are now consolidated into `pr-quality-checks.ts`. Any hook with branching logic or state management should be in TypeScript.
 - Never mix languages within a single hook's logic — use a trampoline.
 
 ### Trampoline Pattern
