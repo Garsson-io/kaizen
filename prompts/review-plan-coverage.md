@@ -7,10 +7,9 @@ Compare the proposed plan against the issue's requirements, acceptance criteria,
 ## Context
 
 Issue: #{{issue_num}} in {{repo}}
-{{#plan_text}}
+
 Plan:
 {{plan_text}}
-{{/plan_text}}
 
 ## Instructions
 
