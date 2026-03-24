@@ -4,7 +4,7 @@
  * Tests the FULL operation: setup → hook registration → workflow simulation.
  * No LLM needed — hooks are executed directly with simulated Claude Code events.
  *
- * This is the "trigger-to-outcome" test for kaizen itself (cf. NanoClaw issue #173).
+ * This is the "trigger-to-outcome" test for kaizen itself.
  * It verifies that:
  *   1. Setup produces correct configuration
  *   2. All hooks are registered and executable

@@ -124,7 +124,7 @@ describe('FM1: detectDryViolations', () => {
 // ============================================================
 
 describe('FM6: detectStaleReferences', () => {
-  // --- Real incident: PR #416, 24 files referenced old nanoclaw names ---
+  // --- Real incident: PR #416, 24 files referenced old product names ---
   it('detects old skill name after rename (PR #416 pattern)', () => {
     const files: DiffFile[] = [
       {
@@ -245,7 +245,7 @@ describe('FM5: detectEnvAssumptions', () => {
       {
         path: 'scripts/worktree-du.sh',
         additions: [
-          'REPO_ROOT="/home/aviadr1/projects/nanoclaw"',
+          'REPO_ROOT="/home/aviadr1/projects/kaizen"',
         ],
         deletions: [],
 

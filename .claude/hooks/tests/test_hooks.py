@@ -86,7 +86,7 @@ class TestDenySchema:
         assert "worktree" in result.stderr.lower(), f"Expected worktree warning on stderr, got: {result.stderr[:200]}"
 
     def test_pr_review_gate_denies_during_review(self, review_harness, state):
-        state.create_state("https://github.com/Garsson-io/nanoclaw/pull/42", round_num=1, status="needs_review", branch="wt/test-branch")
+        state.create_state("https://github.com/Garsson-io/kaizen/pull/42", round_num=1, status="needs_review", branch="wt/test-branch")
 
         # npm test is now allowed as diagnostic (kaizen #775), use npm install instead
         result = review_harness.run_hook("kaizen-enforce-pr-review-ts.sh", PreToolUseInput.bash("npm install lodash"))
@@ -161,7 +161,7 @@ class TestRealWorldCommands:
         """Some gh versions output PR URL to stderr."""
         inp = PostToolUseInput.bash(
             "gh pr create --title test --body test",
-            stderr="https://github.com/Garsson-io/nanoclaw/pull/88",
+            stderr="https://github.com/Garsson-io/kaizen/pull/88",
         )
         result = review_harness.run_hook("pr-review-loop-ts.sh", inp)
         assert "SELF-REVIEW" in result.stdout
@@ -229,7 +229,7 @@ class TestEdgeCases:
 class TestPRLifecycle:
     """INVARIANT: PR review lifecycle transitions correctly across hooks."""
 
-    PR_URL = "https://github.com/Garsson-io/nanoclaw/pull/55"
+    PR_URL = "https://github.com/Garsson-io/kaizen/pull/55"
 
     def test_full_lifecycle(self, review_harness, state):
         """End-to-end: create → gate → diff → open → push → re-gate → merge → cleanup."""
@@ -282,12 +282,12 @@ class TestPRLifecycle:
         assert not state.state_exists(self.PR_URL), "State should be cleaned up after merge"
 
     def test_multi_repo_isolation(self, review_harness, state):
-        url_a = "https://github.com/Garsson-io/nanoclaw/pull/60"
+        url_a = "https://github.com/Garsson-io/kaizen/pull/60"
         url_b = "https://github.com/Garsson-io/garsson-prints/pull/10"
 
         # Create PRs for both repos
         review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
-            "gh pr create --repo Garsson-io/nanoclaw", stdout=url_a))
+            "gh pr create --repo Garsson-io/kaizen", stdout=url_a))
         review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr create --repo Garsson-io/garsson-prints", stdout=url_b))
 
@@ -328,7 +328,7 @@ class TestParallelExecution:
         mocks.add_git_mock(branch="main", status_output=" M src/dirty.ts")
         harness.set_env("PATH", mocks.path_with_mocks)
         harness.set_env("STATE_DIR", str(state.state_dir))
-        state.create_state("https://github.com/Garsson-io/nanoclaw/pull/42", status="needs_review", branch="main")
+        state.create_state("https://github.com/Garsson-io/kaizen/pull/42", status="needs_review", branch="main")
 
         # gh pr create on main branch with dirty files and active review
         inp = PreToolUseInput.bash("gh pr create --title test --body test")
@@ -345,7 +345,7 @@ class TestParallelExecution:
     def test_both_post_hooks_fire_on_pr_create(self, review_harness, state):
         inp = PostToolUseInput.bash(
             "gh pr create --title test --body test",
-            stdout="https://github.com/Garsson-io/nanoclaw/pull/99")
+            stdout="https://github.com/Garsson-io/kaizen/pull/99")
 
         review_result = review_harness.run_hook("pr-review-loop-ts.sh", inp)
         kaizen_result = review_harness.run_hook("kaizen-reflect-ts.sh", inp)
@@ -363,7 +363,7 @@ class TestPostToolUseFormat:
     def test_no_deny_json_in_post_hooks(self, review_harness, hook):
         inp = PostToolUseInput.bash(
             "gh pr create --title test --body test",
-            stdout="https://github.com/Garsson-io/nanoclaw/pull/70")
+            stdout="https://github.com/Garsson-io/kaizen/pull/70")
 
         result = review_harness.run_hook(hook, inp)
         assert result.exit_code == 0, f"{hook} should always exit 0"
