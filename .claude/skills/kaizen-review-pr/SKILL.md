@@ -6,7 +6,7 @@ user_invocable: true
 
 # Review PR — Deep Code Review with Learnable Criteria
 
-Structured code review that reads the diff against concrete, modifiable criteria. The review criteria live in `.claude/kaizen/review-criteria.md` — a separate file that grows smarter as failure modes are discovered.
+Structured review driven by data-driven dimensions (`prompts/review-*.md`). Each dimension is an adversarial check — run as a subagent, producing structured DONE/PARTIAL/MISSING findings. Learned failure modes in `.claude/kaizen/review-criteria.md` supplement the dimensions with FM-N patterns from past incidents.
 
 The `pr-review-loop.sh` hook enforces that this review happens. This skill defines **how** to review.
 
@@ -19,7 +19,7 @@ The `pr-review-loop.sh` hook enforces that this review happens. This skill defin
 
 ### Phase 1: Gather Context
 
-1. **Read the review criteria:** Load `.claude/kaizen/review-criteria.md` — this is the rubric.
+1. **Discover dimensions:** `npx tsx src/cli-dimensions.ts list` — these are the review rubric. Also load `.claude/kaizen/review-criteria.md` for supplementary learned failure modes (FM-N patterns).
 2. **Read the diff:** `gh pr diff <pr-url>` — read every file, not just a summary.
 3. **Read linked issues:** Check PR body, branch name, commits for `#N` or `kaizen#N`. If found, `gh issue view --repo "$ISSUES_REPO"` to understand requirements.
 4. **Scan recent failure modes:** Check the "Learned Failure Modes" section of the criteria file. These are patterns from past incidents — watch for them specifically in this diff.
@@ -139,8 +139,8 @@ Create these tasks at skill start using TaskCreate:
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | Gather context | Load review criteria from `.claude/kaizen/review-criteria.md`, read full diff, read linked issues, scan failure modes (FM-1 through FM-12) |
-| 2 | Review (subagents or sequential) | Small PR (≤50 lines): sequential. Medium (50-300): 2-3 agents. Large (>300): 5 parallel agents (DRY, testability, tooling, security, horizons). Each finding needs file, line, criterion, confidence 0-100. |
+| 1 | Gather context + briefing | Discover dimensions (`npx tsx src/cli-dimensions.ts list`), read full diff, read linked issues, read plan from issue comments, load learned failure modes from `review-criteria.md` |
+| 2 | Review (subagent dimensions) | Decide grouping using priority signals + data overlap + PR size. Spawn subagents for ALL dimensions. Validate coverage — all dimensions must have findings (`validateReviewCoverage()`). |
 | 3 | Filter and classify findings | Drop confidence < 75. MUST-FIX ≥ 90 (blocks merge). SHOULD-FIX 75-89 (fix before merge). |
 | 4 | Fix loop (max 3 rounds) | Fix each finding, commit+push, re-review from task #1. Repeat until clean or 3 rounds. If still unclean at round 3: escalate to human. |
 

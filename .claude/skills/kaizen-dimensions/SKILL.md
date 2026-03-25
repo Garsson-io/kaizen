@@ -88,10 +88,17 @@ Consumers call `listDimensions()` or `loadDimensionMetas()` from `src/review-bat
 
 ## Current Dimensions
 
-Run `npx tsx src/cli-dimensions.ts list` for the live list. As of this writing:
+Run `npx tsx src/cli-dimensions.ts list` for the authoritative live list. The CLI is the source of truth — this table is a snapshot:
 
-| Name | Description | Applies to |
-|------|------------|------------|
-| `requirements` | Does the PR address every requirement in the linked issue? | pr |
-| `plan-coverage` | Does the plan cover the issue's requirements? | plan |
-| `pr-description` | Does the PR body tell the solution story? Story Spine. | pr |
+| Name | Description | Needs | Applies to |
+|------|------------|-------|------------|
+| `requirements` | Does the PR address every requirement in the linked issue? | diff, issue | pr |
+| `scope-fidelity` | Does the diff do what the issue asked — nothing more, nothing less? | diff, issue | both |
+| `plan-coverage` | Does the plan cover the issue's requirements? | issue, plan | plan |
+| `plan-fidelity` | Does the PR implement what the plan said? Plan must exist. | diff, issue, plan, pr | pr |
+| `test-plan` | Right testing strategy? Pyramid levels, SUT, invariants, category prevention. | diff, issue, tests | pr |
+| `test-quality` | Meaningful assertions, edge cases, error paths? | diff, tests | pr |
+| `logic-correctness` | Logic bugs, off-by-one, incorrect conditionals? | diff | pr |
+| `error-handling` | Silent failures, empty catches, swallowed exceptions? | diff | pr |
+| `dry` | Duplicated code, reimplemented utilities, copy-paste? | diff, codebase | pr |
+| `pr-description` | Does the PR body tell the solution story? Story Spine. | diff, pr, issue | pr |
