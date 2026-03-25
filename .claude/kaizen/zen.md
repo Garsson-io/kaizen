@@ -90,6 +90,13 @@ A reviewer who must read the code to understand the PR was failed by the author.
 Correctness is necessary but not sufficient.
 Every capability must have a feedback loop — or it's correct today and stale tomorrow.
 
+The system that reviews itself must be reviewable.
+The dimension that checks improvement must itself be improvable.
+The hand draws the hand. If the drawing contradicts the drawer, the loop is broken.
+
+Every reference is a promise. If A points to B, B should know about A.
+One source of truth, many pointers. Duplication is a contradiction waiting to happen.
+
 The goal is not to be done. The goal is to be better at not being done.
 ```
 
@@ -310,4 +317,6 @@ Each principle traces back to a specific observation, incident, or conversation.
 | *The fastest path to better is shorter loops* | #646 — contemplation run 59 surfaced implicit pattern across adaptive selection, intra-batch reflection, regression detection | Feedback latency, learning rate |
 | *The diff is proof. The description is the argument.* | #846 — PR bodies that listed features without telling the story; Story Spine (Pixar) adapted for technical PRs | PR quality, reviewer experience, knowledge transfer |
 | *Correctness is necessary but not sufficient.* | #846 — review battery built correct code but artifacts had no persistence, no reviewers, no feedback loops. Hours spent fixing lifecycle gaps that no dimension caught. | Improvement lifecycle, recursive improvement, artifact chains |
+| *The system that reviews itself must be reviewable.* | #846 — Hofstadter's strange loops applied to kaizen: dimensions review code, code implements dimensions, the improvement-lifecycle dimension reviews whether the loop is complete. Inspired by Gödel, Escher, Bach. | Self-reference, tangled hierarchies, recursive coherence |
+| *Every reference is a promise.* | #846 — skills had stale dimension names, docs described wrong artifact locations, hooks contradicted skill workflows. Cross-references that drift become contradictions. | Cross-referencing, single source of truth, duplication |
 | *The goal is not to be done* | Founding principle | Infinite game orientation |

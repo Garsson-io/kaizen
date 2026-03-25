@@ -114,7 +114,15 @@ CREATE → PERSIST → CONSUME → MEASURE → REVIEW → FEEDBACK → IMPROVE
    - Does the architecture described in docs match the code? Do the skills match the hooks?
    - Run a mental audit: for each skill that touches this area, would its instructions produce correct behavior given this change?
 
-9. **Check for kaizen capabilities specifically:**
+9. **Check CROSS-REFERENCING and DUPLICATION (strange loops):**
+   The system is a web of references: skills reference skills, dimensions reference artifacts, hooks enforce what skills instruct, docs describe what code implements. Every reference is a promise — if A points to B, B should know about A.
+   - Are references **bidirectional**? If a skill says "uses dimension X," does dimension X's `high_when` reflect where that skill invokes it?
+   - Is there **one source of truth**? If a fact (dimension list, artifact location, workflow step) appears in multiple places, which is authoritative? Do the others point to it, or do they duplicate it?
+   - Are there **contradictions**? The old way described in one place, the new way in another? Stale names, paths, or counts?
+   - Does this PR **introduce new duplication**? Same logic in two files? Same list hardcoded in two skills? Same documentation in a skill AND a doc?
+   - For each duplication found: should one be deleted and replaced with a reference to the other?
+
+10. **Check for kaizen capabilities specifically:**
    If this PR adds or changes a skill, hook, dimension, review prompt, zen principle, or workflow step:
    - Does it eat its own dogfood? (Does the review system review itself? Does the plan process plan itself?)
    - Is there a meta-review? (Who checks that this kaizen capability is actually improving things?)
