@@ -24,40 +24,32 @@ The `pr-review-loop.sh` hook enforces that this review happens. This skill defin
 3. **Read linked issues:** Check PR body, branch name, commits for `#N` or `kaizen#N`. If found, `gh issue view --repo "$ISSUES_REPO"` to understand requirements.
 4. **Scan recent failure modes:** Check the "Learned Failure Modes" section of the criteria file. These are patterns from past incidents — watch for them specifically in this diff.
 
-### Phase 2: Review Using Subagents
+### Phase 2: Review Using Dimensions
 
-**Review dimensions are data-driven.** Dimensions are discovered from prompt template files in `prompts/review-*.md`. To add a new review dimension, create a new `prompts/review-<name>.md` file — no code changes needed. The review battery (`src/review-battery.ts`) auto-discovers them via `discoverDimensions()`.
+**All review checks are dimensions.** Every dimension is a `prompts/review-*.md` file with YAML frontmatter. To add a new check, create a file — no code changes needed. Run `npx tsx src/cli-dimensions.ts list` to see what's available.
 
-**Current dimensions** (auto-discovered from `prompts/`):
+**Dimensions have two execution modes** (set in frontmatter `execution:` field):
 
-| Dimension | File | What it checks |
-|-----------|------|---------------|
-| `requirements` | `review-requirements.md` | Does the PR address every requirement in the linked issue? |
-| `plan-coverage` | `review-plan-coverage.md` | Does the plan cover the issue's requirements? (used by kaizen-evaluate) |
-| `pr-description` | `review-pr-description.md` | Does the PR body tell the solution story as complement to the issue? |
+| Mode | How it runs | Cost | When to use |
+|------|------------|------|-------------|
+| `in-session` | Agent tool subagent within your session | Free | Code-level checks: the diff alone is sufficient |
+| `independent` | Separate `claude -p` via review-battery.ts | $0.10-0.20 | Needs issue/plan context, or must be adversarial (independent of implementing agent) |
 
-The `pr-description` dimension checks whether the PR body follows the `/kaizen-write-pr` Story Spine guidelines — narrative arc, complements (not repeats) the issue, includes evidence, names limitations. If PARTIAL or MISSING, it suggests running `/kaizen-write-pr`. This is a SHOULD-FIX, not a merge blocker.
+**Discover dimensions at review start:**
+```bash
+npx tsx src/cli-dimensions.ts list   # see all dimensions + execution mode
+```
 
-**Additionally, check code quality using subagents** from the criteria in `.claude/kaizen/review-criteria.md`:
+**Run all dimensions that apply to this PR:**
+1. Filter dimensions by `applies_to: pr` (exclude `plan` dimensions)
+2. For `execution: in-session` dimensions: run as Agent tool subagents (group related ones for efficiency)
+3. For `execution: independent` dimensions: run via `reviewBattery()` from `src/review-battery.ts`
+4. Merge all findings into a single report
 
-Launch review agents, each focused on one dimension from the criteria file. Each agent reads the diff and returns findings with confidence scores (0-100).
-
-**Execution modes — scale agents to PR size:**
-- **Small PR** (≤50 lines changed, ≤3 files): Single-agent sequential review. Check all dimensions yourself. Most self-reviews during `/kaizen-implement` fall here.
-- **Medium PR** (50-300 lines, 3-10 files): Use 2-3 focused subagents (e.g., DRY+Reuse, Testability+Harness, Security+Horizons). Balance thoroughness with cost.
-- **Large PR** (>300 lines or >10 files): Use all 5 parallel subagents. The token cost is justified by the risk surface.
-
-Use judgment — a 100-line PR touching security-sensitive code deserves more agents than a 200-line refactor.
-
-**Agent assignments (for full review — in self-review, check all sequentially):**
-
-| Agent | Criteria Section | What to check |
-|-------|-----------------|---------------|
-| DRY reviewer | §1 DRY | Copied blocks, patterns that exist elsewhere in codebase, test setup duplication |
-| Testability reviewer | §2-4 Testability + Testing + Harness | Missing tests, tests that skip in CI, mock quality, E2E coverage |
-| Tooling reviewer | §5 Tooling + §7 Reuse | Hand-rolled parsers, bash doing TS work, missing library reuse, existing patterns ignored |
-| Security reviewer | §6 Security | Shell injection, unquoted variables, secrets, eval |
-| Horizon reviewer | Learned Failure Modes | Every FM-N pattern from the criteria file checked against this specific diff |
+**Scale to PR size:**
+- **Small PR** (≤50 lines): Run in-session dimensions sequentially yourself. Skip independent dimensions unless the PR is high-risk.
+- **Medium PR** (50-300 lines): Run in-session dimensions as 2-3 parallel subagents. Run independent dimensions.
+- **Large PR** (>300 lines): Run all dimensions in parallel. The cost is justified by the risk surface.
 
 **Each agent must:**
 - Read the full diff (not a summary)

@@ -45,14 +45,18 @@ Some instructions.
 describe('cli-dimensions against real prompts', () => {
   const realDir = resolvePromptsDir();
 
-  it('list finds all 3 existing dimensions', () => {
+  it('list finds all existing dimensions', () => {
     const output = cmdList(realDir);
     expect(output).toContain('plan-coverage');
     expect(output).toContain('requirements');
     expect(output).toContain('pr-description');
-    // header + separator + 3 data rows = 5 lines
+    expect(output).toContain('scope-fidelity');
+    expect(output).toContain('logic-correctness');
+    expect(output).toContain('error-handling');
+    expect(output).toContain('test-quality');
+    // header + separator + N data rows
     const lines = output.split('\n');
-    expect(lines.length).toBe(5);
+    expect(lines.length).toBeGreaterThanOrEqual(9); // 2 header + 7 dimensions
   });
 
   it('show reads a dimension by name', () => {
@@ -77,7 +81,7 @@ describe('cli-dimensions against real prompts', () => {
   it('validate passes on existing dimensions', () => {
     const v = cmdValidate(realDir);
     expect(v.ok).toBe(true);
-    expect(v.results.length).toBe(3);
+    expect(v.results.length).toBeGreaterThanOrEqual(7);
     for (const r of v.results) {
       expect(r.errors).toEqual([]);
     }

@@ -96,7 +96,10 @@ export type ReviewDimension = string;
 export interface DimensionMeta {
   name: string;
   description: string;
+  /** What artifact this dimension reviews: pr, plan, or both */
   applies_to: string;
+  /** How this dimension runs: in-session (free, Agent tool) or independent ($, claude -p) */
+  execution: 'in-session' | 'independent';
   file: string;
 }
 
@@ -158,10 +161,11 @@ export function loadDimensionMetas(promptsDir?: string): DimensionMeta[] {
         name: fm?.name ?? dimName,
         description: fm?.description ?? '',
         applies_to: fm?.applies_to ?? 'pr',
+        execution: (fm?.execution as 'in-session' | 'independent') ?? 'independent',
         file,
       });
     } catch {
-      metas.push({ name: dimName, description: '', applies_to: 'pr', file });
+      metas.push({ name: dimName, description: '', applies_to: 'pr', execution: 'independent', file });
     }
   }
   return metas;
