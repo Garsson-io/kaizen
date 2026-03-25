@@ -241,3 +241,101 @@ Only `requirements` is wired into auto-dent and implement. `plan-coverage` is wi
 | `/.claude/skills/kaizen-evaluate/SKILL.md` | Phase 5.5: plan-coverage review |
 | `/.claude/skills/kaizen-implement/SKILL.md` | Step 5b: requirements-coverage review |
 | `/.claude/review-fix/pr-812.json` | Sample state file from validation campaign |
+
+## 7. Decision Framework: Criteria Section vs Independent Dimension
+
+### The Two Review Mechanisms
+
+The review system has two fundamentally different execution paths:
+
+1. **Criteria sections** (in `.claude/kaizen/review-criteria.md`): Loaded into the reviewing agent's context as instructions. The same agent that implemented the code reads and applies them. Cost: zero marginal (already in session). Trust: low (the implementing agent reviews its own work).
+
+2. **Independent dimensions** (in `prompts/review-*.md`): Spawned as separate `claude -p` subagents. Fresh context, no access to the implementing agent's reasoning. Cost: $0.10-0.20 per dimension. Trust: high (adversarial, cannot be gamed).
+
+### Decision Criteria
+
+Use this decision tree to determine where a review check belongs:
+
+```
+Is the check about CODE QUALITY (patterns, style, structure)?
+  → YES → Criteria section (the implementing agent can self-check)
+
+Is the check about REQUIREMENTS FIDELITY (did the PR solve the right problem)?
+  → YES → Independent dimension (needs adversarial framing, issue context)
+
+Does the check need EXTERNAL CONTEXT the code review doesn't have?
+  (issue body, acceptance criteria, plan text, PR description narrative)
+  → YES → Independent dimension (the context is the input)
+
+Can the implementing agent game the check by writing code that
+  technically passes but misses the point?
+  → YES → Independent dimension (adversarial separation is the value)
+
+Is the check DETERMINISTIC (regex, AST, grep)?
+  → YES → Neither. Build a detector in src/analysis/ instead.
+  → Detectors are free, un-gameable, and testable with synthetic scenarios.
+
+Is the check a PATTERN from a past incident (FM-N)?
+  → YES → Criteria section (cheap, broad coverage, grows over time)
+  → Exception: if the pattern requires issue-level context, make it a dimension.
+```
+
+### Cost-Benefit Analysis
+
+| Mechanism | Cost per PR | Trust | Context | Best for |
+|-----------|-------------|-------|---------|----------|
+| Criteria section | $0 | Low (self-review) | Code diff only | Code quality, patterns, style |
+| Independent dimension | $0.10-0.20 | High (adversarial) | Code + issue + plan | Requirements, scope, narrative |
+| Deterministic detector | $0 | Highest (code) | AST/regex | Shell injection, stale refs, DRY |
+
+### Budget Guidance and Presets
+
+**Target budget per PR: $0.30-0.50** (3 dimensions at $0.10-0.17 each).
+
+Recommended presets:
+
+| Preset | Dimensions | Cost | When |
+|--------|-----------|------|------|
+| `quick` | `requirements` only | ~$0.13 | Auto-dent advisory, tiny PRs (<20 lines) |
+| `standard` | `requirements` + `pr-description` | ~$0.26 | Normal PRs, interactive kaizen-implement |
+| `thorough` | `requirements` + `pr-description` + `plan-coverage` + future dimensions | ~$0.40-0.65 | Large PRs (>300 lines), security-sensitive, multi-issue PRs |
+
+The `plan-coverage` dimension applies at evaluate time (before implementation), not at PR review time. It should not be in the PR review presets but rather triggered by `kaizen-evaluate` Phase 5.5.
+
+Upper bound: **5 dimensions at $0.17 = $0.85**. Beyond 5 dimensions, diminishing returns set in -- the incremental value of a 6th adversarial reviewer is low compared to improving the first 3 prompts.
+
+### Section-by-Section Recommendation for review-criteria.md
+
+| # | Section | Recommendation | Rationale |
+|---|---------|---------------|-----------|
+| 1 | DRY | **Keep as criteria** | Code-structural check. The implementing agent can grep for duplicates. Partially covered by FM-3 detector. |
+| 2 | Testability | **Keep as criteria** | Code-structural check. "Can this function be tested without I/O?" is answerable from the diff alone. |
+| 3 | Testing | **Keep as criteria** | Code-structural check. "Does every exported function have a test?" is diff-answerable. |
+| 4 | Testing Harness / E2E | **Keep as criteria, add future dimension** | The "does a trigger-to-outcome test exist?" question is partly structural (criteria) and partly requirements-level ("did the issue ask for E2E coverage?"). Today: keep as criteria. Future: a `test-coverage` dimension that cross-references issue requirements against test files would be high-value. |
+| 5 | Tooling Fitness | **Keep as criteria** | Code-structural. "Is there a library for this?" requires codebase knowledge the implementing agent already has. |
+| 6 | Security | **Keep as criteria, invest in detectors** | Shell injection and unquoted variables are better caught by deterministic detectors (regex on `execSync` calls with template literals, unquoted `$VAR` in .sh files). The criteria section provides LLM judgment for cases detectors miss. Do NOT make this a dimension -- security review needs full diff context that a $0.13 sonnet call may not handle deeply enough. |
+| 7 | Reuse & Patterns | **Keep as criteria** | Code-structural. Overlaps heavily with DRY (section 1). Consider merging sections 1 and 7 into a single "DRY & Reuse" section. |
+| 8 | Best Practices | **Keep as criteria** | Grab-bag of code quality checks. These are cheap self-review items. |
+| FM-1 to FM-12 | Learned Failure Modes | **Keep as criteria** | These are pattern-matching checks against the diff. They grow over time and are free to evaluate. The deterministic subset (FM-8, FM-9, FM-10, FM-11, FM-12) already have detectors in `src/analysis/`. |
+
+### Existing Dimensions: Keep or Restructure?
+
+| Dimension | File | Recommendation |
+|-----------|------|---------------|
+| `requirements` | `review-requirements.md` | **Keep as dimension**. This is the highest-value adversarial check. It catches "correct code, wrong problem" -- something self-review cannot detect because the implementing agent has already convinced itself the code is right. |
+| `plan-coverage` | `review-plan-coverage.md` | **Keep as dimension**. Used at evaluate time, not PR review time. Needs issue context the code review doesn't have. |
+| `pr-description` | `review-pr-description.md` | **Keep as dimension**. Narrative quality assessment benefits from fresh eyes. The implementing agent wrote the description and cannot objectively judge whether it tells the story well. |
+
+### Recommended New Dimensions (Future)
+
+| Dimension | Value | Priority |
+|-----------|-------|----------|
+| `scope-creep` | Does the PR change things the issue didn't ask for? Catches gold-plating and drive-by refactors that expand risk surface. | High -- cheap to build, high signal |
+| `test-coverage` | Does the PR test what the issue asked for, not just what the code does? Cross-references issue acceptance criteria against test assertions. | Medium -- high value but needs the implementing agent to have written tests first |
+| `follow-up-hygiene` | Does the PR file follow-up issues for deferred work? Catches silent scope reductions. | Low -- partially covered by `requirements` dimension already |
+
+### Summary Decision Rule
+
+**If it can be answered by reading the diff alone, it belongs in criteria. If it requires comparing the diff against an external artifact (issue, plan, PR description), it belongs in a dimension. If it can be answered by a regex, it belongs in a detector.**
+
+The criteria file is the "what good code looks like" rubric. Dimensions are the "did this code solve the right problem?" adversarial checks. Detectors are the "is this pattern present in the diff?" automated scanners. All three work together -- they are not substitutes for each other.
