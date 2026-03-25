@@ -30,7 +30,7 @@ import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js
 import {
   reviewBattery,
   formatBatteryReport,
-  type ReviewDimension,
+  listDimensions,
 } from '../src/review-battery.js';
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
 
@@ -1567,10 +1567,11 @@ async function main(): Promise<void> {
   if (result.prs.length > 0 && pickedIssue) {
     const repo = state.kaizen_repo || state.host_repo || '';
     try {
-      console.log(`  ${color.dim('[review-battery]')} running requirements review for ${result.prs.length} PR(s)...`);
+      const dimensions = listDimensions().filter(d => d !== 'plan-coverage'); // plan-coverage is for pre-implementation
+      console.log(`  ${color.dim('[review-battery]')} running ${dimensions.join(', ')} review for ${result.prs.length} PR(s)...`);
       for (const prUrl of result.prs) {
         const batteryResult = reviewBattery({
-          dimensions: ['requirements'] as ReviewDimension[],
+          dimensions,
           prUrl,
           issueNum: pickedIssue,
           repo,

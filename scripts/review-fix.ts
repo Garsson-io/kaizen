@@ -28,9 +28,9 @@ import { join } from 'node:path';
 import {
   reviewBattery,
   formatBatteryReport,
+  listDimensions,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
-  type ReviewDimension,
   type BatteryResult,
   type ReviewFinding,
 } from '../src/review-battery.js';
@@ -400,8 +400,9 @@ function main() {
     // ── REVIEW ──
     console.log(`--- Round ${round}/${opts.maxRounds}: REVIEW ---`);
 
+    const dimensions = listDimensions().filter(d => d !== 'plan-coverage'); // plan-coverage is for pre-implementation
     const battery = reviewBattery({
-      dimensions: ['requirements'] as ReviewDimension[],
+      dimensions,
       prUrl: opts.prUrl,
       issueNum: opts.issueNum,
       repo: opts.repo,
