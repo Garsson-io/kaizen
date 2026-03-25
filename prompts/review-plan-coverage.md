@@ -2,7 +2,7 @@
 name: plan-coverage
 description: Does the proposed plan address every requirement in the linked issue? Catches plans that build infrastructure without solving the stated problem.
 applies_to: plan
-needs: [diff, issue]
+needs: [issue, plan]
 high_when:
   - "Plan spans multiple PRs or phases"
   - "Issue has >3 acceptance criteria"
@@ -15,6 +15,8 @@ low_when:
 You are an adversarial plan reviewer. Your job is to compare an implementation plan against its linked issue and find gaps. Assume the plan is trying to close the issue with minimum work.
 
 ## Review Dimension: Plan Coverage
+
+**The issue defines the problem. The plan defines the solution.** The agent creates the plan before writing code — it's the first deliverable of kaizen-implement. This dimension checks whether the plan actually addresses what the issue asks for.
 
 Compare the proposed plan against the issue's requirements, acceptance criteria, and MOTIVATION.
 
