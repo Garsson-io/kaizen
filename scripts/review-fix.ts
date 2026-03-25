@@ -36,6 +36,85 @@ import {
 } from '../src/review-battery.js';
 import { ghExec } from './auto-dent-github.js';
 
+// ── Stream-JSON parsing ─────────────────────────────────────────────
+
+export interface StreamJsonResult {
+  /** Whether a result message was found in the log */
+  found: boolean;
+  /** Whether the session completed without error */
+  success: boolean;
+  /** Total cost in USD from the result message */
+  costUsd: number;
+  /** The final text output */
+  output: string;
+}
+
+/**
+ * Parse a stream-json JSONL log (--output-format stream-json --verbose).
+ * Scans for the final message with type === "result" and extracts
+ * success status, cost, and output text.
+ *
+ * Returns { found: false } if no result line has been emitted yet
+ * (session still running or session produced no output).
+ */
+export function parseStreamJsonResult(stdout: string): StreamJsonResult {
+  if (!stdout.trim()) return { found: false, success: false, costUsd: 0, output: '' };
+  for (const line of stdout.trim().split('\n').reverse()) {
+    try {
+      const msg = JSON.parse(line.trim());
+      if (msg.type === 'result') {
+        return {
+          found: true,
+          success: msg.subtype !== 'error_during_generation',
+          costUsd: msg.usage?.total_cost_usd ?? msg.cost_usd ?? 0,
+          output: msg.result ?? '',
+        };
+      }
+    } catch { continue; }
+  }
+  return { found: false, success: false, costUsd: 0, output: '' };
+}
+
+// ── Fix-running phase handler ────────────────────────────────────────
+
+export type FixRunningAction = 'wait' | 'continue' | 'reset';
+
+/**
+ * Handle the fix_running phase on resume.
+ * Extracted for testability — no I/O, takes state + check function.
+ *
+ * Returns:
+ *   'wait'     — fix session still running, caller should exit
+ *   'continue' — fix session completed, caller should proceed to review loop
+ *   'reset'    — activeFix is missing (corrupt state), reset to needs_review
+ */
+export function applyFixRunningPhase(
+  state: ReviewFixState,
+  checkFn: (logFile: string, pid: number) => { done: boolean; success: boolean; costUsd: number; output: string },
+): { action: FixRunningAction; state: ReviewFixState } {
+  if (!state.activeFix) {
+    return { action: 'reset', state: { ...state, phase: 'needs_review' } };
+  }
+  const { pid, logFile } = state.activeFix;
+  const result = checkFn(logFile, pid);
+  if (!result.done) {
+    return { action: 'wait', state };
+  }
+  // Fix completed — record it, advance round
+  const newState: ReviewFixState = {
+    ...state,
+    totalCostUsd: state.totalCostUsd + result.costUsd,
+    currentRound: state.currentRound + 1,
+    phase: 'needs_review',
+    activeFix: undefined,
+    rounds: [
+      ...state.rounds,
+      { round: state.currentRound, phase: 'fix', verdict: result.success ? 'fixed' : 'fix_failed', gaps: 0, reviewCost: 0, fixCost: result.costUsd },
+    ],
+  };
+  return { action: 'continue', state: newState };
+}
+
 // ── State persistence ───────────────────────────────────────────────
 
 interface ReviewFixState {
@@ -249,7 +328,7 @@ function launchFix(prompt: string, logDir: string, round: number): { pid: number
 
   const child = asyncSpawn('bash', [
     '-c',
-    `cat "${promptFile}" | claude -p --output-format json --dangerously-skip-permissions --model sonnet`,
+    `cat "${promptFile}" | claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model sonnet`,
   ], {
     detached: true,
     stdio: ['pipe', out, err],
@@ -290,29 +369,26 @@ function checkFixResult(logFile: string, pid: number): { done: boolean; success:
 
   const stdout = readFileSync(logFile, 'utf8');
 
-  // If process is still running and no result yet, it's in progress
-  if (running && stdout.trim().length === 0) {
+  // If process is still running and log is empty, nothing has happened yet
+  if (running && !stdout.trim()) {
     return { done: false, success: false, costUsd: 0, output: '' };
   }
 
-  // Try to parse JSON result (claude -p --output-format json writes one JSON object)
-  let costUsd = 0, output = '';
-  try {
-    const parsed = JSON.parse(stdout.trim());
-    output = parsed.result ?? '';
-    costUsd = parsed.cost_usd ?? parsed.total_cost_usd ?? 0;
-    return { done: true, success: true, costUsd, output };
-  } catch {
-    // Not valid JSON — either still running or failed
-    if (running) {
-      return { done: false, success: false, costUsd: 0, output: '' };
-    }
-    // Process exited but no valid JSON — failure
-    const stderrFile = logFile + '.stderr';
-    const stderr = existsSync(stderrFile) ? readFileSync(stderrFile, 'utf8').slice(0, 500) : '';
-    console.log(`  Fix stderr: ${stderr}`);
-    return { done: true, success: false, costUsd: 0, output: stdout.slice(0, 500) };
+  // Parse stream-json JSONL — look for the result message
+  const parsed = parseStreamJsonResult(stdout);
+  if (parsed.found) {
+    return { done: true, success: parsed.success, costUsd: parsed.costUsd, output: parsed.output };
   }
+
+  // No result line yet
+  if (running) {
+    return { done: false, success: false, costUsd: 0, output: '' };
+  }
+  // Process exited without a result line — failure
+  const stderrFile = logFile + '.stderr';
+  const stderr = existsSync(stderrFile) ? readFileSync(stderrFile, 'utf8').slice(0, 500) : '';
+  console.log(`  Fix stderr: ${stderr}`);
+  return { done: true, success: false, costUsd: 0, output: stdout.slice(0, 500) };
 }
 
 // ── Main ────────────────────────────────────────────────────────────
@@ -355,41 +431,34 @@ function main() {
   console.log('');
 
   // ── Check if a fix session is still running ──
-  if (state.phase === 'fix_running' && state.activeFix) {
-    const { pid, logFile } = state.activeFix;
-    console.log(`--- Checking fix session (PID ${pid}) ---`);
-    const result = checkFixResult(logFile, pid);
+  if (state.phase === 'fix_running') {
+    const pid = state.activeFix?.pid;
+    const logFile = state.activeFix?.logFile;
+    console.log(`--- Checking fix session (PID ${pid ?? 'unknown'}) ---`);
 
-    if (!result.done) {
+    const { action, state: nextState } = applyFixRunningPhase(state, checkFixResult);
+    state = nextState;
+
+    if (action === 'reset') {
+      console.log('  Warning: fix_running phase but no activeFix record — resetting to review');
+      saveState(state);
+    } else if (action === 'wait') {
       console.log(`  Fix session still running (PID ${pid})`);
       console.log(`  Monitor: tail -f ${logFile}`);
       console.log(`  Re-run with --resume to check again.`);
       finish(state, startTime);
       return;
-    }
-
-    // Fix session completed
-    state.totalCostUsd += result.costUsd;
-    console.log(`  Fix session completed | Cost: $${result.costUsd.toFixed(2)} | Success: ${result.success}`);
-    state.rounds.push({
-      round: state.currentRound, phase: 'fix',
-      verdict: result.success ? 'fixed' : 'fix_failed',
-      gaps: 0, reviewCost: 0, fixCost: result.costUsd,
-    });
-    state.activeFix = undefined;
-
-    if (result.success) {
-      state.currentRound++;
-      state.phase = 'needs_review';
     } else {
-      state.phase = 'needs_review'; // retry review anyway — maybe partial fixes landed
-      state.currentRound++;
+      const lastFix = state.rounds[state.rounds.length - 1];
+      console.log(`  Fix session completed | Cost: $${lastFix?.fixCost.toFixed(2)} | Success: ${lastFix?.verdict === 'fixed'}`);
+      saveState(state);
     }
-    saveState(state);
   }
 
   // ── Main review-fix loop ──
-  for (let round = state.currentRound; round <= opts.maxRounds; round++) {
+  // Use stored maxRounds on resume so the original limit is respected.
+  const maxRounds = opts.resume ? state.maxRounds : opts.maxRounds;
+  for (let round = state.currentRound; round <= maxRounds; round++) {
     state.currentRound = round;
     state.phase = 'needs_review';
     saveState(state);
@@ -510,4 +579,6 @@ function finish(state: ReviewFixState, startTime: number) {
   process.exit(state.outcome === 'pass' ? 0 : 1);
 }
 
-main();
+if (process.argv[1]?.endsWith('review-fix.ts') || process.argv[1]?.endsWith('review-fix.js')) {
+  main();
+}
