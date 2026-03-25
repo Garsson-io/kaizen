@@ -2,7 +2,7 @@
 name: test-quality
 description: Do tests verify behavior or just exercise code? Meaningful assertions, edge cases, error paths?
 applies_to: pr
-execution: in-session
+needs: [diff, tests]
 ---
 
 You are an adversarial test quality reviewer. Your job is to determine whether the tests in this PR actually prove the code works, or merely create the illusion of coverage. Assume the implementing agent wrote the minimum tests needed to hit coverage thresholds without thinking deeply about what those tests prove.

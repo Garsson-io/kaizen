@@ -19,6 +19,7 @@ import {
   discoverDimensions,
   listDimensions,
   loadDimensionMetas,
+  reviewBriefing,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
@@ -200,12 +201,14 @@ describe('discoverDimensions', () => {
 
   it('loadDimensionMetas reads frontmatter from each dimension', () => {
     const metas = loadDimensionMetas();
-    expect(metas.length).toBeGreaterThanOrEqual(3);
+    expect(metas.length).toBeGreaterThanOrEqual(7);
 
     const req = metas.find(m => m.name === 'requirements');
     expect(req).toBeDefined();
     expect(req!.description).toContain('requirement');
     expect(req!.applies_to).toBe('pr');
+    expect(req!.needs).toContain('diff');
+    expect(req!.needs).toContain('issue');
     expect(req!.file).toBe('review-requirements.md');
 
     const plan = metas.find(m => m.name === 'plan-coverage');
@@ -215,6 +218,27 @@ describe('discoverDimensions', () => {
     const desc = metas.find(m => m.name === 'pr-description');
     expect(desc).toBeDefined();
     expect(desc!.description).toContain('Story Spine');
+    expect(desc!.needs).toContain('pr');
+  });
+
+  it('reviewBriefing provides signals for agent grouping decisions', () => {
+    const metas = loadDimensionMetas().filter(m => m.applies_to !== 'plan');
+    const briefing = reviewBriefing(metas, 200);
+
+    expect(briefing.dimension_count).toBeGreaterThanOrEqual(6);
+    expect(briefing.pr_lines).toBe(200);
+    expect(briefing.all_data_needs).toContain('diff');
+    expect(briefing.all_data_needs).toContain('issue');
+
+    // Data overlap groups cluster dimensions with same needs
+    expect(briefing.data_overlap_groups.length).toBeGreaterThan(0);
+    // diff-only dimensions should be grouped together
+    const diffOnly = briefing.data_overlap_groups.find(g =>
+      g.shared_needs.length === 1 && g.shared_needs[0] === 'diff'
+    );
+    expect(diffOnly).toBeDefined();
+    expect(diffOnly!.dimensions).toContain('logic-correctness');
+    expect(diffOnly!.dimensions).toContain('error-handling');
   });
 });
 

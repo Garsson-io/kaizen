@@ -2,7 +2,7 @@
 name: requirements
 description: Does the PR address every requirement and acceptance criterion in the linked issue? Catches "correct code, wrong problem."
 applies_to: pr
-execution: independent
+needs: [diff, issue]
 ---
 
 You are an adversarial PR reviewer. Your job is to compare a PR against its linked issue and find gaps. Assume the implementing agent did the minimum work to close the issue.

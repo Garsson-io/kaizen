@@ -2,7 +2,7 @@
 name: pr-description
 description: Does the PR body tell the solution story as complement to the issue's problem story? Uses the Story Spine narrative arc. See /kaizen-write-pr.
 applies_to: pr
-execution: independent
+needs: [diff, pr, issue]
 ---
 
 You are a PR description reviewer. Your job is to evaluate whether a PR's description tells the solution story as the complement to its linked issue's problem story.

@@ -92,15 +92,75 @@ export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
 
 export type ReviewDimension = string;
 
+/** Data categories a dimension can require */
+export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'session' | 'git-history';
+
 /** Frontmatter metadata from a review dimension prompt */
 export interface DimensionMeta {
   name: string;
   description: string;
   /** What artifact this dimension reviews: pr, plan, or both */
   applies_to: string;
-  /** How this dimension runs: in-session (free, Agent tool) or independent ($, claude -p) */
-  execution: 'in-session' | 'independent';
+  /** What data this dimension needs to do its job */
+  needs: DataNeed[];
   file: string;
+}
+
+/**
+ * Compute data-need overlap between dimensions.
+ * Returns groups of dimensions that share the same data needs.
+ * This is a SIGNAL for the agent to use when deciding how to group —
+ * it does not make the grouping decision.
+ */
+export function computeDataOverlap(metas: DimensionMeta[]): Array<{
+  /** The shared data needs */
+  shared_needs: DataNeed[];
+  /** Dimensions that share these needs */
+  dimensions: string[];
+}> {
+  // Group by exact needs signature
+  const byNeeds = new Map<string, string[]>();
+  for (const m of metas) {
+    const key = [...m.needs].sort().join(',');
+    if (!byNeeds.has(key)) byNeeds.set(key, []);
+    byNeeds.get(key)!.push(m.name);
+  }
+  return [...byNeeds.entries()].map(([key, dims]) => ({
+    shared_needs: key.split(',').filter(Boolean) as DataNeed[],
+    dimensions: dims,
+  }));
+}
+
+/**
+ * Produce a review briefing — all the signals an agent needs to decide
+ * how many subagents to use and how to group dimensions.
+ *
+ * This function does NOT decide. It provides:
+ * - All applicable dimensions with their data needs
+ * - Natural groupings by data overlap
+ * - PR size signal
+ * - All data categories needed across all dimensions
+ */
+export function reviewBriefing(
+  metas: DimensionMeta[],
+  prLines: number,
+): {
+  dimensions: DimensionMeta[];
+  data_overlap_groups: ReturnType<typeof computeDataOverlap>;
+  all_data_needs: DataNeed[];
+  pr_lines: number;
+  dimension_count: number;
+} {
+  const allNeeds = new Set<DataNeed>();
+  for (const m of metas) m.needs.forEach(n => allNeeds.add(n));
+
+  return {
+    dimensions: metas,
+    data_overlap_groups: computeDataOverlap(metas),
+    all_data_needs: [...allNeeds],
+    pr_lines: prLines,
+    dimension_count: metas.length,
+  };
 }
 
 /**
@@ -157,15 +217,17 @@ export function loadDimensionMetas(promptsDir?: string): DimensionMeta[] {
     try {
       const content = readFileSync(resolve(dir, file), 'utf8');
       const fm = parseFrontmatter(content);
+      const needsStr = fm?.needs ?? 'diff';
+      const needs = needsStr.replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean) as DataNeed[];
       metas.push({
         name: fm?.name ?? dimName,
         description: fm?.description ?? '',
         applies_to: fm?.applies_to ?? 'pr',
-        execution: (fm?.execution as 'in-session' | 'independent') ?? 'independent',
+        needs,
         file,
       });
     } catch {
-      metas.push({ name: dimName, description: '', applies_to: 'pr', execution: 'independent', file });
+      metas.push({ name: dimName, description: '', applies_to: 'pr', needs: ['diff'], file });
     }
   }
   return metas;

@@ -2,7 +2,7 @@
 name: logic-correctness
 description: Are there logical errors, off-by-one bugs, incorrect conditionals, or flawed control flow? The #1 defect type in agent code.
 applies_to: pr
-execution: in-session
+needs: [diff]
 ---
 
 You are an adversarial logic auditor. Your sole job is to find logical errors in the PR diff. AI-generated code has 75% more logic/correctness errors than human code. Assume every branch, comparison, and boundary is wrong until you prove otherwise.
