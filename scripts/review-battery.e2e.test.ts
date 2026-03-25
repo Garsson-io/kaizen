@@ -638,7 +638,10 @@ describe('Tier 4 — auto-dent E2E full fix loop (CLAUDE_E2E_AUTODENT=1 to enabl
             `  - Issue #${issue2Num}: NaN on empty in average (src/utils.ts)\n\n` +
             `IMPORTANT: The bugs are on branch "${testBranch}", NOT on main. ` +
             `Clone that branch, create fix branches from it, and PR back to "${testBranch}". ` +
-            `Do NOT target main.`,
+            `Do NOT target main.\n\n` +
+            `REQUIRED: Include "Closes #${issue1Num}" and "Closes #${issue2Num}" in the PR body ` +
+            `so the issues close automatically when the PR merges. ` +
+            `After merging, verify both issues show as closed.`,
           batch_start: Math.floor(ts / 1000),
           max_runs: 1,
           cooldown: 0,
@@ -696,6 +699,21 @@ describe('Tier 4 — auto-dent E2E full fix loop (CLAUDE_E2E_AUTODENT=1 to enabl
             `PR ${prUrl} should be MERGED (agent fixed the bugs and merged)\n` +
             `state: ${stateFile}`,
           ).toBe('MERGED');
+        }
+
+        // Both issues must be CLOSED — agent must use "Closes #N" in PR body.
+        // Checked directly via gh, not via the harness counter (which only tracks
+        // issues in kaizen_repo, not cross-repo host issues).
+        for (const [issueNum, label] of [[issue1Num, 'off-by-one'], [issue2Num, 'NaN on empty']] as const) {
+          const issueState = await execCapture(
+            `gh issue view ${issueNum} --repo ${FIXTURE_REPO} --json state --jq .state`,
+          );
+          expect(
+            issueState,
+            `Issue #${issueNum} (${label}) should be CLOSED after auto-dent fixed it.\n` +
+            `Agent must use "Closes #${issueNum}" in the PR body.\n` +
+            `state: ${stateFile}`,
+          ).toBe('CLOSED');
         }
 
         // Verify the bugs are actually gone: check utils.ts on the test branch
