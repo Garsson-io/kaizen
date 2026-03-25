@@ -18,25 +18,29 @@ describe('parseStreamJsonResult', () => {
   });
 
   it('finds result line in a multi-line stream-json log', () => {
+    // Real stream-json format: result="" (empty), cost at top-level total_cost_usd
     const log = [
-      JSON.stringify({ type: 'assistant', message: { content: [] } }),
-      JSON.stringify({ type: 'tool_use', id: 'x', name: 'Read' }),
-      JSON.stringify({ type: 'result', subtype: 'success', result: 'done fixing gaps', cost_usd: 0.14 }),
+      JSON.stringify({ type: 'system', subtype: 'init' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'fixing...' }] } }),
+      JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: 0.14 }),
     ].join('\n');
 
     const r = parseStreamJsonResult(log);
     expect(r.found).toBe(true);
     expect(r.success).toBe(true);
-    expect(r.output).toBe('done fixing gaps');
     expect(r.costUsd).toBeCloseTo(0.14);
   });
 
-  it('extracts cost from usage.total_cost_usd field', () => {
+  it('extracts cost from top-level total_cost_usd field (real stream-json format)', () => {
+    // Verified against real claude -p --output-format stream-json --verbose output:
+    // total_cost_usd is a top-level field on the result message, NOT nested in usage
     const log = JSON.stringify({
       type: 'result',
       subtype: 'success',
-      result: 'ok',
-      usage: { total_cost_usd: 0.22 },
+      is_error: false,
+      result: '',
+      total_cost_usd: 0.22,
+      usage: { input_tokens: 100, output_tokens: 20 },
     });
     const r = parseStreamJsonResult(log);
     expect(r.costUsd).toBeCloseTo(0.22);
@@ -46,8 +50,9 @@ describe('parseStreamJsonResult', () => {
     const log = JSON.stringify({
       type: 'result',
       subtype: 'error_during_generation',
+      is_error: true,
       result: '',
-      cost_usd: 0,
+      total_cost_usd: 0,
     });
     const r = parseStreamJsonResult(log);
     expect(r.found).toBe(true);
@@ -74,20 +79,21 @@ describe('parseStreamJsonResult', () => {
     const log = [
       'not json at all',
       '{broken json',
-      JSON.stringify({ type: 'result', subtype: 'success', result: 'fixed', cost_usd: 0.05 }),
+      JSON.stringify({ type: 'result', subtype: 'success', result: '', total_cost_usd: 0.05 }),
     ].join('\n');
     const r = parseStreamJsonResult(log);
     expect(r.found).toBe(true);
-    expect(r.output).toBe('fixed');
+    expect(r.success).toBe(true);
+    expect(r.costUsd).toBeCloseTo(0.05);
   });
 
   it('uses the LAST result line when multiple result lines exist', () => {
     const log = [
-      JSON.stringify({ type: 'result', subtype: 'success', result: 'first', cost_usd: 0.01 }),
-      JSON.stringify({ type: 'result', subtype: 'success', result: 'last', cost_usd: 0.09 }),
+      JSON.stringify({ type: 'result', subtype: 'success', result: '', total_cost_usd: 0.01 }),
+      JSON.stringify({ type: 'result', subtype: 'success', result: '', total_cost_usd: 0.09 }),
     ].join('\n');
     const r = parseStreamJsonResult(log);
-    expect(r.output).toBe('last');
+    expect(r.found).toBe(true);
     expect(r.costUsd).toBeCloseTo(0.09);
   });
 });

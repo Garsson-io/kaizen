@@ -66,7 +66,8 @@ export function parseStreamJsonResult(stdout: string): StreamJsonResult {
         return {
           found: true,
           success: msg.subtype !== 'error_during_generation',
-          costUsd: msg.usage?.total_cost_usd ?? msg.cost_usd ?? 0,
+          // total_cost_usd is a top-level field on the result message (not nested in usage)
+          costUsd: msg.total_cost_usd ?? 0,
           output: msg.result ?? '',
         };
       }
