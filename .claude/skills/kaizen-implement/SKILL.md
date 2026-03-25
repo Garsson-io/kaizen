@@ -55,25 +55,52 @@ For kaizen issues, always pass `--github-issue` to link the case to the existing
 
 **Immediately after the case gate passes**, discover the review dimensions your PR will be measured on and create the workflow task list.
 
-**Step 0: Discover review dimensions.** Read the frontmatter of each `prompts/review-*.md` file (or call `loadDimensionMetas()` from `src/review-battery.ts`). These are the dimensions your PR will be adversarially reviewed on after completion. Display them now so you know the target:
+**Step 0: Discover review dimensions and create the plan.**
 
+First, discover the dimensions your PR will be measured on:
+```bash
+npx tsx src/cli-dimensions.ts list
 ```
-Review dimensions your PR will be measured on:
-  requirements    — Does the PR address every requirement in the linked issue?
-                    (prompts/review-requirements.md)
-  pr-description  — Does the PR body tell the solution story? Story Spine arc.
-                    (prompts/review-pr-description.md)
-  plan-coverage   — Does the plan cover the issue? (pre-implementation only)
-                    (prompts/review-plan-coverage.md)
-  ... (any new prompts/review-*.md files auto-discovered)
+These are not aspirational — they are the adversarial rubric. Read the `high_when` signals for each dimension against your issue to understand which dimensions matter most.
+
+**Step 0b: Create the plan file.** Write `.claude/plans/issue-N.md` with this structure:
+
+```markdown
+# Plan: <issue title>
+Issue: #N | Created: <date>
+
+## Approach
+What to build and how. Key architectural decisions. Why this approach over alternatives.
+
+## Testing Strategy
+- Pyramid levels: [unit | integration | E2E] — which and why
+- SUT: what component is the focus of testing
+- Invariants: what must ALWAYS be true (not just "this bug is fixed")
+- For bug fixes: what category of bug does this prevent?
+
+## Scope
+- In this PR: [concrete list]
+- Deferred: [with mechanism — follow-up issue #N]
+
+## Risk Assessment
+- Which review dimensions are high-priority for this PR (based on high_when signals)
+- Suggested subagent grouping for review
 ```
 
-Keep these in mind throughout implementation. They are not aspirational — they are the rubric the review battery will use.
+**This file is mandatory.** It must exist before you write any code. It's consumed by:
+- `plan-coverage` dimension (does the plan address the issue?)
+- `plan-fidelity` dimension (does the PR follow the plan?)
+- `test-plan` dimension (is the testing strategy right?)
+
+After PR creation, the plan content flows into the PR description via `/kaizen-write-pr`.
+
+See `docs/artifact-lifecycle.md` for the full artifact chain.
 
 **Create ALL of these tasks:**
 
-1. **Assess architecture/tooling fitness** — Right language? Right runtime? Libraries to reuse? E2E harness exists? (From `/kaizen-evaluate` Phase 3.7 assessment — verify it's still valid)
-2. **Write failing tests (TDD RED)** — Express target invariants as tests. They must fail before implementation.
+1. **Create plan** — Write `.claude/plans/issue-N.md`. Run plan-coverage review against the issue. Iterate until the plan addresses all requirements.
+1b. **Assess architecture/tooling fitness** — Right language? Right runtime? Libraries to reuse? E2E harness exists? (From `/kaizen-evaluate` Phase 3.7 assessment — verify it's still valid)
+2. **Write failing tests (TDD RED)** — Express target invariants from the plan's Testing Strategy. They must fail before implementation.
 3. **Implement (TDD GREEN)** — Make the failing tests pass with the simplest correct change.
 4. **Self-review: invoke `/kaizen-review-pr`** — This invokes the review skill which has its own 4-task workflow: (1) load review criteria from `.claude/kaizen/review-criteria.md`, read full diff, scan failure modes FM-1 through FM-12; (2) review using subagents — small PR (≤50 lines): sequential, medium (50-300): 2-3 agents, large (>300): 5 parallel agents covering DRY, testability, tooling, security, and horizons; (3) filter findings — drop confidence < 75, classify MUST-FIX (≥90) and SHOULD-FIX (75-89); (4) fix loop below.
 5. **Review fix loop** — Fix all MUST-FIX and SHOULD-FIX findings from the review. Commit + push fixes. Re-run `/kaizen-review-pr` from step (1). Repeat until clean or max 3 rounds. If still unclean at round 3: escalate to human with `gh pr comment`. Hooks `pr-review-loop.ts` and `stop-gate.ts` enforce this — you cannot stop with pending review.
