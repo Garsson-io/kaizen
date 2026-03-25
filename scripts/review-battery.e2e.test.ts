@@ -524,3 +524,201 @@ describe('Tier 3 — semantic replay (CLAUDE_E2E=replay to enable)', () => {
   // - plan-fidelity:        when a PR diverges from its plan
   // - improvement-lifecycle: PR #846 — review battery without lifecycle
 });
+
+// ── Tier 4: Auto-dent E2E — full fix loop ─────────────────────────────
+//
+// Tests the complete auto-dent loop against the synthetic bugs fixture:
+//   detect bugs → pick issues → implement fixes → run tests → create PRs → merge
+//
+// FIXTURE SETUP (permanent, in Garsson-io/kaizen-test-fixture):
+//   branch fixture/buggy-utils @ 5f1dd1c7
+//     src/utils.ts has two known bugs:
+//       - countMatching: off-by-one (i < items.length - 1)
+//       - average: NaN on empty (sum / 0)
+//     Tests pass WITH the bugs (edge cases deliberately excluded)
+//
+// EACH TEST RUN:
+//   1. Creates a fresh branch test/autodent-<ts> from fixture/buggy-utils
+//   2. Files two new issues in kaizen-test-fixture describing the bugs
+//   3. Bootstraps a state.json with host_repo=kaizen-test-fixture and
+//      guidance directing the agent to the test branch + issues
+//   4. Runs auto-dent-run.ts (single run, $3 budget)
+//   5. Asserts: both issues closed, ≥2 PRs created, run succeeded
+//   6. Cleans up: deletes the test branch
+//
+// Enable with: CLAUDE_E2E_AUTODENT=1
+// Cost: ~$0.70–$1.50 per run, ~4–6 min
+
+const TIER4_AUTODENT = !!process.env.CLAUDE_E2E_AUTODENT;
+
+// The commit SHA of the buggy state (PR #5 merged to main, before any fixes).
+// fixture/buggy-utils branch always points here — this is the reset point.
+const BUGGY_UTILS_SHA = '5f1dd1c7d7c159e2b66f0f1ea5278d77bda17055';
+const FIXTURE_REPO = 'Garsson-io/kaizen-test-fixture';
+
+async function execCapture(cmd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('bash', ['-c', cmd], { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => { err += d.toString(); });
+    child.on('close', (code) => {
+      if (code !== 0) reject(new Error(`Command failed (${code}): ${cmd}\n${err}`));
+      else resolve(out.trim());
+    });
+  });
+}
+
+describe('Tier 4 — auto-dent E2E full fix loop (CLAUDE_E2E_AUTODENT=1 to enable)', () => {
+  it(
+    'auto-dent detects and fixes both bugs in kaizen-test-fixture',
+    { timeout: 600_000 },
+    async () => {
+      if (!TIER4_AUTODENT) {
+        console.log('  [skip] set CLAUDE_E2E_AUTODENT=1 to run full auto-dent loop (~$1, ~5min)');
+        console.log('         fixture: Garsson-io/kaizen-test-fixture @ fixture/buggy-utils');
+        console.log('         bugs: off-by-one in countMatching, NaN in average');
+        return;
+      }
+
+      const ts = Date.now();
+      const testBranch = `test/autodent-${ts}`;
+      let cleanedUp = false;
+
+      const cleanup = async () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        try {
+          await execCapture(
+            `gh api repos/${FIXTURE_REPO}/git/refs/heads/${testBranch.replace('/', '/')} -X DELETE 2>/dev/null || true`,
+          );
+        } catch {}
+      };
+
+      try {
+        // ── Step 1: Create fresh test branch from the buggy commit ─────
+        console.log(`  [setup] creating branch ${testBranch} from ${BUGGY_UTILS_SHA.slice(0, 7)}`);
+        await execCapture(
+          `gh api repos/${FIXTURE_REPO}/git/refs -X POST ` +
+          `-f ref="refs/heads/${testBranch}" -f sha="${BUGGY_UTILS_SHA}"`,
+        );
+
+        // ── Step 2: File fresh issues ──────────────────────────────────
+        console.log('  [setup] filing bug issues in kaizen-test-fixture');
+        const issue1Url = await execCapture(
+          `gh issue create --repo ${FIXTURE_REPO} ` +
+          `--title "Bug: countMatching skips last element (off-by-one)" ` +
+          `--body "In branch ${testBranch}: \`for (let i = 0; i < items.length - 1; i++)\` ` +
+          `skips the last element. Fix: change to \`i < items.length\`. ` +
+          `Add a regression test: countMatching([2,4,6], n=>n%2===0) should return 3."`,
+        );
+        const issue1Num = issue1Url.split('/').pop()!;
+
+        const issue2Url = await execCapture(
+          `gh issue create --repo ${FIXTURE_REPO} ` +
+          `--title "Bug: average() returns NaN for empty array" ` +
+          `--body "In branch ${testBranch}: \`return sum / numbers.length\` returns NaN when ` +
+          `numbers is empty (divide by zero). Fix: throw an error if numbers.length === 0. ` +
+          `Add regression test: average([]) should throw."`,
+        );
+        const issue2Num = issue2Url.split('/').pop()!;
+        console.log(`  [setup] issues: #${issue1Num} (off-by-one), #${issue2Num} (NaN)`);
+
+        // ── Step 3: Bootstrap state.json ──────────────────────────────
+        const batchId = `autodent-e2e-${ts}`;
+        const logDir = join(process.cwd(), 'logs', 'auto-dent', batchId);
+        mkdirSync(logDir, { recursive: true });
+        const stateFile = join(logDir, 'state.json');
+
+        const state = {
+          batch_id: batchId,
+          guidance: `Fix two bugs in ${FIXTURE_REPO} on branch ${testBranch}:\n` +
+            `  - Issue #${issue1Num}: off-by-one in countMatching (src/utils.ts)\n` +
+            `  - Issue #${issue2Num}: NaN on empty in average (src/utils.ts)\n\n` +
+            `IMPORTANT: The bugs are on branch "${testBranch}", NOT on main. ` +
+            `Clone that branch, create fix branches from it, and PR back to "${testBranch}". ` +
+            `Do NOT target main.`,
+          batch_start: Math.floor(ts / 1000),
+          max_runs: 1,
+          cooldown: 0,
+          budget: '3.00',
+          max_budget: '3.00',
+          max_failures: 1,
+          kaizen_repo: 'Garsson-io/kaizen',
+          host_repo: FIXTURE_REPO,
+          run: 0,
+          consecutive_failures: 0,
+          prs: [],
+          issues_filed: [],
+          issues_closed: [],
+          run_history: [],
+          stop_reason: '',
+          progress_issue: '',
+          test_task: false,
+          experiment: false,
+          max_run_seconds: 540,
+          no_plan: false,
+        };
+        writeFileSync(stateFile, JSON.stringify(state, null, 2));
+
+        // ── Step 4: Run auto-dent-run.ts ───────────────────────────────
+        console.log(`  [run] starting auto-dent-run.ts (budget $3, timeout 9min)`);
+        const runnerPath = join(process.cwd(), '..', '..', '..', 'scripts', 'auto-dent-run.ts');
+        await execCapture(`npx tsx "${runnerPath}" "${stateFile}"`);
+
+        // ── Step 5: Assert ─────────────────────────────────────────────
+        const finalState = JSON.parse(readFileSync(stateFile, 'utf8'));
+
+        // Run must have produced at least one PR
+        expect(
+          finalState.prs.length,
+          `Expected ≥1 PRs from auto-dent run, got ${finalState.prs.length}\n` +
+          `state: ${stateFile}`,
+        ).toBeGreaterThanOrEqual(1);
+
+        // Run outcome must be 'success' (set by the harness in run_history)
+        const runHistory: Array<{ outcome?: string }> = finalState.run_history ?? [];
+        expect(
+          runHistory.some(r => r.outcome === 'success'),
+          `Expected at least one run with outcome='success' in run_history\n` +
+          `Actual outcomes: ${JSON.stringify(runHistory.map(r => r.outcome))}\n` +
+          `state: ${stateFile}`,
+        ).toBe(true);
+
+        // All produced PRs must be merged (agent fixed the code and it landed)
+        for (const prUrl of finalState.prs as string[]) {
+          const prState = await execCapture(
+            `gh pr view "${prUrl}" --json state --jq .state`,
+          );
+          expect(
+            prState,
+            `PR ${prUrl} should be MERGED (agent fixed the bugs and merged)\n` +
+            `state: ${stateFile}`,
+          ).toBe('MERGED');
+        }
+
+        // Verify the bugs are actually gone: check utils.ts on the test branch
+        // after the fix PRs were merged into it
+        const utilsContent = await execCapture(
+          `gh api repos/${FIXTURE_REPO}/contents/src/utils.ts?ref=${testBranch} --jq .content | base64 -d`,
+        );
+        expect(
+          utilsContent,
+          `off-by-one bug should be fixed (i < items.length not i < items.length - 1)\n` +
+          `utils.ts content:\n${utilsContent}`,
+        ).not.toContain('items.length - 1');
+        expect(
+          utilsContent,
+          `NaN bug should be fixed (should guard against empty input)\n` +
+          `utils.ts content:\n${utilsContent}`,
+        ).not.toMatch(/return sum \/ numbers\.length/);
+
+        console.log(`  [pass] auto-dent fixed both bugs: PRs=${finalState.prs.join(', ')}`);
+
+      } finally {
+        await cleanup();
+      }
+    },
+  );
+});
