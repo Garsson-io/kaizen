@@ -96,11 +96,44 @@ CREATE → PERSIST → CONSUME → MEASURE → REVIEW → FEEDBACK → IMPROVE
 - Is there enough documentation/observability for someone encountering this for the first time?
 - Is the capability's design recorded somewhere (PR description, docs)?
 
-6. **Check for kaizen capabilities specifically:**
+6. **Check DOCUMENTATION completeness:**
+   - Is this capability documented in the relevant docs? (`docs/artifact-lifecycle.md`, `CLAUDE.md`, skill READMEs)
+   - Are existing docs updated to mention it? (If you add a dimension, is `kaizen-dimensions` SKILL.md updated? If you add an artifact, is `artifact-lifecycle.md` updated?)
+   - Is there a single source of truth, or has this change created competing descriptions?
+   - Would a new agent encountering this system for the first time find and understand this capability?
+
+7. **Check INTEGRATION with existing system:**
+   - Do the skills that should use this know about it? (If you add a dimension, does `kaizen-review-pr` discover it? Does `kaizen-implement` mention it in the task list?)
+   - Do the hooks that govern this workflow accommodate it? (If you add a review step, does `enforce-pr-review.ts` allow the tools it needs?)
+   - Are existing references to related systems updated? (Stale dimension names? Stale file paths? Criteria framed as primary when dimensions replaced it?)
+   - Is the task list / workflow in `kaizen-implement` complete for this new capability?
+
+8. **Check COHERENCE after this change:**
+   - Is the system still internally consistent? Are there contradictions between skills?
+   - Are there stale references that describe the OLD way when this PR introduces the NEW way?
+   - Does the architecture described in docs match the code? Do the skills match the hooks?
+   - Run a mental audit: for each skill that touches this area, would its instructions produce correct behavior given this change?
+
+9. **Check for kaizen capabilities specifically:**
    If this PR adds or changes a skill, hook, dimension, review prompt, zen principle, or workflow step:
    - Does it eat its own dogfood? (Does the review system review itself? Does the plan process plan itself?)
    - Is there a meta-review? (Who checks that this kaizen capability is actually improving things?)
    - Is there a deprecation/sunset path? (What happens when this capability is no longer needed?)
+   - Is it referenced from the skills that orchestrate it? (`kaizen-implement` task list, `kaizen-review-pr` workflow)
+
+## What this dimension would have caught in PR #846
+
+These are real findings from the session that built this dimension — every one was caught manually:
+
+| What happened | Which check catches it |
+|---------------|----------------------|
+| Plans persisted in `.claude/plans/` (wrong — not plugin-safe) | Persist: "Does persistence work in plugin mode?" |
+| Skills had stale dimension names ("DRY, testability, tooling, security, horizons") | Integration: "Are existing references updated?" |
+| review-criteria.md framed as primary when dimensions replaced it | Coherence: "Are there stale references describing the OLD way?" |
+| enforce-pr-review.ts blocks the subagents the review skill needs | Integration: "Do hooks accommodate this new workflow?" |
+| kaizen-dimensions listed 3 of 10 dimensions | Documentation: "Are existing docs updated?" |
+| No L2 enforcement for coverage gate | Measure: "What enforcement level does this have?" |
+| Plan-before-code had no hook enforcement | Measure: "Is creation mandatory or optional?" |
 
 ## Output Format
 
@@ -128,6 +161,9 @@ Rules for status:
 - Missing PERSIST for an artifact → MISSING (lost outputs can't be reviewed)
 - Missing FEEDBACK for any capability → PARTIAL at minimum (no improvement path)
 - Missing CONSUME → PARTIAL (artifact without purpose, but not broken)
+- Missing DOCUMENTATION for a new capability → MISSING (undiscoverable = doesn't exist)
+- Missing INTEGRATION with existing skills/hooks → MISSING (new capability that nothing uses)
+- Stale references creating COHERENCE contradiction → PARTIAL (system is confused about itself)
 
 Be concrete. Don't flag every function — focus on capabilities that others depend on or that introduce new artifact types. A utility function doesn't need its own improvement lifecycle. A new review dimension does.
 
