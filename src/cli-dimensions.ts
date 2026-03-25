@@ -88,6 +88,7 @@ export function cmdAdd(opts: AddOptions): string {
 name: ${opts.name}
 description: ${opts.description}
 applies_to: ${opts.appliesTo}
+needs: [diff, issue]
 ---
 
 You are an adversarial reviewer. Your job is to evaluate the ${opts.appliesTo === 'plan' ? 'plan' : 'PR'} against the "${opts.name}" dimension.

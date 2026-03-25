@@ -10,7 +10,7 @@
  * They validate that review prompts produce correct findings on known PRs.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   parseReviewOutput,
   formatBatteryReport,
@@ -21,6 +21,10 @@ import {
   loadDimensionMetas,
   reviewBriefing,
   validateReviewCoverage,
+  renderTemplate,
+  computeDataOverlap,
+  spawnReview,
+  reviewBattery,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
@@ -29,8 +33,16 @@ import {
   type BatteryResult,
   type ReviewDimension,
 } from './review-battery.js';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+// vi.mock is hoisted by vitest so it runs before imports — this is the correct
+// ESM-compatible way to intercept spawnSync in tests.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawnSync: vi.fn(actual.spawnSync) };
+});
 
 // Tier 1: Schema and parser tests
 
@@ -330,6 +342,232 @@ describe('policy constants', () => {
   });
 });
 
+// Tier 1: renderTemplate
+
+describe('renderTemplate', () => {
+  it('substitutes simple variables', () => {
+    const result = renderTemplate('Hello {{name}}, repo: {{repo}}', { name: 'world', repo: 'a/b' });
+    expect(result).toBe('Hello world, repo: a/b');
+  });
+
+  it('includes conditional block when var is set', () => {
+    const result = renderTemplate('prefix\n{{#guidance}}guided: {{guidance}}{{/guidance}}\nsuffix', { guidance: 'focus' });
+    expect(result).toContain('guided: focus');
+    expect(result).toContain('prefix');
+    expect(result).toContain('suffix');
+  });
+
+  it('omits conditional block when var is missing or empty', () => {
+    const result = renderTemplate('prefix\n{{#guidance}}guided: {{guidance}}{{/guidance}}\nsuffix', { guidance: '' });
+    expect(result).not.toContain('guided');
+    expect(result).toContain('prefix');
+    expect(result).toContain('suffix');
+  });
+
+  it('leaves unknown variables as-is', () => {
+    const result = renderTemplate('{{unknown}}', {});
+    expect(result).toBe('{{unknown}}');
+  });
+
+  it('collapses multiple blank lines from removed conditionals', () => {
+    const template = 'a\n\n{{#x}}x content{{/x}}\n\n\n\nb';
+    const result = renderTemplate(template, {});
+    expect(result).not.toMatch(/\n{3,}/);
+    expect(result).toContain('a');
+    expect(result).toContain('b');
+  });
+
+  it('trims leading and trailing whitespace', () => {
+    const result = renderTemplate('  \n  hello  \n  ', {});
+    expect(result).toBe('hello');
+  });
+});
+
+// Tier 1: computeDataOverlap
+
+describe('computeDataOverlap', () => {
+  const makeMeta = (name: string, needs: string[]): DimensionMeta => ({
+    name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md`,
+  });
+
+  it('returns empty array for no metas', () => {
+    expect(computeDataOverlap([])).toEqual([]);
+  });
+
+  it('groups dimensions with identical needs', () => {
+    const metas = [
+      makeMeta('a', ['diff', 'issue']),
+      makeMeta('b', ['diff', 'issue']),
+      makeMeta('c', ['diff']),
+    ];
+    const groups = computeDataOverlap(metas);
+    const ab = groups.find(g => g.dimensions.includes('a'));
+    expect(ab).toBeDefined();
+    expect(ab!.dimensions).toContain('b');
+    expect(ab!.dimensions).not.toContain('c');
+    const cOnly = groups.find(g => g.dimensions.includes('c'));
+    expect(cOnly!.dimensions).toHaveLength(1);
+  });
+
+  it('needs order does not affect grouping', () => {
+    const metas = [
+      makeMeta('x', ['issue', 'diff']),
+      makeMeta('y', ['diff', 'issue']),
+    ];
+    const groups = computeDataOverlap(metas);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].dimensions).toContain('x');
+    expect(groups[0].dimensions).toContain('y');
+  });
+
+  it('each dimension with unique needs forms its own group', () => {
+    const metas = [
+      makeMeta('a', ['diff']),
+      makeMeta('b', ['issue']),
+      makeMeta('c', ['pr']),
+    ];
+    const groups = computeDataOverlap(metas);
+    expect(groups).toHaveLength(3);
+  });
+});
+
+// Tier 1: spawnReview (mocked claude subprocess)
+//
+// vi.mock hoists the node:child_process mock, wrapping spawnSync in vi.fn().
+// In tests, we override mockImplementation per-test:
+//   - git calls return empty stdout → resolvePromptsDir falls back to import.meta.url path
+//   - claude calls return the desired mock response
+
+describe('spawnReview', () => {
+  afterEach(() => { vi.mocked(spawnSync).mockRestore(); });
+
+  function mockClaude(stdout: string, exitCode = 0) {
+    vi.mocked(spawnSync).mockImplementation((cmd: string, args: any, opts: any) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      return { status: exitCode, stdout, stderr: '', signal: null, pid: 1, output: [null, stdout, ''] } as any;
+    });
+  }
+
+  it('returns parsed review when claude exits 0 with valid JSON', () => {
+    const payload = JSON.stringify({
+      result: JSON.stringify({
+        dimension: 'requirements',
+        summary: 'all good',
+        findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }],
+      }),
+      cost_usd: 0.12,
+    });
+    mockClaude(payload);
+
+    const { review, costUsd } = spawnReview({ dimension: 'requirements', prUrl: 'https://github.com/test/test/pull/1', repo: 'test/test' });
+    expect(review).not.toBeNull();
+    expect(review!.verdict).toBe('pass');
+    expect(review!.findings[0].status).toBe('DONE');
+    expect(costUsd).toBeCloseTo(0.12);
+  });
+
+  it('returns null review when claude exits non-zero', () => {
+    mockClaude('', 1);
+    const { review, costUsd } = spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    expect(review).toBeNull();
+    expect(costUsd).toBe(0);
+  });
+
+  it('falls back to raw stdout when output is not valid JSON (prose with embedded JSON)', () => {
+    // claude outputs prose + embedded JSON — JSON.parse fails, catch uses raw stdout
+    const raw = `Here is my review:\n{"dimension":"requirements","summary":"gap","findings":[{"requirement":"R1","status":"MISSING","detail":"not done"}]}\nDone.`;
+    mockClaude(raw);
+
+    const { review } = spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    expect(review).not.toBeNull();
+    expect(review!.verdict).toBe('fail');
+  });
+
+  it('returns null review when output is unparseable', () => {
+    mockClaude('not json at all');
+    const { review } = spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    expect(review).toBeNull();
+  });
+
+  it('extracts total_cost_usd as fallback cost field', () => {
+    const payload = JSON.stringify({
+      result: '{"dimension":"d","summary":"ok","findings":[]}',
+      total_cost_usd: 0.05,
+    });
+    mockClaude(payload);
+    const { costUsd } = spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    expect(costUsd).toBeCloseTo(0.05);
+  });
+});
+
+// Tier 1: reviewBattery (mocked spawnReview)
+
+describe('reviewBattery', () => {
+  afterEach(() => { vi.mocked(spawnSync).mockRestore(); });
+
+  function mockClaude(responses: Array<{ stdout: string; exitCode?: number }>) {
+    let callCount = 0;
+    vi.mocked(spawnSync).mockImplementation((cmd: string, args: any, opts: any) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      const resp = responses[callCount] ?? responses[responses.length - 1];
+      callCount++;
+      return { status: resp.exitCode ?? 0, stdout: resp.stdout, stderr: '', signal: null, pid: 1, output: [null, resp.stdout, ''] } as any;
+    });
+  }
+
+  const passingOutput = JSON.stringify({
+    result: JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] }),
+    cost_usd: 0.10,
+  });
+
+  const failingOutput = JSON.stringify({
+    result: JSON.stringify({ dimension: 'test-quality', summary: 'gap', findings: [{ requirement: 'R1', status: 'MISSING', detail: 'no tests' }] }),
+    cost_usd: 0.08,
+  });
+
+  it('returns pass when all dimensions pass', () => {
+    mockClaude([{ stdout: passingOutput }, { stdout: passingOutput }]);
+    const result = reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+    expect(result.verdict).toBe('pass');
+    expect(result.missingCount).toBe(0);
+    expect(result.dimensions).toHaveLength(2);
+  });
+
+  it('returns fail when any dimension has MISSING finding', () => {
+    mockClaude([{ stdout: passingOutput }, { stdout: failingOutput }]);
+    const result = reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+    expect(result.verdict).toBe('fail');
+    expect(result.missingCount).toBe(1);
+  });
+
+  it('returns fail when some reviews fail (null results excluded from dimensions)', () => {
+    mockClaude([{ stdout: passingOutput }, { stdout: '', exitCode: 1 }]);
+    const result = reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+    expect(result.verdict).toBe('fail');
+    expect(result.dimensions).toHaveLength(1); // failed review excluded
+  });
+
+  it('sums costs across all dimensions', () => {
+    mockClaude([{ stdout: passingOutput }, { stdout: failingOutput }]);
+    const result = reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+    expect(result.costUsd).toBeCloseTo(0.18);
+  });
+
+  it('counts partialCount correctly', () => {
+    const partialOutput = JSON.stringify({
+      result: JSON.stringify({ dimension: 'requirements', summary: 'partial', findings: [
+        { requirement: 'R1', status: 'DONE', detail: 'ok' },
+        { requirement: 'R2', status: 'PARTIAL', detail: 'half done' },
+      ]}),
+      cost_usd: 0.09,
+    });
+    mockClaude([{ stdout: partialOutput }]);
+    const result = reviewBattery({ dimensions: ['requirements'] });
+    expect(result.partialCount).toBe(1);
+    expect(result.missingCount).toBe(0);
+  });
+});
+
 // Tier 3: Replay tests (slow, costs money)
 // Run with: RUN_REPLAY_TESTS=1 npm test -- --grep "replay"
 
@@ -393,4 +631,88 @@ describe('replay tests', () => {
     const gaps = review!.findings.filter(f => f.status !== 'DONE');
     expect(gaps.length).toBeGreaterThan(0);
   }, 180_000);
+
+  it('scope-fidelity flags PR #816 scope reduction (disabled sentinel instead of fixing root cause)', async () => {
+    if (skip) { console.log('  [skip] set RUN_REPLAY_TESTS=1 to run'); return; }
+
+    // PR #816 / issue #814 (CI tests timing out)
+    // Issue explicitly said "fix the underlying slowness rather than increasing the timeout."
+    // PR disabled the timing sentinel. Scope-fidelity should catch this.
+    const { spawnReview } = await import('./review-battery.js');
+    const { review } = spawnReview({
+      dimension: 'scope-fidelity',
+      prUrl: 'https://github.com/Garsson-io/kaizen/pull/816',
+      issueNum: '814',
+      repo: 'Garsson-io/kaizen',
+    });
+
+    expect(review).not.toBeNull();
+    expect(review!.verdict).toBe('fail');
+    const gaps = review!.findings.filter(f => f.status !== 'DONE');
+    expect(gaps.length).toBeGreaterThan(0);
+  }, 180_000);
+
+  it('scope-fidelity passes PR #825 clean implementation', async () => {
+    if (skip) { console.log('  [skip] set RUN_REPLAY_TESTS=1 to run'); return; }
+
+    // PR #825 / issue #726 (deduplicate batch progress issues)
+    // Expected: clean implementation, scope matches issue
+    const { spawnReview } = await import('./review-battery.js');
+    const { review } = spawnReview({
+      dimension: 'scope-fidelity',
+      prUrl: 'https://github.com/Garsson-io/kaizen/pull/825',
+      issueNum: '726',
+      repo: 'Garsson-io/kaizen',
+    });
+
+    expect(review).not.toBeNull();
+    expect(review!.verdict).toBe('pass');
+  }, 180_000);
+
+  it('pr-description flags PR #810 missing narrative arc', async () => {
+    if (skip) { console.log('  [skip] set RUN_REPLAY_TESTS=1 to run'); return; }
+
+    // PR #810 / issue #765 — pre-Story Spine era, likely a feature list not a narrative.
+    // pr-description should catch weak "Once upon a time / Because of that" structure.
+    const { spawnReview } = await import('./review-battery.js');
+    const { review } = spawnReview({
+      dimension: 'pr-description',
+      prUrl: 'https://github.com/Garsson-io/kaizen/pull/810',
+      issueNum: '765',
+      repo: 'Garsson-io/kaizen',
+    });
+
+    expect(review).not.toBeNull();
+    // Pre-Story Spine PRs should score PARTIAL or fail on narrative quality
+    const gaps = review!.findings.filter(f => f.status !== 'DONE');
+    expect(gaps.length).toBeGreaterThan(0);
+  }, 180_000);
+
+  it('test-quality flags PR #832 zero-adoption gap in tests', async () => {
+    if (skip) { console.log('  [skip] set RUN_REPLAY_TESTS=1 to run'); return; }
+
+    // PR #832 / issue #666 (skill metadata schema)
+    // Tests exist for the TypeScript interface but no test verifies that
+    // existing SKILL.md files are updated to use the schema.
+    const { spawnReview } = await import('./review-battery.js');
+    const { review } = spawnReview({
+      dimension: 'test-quality',
+      prUrl: 'https://github.com/Garsson-io/kaizen/pull/832',
+      issueNum: '666',
+      repo: 'Garsson-io/kaizen',
+    });
+
+    expect(review).not.toBeNull();
+    const gaps = review!.findings.filter(f => f.status !== 'DONE');
+    expect(gaps.length).toBeGreaterThan(0);
+  }, 180_000);
+
+  // TODO: Add replay cases for these dimensions once motivating PRs are identified:
+  // - plan-coverage: needs a PR where plan review was run (requires plan in issue comment)
+  // - plan-fidelity: needs a PR that diverged from its plan
+  // - logic-correctness: needs a PR with a confirmed logic bug that was caught
+  // - error-handling: needs a PR with swallowed exceptions or missing error paths
+  // - dry: needs a PR with confirmed duplication
+  // - test-plan: needs a PR with wrong testing strategy (e.g. unit tests for something needing E2E)
+  // - improvement-lifecycle: use PR #846 itself (the review battery PR)
 });

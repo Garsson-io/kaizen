@@ -31,6 +31,8 @@ import {
   reviewBattery,
   formatBatteryReport,
   listDimensions,
+  resolvePromptsDir,
+  renderTemplate,
 } from '../src/review-battery.js';
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
 
@@ -66,6 +68,9 @@ export {
   type BatchReflectEvent,
   type EventEnvelope,
 } from './auto-dent-events.js';
+
+// Re-export shared utilities from review-battery for backward compatibility
+export { resolvePromptsDir, renderTemplate } from '../src/review-battery.js';
 
 export {
   color,
@@ -198,6 +203,10 @@ export interface RunResult {
   contemplationRecs?: string[];
   /** Reflection insights extracted from reflect-mode run output (#699) */
   reflectionInsights?: string[];
+  /** Advisory requirements review verdict for the PR produced by this run */
+  reviewVerdict?: 'pass' | 'fail' | 'skipped';
+  /** Cost of the requirements review in USD */
+  reviewCostUsd?: number;
 }
 
 // State I/O
@@ -250,22 +259,6 @@ function getRepoRoot(): string {
  * Resolve the prompts directory. Checks repo-root/prompts first,
  * then falls back to the directory relative to this script.
  */
-export function resolvePromptsDir(): string {
-  // Use --show-toplevel (worktree-aware) not --git-common-dir (main repo root).
-  // Prompts are worktree-local files that may differ per branch.
-  try {
-    const toplevel = execSync(
-      'git rev-parse --show-toplevel',
-      { encoding: 'utf8' },
-    ).trim();
-    const dir = resolve(toplevel, 'prompts');
-    if (existsSync(dir)) return dir;
-  } catch {
-    // Fall through
-  }
-  return resolve(dirname(new URL(import.meta.url).pathname), '..', 'prompts');
-}
-
 /**
  * Load persisted reflection insights from the batch log directory.
  * Returns formatted markdown string for prompt injection, or empty string if none.
@@ -456,29 +449,6 @@ export function buildTemplateVars(
  *   {{variable}}          — simple substitution
  *   {{#variable}}...{{/variable}} — conditional section (rendered if variable is non-empty)
  */
-export function renderTemplate(
-  template: string,
-  vars: Record<string, string>,
-): string {
-  // Process conditional sections: {{#key}}...{{/key}}
-  let result = template.replace(
-    /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g,
-    (_match, key: string, body: string) => {
-      return vars[key] ? body : '';
-    },
-  );
-
-  // Substitute variables: {{key}}
-  result = result.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => {
-    return vars[key] ?? `{{${key}}}`;
-  });
-
-  // Clean up blank lines left by removed conditional sections
-  result = result.replace(/\n{3,}/g, '\n\n');
-
-  return result.trim();
-}
-
 /**
  * Load a prompt template from the prompts directory.
  * Returns null if the file doesn't exist (caller should fall back to inline).
@@ -1605,6 +1575,10 @@ async function main(): Promise<void> {
       appendFileSync(logFile, `\nreview_battery_error=${e.message}\n`);
     }
   }
+
+  // Store review verdict back onto result so scoreRunResult picks it up
+  result.reviewVerdict = reviewVerdict;
+  result.reviewCostUsd = reviewCostUsd;
 
   // Lifecycle validation (#639) — advisory, not blocking
   let lifecycleViolationCount = 0;

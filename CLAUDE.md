@@ -31,6 +31,9 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `docs/case-create-auto-adopt-worktree-spec.md` | Worktree adoption for case system |
 | `docs/test-side-effects-and-kaizen-escalation-spec.md` | Test side-effects and L1→L2 escalation patterns |
 | `docs/auto-dent-operations.md` | Auto-dent operational guide — how to run, monitor, debug batch operations |
+| `docs/artifact-lifecycle.md` | Artifact chain — where outputs live, who consumes them, recursive loops |
+| `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume |
+| `src/cli-dimensions.ts` | Dimension CLI: list/show/add/validate `prompts/review-*.md` files |
 
 ## Skills
 
@@ -46,6 +49,8 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `/kaizen-prd` | Problem mapping — iterative discovery to spec |
 | `/kaizen-plan` | Break large work into sequenced PRs |
 | `/kaizen-review-pr` | Self-review checklist |
+| `/kaizen-write-pr` | Write a PR body using the Story Spine narrative arc |
+| `/kaizen-dimensions` | List, inspect, and manage review battery dimensions |
 | `/kaizen-file-issue` | Fast incident-to-issue capture (2 min) |
 | `/kaizen-zen` | Print the Zen of Kaizen |
 | `/kaizen-wip` | Show in-progress work |

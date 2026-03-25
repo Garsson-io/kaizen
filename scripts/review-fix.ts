@@ -22,7 +22,7 @@
  * --dry-run: review only, print the fix prompt, don't spawn fix session
  */
 
-import { spawn as asyncSpawn, spawnSync, execSync } from 'node:child_process';
+import { spawn as asyncSpawn, spawnSync } from 'node:child_process';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -34,6 +34,7 @@ import {
   type BatteryResult,
   type ReviewFinding,
 } from '../src/review-battery.js';
+import { ghExec } from './auto-dent-github.js';
 
 // ── State persistence ───────────────────────────────────────────────
 
@@ -148,11 +149,7 @@ Example:
 // ── Pre-fetch context ───────────────────────────────────────────────
 
 function gh(cmd: string): string {
-  try {
-    return execSync(`gh ${cmd}`, { encoding: 'utf8', timeout: 30_000 }).trim();
-  } catch {
-    return '';
-  }
+  try { return ghExec(`gh ${cmd}`); } catch { return ''; }
 }
 
 function prefetch(prUrl: string, issueNum: string, repo: string) {

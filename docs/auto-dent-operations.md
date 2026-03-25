@@ -48,6 +48,8 @@ All cross-run state lives in `logs/auto-dent/<batch-id>/state.json`. Key fields:
 | `stop_reason` | string | Why the batch stopped (empty while running) |
 | `progress_issue` | string | GitHub issue URL for batch progress tracking |
 | `run_history` | RunMetrics[] | Per-run duration, cost, tool calls, exit code |
+| `review_verdict` | `"pass"\|"fail"\|"error"\|"skipped"` per run | Advisory requirements review verdict for the PR produced by this run |
+| `review_cost_usd` | number per run | Cost of the requirements review for this run (typically $0.10–0.20) |
 
 ### Prompt Templates
 
@@ -174,6 +176,15 @@ jq '.stop_reason, .consecutive_failures' logs/auto-dent/<batch-id>/state.json
 ```bash
 jq '.run_history[] | {run, exit_code, duration_seconds, cost_usd, prs}' logs/auto-dent/<batch-id>/state.json
 ```
+
+### 3b. Check review verdict distribution
+```bash
+jq '.run_history[] | {run, review_verdict, review_cost_usd}' logs/auto-dent/<batch-id>/state.json
+```
+
+`review_verdict` is advisory — a `"fail"` does not stop the run. But a high fail rate (>30% across a batch) signals that PRs are closing issues in name only. Investigate the specific runs where verdict is `"fail"` to find systemic gaps.
+
+If `review_verdict` is `"error"` or `"skipped"`, the review could not complete (rate limit, timeout, or no PR in that run). These are expected for runs that produce no PR.
 
 ### 4. Read the failing run's log
 ```bash

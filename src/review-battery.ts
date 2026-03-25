@@ -7,7 +7,7 @@
  *
  * Core primitive: compare(artifact_a, artifact_b, adversarial_prompt) → findings[]
  *
- * Part of the review loop system — see docs/review-loop-spec.md
+ * Part of the review loop system — see docs/artifact-lifecycle.md
  * Linear: ENG-6638
  */
 
@@ -363,6 +363,22 @@ function normalizeStatus(s: unknown): FindingStatus {
 // ── Prompt Loading ──────────────────────────────────────────────────
 
 /**
+ * Substitute variables and conditional sections in a template string.
+ * - `{{#key}}...{{/key}}` — include block only if vars[key] is non-empty
+ * - `{{key}}` — replace with vars[key], or leave as `{{key}}` if missing
+ * Cleans up extra blank lines left by removed conditional sections.
+ */
+export function renderTemplate(template: string, vars: Record<string, string>): string {
+  let result = template.replace(
+    /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g,
+    (_match, key: string, body: string) => vars[key] ? body : '',
+  );
+  result = result.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => vars[key] ?? `{{${key}}}`);
+  result = result.replace(/\n{3,}/g, '\n\n');
+  return result.trim();
+}
+
+/**
  * Resolve the prompts directory. Checks repo-root/prompts first,
  * then falls back to the directory relative to this file.
  */
@@ -399,14 +415,8 @@ export function loadReviewPrompt(
     throw new Error(`Review prompt template not found: ${templatePath}`);
   }
 
-  let content = readFileSync(templatePath, 'utf8');
-
-  // Mustache-style variable substitution
-  for (const [key, value] of Object.entries(vars)) {
-    content = content.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
-  }
-
-  return content;
+  const content = readFileSync(templatePath, 'utf8');
+  return renderTemplate(content, vars);
 }
 
 // ── Review Spawning ─────────────────────────────────────────────────
