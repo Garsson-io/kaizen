@@ -197,7 +197,7 @@ export function formatValidation(v: { results: ValidationResult[]; ok: boolean }
 
 // ── CLI Entry Point ─────────────────────────────────────────────────
 
-function parseArgs(argv: string[]): void {
+export function parseArgs(argv: string[]): void {
   const args = argv.slice(2); // strip node + script
   const command = args[0];
 

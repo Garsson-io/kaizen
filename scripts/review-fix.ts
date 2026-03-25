@@ -163,14 +163,15 @@ function stateDir(): string {
   return dir;
 }
 
-function stateKey(prUrl: string): string {
+export function stateKey(prUrl: string): string {
   // Extract PR number from URL
   const m = prUrl.match(/\/pull\/(\d+)/);
   return m ? `pr-${m[1]}` : prUrl.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
-function loadState(prUrl: string): ReviewFixState | null {
-  const path = join(stateDir(), `${stateKey(prUrl)}.json`);
+export function loadState(prUrl: string, dir?: string): ReviewFixState | null {
+  const d = dir ?? stateDir();
+  const path = join(d, `${stateKey(prUrl)}.json`);
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, 'utf8'));
@@ -179,8 +180,9 @@ function loadState(prUrl: string): ReviewFixState | null {
   }
 }
 
-function saveState(state: ReviewFixState): void {
-  const path = join(stateDir(), `${stateKey(state.prUrl)}.json`);
+export function saveState(state: ReviewFixState, dir?: string): void {
+  const d = dir ?? stateDir();
+  const path = join(d, `${stateKey(state.prUrl)}.json`);
   writeFileSync(path, JSON.stringify(state, null, 2));
 }
 
@@ -196,8 +198,8 @@ interface CliArgs {
   resume: boolean;
 }
 
-function parseArgs(): CliArgs {
-  const args = process.argv.slice(2);
+export function parseArgs(argv = process.argv): CliArgs {
+  const args = argv.slice(2);
   let prUrl = '', issueNum = '', repo = '';
   let dryRun = false, resume = false, maxRounds = MAX_FIX_ROUNDS, budgetCap = BUDGET_CAP_USD;
 
@@ -263,7 +265,7 @@ function prefetch(prUrl: string, issueNum: string, repo: string) {
 
 // ── Fix prompt ──────────────────────────────────────────────────────
 
-function buildFixPrompt(
+export function buildFixPrompt(
   issueNum: string,
   repo: string,
   prUrl: string,

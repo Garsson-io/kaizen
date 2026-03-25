@@ -5,11 +5,11 @@
  * against both real prompts/ dimensions and temp fixtures.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { cmdList, cmdShow, cmdAdd, cmdValidate, formatValidation } from './cli-dimensions.js';
+import { cmdList, cmdShow, cmdAdd, cmdValidate, formatValidation, parseArgs } from './cli-dimensions.js';
 import { resolvePromptsDir } from './review-battery.js';
 
 // Fixture helpers
@@ -234,5 +234,73 @@ describe('cli-dimensions with temp fixtures', () => {
     const output = formatValidation(v);
     expect(output).toContain('FAIL');
     expect(output).toContain('Validation failed.');
+  });
+});
+
+// ── parseArgs dispatch ────────────────────────────────────────────────
+//
+// Tests the CLI routing layer: does the right command get called and do
+// error paths exit with the right code? Uses vi.spyOn on process.exit
+// to capture exits without terminating the test process.
+
+describe('parseArgs dispatch', () => {
+  let logs: string[];
+  let errors: string[];
+
+  beforeEach(() => {
+    logs = [];
+    errors = [];
+    vi.spyOn(console, 'log').mockImplementation((msg: string) => { logs.push(String(msg)); });
+    vi.spyOn(console, 'error').mockImplementation((msg: string) => { errors.push(String(msg)); });
+    vi.spyOn(process, 'exit').mockImplementation((_code?: number | string) => {
+      throw new Error(`exit:${_code}`);
+    });
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('list command prints output and does not exit', () => {
+    parseArgs(['node', 'cli-dimensions.ts', 'list']);
+    expect(logs.join('\n')).toContain('requirements');
+  });
+
+  it('show with no names exits 1', () => {
+    expect(() => parseArgs(['node', 'cli-dimensions.ts', 'show'])).toThrow('exit:1');
+    expect(errors.join()).toContain('at least one');
+  });
+
+  it('add with no --description exits 1', () => {
+    expect(() => parseArgs(['node', 'cli-dimensions.ts', 'add', 'foo'])).toThrow('exit:1');
+    expect(errors.join()).toContain('--description');
+  });
+
+  it('add with no name exits 1', () => {
+    expect(() => parseArgs(['node', 'cli-dimensions.ts', 'add'])).toThrow('exit:1');
+    expect(errors.join()).toContain('name');
+  });
+
+  it('unknown command exits 1', () => {
+    expect(() => parseArgs(['node', 'cli-dimensions.ts', 'frobnicate'])).toThrow('exit:1');
+    expect(errors.join()).toContain('Unknown command');
+  });
+
+  it('--help exits 0', () => {
+    expect(() => parseArgs(['node', 'cli-dimensions.ts', '--help'])).toThrow('exit:0');
+    expect(logs.join()).toContain('Usage:');
+  });
+
+  it('-h exits 0', () => {
+    expect(() => parseArgs(['node', 'cli-dimensions.ts', '-h'])).toThrow('exit:0');
+  });
+
+  it('no command exits 0 with usage', () => {
+    expect(() => parseArgs(['node', 'cli-dimensions.ts'])).toThrow('exit:0');
+    expect(logs.join()).toContain('Commands:');
+  });
+
+  it('validate on all-valid prompts exits 0', () => {
+    // validate against real prompts dir — all should pass
+    // If this fails, a prompt file has broken frontmatter
+    expect(() => parseArgs(['node', 'cli-dimensions.ts', 'validate'])).not.toThrow();
   });
 });

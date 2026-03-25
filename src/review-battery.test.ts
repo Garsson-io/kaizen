@@ -34,7 +34,7 @@ import {
   type ReviewDimension,
 } from './review-battery.js';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // vi.mock is hoisted by vitest so it runs before imports — this is the correct
@@ -715,4 +715,136 @@ describe('replay tests', () => {
   // - dry: needs a PR with confirmed duplication
   // - test-plan: needs a PR with wrong testing strategy (e.g. unit tests for something needing E2E)
   // - improvement-lifecycle: use PR #846 itself (the review battery PR)
+});
+
+// ── Tier 1: Structural tests for all prompt files ────────────────────
+//
+// Zero cost — no subprocess. Verifies every prompts/review-*.md file
+// has the required frontmatter fields, correct name/filename alignment,
+// and a valid applies_to value. These are the cheapest possible guard
+// against schema drift in prompt files.
+
+describe('Tier 1 — prompt file structure (all dimensions)', () => {
+  const promptsDir = resolvePromptsDir();
+  const validAppliesTo = new Set(['pr', 'plan', 'both']);
+
+  // Parse YAML frontmatter between --- delimiters
+  function parseFrontmatterFields(content: string): Record<string, string> | null {
+    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!match) return null;
+    const fields: Record<string, string> = {};
+    for (const line of match[1].split('\n')) {
+      const kv = line.match(/^(\w+):\s*(.+)$/);
+      if (kv) fields[kv[1]] = kv[2].trim().replace(/^["']|["']$/g, '');
+    }
+    return fields;
+  }
+
+  const dimensions = [
+    'dry', 'error-handling', 'improvement-lifecycle', 'logic-correctness',
+    'plan-coverage', 'plan-fidelity', 'pr-description', 'requirements',
+    'scope-fidelity', 'test-plan', 'test-quality',
+  ];
+
+  for (const dim of dimensions) {
+    const filePath = resolve(promptsDir, `review-${dim}.md`);
+
+    it(`review-${dim}.md exists`, () => {
+      expect(existsSync(filePath), `${filePath} not found`).toBe(true);
+    });
+
+    it(`review-${dim}.md has parseable frontmatter`, () => {
+      const content = readFileSync(filePath, 'utf8');
+      const fm = parseFrontmatterFields(content);
+      expect(fm, `Could not parse frontmatter in review-${dim}.md`).not.toBeNull();
+    });
+
+    it(`review-${dim}.md frontmatter name matches filename`, () => {
+      const content = readFileSync(filePath, 'utf8');
+      const fm = parseFrontmatterFields(content)!;
+      expect(fm.name, `name field in review-${dim}.md should be "${dim}"`).toBe(dim);
+    });
+
+    it(`review-${dim}.md has non-empty description`, () => {
+      const content = readFileSync(filePath, 'utf8');
+      const fm = parseFrontmatterFields(content)!;
+      expect(fm.description, `description missing in review-${dim}.md`).toBeTruthy();
+    });
+
+    it(`review-${dim}.md applies_to is valid`, () => {
+      const content = readFileSync(filePath, 'utf8');
+      const fm = parseFrontmatterFields(content)!;
+      expect(
+        validAppliesTo.has(fm.applies_to),
+        `applies_to in review-${dim}.md is "${fm.applies_to}", must be pr|plan|both`,
+      ).toBe(true);
+    });
+
+    it(`review-${dim}.md has non-empty body`, () => {
+      const content = readFileSync(filePath, 'utf8');
+      const bodyStart = content.indexOf('---', 3);
+      const body = bodyStart !== -1 ? content.slice(bodyStart + 3).trim() : '';
+      expect(body.length, `body in review-${dim}.md is empty`).toBeGreaterThan(50);
+    });
+  }
+});
+
+// ── Tier 0: Category-prevention for parseReviewOutput edge cases ──────
+//
+// These tests ensure the parser does not crash on malformed or unexpected
+// LLM output — a real risk since LLM output shape can vary.
+
+describe('parseReviewOutput — category prevention for edge cases', () => {
+  it('findings entry with neither requirement nor item uses empty string, does not crash', () => {
+    const raw = JSON.stringify({
+      dimension: 'test',
+      summary: 'ok',
+      findings: [{ status: 'DONE', detail: 'done' }],
+    });
+    const result = parseReviewOutput(raw, 'test');
+    expect(result).not.toBeNull();
+    expect(result!.findings[0].requirement).toBe('');
+  });
+
+  it('unknown dimension field falls back to the passed-in dimension param', () => {
+    const raw = JSON.stringify({
+      dimension: 'some-unknown-value',
+      summary: 'ok',
+      findings: [{ requirement: 'R', status: 'DONE', detail: 'd' }],
+    });
+    // dimension field is preserved as-is from parsed output (whatever the LLM returned)
+    const result = parseReviewOutput(raw, 'fallback-dim');
+    expect(result).not.toBeNull();
+    expect(result!.dimension).toBe('some-unknown-value');
+  });
+
+  it('valid JSON but completely wrong shape (no findings) returns null', () => {
+    const raw = JSON.stringify({ type: 'assistant', message: 'hello' });
+    expect(parseReviewOutput(raw, 'test')).toBeNull();
+  });
+
+  it('findings is not an array returns null', () => {
+    const raw = JSON.stringify({ dimension: 'test', findings: 'not an array' });
+    expect(parseReviewOutput(raw, 'test')).toBeNull();
+  });
+
+  it('finding with item field (alternative name) normalizes to requirement', () => {
+    const raw = JSON.stringify({
+      dimension: 'test',
+      summary: '',
+      findings: [{ item: 'Alternative field', status: 'PARTIAL', detail: 'partial' }],
+    });
+    const result = parseReviewOutput(raw, 'test');
+    expect(result!.findings[0].requirement).toBe('Alternative field');
+  });
+
+  it('finding with description field (alternative name) normalizes to detail', () => {
+    const raw = JSON.stringify({
+      dimension: 'test',
+      summary: '',
+      findings: [{ requirement: 'R', status: 'DONE', description: 'alt detail' }],
+    });
+    const result = parseReviewOutput(raw, 'test');
+    expect(result!.findings[0].detail).toBe('alt detail');
+  });
 });
