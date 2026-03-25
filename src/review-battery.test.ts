@@ -16,6 +16,8 @@ import {
   formatBatteryReport,
   loadReviewPrompt,
   resolvePromptsDir,
+  discoverDimensions,
+  listDimensions,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
@@ -172,6 +174,27 @@ describe('formatBatteryReport', () => {
     expect(report).toContain('[x] **R1**');
     expect(report).toContain('[ ] **R2**');
     expect(report).toContain('Missing | 1');
+  });
+});
+
+// Tier 1: Dimension discovery
+
+describe('discoverDimensions', () => {
+  it('discovers dimensions from prompts directory', () => {
+    const dims = discoverDimensions();
+    expect(dims).toHaveProperty('plan-coverage');
+    expect(dims).toHaveProperty('requirements');
+    expect(dims).toHaveProperty('pr-description');
+    expect(dims['plan-coverage']).toBe('review-plan-coverage.md');
+    expect(dims['requirements']).toBe('review-requirements.md');
+    expect(dims['pr-description']).toBe('review-pr-description.md');
+  });
+
+  it('listDimensions returns dimension names', () => {
+    const names = listDimensions();
+    expect(names).toContain('plan-coverage');
+    expect(names).toContain('requirements');
+    expect(names).toContain('pr-description');
   });
 });
 

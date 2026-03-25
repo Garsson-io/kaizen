@@ -24,27 +24,21 @@ The `pr-review-loop.sh` hook enforces that this review happens. This skill defin
 3. **Read linked issues:** Check PR body, branch name, commits for `#N` or `kaizen#N`. If found, `gh issue view --repo "$ISSUES_REPO"` to understand requirements.
 4. **Scan recent failure modes:** Check the "Learned Failure Modes" section of the criteria file. These are patterns from past incidents — watch for them specifically in this diff.
 
-### Phase 1.5: PR Description Quality
-
-The **issue** tells the story of the problem — incidents, motivation, acceptance criteria. The **PR description** is its complement — the story of the journey from problem to solution. Together they form the complete record: *why we did this* (issue) + *how we did it, what happened, and what changed* (PR). A future reader should understand the full story from issue + PR without reading the diff.
-
-**Check the PR body against `/kaizen-write-pr` guidelines:**
-
-1. **Does it tell a narrative?** The PR should follow the Story Spine arc: what was the world like before → what incident triggered this → what was built → what's the evidence it works → what changed. A PR body that just lists "Added X, changed Y, updated Z" fails this — it duplicates commit messages instead of complementing the issue.
-
-2. **Does it complement the issue, not repeat it?** The issue describes the problem. The PR should describe the *solution journey* — what was tried, what design decisions were made and why, what tradeoffs were considered, what the empirical evidence shows. If the PR body restates the problem without adding solution context, it's not doing its job.
-
-3. **Does it include evidence?** Test results, validation data, before/after comparisons, real output. Claims without evidence ("this improves quality") are not findings.
-
-4. **Does it name its limitations honestly?** A PR that pretends to be complete when it has known gaps erodes reviewer trust. Known limitations with next steps signal maturity.
-
-5. **Can a reviewer understand the PR's value without reading the diff?** This is the acid test. The diff is proof — the description is the argument.
-
-**If the PR body fails these checks:**
-- Flag it as a SHOULD-FIX finding: "PR description does not tell the story of the solution. Run `/kaizen-write-pr` to improve it."
-- This is not a blocker (MUST-FIX), but a quality signal. Rich PR descriptions compound — they become the institutional memory of why things were built the way they were.
-
 ### Phase 2: Review Using Subagents
+
+**Review dimensions are data-driven.** Dimensions are discovered from prompt template files in `prompts/review-*.md`. To add a new review dimension, create a new `prompts/review-<name>.md` file — no code changes needed. The review battery (`src/review-battery.ts`) auto-discovers them via `discoverDimensions()`.
+
+**Current dimensions** (auto-discovered from `prompts/`):
+
+| Dimension | File | What it checks |
+|-----------|------|---------------|
+| `requirements` | `review-requirements.md` | Does the PR address every requirement in the linked issue? |
+| `plan-coverage` | `review-plan-coverage.md` | Does the plan cover the issue's requirements? (used by kaizen-evaluate) |
+| `pr-description` | `review-pr-description.md` | Does the PR body tell the solution story as complement to the issue? |
+
+The `pr-description` dimension checks whether the PR body follows the `/kaizen-write-pr` Story Spine guidelines — narrative arc, complements (not repeats) the issue, includes evidence, names limitations. If PARTIAL or MISSING, it suggests running `/kaizen-write-pr`. This is a SHOULD-FIX, not a merge blocker.
+
+**Additionally, check code quality using subagents** from the criteria in `.claude/kaizen/review-criteria.md`:
 
 Launch review agents, each focused on one dimension from the criteria file. Each agent reads the diff and returns findings with confidence scores (0-100).
 

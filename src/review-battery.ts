@@ -12,8 +12,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { resolve, dirname, basename } from 'node:path';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -86,14 +86,38 @@ export const BUDGET_CAP_USD = 2.0;
 export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
 
 // ── Review Dimensions ───────────────────────────────────────────────
+//
+// Dimensions are auto-discovered from prompts/review-*.md files.
+// To add a new dimension: create prompts/review-<name>.md and it's available.
 
-export type ReviewDimension = 'plan-coverage' | 'requirements';
+export type ReviewDimension = string;
 
-/** Map dimension names to their prompt template files */
-export const DIMENSION_TEMPLATES: Record<ReviewDimension, string> = {
-  'plan-coverage': 'review-plan-coverage.md',
-  'requirements': 'review-requirements.md',
-};
+/**
+ * Discover available review dimensions by scanning prompts/review-*.md.
+ * Returns a map of dimension name → template filename.
+ */
+export function discoverDimensions(promptsDir?: string): Record<string, string> {
+  const dir = promptsDir ?? resolvePromptsDir();
+  const dims: Record<string, string> = {};
+  try {
+    for (const file of readdirSync(dir)) {
+      const match = file.match(/^review-(.+)\.md$/);
+      if (match) {
+        dims[match[1]] = file;
+      }
+    }
+  } catch {
+    // Fall through — no prompts dir
+  }
+  return dims;
+}
+
+/**
+ * List available dimension names.
+ */
+export function listDimensions(promptsDir?: string): string[] {
+  return Object.keys(discoverDimensions(promptsDir));
+}
 
 // ── Output Parsing ──────────────────────────────────────────────────
 
@@ -175,8 +199,13 @@ export function loadReviewPrompt(
   dimension: ReviewDimension,
   vars: Record<string, string>,
 ): string {
-  const templateFile = DIMENSION_TEMPLATES[dimension];
   const promptsDir = resolvePromptsDir();
+  const dims = discoverDimensions(promptsDir);
+  const templateFile = dims[dimension];
+  if (!templateFile) {
+    const available = Object.keys(dims).join(', ');
+    throw new Error(`Unknown review dimension: "${dimension}". Available: ${available}`);
+  }
   const templatePath = resolve(promptsDir, templateFile);
 
   if (!existsSync(templatePath)) {
