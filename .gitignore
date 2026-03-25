@@ -16,3 +16,4 @@ logs/
 data/
 .kaizen/
 .claude/review-fix/
+.claude/e2e-results/
