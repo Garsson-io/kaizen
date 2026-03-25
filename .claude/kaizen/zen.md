@@ -84,6 +84,9 @@ Twenty PRs in the wrong direction is worse than two in the right one.
 The fastest path to better is shorter loops.
 A system that learns from its actions in minutes improves faster than one that learns in hours.
 
+The diff is proof. The description is the argument.
+A reviewer who must read the code to understand the PR was failed by the author.
+
 The goal is not to be done. The goal is to be better at not being done.
 ```
 
@@ -302,4 +305,5 @@ Each principle traces back to a specific observation, incident, or conversation.
 | *The framework that can't evolve becomes the ceiling* | #559, #561 — the improvement framework itself must be evolvable | Recursive self-improvement, philosophical evolution |
 | *Productivity without strategic diversity is local optimization* | #548, #561 — auto-dent batches producing many PRs in one mode without cognitive diversity | Tunnel vision, mode balance |
 | *The fastest path to better is shorter loops* | #646 — contemplation run 59 surfaced implicit pattern across adaptive selection, intra-batch reflection, regression detection | Feedback latency, learning rate |
+| *The diff is proof. The description is the argument.* | #846 — PR bodies that listed features without telling the story; Story Spine (Pixar) adapted for technical PRs | PR quality, reviewer experience, knowledge transfer |
 | *The goal is not to be done* | Founding principle | Infinite game orientation |
