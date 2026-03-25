@@ -92,6 +92,29 @@ export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
 
 export type ReviewDimension = string;
 
+/** Frontmatter metadata from a review dimension prompt */
+export interface DimensionMeta {
+  name: string;
+  description: string;
+  applies_to: string;
+  file: string;
+}
+
+/**
+ * Parse YAML frontmatter from a review prompt file.
+ * Returns null if no frontmatter found.
+ */
+function parseFrontmatter(content: string): Record<string, string> | null {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return null;
+  const result: Record<string, string> = {};
+  for (const line of match[1].split('\n')) {
+    const kv = line.match(/^(\w[\w_-]*)\s*:\s*(.+)$/);
+    if (kv) result[kv[1]] = kv[2].trim();
+  }
+  return result;
+}
+
 /**
  * Discover available review dimensions by scanning prompts/review-*.md.
  * Returns a map of dimension name → template filename.
@@ -117,6 +140,31 @@ export function discoverDimensions(promptsDir?: string): Record<string, string> 
  */
 export function listDimensions(promptsDir?: string): string[] {
   return Object.keys(discoverDimensions(promptsDir));
+}
+
+/**
+ * Load metadata for all review dimensions.
+ * Reads frontmatter from each prompts/review-*.md file.
+ */
+export function loadDimensionMetas(promptsDir?: string): DimensionMeta[] {
+  const dir = promptsDir ?? resolvePromptsDir();
+  const dims = discoverDimensions(dir);
+  const metas: DimensionMeta[] = [];
+  for (const [dimName, file] of Object.entries(dims)) {
+    try {
+      const content = readFileSync(resolve(dir, file), 'utf8');
+      const fm = parseFrontmatter(content);
+      metas.push({
+        name: fm?.name ?? dimName,
+        description: fm?.description ?? '',
+        applies_to: fm?.applies_to ?? 'pr',
+        file,
+      });
+    } catch {
+      metas.push({ name: dimName, description: '', applies_to: 'pr', file });
+    }
+  }
+  return metas;
 }
 
 // ── Output Parsing ──────────────────────────────────────────────────

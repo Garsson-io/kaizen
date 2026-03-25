@@ -53,7 +53,22 @@ For kaizen issues, always pass `--github-issue` to link the case to the existing
 
 ## Workflow Task Plan — Create at Session Start (MANDATORY)
 
-**Immediately after the case gate passes**, create the full workflow task list using TaskCreate. These tasks are the contract — they make the entire workflow visible from the start so you can't "forget" review, reflection, or cleanup.
+**Immediately after the case gate passes**, discover the review dimensions your PR will be measured on and create the workflow task list.
+
+**Step 0: Discover review dimensions.** Read the frontmatter of each `prompts/review-*.md` file (or call `loadDimensionMetas()` from `src/review-battery.ts`). These are the dimensions your PR will be adversarially reviewed on after completion. Display them now so you know the target:
+
+```
+Review dimensions your PR will be measured on:
+  requirements    — Does the PR address every requirement in the linked issue?
+                    (prompts/review-requirements.md)
+  pr-description  — Does the PR body tell the solution story? Story Spine arc.
+                    (prompts/review-pr-description.md)
+  plan-coverage   — Does the plan cover the issue? (pre-implementation only)
+                    (prompts/review-plan-coverage.md)
+  ... (any new prompts/review-*.md files auto-discovered)
+```
+
+Keep these in mind throughout implementation. They are not aspirational — they are the rubric the review battery will use.
 
 **Create ALL of these tasks:**
 

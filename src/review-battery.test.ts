@@ -18,6 +18,7 @@ import {
   resolvePromptsDir,
   discoverDimensions,
   listDimensions,
+  loadDimensionMetas,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
@@ -195,6 +196,25 @@ describe('discoverDimensions', () => {
     expect(names).toContain('plan-coverage');
     expect(names).toContain('requirements');
     expect(names).toContain('pr-description');
+  });
+
+  it('loadDimensionMetas reads frontmatter from each dimension', () => {
+    const metas = loadDimensionMetas();
+    expect(metas.length).toBeGreaterThanOrEqual(3);
+
+    const req = metas.find(m => m.name === 'requirements');
+    expect(req).toBeDefined();
+    expect(req!.description).toContain('requirement');
+    expect(req!.applies_to).toBe('pr');
+    expect(req!.file).toBe('review-requirements.md');
+
+    const plan = metas.find(m => m.name === 'plan-coverage');
+    expect(plan).toBeDefined();
+    expect(plan!.applies_to).toBe('plan');
+
+    const desc = metas.find(m => m.name === 'pr-description');
+    expect(desc).toBeDefined();
+    expect(desc!.description).toContain('Story Spine');
   });
 });
 
