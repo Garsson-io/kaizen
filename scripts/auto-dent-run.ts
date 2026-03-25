@@ -1540,7 +1540,7 @@ async function main(): Promise<void> {
       const dimensions = listDimensions().filter(d => d !== 'plan-coverage'); // plan-coverage is for pre-implementation
       console.log(`  ${color.dim('[review-battery]')} running ${dimensions.join(', ')} review for ${result.prs.length} PR(s)...`);
       for (const prUrl of result.prs) {
-        const batteryResult = reviewBattery({
+        const batteryResult = await reviewBattery({
           dimensions,
           prUrl,
           issueNum: pickedIssue,

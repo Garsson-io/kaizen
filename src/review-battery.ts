@@ -11,7 +11,7 @@
  * Linear: ENG-6638
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 
@@ -65,6 +65,10 @@ export interface BatteryResult {
   durationMs: number;
   /** Total cost across all review agents (USD) */
   costUsd: number;
+  /** Dimensions that returned null (timeout or claude error) */
+  failedDimensions: string[];
+  /** Dimensions auto-skipped due to missing required data (e.g. no plan text) */
+  skippedDimensions: string[];
 }
 
 // ── Review Policy Constants ─────────────────────────────────────────
@@ -397,6 +401,8 @@ export function resolvePromptsDir(): string {
 
 /**
  * Load a review prompt template and substitute variables.
+ * Strips YAML frontmatter before sending — frontmatter is metadata for the
+ * tool loader (needs, high_when, etc.) and must not be sent to the LLM.
  */
 export function loadReviewPrompt(
   dimension: ReviewDimension,
@@ -416,7 +422,9 @@ export function loadReviewPrompt(
   }
 
   const content = readFileSync(templatePath, 'utf8');
-  return renderTemplate(content, vars);
+  // Strip YAML frontmatter (--- ... ---) — it's for the tool loader, not the LLM
+  const body = content.replace(/^---\n[\s\S]*?\n---\n?/, '');
+  return renderTemplate(body, vars);
 }
 
 // ── Review Spawning ─────────────────────────────────────────────────
@@ -444,11 +452,75 @@ export interface SpawnReviewOptions {
   timeoutMs?: number;
 }
 
+// ── Claude Subprocess Helper ─────────────────────────────────────────
+
+/**
+ * Run a single `claude -p` call with the given prompt.
+ * Model is controlled by the REVIEW_MODEL env var (default: sonnet).
+ * Returns parsed text, cost, duration, and exit code.
+ */
+async function runClaude(
+  prompt: string,
+  opts: { cwd?: string; timeoutMs?: number },
+): Promise<{ text: string; costUsd: number; durationMs: number; exitCode: number }> {
+  const model = process.env.REVIEW_MODEL ?? 'sonnet';
+  const start = Date.now();
+
+  return new Promise((resolve) => {
+    const child = spawn('claude', [
+      '-p',
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--dangerously-skip-permissions',
+      '--model', model,
+    ], {
+      cwd: opts.cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    child.stdin.write(prompt, 'utf8');
+    child.stdin.end();
+
+    let stdout = '';
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+    child.stderr.on('data', () => {}); // drain to prevent blocking
+
+    const timer = setTimeout(() => { child.kill(); }, opts.timeoutMs ?? 120_000);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const durationMs = Date.now() - start;
+
+      // Parse text and cost from stream-json JSONL output.
+      // The `result` field in the final "result" message is now always empty;
+      // actual text lives in assistant message content blocks.
+      let costUsd = 0;
+      let text = '';
+      for (const line of stdout.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.type === 'result') {
+            costUsd = msg.total_cost_usd ?? 0;
+          } else if (msg.type === 'assistant') {
+            const content = msg.message?.content ?? [];
+            for (const block of content) {
+              if (block.type === 'text') text += block.text;
+            }
+          }
+        } catch { continue; }
+      }
+
+      resolve({ text, costUsd, durationMs, exitCode: code ?? -1 });
+    });
+  });
+}
+
 /**
  * Spawn a single review agent via `claude -p`.
  * Returns the parsed DimensionReview, or null if the review failed.
  */
-export function spawnReview(opts: SpawnReviewOptions): { review: DimensionReview | null; costUsd: number; durationMs: number } {
+export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: DimensionReview | null; costUsd: number; durationMs: number }> {
   const vars: Record<string, string> = {
     pr_url: opts.prUrl ?? '',
     issue_num: opts.issueNum ?? '',
@@ -467,40 +539,116 @@ export function spawnReview(opts: SpawnReviewOptions): { review: DimensionReview
     return { review: null, costUsd: 0, durationMs: 0 };
   }
 
-  const start = Date.now();
-  const result = spawnSync('claude', [
-    '-p',
-    '--output-format', 'json',
-    '--dangerously-skip-permissions',
-    '--model', 'sonnet',
-  ], {
-    input: prompt,
-    encoding: 'utf8',
+  const { text, costUsd, durationMs, exitCode } = await runClaude(prompt, {
     cwd: opts.cwd,
-    timeout: opts.timeoutMs ?? 120_000,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    timeoutMs: opts.timeoutMs,
   });
 
-  const durationMs = Date.now() - start;
-
-  if (result.status !== 0) {
-    console.error(`  [review] claude -p failed for ${opts.dimension}: exit ${result.status}`);
+  if (exitCode !== 0) {
+    console.error(`  [review] claude -p failed for ${opts.dimension}: exit ${exitCode}`);
     return { review: null, costUsd: 0, durationMs };
   }
 
-  // Parse cost from JSON output
-  let costUsd = 0;
-  let responseText = '';
-  try {
-    const output = JSON.parse(result.stdout);
-    responseText = output.result ?? '';
-    costUsd = output.cost_usd ?? output.total_cost_usd ?? 0;
-  } catch {
-    responseText = result.stdout;
+  const review = parseReviewOutput(text, opts.dimension);
+  return { review, costUsd, durationMs };
+}
+
+// ── Batch Review ─────────────────────────────────────────────────────
+
+export interface SpawnBatchReviewOptions extends Omit<SpawnReviewOptions, 'dimension'> {
+  dimensions: ReviewDimension[];
+}
+
+/**
+ * Parse all DimensionReview JSON blocks from a batch response.
+ * A batch prompt asks claude to output one ```json block per dimension.
+ * Returns all successfully parsed reviews (may be fewer than requested).
+ */
+export function parseAllReviewOutputs(raw: string, expectedDimensions: string[]): DimensionReview[] {
+  const results: DimensionReview[] = [];
+  const fenceRe = /```(?:json)?\s*\n?([\s\S]*?)\n?```/g;
+  for (const match of raw.matchAll(fenceRe)) {
+    const review = parseReviewOutput(match[0], '');
+    if (review && review.dimension) results.push(review);
+  }
+  return results;
+}
+
+/**
+ * Group dimensions by their shared data-needs signature.
+ * Dimensions with identical needs can be batched into one claude call.
+ * Unknown dimensions (not in metas) are never batched.
+ */
+export function groupByDataNeeds(
+  dimensions: ReviewDimension[],
+  metas: DimensionMeta[],
+): ReviewDimension[][] {
+  const groups = new Map<string, ReviewDimension[]>();
+  for (const dim of dimensions) {
+    const meta = metas.find(m => m.name === dim);
+    const key = meta ? [...meta.needs].sort().join(',') : `_solo_${dim}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(dim);
+  }
+  return [...groups.values()];
+}
+
+/**
+ * Spawn multiple review dimensions in a single `claude -p` call.
+ * Prompts are concatenated; the LLM outputs one ```json block per dimension.
+ * Cost is split evenly across dimensions.
+ */
+export async function spawnBatchReview(
+  opts: SpawnBatchReviewOptions,
+): Promise<Array<{ review: DimensionReview | null; costUsd: number; durationMs: number }>> {
+  const vars: Record<string, string> = {
+    pr_url: opts.prUrl ?? '',
+    issue_num: opts.issueNum ?? '',
+    repo: opts.repo ?? '',
+    plan_text: opts.planText ?? '',
+    issue_body: opts.issueBody ?? '',
+    pr_body: opts.prBody ?? '',
+    pr_diff_stat: opts.prDiffStat ?? '',
+  };
+
+  const loadedDims: string[] = [];
+  const prompts: string[] = [];
+  for (const dim of opts.dimensions) {
+    try {
+      prompts.push(loadReviewPrompt(dim, vars));
+      loadedDims.push(dim);
+    } catch (e: any) {
+      console.error(`  [review] batch: failed to load prompt for ${dim}: ${e.message}`);
+    }
   }
 
-  const review = parseReviewOutput(responseText, opts.dimension);
-  return { review, costUsd, durationMs };
+  if (prompts.length === 0) {
+    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs: 0 }));
+  }
+
+  const batchPrompt =
+    `Review this PR across ${prompts.length} dimension(s). ` +
+    `For each dimension, output a separate \`\`\`json block with the "dimension" field set to the dimension name.\n\n` +
+    prompts.join('\n\n---\n\n');
+
+  const { text, costUsd, durationMs, exitCode } = await runClaude(batchPrompt, {
+    cwd: opts.cwd,
+    timeoutMs: opts.timeoutMs,
+  });
+
+  if (exitCode !== 0) {
+    console.error(`  [review] batch claude -p failed: exit ${exitCode}`);
+    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs }));
+  }
+
+  const reviews = parseAllReviewOutputs(text, loadedDims);
+  const costPerDim = costUsd / Math.max(loadedDims.length, 1);
+
+  return opts.dimensions.map(dim => ({
+    review: reviews.find(r => r.dimension === dim) ?? null,
+    costUsd: costPerDim,
+    durationMs,
+  }));
 }
 
 // ── Battery Orchestration ───────────────────────────────────────────
@@ -530,27 +678,65 @@ export interface BatteryOptions {
 
 /**
  * Run a battery of review dimensions in parallel.
- * Returns aggregated results with overall verdict.
+ * - Auto-skips dims that need 'plan' data when no planText is provided.
+ * - Batches dims with identical data needs into one claude call.
+ * - Logs per-dim timing and surfaces failed dims explicitly.
  */
-export function reviewBattery(opts: BatteryOptions): BatteryResult {
+export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult> {
   const start = Date.now();
 
-  // Run reviews sequentially (spawnSync is blocking).
-  // For true parallelism, we'd need async spawn — sequential is simpler for v1.
-  const results = opts.dimensions.map(dimension => {
-    return spawnReview({
-      dimension,
-      prUrl: opts.prUrl,
-      issueNum: opts.issueNum,
-      repo: opts.repo,
-      issueBody: opts.issueBody,
-      prBody: opts.prBody,
-      prDiffStat: opts.prDiffStat,
-      planText: opts.planText,
-      cwd: opts.cwd,
-      timeoutMs: opts.timeoutMs,
-    });
+  // Auto-skip dims that require data we don't have
+  const metas = loadDimensionMetas();
+  const skippedDimensions: string[] = [];
+  const effective = opts.dimensions.filter(dim => {
+    const meta = metas.find(m => m.name === dim);
+    if (meta?.needs.includes('plan') && !opts.planText) {
+      skippedDimensions.push(dim);
+      return false;
+    }
+    return true;
   });
+
+  if (skippedDimensions.length > 0) {
+    console.log(`  [review] skipping ${skippedDimensions.length} dim(s) (no plan text): ${skippedDimensions.join(', ')}`);
+  }
+
+  // Group by shared data needs; batch same-needs dims into one call
+  const batches = groupByDataNeeds(effective, metas);
+  const sharedOpts = {
+    prUrl: opts.prUrl, issueNum: opts.issueNum, repo: opts.repo,
+    issueBody: opts.issueBody, prBody: opts.prBody, prDiffStat: opts.prDiffStat,
+    planText: opts.planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
+  };
+
+  const batchResultGroups = await Promise.all(
+    batches.map(batch =>
+      batch.length > 1
+        ? spawnBatchReview({ dimensions: batch, ...sharedOpts })
+        : spawnReview({ dimension: batch[0], ...sharedOpts }).then(r => [r]),
+    ),
+  );
+
+  // Map results back to effective dimension order
+  const resultMap = new Map<string, { review: DimensionReview | null; costUsd: number; durationMs: number }>();
+  for (let i = 0; i < batches.length; i++) {
+    for (let j = 0; j < batches[i].length; j++) {
+      resultMap.set(batches[i][j], batchResultGroups[i][j]);
+    }
+  }
+  const results = effective.map(dim => resultMap.get(dim)!);
+
+  // Log per-dim timing and collect failures
+  const failedDimensions: string[] = [];
+  for (const [i, dim] of effective.entries()) {
+    const r = results[i];
+    if (r.review === null) {
+      failedDimensions.push(dim);
+      console.error(`  [review] ${dim}: FAILED in ${Math.round(r.durationMs / 1000)}s`);
+    } else {
+      console.log(`  [review] ${dim}: ${r.review.verdict.toUpperCase()} in ${Math.round(r.durationMs / 1000)}s ($${r.costUsd.toFixed(3)})`);
+    }
+  }
 
   const dimensions = results
     .map(r => r.review)
@@ -567,11 +753,13 @@ export function reviewBattery(opts: BatteryOptions): BatteryResult {
 
   return {
     dimensions,
-    verdict: missingCount === 0 && dimensions.length === opts.dimensions.length ? 'pass' : 'fail',
+    verdict: missingCount === 0 && dimensions.length === effective.length ? 'pass' : 'fail',
     missingCount,
     partialCount,
     durationMs,
     costUsd,
+    failedDimensions,
+    skippedDimensions,
   };
 }
 

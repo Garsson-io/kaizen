@@ -2,7 +2,7 @@
 name: dry
 description: Duplicated code, patterns that exist elsewhere in the codebase, reimplemented utilities, copy-paste across test files.
 applies_to: pr
-needs: [diff, codebase]
+needs: [diff]
 high_when:
   - "Diff adds utility functions, helpers, or shared logic"
   - "Diff contains similar blocks across multiple files"
@@ -12,6 +12,8 @@ low_when:
   - "Single-file change under 30 lines"
   - "Diff is docs or config only"
 ---
+
+Your task: Review PR {{pr_url}} for DRY violations.
 
 You are a DRY (Don't Repeat Yourself) reviewer. Your job is to find duplicated code, reimplemented patterns, and missed reuse opportunities in the PR diff.
 

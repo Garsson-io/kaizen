@@ -408,7 +408,7 @@ export function checkFixResult(logFile: string, pid: number): { done: boolean; s
 
 // ── Main ────────────────────────────────────────────────────────────
 
-function main() {
+async function main() {
   const opts = parseArgs();
   const startTime = Date.now();
 
@@ -482,7 +482,7 @@ function main() {
     console.log(`--- Round ${round}/${maxRounds}: REVIEW ---`);
 
     const dimensions = listDimensions().filter(d => d !== 'plan-coverage'); // plan-coverage is for pre-implementation
-    const battery = reviewBattery({
+    const battery = await reviewBattery({
       dimensions,
       prUrl: opts.prUrl,
       issueNum: opts.issueNum,

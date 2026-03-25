@@ -48,6 +48,7 @@
 import { describe, it, beforeAll } from 'vitest';
 import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { expect } from 'vitest';
 import { spawnReview } from '../src/review-battery.js';
 import type { DimensionReview } from '../src/review-battery.js';
@@ -57,12 +58,38 @@ import type { DimensionReview } from '../src/review-battery.js';
 const RESULTS_DIR = process.env.REVIEW_E2E_RESULTS_DIR
   ?? join(process.cwd(), '.claude', 'e2e-results');
 
+// ── PR fixtures ───────────────────────────────────────────────────────
+//
+// DEFAULT_PR: kaizen/pull/832 — real PR, has large diff and test files.
+//   Used for: requirements, scope-fidelity (and other dims that benefit from realistic complexity).
+//
+// FIXTURE_PR: kaizen-test-fixture/pull/3 — tiny synthetic PR (one file, no tests).
+//   Used for: test-plan (avoids 180s timeout caused by reading large test files in #832).
+//   PR adds truncate() utility with no tests → test-plan flags missing unit tests.
+
+interface PrFixture { prUrl: string; issueNum: string; repo: string; }
+
+const DEFAULT_PR: PrFixture = {
+  prUrl: 'https://github.com/Garsson-io/kaizen/pull/832',
+  issueNum: '666',
+  repo: 'Garsson-io/kaizen',
+};
+
+const FIXTURE_PR: PrFixture = {
+  prUrl: 'https://github.com/Garsson-io/kaizen-test-fixture/pull/3',
+  issueNum: '2',
+  repo: 'Garsson-io/kaizen-test-fixture',
+};
+
 beforeAll(() => {
   mkdirSync(RESULTS_DIR, { recursive: true });
   console.log(`\n  E2E results: ${RESULTS_DIR}`);
   console.log('  Tip: SKIP_PASSED=1 to skip already-passing tests');
   console.log('  Tip: CLAUDE_E2E_DEV=1 to load checkpoints instead of calling claude');
 });
+
+// Use haiku by default to save cost/time; override with REVIEW_MODEL=sonnet for quality checks
+if (!process.env.REVIEW_MODEL) process.env.REVIEW_MODEL = 'haiku';
 
 // ── Env flags ─────────────────────────────────────────────────────────
 
@@ -120,7 +147,11 @@ interface SmokeResult {
  * In normal mode: calls claude, writes full output to a named checkpoint file
  * before parsing, logs cost + duration.
  */
-function runDimensionCall(dim: string, tier: 'smoke' | 'replay'): SmokeResult {
+async function runDimensionCall(
+  dim: string,
+  tier: 'smoke' | 'replay',
+  pr: PrFixture = DEFAULT_PR,
+): Promise<SmokeResult> {
   // DEV MODE: load latest checkpoint for fast assertion iteration
   if (DEV_MODE) {
     const checkpoint = findLatestCheckpoint(dim, tier);
@@ -146,11 +177,11 @@ function runDimensionCall(dim: string, tier: 'smoke' | 'replay'): SmokeResult {
   const timestamp = Date.now();
   const rawPath = join(RESULTS_DIR, `${dim}-${tier}-${timestamp}.txt`);
 
-  const { review, costUsd, durationMs } = spawnReview({
+  const { review, costUsd, durationMs } = await spawnReview({
     dimension: dim,
-    prUrl: 'https://github.com/Garsson-io/kaizen/pull/832',
-    issueNum: '666',
-    repo: 'Garsson-io/kaizen',
+    prUrl: pr.prUrl,
+    issueNum: pr.issueNum,
+    repo: pr.repo,
     cwd: process.cwd(),
     timeoutMs: 120_000,
   });
@@ -235,34 +266,111 @@ function assertRequirementsHasAdoptionGap(review: DimensionReview, rawPath: stri
   ).toBeTruthy();
 }
 
+// ── Tier 2: Tool availability prerequisite ────────────────────────────
+//
+// This test runs first. If it fails, all schema smoke tests will also fail
+// (the review dims require bash tool use to fetch GitHub data). Diagnose
+// tool availability before debugging review output.
+
+describe('Tier 2 — prerequisites (CLAUDE_E2E=1 to enable)', () => {
+  it('claude -p subprocess has bash tool access', { timeout: 30_000 }, async () => {
+    if (!TIER2) {
+      console.log('  [skip] set CLAUDE_E2E=1 to run tool-availability check');
+      return;
+    }
+
+    const SENTINEL = 'KAIZEN_TOOLS_OK_' + Date.now();
+    const result = await new Promise<{ text: string; exitCode: number }>((res) => {
+      const child = spawn('claude', [
+        '-p', '--output-format', 'stream-json', '--verbose',
+        '--dangerously-skip-permissions', '--model', process.env.REVIEW_MODEL ?? 'haiku',
+      ], { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
+
+      child.stdin.write(`Run this bash command and include its exact output in your response: echo ${SENTINEL}`, 'utf8');
+      child.stdin.end();
+
+      let stdout = '';
+      child.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });
+      child.stderr.on('data', () => {});
+
+      const timer = setTimeout(() => child.kill(), 25_000);
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        let text = '';
+        for (const line of stdout.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.type === 'assistant') {
+              for (const block of (msg.message?.content ?? [])) {
+                if (block.type === 'text') text += block.text;
+              }
+            }
+          } catch {}
+        }
+        res({ text, exitCode: code ?? -1 });
+      });
+    });
+
+    expect(
+      result.text,
+      `claude -p did not use bash tools — cannot run reviews.\n` +
+      `Response was: ${result.text.slice(0, 200)}\n` +
+      `Check: REVIEW_MODEL=${process.env.REVIEW_MODEL}, exitCode=${result.exitCode}`,
+    ).toContain(SENTINEL);
+  });
+});
+
 // ── Tier 2: Schema smoke tests ────────────────────────────────────────
 
 describe('Tier 2 — schema smoke (CLAUDE_E2E=1 to enable)', () => {
-  const smokeDimensions = ['requirements', 'scope-fidelity', 'test-plan'];
+  // These dims run against kaizen PR #832 (realistic complexity).
+  // test-plan is excluded: it reads large test files from #832, causing 180s timeouts.
+  // test-plan has its own test below using a small fixture PR.
+  const smokeDimensions = ['requirements', 'scope-fidelity'];
 
   for (const dim of smokeDimensions) {
-    it(`${dim}: returns valid DimensionReview schema`, { timeout: 150_000 }, () => {
+    it(`${dim}: returns valid DimensionReview schema`, { timeout: 150_000 }, async () => {
       if (!TIER2) {
         console.log(`  [skip] set CLAUDE_E2E=1 to run ${dim} smoke (~$0.05, ~30s)`);
         console.log(`         or CLAUDE_E2E_DEV=1 to load latest checkpoint (free)`);
         return;
       }
 
-      const result = runDimensionCall(dim, 'smoke');
+      const result = await runDimensionCall(dim, 'smoke');
 
-      // Budget guard first — cheap check before schema assertions
       expect(
         result.costUsd,
         `${dim} smoke cost $${result.costUsd.toFixed(3)} exceeds cap $${SMOKE_BUDGET_USD}` +
         ` — raw: ${result.rawPath}`,
       ).toBeLessThanOrEqual(SMOKE_BUDGET_USD);
 
-      // Schema assertions — raw path in every message
       assertSchemaValid(result.review, dim, result.rawPath);
-
       markPassed(dim, 'smoke', result);
     });
   }
+
+  // test-plan uses a tiny synthetic PR (kaizen-test-fixture/pull/3: adds truncate()
+  // with no tests). This keeps the run under 60s instead of 180s, while still
+  // exercising the dimension's core signal (missing unit tests).
+  it('test-plan: returns valid DimensionReview schema (fixture PR)', { timeout: 150_000 }, async () => {
+    if (!TIER2) {
+      console.log('  [skip] set CLAUDE_E2E=1 to run test-plan smoke (~$0.05, ~30s)');
+      console.log('         uses kaizen-test-fixture/pull/3 (tiny PR, no tests)');
+      return;
+    }
+
+    const result = await runDimensionCall('test-plan', 'smoke', FIXTURE_PR);
+
+    expect(
+      result.costUsd,
+      `test-plan smoke cost $${result.costUsd.toFixed(3)} exceeds cap $${SMOKE_BUDGET_USD}` +
+      ` — raw: ${result.rawPath}`,
+    ).toBeLessThanOrEqual(SMOKE_BUDGET_USD);
+
+    assertSchemaValid(result.review, 'test-plan', result.rawPath);
+    markPassed('test-plan', 'smoke', result);
+  });
 });
 
 // ── Tier 3: Semantic replay tests ─────────────────────────────────────
@@ -293,7 +401,7 @@ describe('Tier 3 — semantic replay (CLAUDE_E2E=replay to enable)', () => {
   it(
     'requirements: PR #832 (skill-metadata) flags zero-adoption gap',
     { timeout: 180_000 },
-    () => {
+    async () => {
       if (!TIER3 && !DEV_MODE) {
         console.log('  [skip] set CLAUDE_E2E=replay (or CLAUDE_E2E_DEV=1) to run requirements replay');
         return;
@@ -303,7 +411,7 @@ describe('Tier 3 — semantic replay (CLAUDE_E2E=replay to enable)', () => {
         return;
       }
 
-      const result = runDimensionCall('requirements', 'replay');
+      const result = await runDimensionCall('requirements', 'replay');
       assertSchemaValid(result.review, 'requirements', result.rawPath);
       assertRequirementsHasAdoptionGap(result.review!, result.rawPath);
       markPassed('requirements', 'replay', result);

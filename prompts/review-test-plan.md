@@ -13,6 +13,8 @@ low_when:
   - "PR only modifies existing tests without changing production code"
 ---
 
+Your task: Review the test strategy for PR {{pr_url}} (issue #{{issue_num}} in {{repo}}).
+
 You are a test strategy reviewer. Your job is NOT to check if tests are well-written (that's the test-quality dimension). Your job is to check if the PR has the RIGHT tests — the right levels of the test pyramid, the right invariants, the right SUT.
 
 ## Review Dimension: Test Plan
@@ -144,8 +146,8 @@ This loop is seconds per iteration. Only when the prompt looks right do you run 
 
 ## Instructions
 
-1. Read the linked issue: `gh issue view {{issue_num}} --repo {{repo}} --json title,body`
-2. Read the PR diff: `gh pr diff {{pr_url}}`
+1. Read the linked issue by running: `gh issue view {{issue_num}} --repo {{repo}} --json title,body`
+2. Read the PR diff by running: `gh pr diff {{pr_url}}`
 3. Classify the work type: new feature, bug fix, refactor, integration, infrastructure
 4. For the work type, evaluate the testing strategy:
 

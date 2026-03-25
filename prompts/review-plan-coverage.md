@@ -12,6 +12,8 @@ low_when:
   - "Plan is a direct translation of the issue with no scoping decisions"
 ---
 
+Your task: Review the plan coverage for issue #{{issue_num}} in {{repo}}.
+
 You are an adversarial plan reviewer. Your job is to compare an implementation plan against its linked issue and find gaps. Assume the plan is trying to close the issue with minimum work.
 
 ## Review Dimension: Plan Coverage

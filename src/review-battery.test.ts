@@ -25,6 +25,9 @@ import {
   computeDataOverlap,
   spawnReview,
   reviewBattery,
+  spawnBatchReview,
+  parseAllReviewOutputs,
+  groupByDataNeeds,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
@@ -33,15 +36,16 @@ import {
   type BatteryResult,
   type ReviewDimension,
 } from './review-battery.js';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // vi.mock is hoisted by vitest so it runs before imports — this is the correct
-// ESM-compatible way to intercept spawnSync in tests.
+// ESM-compatible way to intercept spawnSync/spawn in tests.
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
-  return { ...actual, spawnSync: vi.fn(actual.spawnSync) };
+  return { ...actual, spawnSync: vi.fn(actual.spawnSync), spawn: vi.fn(actual.spawn) };
 });
 
 // Tier 1: Schema and parser tests
@@ -158,6 +162,8 @@ describe('formatBatteryReport', () => {
       partialCount: 0,
       durationMs: 5000,
       costUsd: 0.13,
+      failedDimensions: [],
+      skippedDimensions: [],
     };
 
     const report = formatBatteryReport(result);
@@ -183,6 +189,8 @@ describe('formatBatteryReport', () => {
       partialCount: 0,
       durationMs: 3000,
       costUsd: 0.10,
+      failedDimensions: [],
+      skippedDimensions: [],
     };
 
     const report = formatBatteryReport(result);
@@ -283,6 +291,24 @@ describe('loadReviewPrompt', () => {
     }
     const prompt = loadReviewPrompt('requirements', { pr_url: 'https://github.com/test/test/pull/1' });
     expect(prompt).toContain('https://github.com/test/test/pull/1');
+  });
+
+  it('strips YAML frontmatter from rendered prompt', () => {
+    // Invariant: the rendered prompt must NOT contain frontmatter fields.
+    // If frontmatter is sent to the LLM, haiku treats the prompt as a document
+    // specification ("you've shared the scope-fidelity dimension") and refuses
+    // to execute the review, asking for clarification instead.
+    const dir = resolvePromptsDir();
+    const path = resolve(dir, 'review-requirements.md');
+    if (!existsSync(path)) {
+      console.log('  [skip] review-requirements.md not yet created');
+      return;
+    }
+    const prompt = loadReviewPrompt('requirements', {});
+    expect(prompt.startsWith('---'), 'Prompt must not start with YAML frontmatter').toBe(false);
+    expect(prompt).not.toMatch(/^name:\s+\w/m);
+    expect(prompt).not.toMatch(/^needs:\s+\[/m);
+    expect(prompt).not.toMatch(/^applies_to:\s+/m);
   });
 
   it('throws for nonexistent template', () => {
@@ -439,63 +465,78 @@ describe('computeDataOverlap', () => {
 //   - claude calls return the desired mock response
 
 describe('spawnReview', () => {
-  afterEach(() => { vi.mocked(spawnSync).mockRestore(); });
+  afterEach(() => {
+    vi.mocked(spawnSync).mockRestore();
+    vi.mocked(spawn).mockRestore();
+  });
 
   function mockClaude(stdout: string, exitCode = 0) {
-    vi.mocked(spawnSync).mockImplementation((cmd: string, args: any, opts: any) => {
+    vi.mocked(spawnSync).mockImplementation((cmd: string) => {
       if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
-      return { status: exitCode, stdout, stderr: '', signal: null, pid: 1, output: [null, stdout, ''] } as any;
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+    vi.mocked(spawn).mockImplementation(() => {
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => {
+        proc.stdout.emit('data', Buffer.from(stdout));
+        proc.emit('close', exitCode);
+      });
+      return proc;
     });
   }
 
-  it('returns parsed review when claude exits 0 with valid JSON', () => {
-    const payload = JSON.stringify({
-      result: JSON.stringify({
-        dimension: 'requirements',
-        summary: 'all good',
-        findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }],
-      }),
-      cost_usd: 0.12,
-    });
-    mockClaude(payload);
+  // Build stream-json JSONL output as claude now emits (--output-format stream-json --verbose).
+  // The result.result field is always empty; text lives in assistant content blocks.
+  function streamJsonPayload(text: string, costUsd: number): string {
+    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
+    return `${assistant}\n${result}\n`;
+  }
 
-    const { review, costUsd } = spawnReview({ dimension: 'requirements', prUrl: 'https://github.com/test/test/pull/1', repo: 'test/test' });
+  it('returns parsed review when claude exits 0 with valid JSON', async () => {
+    const text = JSON.stringify({
+      dimension: 'requirements',
+      summary: 'all good',
+      findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }],
+    });
+    mockClaude(streamJsonPayload(text, 0.12));
+
+    const { review, costUsd } = await spawnReview({ dimension: 'requirements', prUrl: 'https://github.com/test/test/pull/1', repo: 'test/test' });
     expect(review).not.toBeNull();
     expect(review!.verdict).toBe('pass');
     expect(review!.findings[0].status).toBe('DONE');
     expect(costUsd).toBeCloseTo(0.12);
   });
 
-  it('returns null review when claude exits non-zero', () => {
+  it('returns null review when claude exits non-zero', async () => {
     mockClaude('', 1);
-    const { review, costUsd } = spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    const { review, costUsd } = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
     expect(review).toBeNull();
     expect(costUsd).toBe(0);
   });
 
-  it('falls back to raw stdout when output is not valid JSON (prose with embedded JSON)', () => {
-    // claude outputs prose + embedded JSON — JSON.parse fails, catch uses raw stdout
-    const raw = `Here is my review:\n{"dimension":"requirements","summary":"gap","findings":[{"requirement":"R1","status":"MISSING","detail":"not done"}]}\nDone.`;
-    mockClaude(raw);
+  it('returns review when text contains prose with embedded JSON', async () => {
+    const text = `Here is my review:\n{"dimension":"requirements","summary":"gap","findings":[{"requirement":"R1","status":"MISSING","detail":"not done"}]}\nDone.`;
+    mockClaude(streamJsonPayload(text, 0.08));
 
-    const { review } = spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    const { review } = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
     expect(review).not.toBeNull();
     expect(review!.verdict).toBe('fail');
   });
 
-  it('returns null review when output is unparseable', () => {
-    mockClaude('not json at all');
-    const { review } = spawnReview({ dimension: 'requirements', repo: 'test/test' });
+  it('returns null review when output is unparseable', async () => {
+    mockClaude(streamJsonPayload('not json at all', 0));
+    const { review } = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
     expect(review).toBeNull();
   });
 
-  it('extracts total_cost_usd as fallback cost field', () => {
-    const payload = JSON.stringify({
-      result: '{"dimension":"d","summary":"ok","findings":[]}',
-      total_cost_usd: 0.05,
-    });
-    mockClaude(payload);
-    const { costUsd } = spawnReview({ dimension: 'requirements', repo: 'test/test' });
+  it('extracts total_cost_usd from result message', async () => {
+    const text = '{"dimension":"d","summary":"ok","findings":[]}';
+    mockClaude(streamJsonPayload(text, 0.05));
+    const { costUsd } = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
     expect(costUsd).toBeCloseTo(0.05);
   });
 });
@@ -503,68 +544,379 @@ describe('spawnReview', () => {
 // Tier 1: reviewBattery (mocked spawnReview)
 
 describe('reviewBattery', () => {
-  afterEach(() => { vi.mocked(spawnSync).mockRestore(); });
+  afterEach(() => {
+    vi.mocked(spawnSync).mockRestore();
+    vi.mocked(spawn).mockRestore();
+  });
 
   function mockClaude(responses: Array<{ stdout: string; exitCode?: number }>) {
-    let callCount = 0;
-    vi.mocked(spawnSync).mockImplementation((cmd: string, args: any, opts: any) => {
+    vi.mocked(spawnSync).mockImplementation((cmd: string) => {
       if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+    let callCount = 0;
+    vi.mocked(spawn).mockImplementation(() => {
       const resp = responses[callCount] ?? responses[responses.length - 1];
       callCount++;
-      return { status: resp.exitCode ?? 0, stdout: resp.stdout, stderr: '', signal: null, pid: 1, output: [null, resp.stdout, ''] } as any;
+      const { stdout, exitCode = 0 } = resp;
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => {
+        proc.stdout.emit('data', Buffer.from(stdout));
+        proc.emit('close', exitCode);
+      });
+      return proc;
     });
   }
 
-  const passingOutput = JSON.stringify({
-    result: JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] }),
-    cost_usd: 0.10,
-  });
+  function streamJsonPayload(text: string, costUsd: number): string {
+    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
+    return `${assistant}\n${result}\n`;
+  }
 
-  const failingOutput = JSON.stringify({
-    result: JSON.stringify({ dimension: 'test-quality', summary: 'gap', findings: [{ requirement: 'R1', status: 'MISSING', detail: 'no tests' }] }),
-    cost_usd: 0.08,
-  });
+  const passingOutput = streamJsonPayload(
+    JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] }),
+    0.10,
+  );
 
-  it('returns pass when all dimensions pass', () => {
+  const failingOutput = streamJsonPayload(
+    JSON.stringify({ dimension: 'test-quality', summary: 'gap', findings: [{ requirement: 'R1', status: 'MISSING', detail: 'no tests' }] }),
+    0.08,
+  );
+
+  it('returns pass when all dimensions pass', async () => {
     mockClaude([{ stdout: passingOutput }, { stdout: passingOutput }]);
-    const result = reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+    const result = await reviewBattery({ dimensions: ['requirements', 'test-quality'] });
     expect(result.verdict).toBe('pass');
     expect(result.missingCount).toBe(0);
     expect(result.dimensions).toHaveLength(2);
   });
 
-  it('returns fail when any dimension has MISSING finding', () => {
+  it('returns fail when any dimension has MISSING finding', async () => {
     mockClaude([{ stdout: passingOutput }, { stdout: failingOutput }]);
-    const result = reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+    const result = await reviewBattery({ dimensions: ['requirements', 'test-quality'] });
     expect(result.verdict).toBe('fail');
     expect(result.missingCount).toBe(1);
   });
 
-  it('returns fail when some reviews fail (null results excluded from dimensions)', () => {
+  it('returns fail when some reviews fail (null results excluded from dimensions)', async () => {
     mockClaude([{ stdout: passingOutput }, { stdout: '', exitCode: 1 }]);
-    const result = reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+    const result = await reviewBattery({ dimensions: ['requirements', 'test-quality'] });
     expect(result.verdict).toBe('fail');
     expect(result.dimensions).toHaveLength(1); // failed review excluded
   });
 
-  it('sums costs across all dimensions', () => {
+  it('sums costs across all dimensions', async () => {
     mockClaude([{ stdout: passingOutput }, { stdout: failingOutput }]);
-    const result = reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+    const result = await reviewBattery({ dimensions: ['requirements', 'test-quality'] });
     expect(result.costUsd).toBeCloseTo(0.18);
   });
 
-  it('counts partialCount correctly', () => {
-    const partialOutput = JSON.stringify({
-      result: JSON.stringify({ dimension: 'requirements', summary: 'partial', findings: [
+  it('counts partialCount correctly', async () => {
+    const partialOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'requirements', summary: 'partial', findings: [
         { requirement: 'R1', status: 'DONE', detail: 'ok' },
         { requirement: 'R2', status: 'PARTIAL', detail: 'half done' },
       ]}),
-      cost_usd: 0.09,
-    });
+      0.09,
+    );
     mockClaude([{ stdout: partialOutput }]);
-    const result = reviewBattery({ dimensions: ['requirements'] });
+    const result = await reviewBattery({ dimensions: ['requirements'] });
     expect(result.partialCount).toBe(1);
     expect(result.missingCount).toBe(0);
+  });
+});
+
+// Tier 1: parseAllReviewOutputs (pure)
+
+describe('parseAllReviewOutputs', () => {
+  it('parses multiple json blocks from a batch response', () => {
+    const raw = `
+First dimension:
+\`\`\`json
+{"dimension":"requirements","summary":"ok","findings":[{"requirement":"R1","status":"DONE","detail":"ok"}]}
+\`\`\`
+
+Second dimension:
+\`\`\`json
+{"dimension":"test-quality","summary":"gap","findings":[{"requirement":"T1","status":"MISSING","detail":"no tests"}]}
+\`\`\`
+`;
+    const results = parseAllReviewOutputs(raw, ['requirements', 'test-quality']);
+    expect(results).toHaveLength(2);
+    expect(results.find(r => r.dimension === 'requirements')).toBeTruthy();
+    expect(results.find(r => r.dimension === 'test-quality')).toBeTruthy();
+  });
+
+  it('returns empty array for unparseable input', () => {
+    expect(parseAllReviewOutputs('just prose, no json blocks', [])).toEqual([]);
+    expect(parseAllReviewOutputs('', [])).toEqual([]);
+  });
+
+  it('skips blocks without findings array', () => {
+    const raw = `\`\`\`json\n{"not": "a review"}\n\`\`\`\n\`\`\`json\n{"dimension":"d","summary":"ok","findings":[]}\n\`\`\``;
+    const results = parseAllReviewOutputs(raw, ['d']);
+    expect(results).toHaveLength(1);
+    expect(results[0].dimension).toBe('d');
+  });
+
+  it('skips blocks with no dimension field', () => {
+    const raw = `\`\`\`json\n{"summary":"ok","findings":[{"requirement":"R","status":"DONE","detail":"ok"}]}\n\`\`\``;
+    const results = parseAllReviewOutputs(raw, []);
+    expect(results).toHaveLength(0);
+  });
+
+  it('handles partial output — returns what parsed successfully', () => {
+    const raw = `
+\`\`\`json
+{"dimension":"requirements","summary":"ok","findings":[{"requirement":"R1","status":"DONE","detail":"ok"}]}
+\`\`\`
+
+\`\`\`json
+{broken json
+\`\`\`
+`;
+    const results = parseAllReviewOutputs(raw, ['requirements']);
+    expect(results).toHaveLength(1);
+    expect(results[0].dimension).toBe('requirements');
+  });
+});
+
+// Tier 1: groupByDataNeeds (pure)
+
+describe('groupByDataNeeds', () => {
+  const makeMeta = (name: string, needs: string[]): DimensionMeta => ({
+    name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md`,
+  });
+
+  it('groups dims with identical data needs together', () => {
+    const metas = [
+      makeMeta('error-handling', ['diff']),
+      makeMeta('logic-correctness', ['diff']),
+      makeMeta('requirements', ['diff', 'issue']),
+    ];
+    const groups = groupByDataNeeds(['error-handling', 'logic-correctness', 'requirements'], metas);
+    expect(groups).toHaveLength(2);
+    const diffGroup = groups.find(g => g.includes('error-handling'));
+    expect(diffGroup).toContain('logic-correctness');
+    expect(diffGroup).not.toContain('requirements');
+  });
+
+  it('unknown dims (not in metas) are never batched together', () => {
+    const metas: DimensionMeta[] = [];
+    const groups = groupByDataNeeds(['unknown-a', 'unknown-b'], metas);
+    expect(groups).toHaveLength(2); // each gets its own group
+  });
+
+  it('single dim produces single-element group', () => {
+    const metas = [makeMeta('dry', ['diff', 'codebase'])];
+    const groups = groupByDataNeeds(['dry'], metas);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toEqual(['dry']);
+  });
+
+  it('preserves order within each group', () => {
+    const metas = [
+      makeMeta('a', ['diff']),
+      makeMeta('b', ['diff']),
+      makeMeta('c', ['diff']),
+    ];
+    const groups = groupByDataNeeds(['a', 'b', 'c'], metas);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toEqual(['a', 'b', 'c']);
+  });
+});
+
+// Tier 1: spawnBatchReview (mocked spawn)
+
+describe('spawnBatchReview', () => {
+  afterEach(() => {
+    vi.mocked(spawnSync).mockRestore();
+    vi.mocked(spawn).mockRestore();
+  });
+
+  function mockClaudeOnce(stdout: string, exitCode = 0) {
+    vi.mocked(spawnSync).mockImplementation((cmd: string) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+    vi.mocked(spawn).mockImplementation(() => {
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => {
+        proc.stdout.emit('data', Buffer.from(stdout));
+        proc.emit('close', exitCode);
+      });
+      return proc;
+    });
+  }
+
+  function batchPayload(reviews: Array<{ dim: string; verdict: string; findings: any[] }>, costUsd: number): string {
+    const blocks = reviews.map(r =>
+      `\`\`\`json\n${JSON.stringify({ dimension: r.dim, summary: 'ok', findings: r.findings })}\n\`\`\``,
+    ).join('\n\n');
+    const assistantLine = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: blocks }] } });
+    const resultLine = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
+    return `${assistantLine}\n${resultLine}\n`;
+  }
+
+  it('returns parsed reviews for each requested dimension', async () => {
+    const payload = batchPayload([
+      { dim: 'error-handling', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+      { dim: 'logic-correctness', verdict: 'pass', findings: [{ requirement: 'R2', status: 'DONE', detail: 'ok' }] },
+    ], 0.15);
+    mockClaudeOnce(payload);
+
+    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    expect(results).toHaveLength(2);
+    expect(results[0].review?.dimension).toBe('error-handling');
+    expect(results[1].review?.dimension).toBe('logic-correctness');
+  });
+
+  it('returns null for dimensions missing from the batch response', async () => {
+    const payload = batchPayload([
+      { dim: 'error-handling', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+    ], 0.10); // only one dim returned
+    mockClaudeOnce(payload);
+
+    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    expect(results[0].review).not.toBeNull();
+    expect(results[1].review).toBeNull(); // logic-correctness missing from response
+  });
+
+  it('splits cost evenly across dimensions', async () => {
+    const payload = batchPayload([
+      { dim: 'error-handling', verdict: 'pass', findings: [] },
+      { dim: 'logic-correctness', verdict: 'pass', findings: [] },
+    ], 0.20);
+    mockClaudeOnce(payload);
+
+    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    expect(results[0].costUsd).toBeCloseTo(0.10);
+    expect(results[1].costUsd).toBeCloseTo(0.10);
+  });
+
+  it('returns all nulls when claude fails', async () => {
+    mockClaudeOnce('', 1);
+    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    expect(results[0].review).toBeNull();
+    expect(results[1].review).toBeNull();
+  });
+
+  it('uses a single claude call regardless of dimension count', async () => {
+    const payload = batchPayload([
+      { dim: 'error-handling', verdict: 'pass', findings: [] },
+      { dim: 'logic-correctness', verdict: 'pass', findings: [] },
+    ], 0.10);
+    mockClaudeOnce(payload);
+
+    await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Tier 1: reviewBattery — failedDimensions, skippedDimensions, batching
+
+describe('reviewBattery — failure surfacing and skipping', () => {
+  afterEach(() => {
+    vi.mocked(spawnSync).mockRestore();
+    vi.mocked(spawn).mockRestore();
+  });
+
+  function streamJsonPayload(text: string, costUsd: number): string {
+    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
+    return `${assistant}\n${result}\n`;
+  }
+
+  function mockClaudeSequential(responses: Array<{ stdout: string; exitCode?: number }>) {
+    vi.mocked(spawnSync).mockImplementation((cmd: string) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+    let callCount = 0;
+    vi.mocked(spawn).mockImplementation(() => {
+      const resp = responses[callCount] ?? responses[responses.length - 1];
+      callCount++;
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => {
+        proc.stdout.emit('data', Buffer.from(resp.stdout));
+        proc.emit('close', resp.exitCode ?? 0);
+      });
+      return proc;
+    });
+  }
+
+  it('populates failedDimensions when a dim returns null', async () => {
+    const passingOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [{ requirement: 'R', status: 'DONE', detail: '' }] }),
+      0.10,
+    );
+    mockClaudeSequential([{ stdout: passingOutput }, { stdout: '', exitCode: 1 }]);
+    const result = await reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+    expect(result.failedDimensions).toContain('test-quality');
+    expect(result.failedDimensions).not.toContain('requirements');
+  });
+
+  it('failedDimensions is empty when all dims succeed', async () => {
+    const passingOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [] }),
+      0.10,
+    );
+    mockClaudeSequential([{ stdout: passingOutput }, { stdout: passingOutput }]);
+    const result = await reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+    expect(result.failedDimensions).toHaveLength(0);
+  });
+
+  it('auto-skips plan-requiring dims when no planText provided', async () => {
+    const passingOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [] }),
+      0.10,
+    );
+    mockClaudeSequential([{ stdout: passingOutput }]);
+    const result = await reviewBattery({
+      dimensions: ['requirements', 'plan-coverage', 'plan-fidelity', 'improvement-lifecycle'],
+    });
+    expect(result.skippedDimensions).toContain('plan-coverage');
+    expect(result.skippedDimensions).toContain('plan-fidelity');
+    expect(result.skippedDimensions).toContain('improvement-lifecycle');
+    expect(result.skippedDimensions).not.toContain('requirements');
+  });
+
+  it('includes plan-requiring dims when planText is provided', async () => {
+    const passingOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [] }),
+      0.10,
+    );
+    mockClaudeSequential([{ stdout: passingOutput }, { stdout: passingOutput }]);
+    const result = await reviewBattery({
+      dimensions: ['requirements', 'plan-fidelity'],
+      planText: 'my plan',
+    });
+    expect(result.skippedDimensions).toHaveLength(0);
+  });
+
+  it('batches same-needs dims into fewer claude calls', async () => {
+    // error-handling and logic-correctness both need [diff] — should be one call
+    const batchOutput = streamJsonPayload(
+      [
+        '```json\n' + JSON.stringify({ dimension: 'error-handling', summary: 'ok', findings: [] }) + '\n```',
+        '```json\n' + JSON.stringify({ dimension: 'logic-correctness', summary: 'ok', findings: [] }) + '\n```',
+      ].join('\n\n'),
+      0.15,
+    );
+    mockClaudeSequential([{ stdout: batchOutput }]);
+    await reviewBattery({ dimensions: ['error-handling', 'logic-correctness'] });
+    // Both dims share [diff] needs → batched into 1 spawn call
+    expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -581,7 +933,7 @@ describe('replay tests', () => {
     // Expected: reviewer flags that 0/16 SKILL.md files use the new fields
     // This is the "smoke detectors with no batteries" finding
     const { spawnReview } = await import('./review-battery.js');
-    const { review } = spawnReview({
+    const { review } = await spawnReview({
       dimension: 'requirements',
       prUrl: 'https://github.com/Garsson-io/kaizen/pull/832',
       issueNum: '666',
@@ -601,7 +953,7 @@ describe('replay tests', () => {
     // PR #825 closed issue #726 (deduplicate batch progress issues)
     // Expected: clean pass — all requirements addressed
     const { spawnReview } = await import('./review-battery.js');
-    const { review } = spawnReview({
+    const { review } = await spawnReview({
       dimension: 'requirements',
       prUrl: 'https://github.com/Garsson-io/kaizen/pull/825',
       issueNum: '726',
@@ -619,7 +971,7 @@ describe('replay tests', () => {
     // Expected: flags that 1 of 3 failure patterns isn't addressed,
     // and no L2 escalation mechanism was created
     const { spawnReview } = await import('./review-battery.js');
-    const { review } = spawnReview({
+    const { review } = await spawnReview({
       dimension: 'requirements',
       prUrl: 'https://github.com/Garsson-io/kaizen/pull/810',
       issueNum: '765',
@@ -639,7 +991,7 @@ describe('replay tests', () => {
     // Issue explicitly said "fix the underlying slowness rather than increasing the timeout."
     // PR disabled the timing sentinel. Scope-fidelity should catch this.
     const { spawnReview } = await import('./review-battery.js');
-    const { review } = spawnReview({
+    const { review } = await spawnReview({
       dimension: 'scope-fidelity',
       prUrl: 'https://github.com/Garsson-io/kaizen/pull/816',
       issueNum: '814',
@@ -658,7 +1010,7 @@ describe('replay tests', () => {
     // PR #825 / issue #726 (deduplicate batch progress issues)
     // Expected: clean implementation, scope matches issue
     const { spawnReview } = await import('./review-battery.js');
-    const { review } = spawnReview({
+    const { review } = await spawnReview({
       dimension: 'scope-fidelity',
       prUrl: 'https://github.com/Garsson-io/kaizen/pull/825',
       issueNum: '726',
@@ -675,7 +1027,7 @@ describe('replay tests', () => {
     // PR #810 / issue #765 — pre-Story Spine era, likely a feature list not a narrative.
     // pr-description should catch weak "Once upon a time / Because of that" structure.
     const { spawnReview } = await import('./review-battery.js');
-    const { review } = spawnReview({
+    const { review } = await spawnReview({
       dimension: 'pr-description',
       prUrl: 'https://github.com/Garsson-io/kaizen/pull/810',
       issueNum: '765',
@@ -695,7 +1047,7 @@ describe('replay tests', () => {
     // Tests exist for the TypeScript interface but no test verifies that
     // existing SKILL.md files are updated to use the schema.
     const { spawnReview } = await import('./review-battery.js');
-    const { review } = spawnReview({
+    const { review } = await spawnReview({
       dimension: 'test-quality',
       prUrl: 'https://github.com/Garsson-io/kaizen/pull/832',
       issueNum: '666',
