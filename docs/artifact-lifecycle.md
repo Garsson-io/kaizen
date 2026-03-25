@@ -1,146 +1,137 @@
-# Artifact Lifecycle — From Issue to Merged PR
+# Artifact Lifecycle — From Issue to Merged PR and Back
 
 Every step in the kaizen workflow produces artifacts. Every review dimension consumes artifacts. If an artifact isn't persisted, it can't be reviewed — and if it can't be reviewed, it can be wrong without anyone knowing.
 
-## Where Things Live
+## Placement Rules
 
-| Location | What goes here | Why |
-|----------|---------------|-----|
-| **Repo (committed)** | Tooling: skills, hooks, dimension prompts, source code, docs | Outlasts any single session. Shared. Versioned. |
-| **Issue tracker (GitHub)** | Per-issue artifacts: plans, evaluations, reflections | Discoverable. Attached to issues. Survives session crashes. Works in plugin mode. |
-| **PR (GitHub)** | Per-PR artifacts: description (solution story), review findings | The final record. Review comments visible to humans. |
-| **Session-local (gitignored)** | Temp state: review state machine, fix logs, cached data | Within-session only. Not committed. Cleaned up with worktree. |
+| Location | What goes here | Why | Examples |
+|----------|---------------|-----|---------|
+| **Repo (committed)** | Tooling that outlasts any session | Shared, versioned, evolves over time | Skills, hooks, dimension prompts, source code, docs, zen.md |
+| **Issue tracker** | Per-issue work artifacts | Discoverable, attached to issues, survives crashes, plugin-safe | Plans, evaluations, reflections, incident reports |
+| **PR** | Per-PR artifacts | Final record of the work, visible to reviewers | PR description (Story Spine), review findings (comments) |
+| **Session-local (gitignored)** | Temp state within a session | Not worth versioning, cleaned up with worktree | Review state machine, fix logs, cached fetches |
 
-**The repo is for tooling, not work artifacts.** Plans, findings, and evaluations are per-issue/per-PR — they belong in the issue tracker, not the codebase. This is especially important in **plugin mode** where kaizen should never commit files to the host repo.
+**The repo is for tooling, not work artifacts.** Kaizen never commits per-issue files to the host repo (plugin mode).
 
-## The Artifact Chain
+## Complete Artifact Table
+
+| Artifact | Created by | Persisted at | Consumed by (immediate) | Re-reviewed by (periodic) | Resilience |
+|----------|-----------|-------------|------------------------|--------------------------|------------|
+| **Issue** | Human, auto-dent explore, kaizen-file-issue, kaizen-reflect | GitHub Issues | kaizen-evaluate, plan-coverage dimension | kaizen-audit-issues (label health, staleness), kaizen-gaps (pattern clusters), kaizen-pick (priority scoring) | Permanent. Survives everything. |
+| **Evaluation** | kaizen-evaluate | Issue comment | kaizen-implement (scope decisions) | kaizen-audit-issues (are evaluations leading to implementations?) | Survives session crash — posted to GitHub before implementation starts. |
+| **Plan** | kaizen-implement step 1 | Issue comment (primary), session context (transient), PR description (final) | plan-coverage dimension, plan-fidelity dimension, test-plan dimension | kaizen-audit-issues (do plans exist for active issues?), future sessions re-evaluating the issue | Survives crash — posted as issue comment before coding. If session dies mid-implementation, plan is still on the issue for the next session. |
+| **Code + Tests** | kaizen-implement steps 2-4 | Git (branch, commits) | All code dimensions (logic, error-handling, dry, test-quality, scope-fidelity), CI | git log, git blame, future kaizen-deep-dive investigating patterns | Survives crash if committed. Uncommitted work lost with worktree — but plan on issue lets next session rebuild. |
+| **Review findings** | kaizen-review-pr subagents | PR comment (primary), session state `.claude/reviews/pr-N.json` (transient) | Fix loop, human reviewer, merge decision | kaizen-gaps (what do reviews keep catching? → improve skills/hooks), auto-dent batch analysis (review_verdict in run metrics) | PR comment survives everything. Session state lost on crash — but review is cheap to re-run ($0.13/dimension). |
+| **PR description** | kaizen-write-pr | GitHub PR body | pr-description dimension, human reviewer | kaizen-audit-issues (do PRs tell stories?), future agents reading PR for context | Permanent once posted. Updated via `gh pr edit`. |
+| **CI results** | GitHub Actions | GitHub Checks | Merge decision | CI history analysis | Permanent. |
+| **Reflection** | kaizen-reflect | New GitHub Issues + session log | kaizen-pick (next work selection), kaizen-gaps (pattern analysis) | kaizen-audit-issues (are reflections producing actionable issues?) | New issues are permanent. Session log available if session ID known. |
+
+## The Recursive Loops
+
+Artifacts don't just flow forward (issue → plan → code → review → merge). They feed BACK:
 
 ```
-ISSUE (problem)
-  ↓ created by: human, auto-dent, kaizen-file-issue
-  ↓ persisted: GitHub Issues
-  ↓ consumed by: evaluate, plan-coverage
-
-EVALUATION (go/no-go + scope)
-  ↓ created by: kaizen-evaluate
-  ↓ persisted: issue comment (gh issue comment N --body "...")
-  ↓ consumed by: implement (scope decisions)
-
-PLAN (solution approach + testing strategy)
-  ↓ created by: kaizen-implement step 1
-  ↓ persisted: issue comment (primary) + session cache (for dimension access)
-  ↓            → absorbed into PR description after PR creation
-  ↓ consumed by: plan-coverage, plan-fidelity, test-plan dimensions
-
-CODE + TESTS
-  ↓ created by: kaizen-implement steps 2-4 (TDD RED → GREEN)
-  ↓ persisted: Git (branch, commits)
-  ↓ consumed by: all code dimensions (logic, error-handling, dry, test-quality)
-
-REVIEW FINDINGS
-  ↓ created by: kaizen-review-pr (subagent dimensions)
-  ↓ persisted: PR comment (primary) + session state (for fix loop)
-  ↓ consumed by: fix loop, human reviewer
-
-PR DESCRIPTION (solution story)
-  ↓ created by: kaizen-write-pr
-  ↓ persisted: GitHub PR body
-  ↓ consumed by: pr-description dimension, human reviewer
-
-REFLECTION (impediments + lessons)
-  ↓ created by: kaizen-reflect
-  ↓ persisted: GitHub Issues, session log
-  ↓ consumed by: future sessions, kaizen-pick
+                    ┌──────────────────────────────────────────┐
+                    │                                          │
+                    ▼                                          │
+ISSUE ──→ PLAN ──→ CODE ──→ REVIEW ──→ PR ──→ MERGE ──→ REFLECT
+  ▲         │        │         │        │                   │
+  │         │        │         │        │                   │
+  │         ▼        ▼         ▼        ▼                   │
+  │    plan-coverage  logic   review   pr-description       │
+  │    plan-fidelity  dry     findings  dimension           │
+  │    test-plan      error   coverage                      │
+  │                   test-q  gate                          │
+  │                                                         │
+  └─────────────── NEW ISSUES ◄─────────────────────────────┘
+                        │
+                        ▼
+              ┌─────────────────┐
+              │ TOOLING EVOLVES │
+              │ dimensions      │
+              │ skills          │
+              │ hooks           │
+              │ zen.md          │
+              └─────────────────┘
 ```
 
-## Plan Format
+### Loop 1: Reflection → New Issues → New Work
+kaizen-reflect produces impediments → filed as new issues → picked by kaizen-pick → worked on by kaizen-implement → reflected on again. This is the core improvement cycle.
 
-Posted as an **issue comment** before any code is written. This is the first deliverable.
+### Loop 2: Review Findings → Dimension Improvement
+Review findings reveal patterns: "the logic-correctness dimension keeps missing async errors" → update the dimension prompt → future reviews are better. The dimensions are living documents.
 
-```markdown
-## Implementation Plan
+### Loop 3: Audit → Tooling Updates
+kaizen-audit-issues and kaizen-gaps periodically scan all issues, PRs, and review findings for patterns: "30% of PRs have scope-fidelity PARTIAL findings about unrequested refactors" → update kaizen-implement instructions → agents refactor less → scope-fidelity pass rate improves.
 
-**Approach**: What to build and how. Key architectural decisions. Why this approach.
+### Loop 4: Zen Evolution
+Session learnings produce new principles (e.g., "The diff is proof. The description is the argument." from this session) → added to zen.md → all skills reference zen.md → agent behavior changes → new learnings → new principles.
 
-**Testing Strategy**:
-- Pyramid levels: [unit | integration | E2E] — which and why
-- SUT: what component is the focus
-- Invariants: what must ALWAYS be true
-- For bug fixes: what category of bug to prevent
+## Tooling Artifacts (committed, evolving)
 
-**Scope**:
-- In this PR: [concrete list]
-- Deferred: [with mechanism — follow-up issue #N]
+These live in the repo and evolve based on the recursive loops above:
 
-**Risk Assessment**:
-- High-priority dimensions for this PR (from high_when signals)
-- Suggested review subagent grouping
-```
+| Artifact | Location | Created by | Updated by | How it improves |
+|----------|----------|-----------|-----------|-----------------|
+| **Dimension prompts** | `prompts/review-*.md` | kaizen-implement (this session) | Any session that finds false positives/negatives | FP/FN data from review findings → adjust prompt → re-test on known PRs |
+| **Skills** | `.claude/skills/*/SKILL.md` | kaizen-prd → kaizen-implement | kaizen-reflect, kaizen-deep-dive | Impediments from reflections → skill updates (e.g., this session added Story Spine to implement) |
+| **Hooks** | `.claude/hooks/`, `src/hooks/` | kaizen-implement | Escalation from L1→L2 | When instructions fail repeatedly → build hook enforcement |
+| **Review criteria** | `.claude/kaizen/review-criteria.md` | Manual | kaizen-review-pr (adds FM-N patterns) | Each review that catches a new failure mode → new learned pattern |
+| **Zen principles** | `.claude/kaizen/zen.md` | Aviad + Claude | Session learnings | Non-obvious insights from sessions → new principles with provenance |
+| **This document** | `docs/artifact-lifecycle.md` | This session | Future sessions | As the process evolves, artifact locations and flows may change |
 
-The plan lives in three places across its lifecycle:
-1. **Issue comment** — posted immediately, persistent, discoverable (primary)
-2. **Session cache** — dimension subagents read it during review (transient)
-3. **PR description** — absorbed into Story Spine narrative after PR creation (final)
+## Observability
 
-## Review Findings Format
+How to inspect the state of each artifact type:
 
-Posted as a **PR comment** after each review round.
+| Question | How to answer |
+|----------|--------------|
+| Which open issues have no plan? | `gh issue list --state open` → check each for plan comment |
+| Which PRs have no review findings? | `gh pr list --state open` → check each for review battery comment |
+| What dimensions keep finding gaps? | Parse review battery PR comments across a batch → aggregate by dimension |
+| Which dimensions have high false positive rates? | Compare findings against human review decisions (merged despite MISSING?) |
+| Are reflections producing actionable issues? | `kaizen-audit-issues` → check issues filed by reflect vs issues actually worked on |
+| Is the plan-to-PR fidelity improving? | Track plan-fidelity pass rate across batches |
 
-```markdown
-## Review Battery: Round N
+## Resilience Analysis
 
-| Dimension | Status | Findings |
-|-----------|--------|----------|
-| requirements | PASS | 4 DONE |
-| logic-correctness | FAIL | 1 MISSING: off-by-one in parser |
-| ... | ... | ... |
+What happens when things fail:
 
-Coverage: 10/10 dimensions reviewed
-Overall: FAIL (2 MISSING findings)
-```
+| Failure | What's lost | What survives | Recovery |
+|---------|------------|---------------|----------|
+| Session crash mid-planning | Nothing — plan posted as issue comment first | Plan, issue, evaluation | Next session reads plan from issue, continues |
+| Session crash mid-implementation | Uncommitted code | Plan (issue comment), committed code, tests | Next session reads plan, picks up from last commit |
+| Session crash mid-review | Session review state | PR exists, code committed | Re-run review ($0.13/dimension, cheap) |
+| Worktree deleted | Session-local state (`.claude/reviews/`) | All GitHub artifacts (issues, PRs, comments) | Create new worktree, everything on GitHub is intact |
+| GitHub outage | Can't read issue/PR | Local code, git history | Wait for GitHub, retry |
 
-Session state (fix loop tracking, which dimensions completed) lives in gitignored temp:
-- `.claude/reviews/pr-N.json` — not committed, cleaned up with worktree
+**Design principle**: every artifact that matters is on GitHub (issues, PRs, comments). Session-local state is always recomputable. The most expensive thing to lose is uncommitted code — commit early, commit often.
 
-## Session-Local State (gitignored)
+## Dogfood vs Plugin Mode
 
-These files exist during a session and are NOT committed:
+| Artifact | Dogfood (`KAIZEN_REPO == HOST_REPO`) | Plugin (`KAIZEN_REPO != HOST_REPO`) |
+|----------|--------------------------------------|-------------------------------------|
+| Issue | `gh issue` on kaizen repo | `gh issue` on `$ISSUES_REPO` (may be kaizen or host) |
+| Plan (issue comment) | Comment on kaizen issue | Comment on `$ISSUES_REPO` issue |
+| Code + PR | PR on kaizen repo | PR on `$HOST_REPO` |
+| Review findings | PR comment on kaizen repo | PR comment on `$HOST_REPO` |
+| Dimension prompts | `prompts/` in kaizen repo | `prompts/` in kaizen repo (plugin provides) |
+| Skills | `.claude/skills/` in kaizen repo | Installed by `kaizen-setup` into host |
+| Session state | Gitignored in kaizen worktree | Gitignored in host worktree |
 
-| File | Purpose | Cleaned up |
-|------|---------|-----------|
-| `.claude/reviews/pr-N.json` | Review state machine (coverage tracking, fix rounds) | With worktree |
-| `.claude/reviews/pr-N-fix-round*.log` | Fix session logs | With worktree |
-| `.claude/review-fix/` | review-fix CLI state | With worktree |
-
-Add to `.gitignore`:
-```
-.claude/reviews/
-.claude/review-fix/
-```
+**Key rule**: kaizen never commits per-issue/per-PR files to ANY repo. Per-issue → issue tracker. Per-PR → PR. Per-session → gitignored temp.
 
 ## Data Categories for Dimensions
 
 Each dimension declares `needs:` in frontmatter. How subagents access each:
 
-| Data need | Source artifact | How to access |
-|-----------|---------------|--------------|
-| `diff` | Code changes | `gh pr diff <url>` |
-| `issue` | Issue (problem) | `gh issue view <N> --json body` |
-| `pr` | PR metadata | `gh pr view <url> --json body` |
-| `plan` | Plan (issue comment) | `gh issue view <N> --json comments` → find plan comment |
-| `tests` | Test output | `npm test` or test files in diff |
-| `codebase` | Existing code | `grep`, `glob` on repo |
-| `session` | Session transcript | JSONL log file (session-local) |
-| `git-history` | Commits, blame | `git log`, `git blame` |
-
-## Dogfood vs Plugin Mode
-
-| Artifact | Dogfood (kaizen repo) | Plugin (host repo) |
-|----------|----------------------|-------------------|
-| Plan | Issue comment on `$KAIZEN_REPO` | Issue comment on `$ISSUES_REPO` |
-| Review findings | PR comment on `$KAIZEN_REPO` | PR comment on `$HOST_REPO` |
-| Session state | Gitignored in worktree | Gitignored in worktree |
-| Dimension prompts | `prompts/` in kaizen repo | `prompts/` in kaizen repo (plugin provides them) |
-| Skills | `.claude/skills/` in kaizen repo | Installed by kaizen-setup |
-
-**Key rule**: kaizen never commits per-issue/per-PR artifacts to the host repo. Everything per-issue goes to the issue tracker. Everything per-session goes to gitignored temp.
+| Data need | Source artifact | How to access | Persistence |
+|-----------|---------------|--------------|-------------|
+| `diff` | Code changes | `gh pr diff <url>` | Git (permanent) |
+| `issue` | Issue body | `gh issue view <N> --json body` | GitHub (permanent) |
+| `pr` | PR metadata + body | `gh pr view <url> --json body` | GitHub (permanent) |
+| `plan` | Plan (issue comment) | `gh issue view <N> --json comments` → find "## Implementation Plan" | GitHub (permanent) |
+| `tests` | Test output | `npm test` or test files in diff | Ephemeral (re-runnable) |
+| `codebase` | Existing code | `grep`, `glob` on repo | Git (permanent) |
+| `session` | Session transcript | JSONL log file | Session-local (available if session ID known) |
+| `git-history` | Commits, blame | `git log`, `git blame` | Git (permanent) |
