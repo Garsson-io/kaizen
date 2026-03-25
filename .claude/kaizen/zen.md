@@ -87,6 +87,9 @@ A system that learns from its actions in minutes improves faster than one that l
 The diff is proof. The description is the argument.
 A reviewer who must read the code to understand the PR was failed by the author.
 
+Correctness is necessary but not sufficient.
+Every capability must have a feedback loop — or it's correct today and stale tomorrow.
+
 The goal is not to be done. The goal is to be better at not being done.
 ```
 
@@ -306,4 +309,5 @@ Each principle traces back to a specific observation, incident, or conversation.
 | *Productivity without strategic diversity is local optimization* | #548, #561 — auto-dent batches producing many PRs in one mode without cognitive diversity | Tunnel vision, mode balance |
 | *The fastest path to better is shorter loops* | #646 — contemplation run 59 surfaced implicit pattern across adaptive selection, intra-batch reflection, regression detection | Feedback latency, learning rate |
 | *The diff is proof. The description is the argument.* | #846 — PR bodies that listed features without telling the story; Story Spine (Pixar) adapted for technical PRs | PR quality, reviewer experience, knowledge transfer |
+| *Correctness is necessary but not sufficient.* | #846 — review battery built correct code but artifacts had no persistence, no reviewers, no feedback loops. Hours spent fixing lifecycle gaps that no dimension caught. | Improvement lifecycle, recursive improvement, artifact chains |
 | *The goal is not to be done* | Founding principle | Infinite game orientation |
