@@ -63,38 +63,39 @@ npx tsx src/cli-dimensions.ts list
 ```
 These are not aspirational — they are the adversarial rubric. Read the `high_when` signals for each dimension against your issue to understand which dimensions matter most.
 
-**Step 0b: Create the plan file.** Write `.claude/plans/issue-N.md` with this structure:
+**Step 0b: Create the plan.** Post it as an **issue comment** on the linked issue:
 
-```markdown
-# Plan: <issue title>
-Issue: #N | Created: <date>
+```bash
+gh issue comment N --repo "$ISSUES_REPO" --body "$(cat <<'PLAN'
+## Implementation Plan
 
-## Approach
-What to build and how. Key architectural decisions. Why this approach over alternatives.
+**Approach**: What to build and how. Key architectural decisions. Why this approach over alternatives.
 
-## Testing Strategy
+**Testing Strategy**:
 - Pyramid levels: [unit | integration | E2E] — which and why
 - SUT: what component is the focus of testing
 - Invariants: what must ALWAYS be true (not just "this bug is fixed")
 - For bug fixes: what category of bug does this prevent?
 
-## Scope
+**Scope**:
 - In this PR: [concrete list]
 - Deferred: [with mechanism — follow-up issue #N]
 
-## Risk Assessment
-- Which review dimensions are high-priority for this PR (based on high_when signals)
+**Risk Assessment**:
+- High-priority review dimensions for this PR (from high_when signals)
 - Suggested subagent grouping for review
+PLAN
+)"
 ```
 
-**This file is mandatory.** It must exist before you write any code. It's consumed by:
-- `plan-coverage` dimension (does the plan address the issue?)
-- `plan-fidelity` dimension (does the PR follow the plan?)
-- `test-plan` dimension (is the testing strategy right?)
+**The plan is mandatory.** It must be posted before you write any code. It lives in three places:
+1. **Issue comment** (primary — persistent, discoverable, works in plugin mode)
+2. **Session context** (you just wrote it — dimension subagents read it during review)
+3. **PR description** (absorbed into Story Spine narrative via `/kaizen-write-pr` after PR creation)
 
-After PR creation, the plan content flows into the PR description via `/kaizen-write-pr`.
+The plan is consumed by: `plan-coverage` (plan vs issue), `plan-fidelity` (PR vs plan), `test-plan` (testing strategy). See `docs/artifact-lifecycle.md` for the full artifact chain.
 
-See `docs/artifact-lifecycle.md` for the full artifact chain.
+**Why an issue comment, not a repo file?** Plans are per-issue artifacts, not tooling. They don't belong in the codebase. In plugin mode, kaizen must never commit per-issue files to the host repo. Issue comments are persistent, attached to the issue, and discoverable by future sessions.
 
 **Create ALL of these tasks:**
 
