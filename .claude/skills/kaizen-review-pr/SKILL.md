@@ -24,42 +24,51 @@ The `pr-review-loop.sh` hook enforces that this review happens. This skill defin
 3. **Read linked issues:** Check PR body, branch name, commits for `#N` or `kaizen#N`. If found, `gh issue view --repo "$ISSUES_REPO"` to understand requirements.
 4. **Scan recent failure modes:** Check the "Learned Failure Modes" section of the criteria file. These are patterns from past incidents — watch for them specifically in this diff.
 
-### Phase 2: Review Using Dimensions
+### Phase 2: Review Using Subagent Dimensions
 
-**All review checks are dimensions.** Every dimension is a `prompts/review-*.md` file with YAML frontmatter. To add a new check, create a file — no code changes needed. Run `npx tsx src/cli-dimensions.ts list` to see what's available.
+**All review checks are dimensions.** Every dimension is a `prompts/review-*.md` file. All dimensions run — no skipping. Run `npx tsx src/cli-dimensions.ts list` to see what's available.
 
-**Dimensions have two execution modes** (set in frontmatter `execution:` field):
+**Step 2a: Get the briefing.** Discover all applicable dimensions and their data needs:
 
-| Mode | How it runs | Cost | When to use |
-|------|------------|------|-------------|
-| `in-session` | Agent tool subagent within your session | Free | Code-level checks: the diff alone is sufficient |
-| `independent` | Separate `claude -p` via review-battery.ts | $0.10-0.20 | Needs issue/plan context, or must be adversarial (independent of implementing agent) |
-
-**Discover dimensions at review start:**
 ```bash
-npx tsx src/cli-dimensions.ts list   # see all dimensions + execution mode
+npx tsx src/cli-dimensions.ts list
 ```
 
-**Run all dimensions that apply to this PR:**
-1. Filter dimensions by `applies_to: pr` (exclude `plan` dimensions)
-2. For `execution: in-session` dimensions: run as Agent tool subagents (group related ones for efficiency)
-3. For `execution: independent` dimensions: run via `reviewBattery()` from `src/review-battery.ts`
-4. Merge all findings into a single report
+This shows every dimension, what data it needs (`diff`, `issue`, `pr`, `codebase`, `tests`), and which dimensions share data needs (natural grouping signal).
 
-**Scale to PR size:**
-- **Small PR** (≤50 lines): Run in-session dimensions sequentially yourself. Skip independent dimensions unless the PR is high-risk.
-- **Medium PR** (50-300 lines): Run in-session dimensions as 2-3 parallel subagents. Run independent dimensions.
-- **Large PR** (>300 lines): Run all dimensions in parallel. The cost is justified by the risk surface.
+**Step 2b: Decide grouping.** You decide how to distribute dimensions across subagents. Use these signals:
 
-**Each agent must:**
+- **Data overlap:** Dimensions needing the same data (`[diff, issue]`) are efficient to group — the subagent fetches once.
+- **PR size:** Small PR → fewer agents, bundle more. Large PR → more agents, less per agent.
+- **Issue risk:** Security-sensitive, auth changes, production-facing → more agents, consider redundancy (give a critical dimension to 2 agents independently).
+
+Example groupings:
+
+| PR context | Agents | Grouping |
+|-----------|--------|----------|
+| Tiny docs fix (10 lines) | 1 agent | All 7 dimensions in one pass |
+| Normal bug fix (80 lines) | 2-3 agents | Agent 1: requirements + scope-fidelity + pr-description (need issue). Agent 2: logic + error-handling + test-quality (need diff). |
+| Large feature (400 lines) | 4-5 agents | Smaller groups, 1-2 dimensions each |
+| Security-sensitive | 5+ agents | Security dimensions get 2 independent agents for redundancy |
+
+**Step 2c: Spawn subagents.** For each group, launch an Agent tool subagent with:
+- The dimension prompt(s) from `prompts/review-*.md`
+- The data it needs (pre-fetch `gh pr diff`, `gh issue view`, etc. and pass in the prompt)
+- Instructions to output structured JSON findings per dimension
+
+Launch independent subagents **in parallel** (multiple Agent tool calls in one message).
+
+**Step 2d: Validate coverage.** After ALL subagents return, verify every dimension was reviewed. Call `validateReviewCoverage()` from `src/review-battery.ts` or manually check: does every dimension from the briefing have findings in the results?
+
+**If any dimensions are MISSING from results** (subagent failed, timed out, or was forgotten): spawn replacement subagents for the missing dimensions. Do NOT proceed with incomplete coverage.
+
+This is the gate: **you cannot move to Phase 3 until all dimensions have findings.**
+
+**Each subagent must:**
 - Read the full diff (not a summary)
-- Read the specific criteria section assigned to it
-- For each finding: cite the file, line, and which criterion it violates
-- Score confidence 0-100 using this scale:
-  - **0-25:** Likely false positive or nitpick
-  - **50:** Real issue but minor or unlikely in practice
-  - **75:** Verified real issue, will impact functionality or maintainability
-  - **100:** Certain issue, confirmed by evidence in the code
+- Read the dimension prompt assigned to it
+- For each finding: cite the file, line, and which dimension it relates to
+- Output structured JSON per the dimension's output format
 
 ### Phase 3: Filter and Classify
 

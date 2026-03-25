@@ -233,6 +233,28 @@ export function loadDimensionMetas(promptsDir?: string): DimensionMeta[] {
   return metas;
 }
 
+// ── Coverage Validation ─────────────────────────────────────────────
+
+/**
+ * Validate that all expected dimensions were reviewed.
+ * Call after collecting subagent results to ensure nothing was skipped.
+ *
+ * Returns { complete, missing } — the agent MUST run missing dimensions
+ * before proceeding.
+ */
+export function validateReviewCoverage(
+  expected: DimensionMeta[],
+  reviewed: DimensionReview[],
+): { complete: boolean; missing: DimensionMeta[]; reviewed: string[] } {
+  const reviewedNames = new Set(reviewed.map(r => r.dimension));
+  const missing = expected.filter(d => !reviewedNames.has(d.name));
+  return {
+    complete: missing.length === 0,
+    missing,
+    reviewed: [...reviewedNames],
+  };
+}
+
 // ── Output Parsing ──────────────────────────────────────────────────
 
 /**

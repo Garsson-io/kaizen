@@ -20,10 +20,12 @@ import {
   listDimensions,
   loadDimensionMetas,
   reviewBriefing,
+  validateReviewCoverage,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
   type DimensionReview,
+  type DimensionMeta,
   type BatteryResult,
   type ReviewDimension,
 } from './review-battery.js';
@@ -284,6 +286,40 @@ describe('loadReviewPrompt', () => {
       // Template exists — verify it loads without throwing
       expect(() => loadReviewPrompt('plan-coverage', {})).not.toThrow();
     }
+  });
+});
+
+// Tier 1: Coverage validation gate
+
+describe('validateReviewCoverage', () => {
+  const makeMeta = (name: string): DimensionMeta => ({
+    name, description: '', applies_to: 'pr', needs: ['diff'], file: `review-${name}.md`,
+  });
+  const makeReview = (dim: string): DimensionReview => ({
+    dimension: dim, verdict: 'pass', findings: [], summary: 'ok',
+  });
+
+  it('returns complete when all dimensions reviewed', () => {
+    const expected = [makeMeta('a'), makeMeta('b'), makeMeta('c')];
+    const reviewed = [makeReview('a'), makeReview('b'), makeReview('c')];
+    const result = validateReviewCoverage(expected, reviewed);
+    expect(result.complete).toBe(true);
+    expect(result.missing).toHaveLength(0);
+  });
+
+  it('returns missing dimensions', () => {
+    const expected = [makeMeta('a'), makeMeta('b'), makeMeta('c')];
+    const reviewed = [makeReview('a')];
+    const result = validateReviewCoverage(expected, reviewed);
+    expect(result.complete).toBe(false);
+    expect(result.missing.map(m => m.name)).toEqual(['b', 'c']);
+  });
+
+  it('handles empty reviews', () => {
+    const expected = [makeMeta('a')];
+    const result = validateReviewCoverage(expected, []);
+    expect(result.complete).toBe(false);
+    expect(result.missing).toHaveLength(1);
   });
 });
 
