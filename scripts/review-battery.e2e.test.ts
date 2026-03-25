@@ -81,6 +81,25 @@ const FIXTURE_PR: PrFixture = {
   repo: 'Garsson-io/kaizen-test-fixture',
 };
 
+// BUGS_PR: kaizen-test-fixture/pull/5 — synthetic PR with two known bugs (issue #4).
+//
+//   Bug 1 — logic-correctness: off-by-one in countMatching()
+//     `for (let i = 0; i < items.length - 1; i++)` skips the last element.
+//     Tests pass because the test array ends with an odd number, so missing the
+//     last element doesn't affect the even-number count.
+//
+//   Bug 2 — error-handling: NaN on empty array in average()
+//     `return sum / numbers.length` → NaN when numbers = [].
+//     Tests pass because no test calls average([]).
+//
+// Used by: logic-correctness smoke, error-handling smoke.
+// Expected: logic-correctness flags Bug 1, error-handling flags Bug 2.
+const BUGS_PR: PrFixture = {
+  prUrl: 'https://github.com/Garsson-io/kaizen-test-fixture/pull/5',
+  issueNum: '4',
+  repo: 'Garsson-io/kaizen-test-fixture',
+};
+
 beforeAll(() => {
   mkdirSync(RESULTS_DIR, { recursive: true });
   console.log(`\n  E2E results: ${RESULTS_DIR}`);
@@ -151,31 +170,32 @@ async function runDimensionCall(
   dim: string,
   tier: 'smoke' | 'replay',
   pr: PrFixture = DEFAULT_PR,
+  label: string = dim,
 ): Promise<SmokeResult> {
   // DEV MODE: load latest checkpoint for fast assertion iteration
   if (DEV_MODE) {
-    const checkpoint = findLatestCheckpoint(dim, tier);
+    const checkpoint = findLatestCheckpoint(label, tier);
     if (checkpoint) {
       const data: CheckpointData = JSON.parse(readFileSync(checkpoint, 'utf8'));
-      console.log(`  [dev] ${dim} ${tier}: loaded checkpoint ${checkpoint}`);
+      console.log(`  [dev] ${label} ${tier}: loaded checkpoint ${checkpoint}`);
       return { ...data, rawPath: checkpoint, fromCheckpoint: true };
     }
-    console.warn(`  [dev] ${dim} ${tier}: no checkpoint found, falling through to real call`);
+    console.warn(`  [dev] ${label} ${tier}: no checkpoint found, falling through to real call`);
   }
 
   // SKIP_PASSED: skip if result file shows it already passed
-  const resultPath = join(RESULTS_DIR, `${dim}-${tier}.result.json`);
+  const resultPath = join(RESULTS_DIR, `${label}-${tier}.result.json`);
   if (SKIP_PASSED && existsSync(resultPath)) {
     const prev: CheckpointData = JSON.parse(readFileSync(resultPath, 'utf8'));
     if (prev.passed) {
-      console.log(`  [skip] ${dim} ${tier}: already passed ($${prev.costUsd?.toFixed(3)})`);
+      console.log(`  [skip] ${label} ${tier}: already passed ($${prev.costUsd?.toFixed(3)})`);
       return { review: prev.review, rawPath: prev.rawPath, costUsd: prev.costUsd, durationMs: 0, fromCheckpoint: true };
     }
   }
 
   // Real call — write checkpoint before parsing so it survives assertion failures
   const timestamp = Date.now();
-  const rawPath = join(RESULTS_DIR, `${dim}-${tier}-${timestamp}.txt`);
+  const rawPath = join(RESULTS_DIR, `${label}-${tier}-${timestamp}.txt`);
 
   const { review, costUsd, durationMs } = await spawnReview({
     dimension: dim,
@@ -192,16 +212,16 @@ async function runDimensionCall(
   writeFileSync(rawPath, JSON.stringify(checkpoint, null, 2));
 
   console.log(
-    `  ${dim} ${tier}: $${costUsd.toFixed(3)} in ${Math.round(durationMs / 1000)}s → ${rawPath}`,
+    `  ${label} ${tier}: $${costUsd.toFixed(3)} in ${Math.round(durationMs / 1000)}s → ${rawPath}`,
   );
 
   return { review, rawPath, costUsd, durationMs, fromCheckpoint: false };
 }
 
 /** Mark the checkpoint as passed so SKIP_PASSED mode can skip it next run. */
-function markPassed(dim: string, tier: 'smoke' | 'replay', result: SmokeResult): void {
+function markPassed(dim: string, tier: 'smoke' | 'replay', result: SmokeResult, label: string = dim): void {
   if (result.fromCheckpoint) return; // don't overwrite a checkpoint we loaded
-  const resultPath = join(RESULTS_DIR, `${dim}-${tier}.result.json`);
+  const resultPath = join(RESULTS_DIR, `${label}-${tier}.result.json`);
   writeFileSync(resultPath, JSON.stringify({
     passed: true, costUsd: result.costUsd, durationMs: result.durationMs,
     review: result.review, rawPath: result.rawPath,
@@ -370,6 +390,80 @@ describe('Tier 2 — schema smoke (CLAUDE_E2E=1 to enable)', () => {
 
     assertSchemaValid(result.review, 'test-plan', result.rawPath);
     markPassed('test-plan', 'smoke', result);
+  });
+});
+
+// ── Tier 2: Synthetic bug detection smoke ─────────────────────────────
+//
+// These tests run specific review dimensions against BUGS_PR — a synthetic PR
+// containing two known bugs. The goal: verify the review battery can detect
+// real bugs, not just schema-validate its output.
+//
+// BUGS_PR (kaizen-test-fixture/pull/5) has:
+//   - off-by-one in countMatching() → should be caught by logic-correctness
+//   - NaN on empty input in average() → should be caught by error-handling
+//
+// Checkpoint names use a label suffix ("-bugs") to avoid colliding with
+// checkpoints from DEFAULT_PR runs of the same dimension.
+//
+// AUTO-DENT INTEGRATION:
+//   After these tests establish that the battery detects the bugs, run:
+//     npx tsx scripts/review-fix.ts --pr https://github.com/Garsson-io/kaizen-test-fixture/pull/5
+//   This simulates auto-dent: review → file issues → implement fixes → re-review.
+
+describe('Tier 2 — bug detection smoke on synthetic bugs PR (CLAUDE_E2E=1 to enable)', () => {
+  it('logic-correctness: flags off-by-one bug in countMatching', { timeout: 150_000 }, async () => {
+    if (!TIER2) {
+      console.log('  [skip] set CLAUDE_E2E=1 to run logic-correctness bug detection (~$0.05, ~30s)');
+      console.log('         target: off-by-one in countMatching (i < items.length - 1)');
+      return;
+    }
+
+    const result = await runDimensionCall('logic-correctness', 'smoke', BUGS_PR, 'logic-correctness-bugs');
+
+    expect(
+      result.costUsd,
+      `logic-correctness smoke cost $${result.costUsd.toFixed(3)} exceeds cap $${SMOKE_BUDGET_USD}` +
+      ` — raw: ${result.rawPath}`,
+    ).toBeLessThanOrEqual(SMOKE_BUDGET_USD);
+
+    assertSchemaValid(result.review, 'logic-correctness', result.rawPath);
+
+    // The dimension should detect the bug — verdict must be 'fail'
+    expect(
+      result.review!.verdict,
+      `logic-correctness should flag the off-by-one bug (verdict='fail') — raw: ${result.rawPath}\n` +
+      `Findings: ${JSON.stringify(result.review!.findings, null, 2)}`,
+    ).toBe('fail');
+
+    markPassed('logic-correctness', 'smoke', result, 'logic-correctness-bugs');
+  });
+
+  it('error-handling: flags NaN on empty input in average', { timeout: 150_000 }, async () => {
+    if (!TIER2) {
+      console.log('  [skip] set CLAUDE_E2E=1 to run error-handling bug detection (~$0.05, ~30s)');
+      console.log('         target: NaN when average([]) called (division by zero)');
+      return;
+    }
+
+    const result = await runDimensionCall('error-handling', 'smoke', BUGS_PR, 'error-handling-bugs');
+
+    expect(
+      result.costUsd,
+      `error-handling smoke cost $${result.costUsd.toFixed(3)} exceeds cap $${SMOKE_BUDGET_USD}` +
+      ` — raw: ${result.rawPath}`,
+    ).toBeLessThanOrEqual(SMOKE_BUDGET_USD);
+
+    assertSchemaValid(result.review, 'error-handling', result.rawPath);
+
+    // The dimension should detect the unguarded division — verdict must be 'fail'
+    expect(
+      result.review!.verdict,
+      `error-handling should flag the unguarded division by zero (verdict='fail') — raw: ${result.rawPath}\n` +
+      `Findings: ${JSON.stringify(result.review!.findings, null, 2)}`,
+    ).toBe('fail');
+
+    markPassed('error-handling', 'smoke', result, 'error-handling-bugs');
   });
 });
 
