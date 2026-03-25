@@ -2,9 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawnSync as spawnRaw } from 'node:child_process';
+
+// A PID that is guaranteed dead: spawnSync waits for the process to exit,
+// so by the time this runs the process is gone and process.kill(pid, 0) will throw ESRCH.
+const DEAD_PID = spawnRaw('true').pid!;
 import {
   parseStreamJsonResult,
   applyFixRunningPhase,
+  checkFixResult,
+  resolveMaxRounds,
   type StreamJsonResult,
   type FixRunningAction,
 } from './review-fix.js';
@@ -173,5 +180,96 @@ describe('applyFixRunningPhase', () => {
     // Should not throw (returns new state object)
     const checkFn = () => ({ done: true, success: true, costUsd: 0, output: '' });
     expect(() => applyFixRunningPhase(frozen, checkFn)).not.toThrow();
+  });
+});
+
+// ── resolveMaxRounds ─────────────────────────────────────────────────
+
+describe('resolveMaxRounds', () => {
+  it('uses state.maxRounds on resume (ignores opts.maxRounds)', () => {
+    expect(resolveMaxRounds({ resume: true, maxRounds: 3 }, { maxRounds: 5 })).toBe(5);
+  });
+
+  it('uses opts.maxRounds on fresh start', () => {
+    expect(resolveMaxRounds({ resume: false, maxRounds: 3 }, { maxRounds: 5 })).toBe(3);
+  });
+
+  it('uses opts.maxRounds when same on both', () => {
+    expect(resolveMaxRounds({ resume: true, maxRounds: 3 }, { maxRounds: 3 })).toBe(3);
+  });
+});
+
+// ── checkFixResult — integration tests with real temp files ──────────
+//
+// These tests exercise the full chain: write JSONL to a temp file → call
+// checkFixResult → assert done/success/costUsd. They use a dead PID (0) so
+// the "is the process running" check returns false (not running).
+//
+// The JSONL format matches real claude -p --output-format stream-json --verbose
+// output, verified empirically. If the format changes, these tests break —
+// that is the desired behavior (they guard against schema drift).
+
+describe('checkFixResult (integration: real temp files)', () => {
+  let tmpDir: string;
+
+  // Create a fresh temp dir for each test, clean up after
+  const setup = () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'review-fix-test-'));
+    return tmpDir;
+  };
+  const teardown = () => rmSync(tmpDir, { recursive: true, force: true });
+
+  it('reads a completed stream-json log and extracts done/success/costUsd', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      // Real stream-json JSONL: system init, assistant message, result line
+      const lines = [
+        JSON.stringify({ type: 'system', subtype: 'init' }),
+        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Fixed the gap.' }] } }),
+        JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: 0.31 }),
+      ];
+      writeFileSync(logFile, lines.join('\n') + '\n');
+      const r = checkFixResult(logFile, DEAD_PID);
+      expect(r.done).toBe(true);
+      expect(r.success).toBe(true);
+      expect(r.costUsd).toBeCloseTo(0.31);
+    } finally { teardown(); }
+  });
+
+  it('reports success=false for error_during_generation result', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      const lines = [
+        JSON.stringify({ type: 'result', subtype: 'error_during_generation', is_error: true, result: '', total_cost_usd: 0.05 }),
+      ];
+      writeFileSync(logFile, lines.join('\n'));
+      const r = checkFixResult(logFile, DEAD_PID);
+      expect(r.done).toBe(true);
+      expect(r.success).toBe(false);
+    } finally { teardown(); }
+  });
+
+  it('returns done=false for an empty log (session just started, process still alive)', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      writeFileSync(logFile, '');
+      // Use current process PID — definitely alive
+      const r = checkFixResult(logFile, process.pid);
+      expect(r.done).toBe(false);
+    } finally { teardown(); }
+  });
+
+  it('returns done=true success=false when process exited with no result line', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      writeFileSync(logFile, 'partial output without result line\n');
+      const r = checkFixResult(logFile, DEAD_PID);
+      expect(r.done).toBe(true);
+      expect(r.success).toBe(false);
+    } finally { teardown(); }
   });
 });

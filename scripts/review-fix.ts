@@ -116,6 +116,18 @@ export function applyFixRunningPhase(
   return { action: 'continue', state: newState };
 }
 
+// ── Max rounds resolution ────────────────────────────────────────────
+
+/**
+ * Resolve the effective maxRounds for a run.
+ * On resume, use the stored maxRounds from the original run so the
+ * original limit is respected regardless of CLI flags.
+ * On fresh start, use opts.maxRounds.
+ */
+export function resolveMaxRounds(opts: { resume: boolean; maxRounds: number }, state: { maxRounds: number }): number {
+  return opts.resume ? state.maxRounds : opts.maxRounds;
+}
+
 // ── State persistence ───────────────────────────────────────────────
 
 interface ReviewFixState {
@@ -354,7 +366,7 @@ function launchFix(prompt: string, logDir: string, round: number): { pid: number
  * Check if a detached fix session has completed.
  * Returns null if still running, or the result if done.
  */
-function checkFixResult(logFile: string, pid: number): { done: boolean; success: boolean; costUsd: number; output: string } {
+export function checkFixResult(logFile: string, pid: number): { done: boolean; success: boolean; costUsd: number; output: string } {
   // Check if process is still running
   let running = false;
   try {
@@ -458,14 +470,14 @@ function main() {
 
   // ── Main review-fix loop ──
   // Use stored maxRounds on resume so the original limit is respected.
-  const maxRounds = opts.resume ? state.maxRounds : opts.maxRounds;
+  const maxRounds = resolveMaxRounds(opts, state);
   for (let round = state.currentRound; round <= maxRounds; round++) {
     state.currentRound = round;
     state.phase = 'needs_review';
     saveState(state);
 
     // ── REVIEW ──
-    console.log(`--- Round ${round}/${opts.maxRounds}: REVIEW ---`);
+    console.log(`--- Round ${round}/${maxRounds}: REVIEW ---`);
 
     const dimensions = listDimensions().filter(d => d !== 'plan-coverage'); // plan-coverage is for pre-implementation
     const battery = reviewBattery({
@@ -534,8 +546,8 @@ function main() {
     }
 
     // ── LAST ROUND? ──
-    if (round === opts.maxRounds) {
-      console.log(`\nMax rounds (${opts.maxRounds}) reached with ${gaps.length} remaining gaps`);
+    if (round === maxRounds) {
+      console.log(`\nMax rounds (${maxRounds}) reached with ${gaps.length} remaining gaps`);
       console.log(formatBatteryReport(battery));
       state.outcome = 'max_rounds';
       state.phase = 'done';
@@ -545,7 +557,7 @@ function main() {
     }
 
     // ── LAUNCH FIX (detached) ──
-    console.log(`\n--- Round ${round}/${opts.maxRounds}: LAUNCHING FIX (${gaps.length} gaps) ---`);
+    console.log(`\n--- Round ${round}/${maxRounds}: LAUNCHING FIX (${gaps.length} gaps) ---`);
     const fixPrompt = buildFixPrompt(
       opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged,
     );
