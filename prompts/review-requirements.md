@@ -3,6 +3,13 @@ name: requirements
 description: Does the PR address every requirement and acceptance criterion in the linked issue? Catches "correct code, wrong problem."
 applies_to: pr
 needs: [diff, issue]
+high_when:
+  - "Issue has explicit acceptance criteria or a checklist"
+  - "PR body uses Fixes #N (claims to close the issue)"
+  - "Issue has multiple requirements or a complex motivation section"
+low_when:
+  - "PR is a pure refactor with no linked issue"
+  - "Issue is a simple one-liner bug report with obvious fix"
 ---
 
 You are an adversarial PR reviewer. Your job is to compare a PR against its linked issue and find gaps. Assume the implementing agent did the minimum work to close the issue.

@@ -103,6 +103,10 @@ export interface DimensionMeta {
   applies_to: string;
   /** What data this dimension needs to do its job */
   needs: DataNeed[];
+  /** Signals that make this dimension higher priority for a given PR */
+  high_when: string[];
+  /** Signals that make this dimension lower priority (bundle with others) */
+  low_when: string[];
   file: string;
 }
 
@@ -141,39 +145,80 @@ export function computeDataOverlap(metas: DimensionMeta[]): Array<{
  * - PR size signal
  * - All data categories needed across all dimensions
  */
+/**
+ * Format a human-readable review briefing.
+ * Shows dimensions, their data needs, priority signals, and overlap groups.
+ * The agent reads this and decides grouping — the briefing provides signals, not decisions.
+ */
 export function reviewBriefing(
   metas: DimensionMeta[],
   prLines: number,
-): {
-  dimensions: DimensionMeta[];
-  data_overlap_groups: ReturnType<typeof computeDataOverlap>;
-  all_data_needs: DataNeed[];
-  pr_lines: number;
-  dimension_count: number;
-} {
+): string {
   const allNeeds = new Set<DataNeed>();
   for (const m of metas) m.needs.forEach(n => allNeeds.add(n));
+  const groups = computeDataOverlap(metas);
 
-  return {
-    dimensions: metas,
-    data_overlap_groups: computeDataOverlap(metas),
-    all_data_needs: [...allNeeds],
-    pr_lines: prLines,
-    dimension_count: metas.length,
-  };
+  const lines: string[] = [
+    `## Review Briefing`,
+    ``,
+    `PR size: ${prLines} lines | Dimensions: ${metas.length} | Data needed: ${[...allNeeds].join(', ')}`,
+    ``,
+    `### Dimensions and Priority Signals`,
+    ``,
+  ];
+
+  for (const m of metas) {
+    lines.push(`**${m.name}** (needs: ${m.needs.join(', ')}) — ${m.description}`);
+    if (m.high_when.length > 0) {
+      lines.push(`  High priority when: ${m.high_when.join('; ')}`);
+    }
+    if (m.low_when.length > 0) {
+      lines.push(`  Low priority when: ${m.low_when.join('; ')}`);
+    }
+    lines.push('');
+  }
+
+  lines.push(`### Natural Groupings (by shared data needs)`, '');
+  for (const g of groups) {
+    lines.push(`- **[${g.shared_needs.join(', ')}]**: ${g.dimensions.join(', ')}`);
+  }
+  lines.push('');
+  lines.push(`Use priority signals + PR context to decide: how many subagents, which dimensions per agent, whether any dimension warrants redundancy.`);
+
+  return lines.join('\n');
 }
 
 /**
  * Parse YAML frontmatter from a review prompt file.
+ * Handles scalar values and list items (lines starting with "  - ").
  * Returns null if no frontmatter found.
  */
-function parseFrontmatter(content: string): Record<string, string> | null {
+function parseFrontmatter(content: string): Record<string, string | string[]> | null {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return null;
-  const result: Record<string, string> = {};
+  const result: Record<string, string | string[]> = {};
+  let currentKey = '';
   for (const line of match[1].split('\n')) {
+    // List item: "  - value"
+    const listItem = line.match(/^\s+-\s+"?([^"]*)"?$/);
+    if (listItem && currentKey) {
+      if (!Array.isArray(result[currentKey])) result[currentKey] = [];
+      (result[currentKey] as string[]).push(listItem[1].trim());
+      continue;
+    }
+    // Scalar: "key: value"
     const kv = line.match(/^(\w[\w_-]*)\s*:\s*(.+)$/);
-    if (kv) result[kv[1]] = kv[2].trim();
+    if (kv) {
+      currentKey = kv[1];
+      result[currentKey] = kv[2].trim();
+      continue;
+    }
+    // Key with no inline value (list follows): "key:"
+    const listKey = line.match(/^(\w[\w_-]*)\s*:\s*$/);
+    if (listKey) {
+      currentKey = listKey[1];
+      result[currentKey] = [];
+    }
   }
   return result;
 }
@@ -217,17 +262,23 @@ export function loadDimensionMetas(promptsDir?: string): DimensionMeta[] {
     try {
       const content = readFileSync(resolve(dir, file), 'utf8');
       const fm = parseFrontmatter(content);
-      const needsStr = fm?.needs ?? 'diff';
-      const needs = needsStr.replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean) as DataNeed[];
+      const needsRaw = fm?.needs;
+      const needs: DataNeed[] = Array.isArray(needsRaw)
+        ? needsRaw as DataNeed[]
+        : (typeof needsRaw === 'string' ? needsRaw.replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean) as DataNeed[] : ['diff']);
+      const highWhen = Array.isArray(fm?.high_when) ? fm.high_when as string[] : [];
+      const lowWhen = Array.isArray(fm?.low_when) ? fm.low_when as string[] : [];
       metas.push({
-        name: fm?.name ?? dimName,
-        description: fm?.description ?? '',
-        applies_to: fm?.applies_to ?? 'pr',
+        name: (fm?.name as string) ?? dimName,
+        description: (fm?.description as string) ?? '',
+        applies_to: (fm?.applies_to as string) ?? 'pr',
         needs,
+        high_when: highWhen,
+        low_when: lowWhen,
         file,
       });
     } catch {
-      metas.push({ name: dimName, description: '', applies_to: 'pr', needs: ['diff'], file });
+      metas.push({ name: dimName, description: '', applies_to: 'pr', needs: ['diff'], high_when: [], low_when: [], file });
     }
   }
   return metas;

@@ -3,6 +3,15 @@ name: logic-correctness
 description: Are there logical errors, off-by-one bugs, incorrect conditionals, or flawed control flow? The #1 defect type in agent code.
 applies_to: pr
 needs: [diff]
+high_when:
+  - "Diff introduces new branching logic (if/else, switch, ternary, ?:)"
+  - "Diff contains arithmetic, comparison operators, or index manipulation"
+  - "Diff modifies parsing, state machines, or protocol handling"
+  - "Large code changes (>100 lines of .ts/.js/.py, excluding tests)"
+low_when:
+  - "Docs-only or config-only changes"
+  - "Pure deletions (removing code, no new logic)"
+  - "Changes only to test files with no production code"
 ---
 
 You are an adversarial logic auditor. Your sole job is to find logical errors in the PR diff. AI-generated code has 75% more logic/correctness errors than human code. Assume every branch, comparison, and boundary is wrong until you prove otherwise.

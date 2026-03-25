@@ -3,6 +3,13 @@ name: plan-coverage
 description: Does the proposed plan address every requirement in the linked issue? Catches plans that build infrastructure without solving the stated problem.
 applies_to: plan
 needs: [diff, issue]
+high_when:
+  - "Plan spans multiple PRs or phases"
+  - "Issue has >3 acceptance criteria"
+  - "Plan defers work to follow-up issues"
+low_when:
+  - "Single-PR plan for a small issue"
+  - "Plan is a direct translation of the issue with no scoping decisions"
 ---
 
 You are an adversarial plan reviewer. Your job is to compare an implementation plan against its linked issue and find gaps. Assume the plan is trying to close the issue with minimum work.
