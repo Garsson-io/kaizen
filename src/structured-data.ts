@@ -38,11 +38,65 @@ export function issueTarget(issueNum: string, repo: string): AttachmentTarget & 
 
 // ── Reviews ─────────────────────────────────────────────────────────
 
+export interface ReviewFinding {
+  requirement: string;
+  status: 'DONE' | 'PARTIAL' | 'MISSING';
+  detail: string;
+}
+
 export interface ReviewFindingData {
   dimension: string;
   verdict: 'pass' | 'fail';
   summary: string;
-  findings: Array<{ requirement: string; status: string; detail: string }>;
+  findings: ReviewFinding[];
+}
+
+const STATUS_ICON: Record<string, string> = { DONE: '✅', PARTIAL: '⚠️', MISSING: '❌' };
+
+/**
+ * Format a dimension's findings as a structured attachment.
+ *
+ * Format:
+ *   <!-- meta:{"round":5,"dimension":"correctness","verdict":"pass","done":3,"partial":0,"missing":0} -->
+ *   ### correctness — PASS
+ *   > One-line summary
+ *   | # | Status | Requirement | Detail |
+ *   |---|--------|-------------|--------|
+ *   | 1 | ✅ DONE | ... | ... |
+ */
+function formatFinding(round: number, finding: ReviewFindingData): string {
+  const done = finding.findings.filter(f => f.status === 'DONE').length;
+  const partial = finding.findings.filter(f => f.status === 'PARTIAL').length;
+  const missing = finding.findings.filter(f => f.status === 'MISSING').length;
+
+  const meta = JSON.stringify({ round, dimension: finding.dimension, verdict: finding.verdict, done, partial, missing });
+
+  const lines: string[] = [
+    `<!-- meta:${meta} -->`,
+    `### ${finding.dimension} — ${finding.verdict.toUpperCase()}`,
+    '',
+    `> ${finding.summary}`,
+    '',
+    '| # | Status | Requirement | Detail |',
+    '|---|--------|-------------|--------|',
+  ];
+
+  finding.findings.forEach((f, i) => {
+    const icon = STATUS_ICON[f.status] ?? '❓';
+    lines.push(`| ${i + 1} | ${icon} ${f.status} | ${f.requirement} | ${f.detail} |`);
+  });
+
+  lines.push('', `**${finding.findings.length} findings**: ${done} DONE, ${partial} PARTIAL, ${missing} MISSING`);
+  return lines.join('\n');
+}
+
+/**
+ * Parse the machine-readable meta from a stored finding attachment.
+ */
+export function parseFindingMeta(content: string): { round: number; dimension: string; verdict: string; done: number; partial: number; missing: number } | null {
+  const match = content.match(/<!-- meta:(\{.*?\}) -->/);
+  if (!match) return null;
+  try { return JSON.parse(match[1]); } catch { return null; }
 }
 
 /**
@@ -54,24 +108,61 @@ export function storeReviewFinding(
   round: number,
   finding: ReviewFindingData,
 ): string {
-  const content = `**${finding.dimension}**: ${finding.verdict.toUpperCase()}\n\n> ${finding.summary}\n\n` +
-    finding.findings.map(f => {
-      const icon = f.status === 'DONE' ? '[x]' : f.status === 'PARTIAL' ? '[-]' : '[ ]';
-      return `- ${icon} **${f.requirement}**: ${f.status} — ${f.detail}`;
-    }).join('\n');
-  return writeAttachment(target, `review/r${round}/${finding.dimension}`, content);
+  return writeAttachment(target, `review/r${round}/${finding.dimension}`, formatFinding(round, finding));
 }
 
 /**
- * Store the overall round summary (main agent's assessment).
+ * Compose a round summary from all stored dimension findings.
+ * Reads each dimension's attachment, parses meta, builds a summary table.
+ */
+export function composeReviewSummary(target: AttachmentTarget, round: number): string {
+  const dims = listReviewDimensions(target, round);
+  const rows: Array<{ dim: string; verdict: string; done: number; partial: number; missing: number }> = [];
+
+  for (const dim of dims) {
+    const content = readReviewFinding(target, round, dim);
+    if (!content) continue;
+    const meta = parseFindingMeta(content);
+    if (meta) {
+      rows.push({ dim: meta.dimension, verdict: meta.verdict, done: meta.done, partial: meta.partial, missing: meta.missing });
+    }
+  }
+
+  const totalPass = rows.filter(r => r.verdict === 'pass').length;
+  const totalFail = rows.filter(r => r.verdict === 'fail').length;
+  const totalMissing = rows.reduce((s, r) => s + r.missing, 0);
+  const totalPartial = rows.reduce((s, r) => s + r.partial, 0);
+  const overallVerdict = totalMissing === 0 ? 'PASS' : 'FAIL';
+  const summaryMeta = JSON.stringify({ round, verdict: overallVerdict.toLowerCase(), dimensions: rows.length, pass: totalPass, fail: totalFail, total_missing: totalMissing, total_partial: totalPartial });
+
+  const lines: string[] = [
+    `<!-- meta:${summaryMeta} -->`,
+    `## Review Round ${round} — ${overallVerdict}`,
+    '',
+    '| Dimension | Verdict | DONE | PARTIAL | MISSING |',
+    '|-----------|---------|------|---------|---------|',
+  ];
+
+  for (const r of rows) {
+    const icon = r.verdict === 'pass' ? '✅' : '❌';
+    lines.push(`| ${r.dim} | ${icon} ${r.verdict.toUpperCase()} | ${r.done} | ${r.partial} | ${r.missing} |`);
+  }
+
+  lines.push('', `**Overall**: ${totalPass} PASS, ${totalFail} FAIL | ${totalMissing} MISSING, ${totalPartial} PARTIAL across ${rows.length} dimensions`);
+  return lines.join('\n');
+}
+
+/**
+ * Store the round summary. Prefer composeReviewSummary() to auto-generate from findings.
  * Attachment name: review/r{round}/summary
  */
 export function storeReviewSummary(
   target: AttachmentTarget,
   round: number,
-  summary: string,
+  summary?: string,
 ): string {
-  return writeAttachment(target, `review/r${round}/summary`, summary);
+  const content = summary ?? composeReviewSummary(target, round);
+  return writeAttachment(target, `review/r${round}/summary`, content);
 }
 
 /**
