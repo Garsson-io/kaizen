@@ -93,6 +93,25 @@ fi
 
 **If not in a batch context** (interactive session), skip this step — there is no structured telemetry yet (see #671).
 
+### 1.7. PLAN-VS-DELIVERY CHECK — did we build what we said we would? (kaizen #891)
+
+**If the linked issue has an implementation plan comment** (posted by kaizen-implement step 0b), compare what was planned against what was actually delivered in the PR.
+
+```bash
+# Find the plan comment on the issue
+gh issue view {N} --repo "$ISSUES_REPO" --json comments --jq '.comments[] | select(.body | contains("## Implementation Plan")) | .body' | head -80
+```
+
+**Check each planned item:**
+- **Scope**: Did the PR deliver everything in "In this PR"? Was anything silently dropped?
+- **Deferred items**: Were deferred items actually filed as follow-up issues?
+- **Requirement mapping**: Does each mapped criterion have corresponding code in the PR?
+- **Testing strategy**: Were the planned test pyramid levels and invariants actually implemented?
+
+**If scope changed during implementation**, document why — this is expected and valuable data. The question isn't "did we follow the plan exactly" but "did we consciously decide to deviate, or did scope silently shrink?"
+
+**If no plan exists**, note that as an impediment — plans are mandatory per kaizen-implement.
+
 ### 2. IDENTIFY impediments — patterns first, then details (kaizen #241, #351)
 
 **Lead with categories, not symptoms.** The most common reflection failure mode is dispositioning each impediment individually and never noticing they share a root cause. Reverse the order: name the patterns first, then drill into individual items.
