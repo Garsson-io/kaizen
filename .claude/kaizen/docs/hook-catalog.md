@@ -17,6 +17,7 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 |------|-------|----------|--------|---------|
 | `kaizen-check-wip.sh` | L1 | No | plugin.json | Detects in-progress work (dirty worktrees, open PRs) when starting a new session in the main checkout. |
 | `kaizen-session-cleanup-ts.sh` → `session-cleanup.ts` | L2 | No | plugin.json | Clears stale state files for merged/closed PRs. Migrated to TS in #786. |
+| `kaizen-worktree-setup.sh` | L1 | No | settings.json | Symlinks `node_modules` and `dist` from main repo into fresh worktrees. Prevents MODULE_NOT_FOUND and hook compilation failures. Idempotent; copy-on-write safe. Issue #705. |
 
 ## PreToolUse Hooks — Bash Matcher
 
