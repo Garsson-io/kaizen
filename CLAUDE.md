@@ -34,6 +34,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `docs/auto-dent-operations.md` | Auto-dent operational guide — how to run, monitor, debug batch operations |
 | `docs/artifact-lifecycle.md` | Artifact chain — where outputs live, who consumes them, recursive loops |
 | `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume |
+| `scripts/auto-dent-artifacts.ts` | Run artifact manifest + bundle — `buildRunManifest`, `writeRunManifest`, `bundleArtifacts` (auto-called at run completion) |
 | `src/cli-dimensions.ts` | Dimension CLI: list/show/add/validate `prompts/review-*.md` files |
 | `src/structured-data.ts` | **Structured data API**: reviews, plans, metadata, connected issues, PR sections, iteration state |
 | `src/cli-structured-data.ts` | CLI for structured data — the primary interface for skills |
