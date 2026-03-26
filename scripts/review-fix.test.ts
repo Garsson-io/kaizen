@@ -651,15 +651,16 @@ describe('runFixLoop', () => {
       const planOnlyBattery: BatteryResult = {
         verdict: 'fail',
         costUsd: 0.10,
-        missingCount: 2,
+        missingCount: 3,
         partialCount: 0,
         durationMs: 5_000,
         failedDimensions: [],
-        skippedDimensions: ['plan-coverage', 'plan-fidelity'],
+        skippedDimensions: ['plan-coverage', 'plan-fidelity', 'improvement-lifecycle'],
         dimensions: [
           { dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
           { dimension: 'plan-coverage', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
           { dimension: 'plan-fidelity', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+          { dimension: 'improvement-lifecycle', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
         ],
       };
       const state = await runFixLoop(baseOpts, {

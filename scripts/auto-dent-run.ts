@@ -209,6 +209,16 @@ export interface RunResult {
   reviewCostUsd?: number;
 }
 
+// Plan text extraction (kaizen #901)
+
+const PLAN_SECTION_RE = /## (?:Implementation )?Plan\b[\s\S]*?(?=\n## |\n```yaml|$)/i;
+
+/** Extract the first plan section from markdown text (issue body or comments). */
+export function extractPlanText(text: string): string | undefined {
+  const match = text.match(PLAN_SECTION_RE);
+  return match ? match[0] : undefined;
+}
+
 // State I/O
 
 export function readState(stateFile: string): BatchState {
@@ -1542,14 +1552,10 @@ async function main(): Promise<void> {
       let planText: string | undefined;
       try {
         const issueBody = ghExec(`gh issue view ${pickedIssue} --repo ${repo} --json body --jq .body`);
-        // Check issue body first, then comments for plan sections
-        const planMatch = issueBody.match(/## (?:Implementation )?Plan\b[\s\S]*?(?=\n## |\n```yaml|$)/i);
-        if (planMatch) {
-          planText = planMatch[0];
-        } else {
+        planText = extractPlanText(issueBody);
+        if (!planText) {
           const comments = ghExec(`gh issue view ${pickedIssue} --repo ${repo} --json comments --jq '.comments[].body'`);
-          const commentPlan = comments.match(/## (?:Implementation )?Plan\b[\s\S]*?(?=\n## |\n```yaml|$)/i);
-          if (commentPlan) planText = commentPlan[0];
+          planText = extractPlanText(comments);
         }
         if (planText) console.log(`  ${color.dim('[review-battery]')} found plan text (${planText.length} chars)`);
       } catch { /* best effort — plan dims will emit MISSING if not found */ }

@@ -46,6 +46,7 @@ import {
   validateRunLifecycle,
   findExistingProgressIssue,
   ensureBatchProgressIssue,
+  extractPlanText,
 } from './auto-dent-run.js';
 import * as github from './auto-dent-github.js';
 
@@ -2882,5 +2883,48 @@ describe('ensureBatchProgressIssue', () => {
     expect(spy.mock.calls[1][0]).toContain('issue create'); // create
     const saved = readState(stateFile);
     expect(saved.progress_issue).toBe(newUrl);
+  });
+});
+
+describe('extractPlanText — plan section regex extraction (kaizen #901)', () => {
+  it('extracts ## Plan section from issue body', () => {
+    const body = '## Problem\n\nSomething broke.\n\n## Plan\n\n1. Fix A\n2. Fix B\n\n## Test Plan\n\nRun tests.';
+    const result = extractPlanText(body);
+    expect(result).toContain('## Plan');
+    expect(result).toContain('Fix A');
+    expect(result).not.toContain('## Test Plan');
+  });
+
+  it('extracts ## Implementation Plan section', () => {
+    const body = '## Implementation Plan\n\nStep 1: do X\nStep 2: do Y\n\n## References\n\n- #123';
+    const result = extractPlanText(body);
+    expect(result).toContain('## Implementation Plan');
+    expect(result).toContain('Step 1');
+    expect(result).not.toContain('## References');
+  });
+
+  it('returns undefined when no plan section exists', () => {
+    const body = '## Problem\n\nBug report.\n\n## Acceptance Criteria\n\n- works';
+    expect(extractPlanText(body)).toBeUndefined();
+  });
+
+  it('extracts plan that is the last section in the body', () => {
+    const body = '## Problem\n\nBug.\n\n## Plan\n\n1. Fix it\n2. Test it';
+    const result = extractPlanText(body);
+    expect(result).toContain('Fix it');
+    expect(result).toContain('Test it');
+  });
+
+  it('stops at ```yaml fence (structured metadata)', () => {
+    const body = '## Plan\n\n1. Do stuff\n\n```yaml\ndeep_dive:\n  domain: foo\n```';
+    const result = extractPlanText(body);
+    expect(result).toContain('Do stuff');
+    expect(result).not.toContain('deep_dive');
+  });
+
+  it('is case-insensitive', () => {
+    const body = '## plan\n\nLowercase header.';
+    const result = extractPlanText(body);
+    expect(result).toContain('Lowercase header');
   });
 });
