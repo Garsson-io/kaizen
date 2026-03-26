@@ -28,7 +28,7 @@ user_invocable: true
 |----------|-------------|-------------|-------------|
 | Briefing (dim list + groupings) | `briefing --lines N` | Phase 2 grouping decision | in-context |
 | Diff | `gh pr diff` | All review subagents | pass verbatim into agent prompts |
-| Issue body | `gh issue view` | requirements, scope-fidelity, test-plan, plan-fidelity agents | pass into agent prompts |
+| Issue body | `gh issue view --repo "$ISSUES_REPO"` | requirements, scope-fidelity, test-plan, plan-fidelity agents | pass into agent prompts |
 | PR body | `gh pr view` | pr-description, plan-fidelity agents | pass into agent prompts |
 | Dimension findings (JSON) | Each subagent | Phase 3 classifier | in-context |
 | Classified findings list | Phase 3 | Phase 4 fix work | in-context |
@@ -66,7 +66,7 @@ gh pr diff <pr-url>
 # Diff URL (for humans): https://github.com/<owner>/<repo>/pull/<N>.diff
 
 # Linked issue(s) — scan PR body, branch name, recent commits for #N
-gh issue view <N> --repo <repo> --json title,body
+gh issue view <N> --repo "$ISSUES_REPO" --json title,body
 
 # PR body (includes test plan link if present)
 gh pr view <pr-url> --json title,body,url
