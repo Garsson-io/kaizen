@@ -150,6 +150,20 @@ After all agents return: verify every dimension has a JSON findings block. Any d
 
 Then provide detail for each finding below the table.
 
+**MANDATORY: Store findings before Phase 4.** Findings live only in session memory until stored. If the session ends, the worktree is deleted, or KAIZEN_UNFINISHED is used, un-stored findings are lost permanently and the PR has no review record.
+
+Store ALL dimension findings in one call (also writes the review sentinel so the gate guard passes):
+```bash
+# Build the JSON array from all dimension findings collected in Phase 2/3, then:
+echo '[
+  {"dimension": "correctness", "verdict": "pass", "summary": "...", "findings": [...]},
+  {"dimension": "security", "verdict": "fail", "summary": "...", "findings": [...]}
+]' | npx tsx src/cli-structured-data.ts store-review-batch \
+  --pr <PR_NUMBER> --repo <owner/repo> --round <N>
+```
+
+This posts one marker comment per dimension on the PR and writes the review sentinel. The sentinel is required for the `pr-review-loop` gate to clear — without it, the gate stays blocked even after all fixes are made.
+
 If the list is empty after this: → **Phase 5 (Verdict)**.
 
 ---
@@ -175,6 +189,15 @@ REVIEW PASSED — N rounds, M findings fixed
 ```
 
 Before declaring: confirm every requirement from the linked issue is DONE or deferred with a filed follow-up issue.
+
+Store the round summary (required to advance to next round or close the gate):
+```bash
+npx tsx src/cli-structured-data.ts store-review-summary \
+  --pr <PR_NUMBER> --repo <owner/repo> --round <N> \
+  --text "REVIEW PASSED — <N> rounds, <M> findings fixed"
+```
+
+If findings needed fixing: return to Phase 1 with the updated diff for the next round.
 
 ---
 

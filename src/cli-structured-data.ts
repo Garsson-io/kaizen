@@ -118,6 +118,14 @@ async function handleStoreReviewBatch(a: CliArgs): Promise<void> {
   const r = resolveRound(a);
   const findings: ReviewFindingData[] = JSON.parse(resolveContent(a));
   const result = storeReviewBatch(pr, r, findings);
+  // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
+  // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
+  try {
+    const stateDir = process.env.STATE_DIR ?? '/tmp/.pr-review-state';
+    const stateKey = `${a.repo.replace('/', '_')}_${a.pr ?? ''}`;
+    mkdirSync(stateDir, { recursive: true });
+    appendFileSync(`${stateDir}/${stateKey}.reviewed-r${r}`, `reviewed_at=${new Date().toISOString()}\n`);
+  } catch { /* best effort — sentinel is advisory */ }
   console.log(`Batch stored: ${result.urls.length} findings + summary (round ${r})`);
   console.log(`Summary: ${result.summaryUrl}`);
 }
