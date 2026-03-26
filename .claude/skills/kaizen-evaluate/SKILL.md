@@ -282,6 +282,25 @@ Present your findings clearly so the admin can make a decision without reading t
 - Questions where all options are equivalent
 - "Is this important?" (you should already know from the incidents)
 
+### Phase 5.5: Review plan coverage (automated)
+
+After formulating a plan (from Phase 3-5), run the **plan-coverage review battery** to check for gaps before presenting to the admin or starting implementation.
+
+**How to invoke:** Use the Agent tool with the plan-coverage review prompt:
+
+```
+Launch a subagent with the review-plan-coverage prompt from prompts/review-plan-coverage.md.
+Pass the plan text and issue number. The subagent compares the plan against the
+issue's requirements and returns structured findings (DONE / PARTIAL / MISSING).
+```
+
+**Interpret the results:**
+- **All DONE:** Plan covers the issue. Proceed to Phase 6.
+- **PARTIAL findings:** Gaps exist but may be intentional scope reductions. Review each PARTIAL finding — if the reduction is intentional, document why (per Scope Reduction Discipline). If unintentional, fix the plan.
+- **MISSING findings:** The plan skips a requirement entirely. Fix the plan before proceeding. Do not present a plan with MISSING items to the admin without flagging them.
+
+**Fix loop:** If the review finds gaps, update the plan and re-run the review. Maximum 3 rounds (per `MAX_FIX_ROUNDS` in `src/review-battery.ts`). If still failing after 3 rounds, present the findings to the admin alongside the plan — they decide whether the gaps are acceptable.
+
 ### Phase 6: Capture lessons for the system
 
 After the admin responds, the conversation you just had contains signal that's currently lost. The admin's reasoning — why they chose X over Y, what they value, what surprised them about the data, where their intuition disagreed with the spec — this is the highest-value information in the entire process, and today it evaporates when the conversation ends.

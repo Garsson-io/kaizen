@@ -6,7 +6,7 @@ user_invocable: true
 
 # Review PR — Deep Code Review with Learnable Criteria
 
-Structured code review that reads the diff against concrete, modifiable criteria. The review criteria live in `.claude/kaizen/review-criteria.md` — a separate file that grows smarter as failure modes are discovered.
+Structured review driven by data-driven dimensions (`prompts/review-*.md`). Each dimension is an adversarial check — run as a subagent, producing structured DONE/PARTIAL/MISSING findings. Learned failure modes in `.claude/kaizen/review-criteria.md` supplement the dimensions with FM-N patterns from past incidents.
 
 The `pr-review-loop.sh` hook enforces that this review happens. This skill defines **how** to review.
 
@@ -19,41 +19,56 @@ The `pr-review-loop.sh` hook enforces that this review happens. This skill defin
 
 ### Phase 1: Gather Context
 
-1. **Read the review criteria:** Load `.claude/kaizen/review-criteria.md` — this is the rubric.
+1. **Discover dimensions:** `npx tsx src/cli-dimensions.ts list` — these are the review rubric. Also load `.claude/kaizen/review-criteria.md` for supplementary learned failure modes (FM-N patterns).
 2. **Read the diff:** `gh pr diff <pr-url>` — read every file, not just a summary.
 3. **Read linked issues:** Check PR body, branch name, commits for `#N` or `kaizen#N`. If found, `gh issue view --repo "$ISSUES_REPO"` to understand requirements.
 4. **Scan recent failure modes:** Check the "Learned Failure Modes" section of the criteria file. These are patterns from past incidents — watch for them specifically in this diff.
 
-### Phase 2: Review Using Subagents
+### Phase 2: Review Using Subagent Dimensions
 
-Launch review agents, each focused on one dimension from the criteria file. Each agent reads the diff and returns findings with confidence scores (0-100).
+**All review checks are dimensions.** Every dimension is a `prompts/review-*.md` file. All dimensions run — no skipping. Run `npx tsx src/cli-dimensions.ts list` to see what's available.
 
-**Execution modes — scale agents to PR size:**
-- **Small PR** (≤50 lines changed, ≤3 files): Single-agent sequential review. Check all dimensions yourself. Most self-reviews during `/kaizen-implement` fall here.
-- **Medium PR** (50-300 lines, 3-10 files): Use 2-3 focused subagents (e.g., DRY+Reuse, Testability+Harness, Security+Horizons). Balance thoroughness with cost.
-- **Large PR** (>300 lines or >10 files): Use all 5 parallel subagents. The token cost is justified by the risk surface.
+**Step 2a: Get the briefing.** Discover all applicable dimensions and their data needs:
 
-Use judgment — a 100-line PR touching security-sensitive code deserves more agents than a 200-line refactor.
+```bash
+npx tsx src/cli-dimensions.ts list
+```
 
-**Agent assignments (for full review — in self-review, check all sequentially):**
+This shows every dimension, what data it needs (`diff`, `issue`, `pr`, `codebase`, `tests`), and which dimensions share data needs (natural grouping signal).
 
-| Agent | Criteria Section | What to check |
-|-------|-----------------|---------------|
-| DRY reviewer | §1 DRY | Copied blocks, patterns that exist elsewhere in codebase, test setup duplication |
-| Testability reviewer | §2-4 Testability + Testing + Harness | Missing tests, tests that skip in CI, mock quality, E2E coverage |
-| Tooling reviewer | §5 Tooling + §7 Reuse | Hand-rolled parsers, bash doing TS work, missing library reuse, existing patterns ignored |
-| Security reviewer | §6 Security | Shell injection, unquoted variables, secrets, eval |
-| Horizon reviewer | Learned Failure Modes | Every FM-N pattern from the criteria file checked against this specific diff |
+**Step 2b: Decide grouping.** You decide how to distribute dimensions across subagents. Use these signals:
 
-**Each agent must:**
+- **Data overlap:** Dimensions needing the same data (`[diff, issue]`) are efficient to group — the subagent fetches once.
+- **PR size:** Small PR → fewer agents, bundle more. Large PR → more agents, less per agent.
+- **Issue risk:** Security-sensitive, auth changes, production-facing → more agents, consider redundancy (give a critical dimension to 2 agents independently).
+
+Example groupings:
+
+| PR context | Agents | Grouping |
+|-----------|--------|----------|
+| Tiny docs fix (10 lines) | 1 agent | All 7 dimensions in one pass |
+| Normal bug fix (80 lines) | 2-3 agents | Agent 1: requirements + scope-fidelity + pr-description (need issue). Agent 2: logic + error-handling + test-quality (need diff). |
+| Large feature (400 lines) | 4-5 agents | Smaller groups, 1-2 dimensions each |
+| Security-sensitive | 5+ agents | Security dimensions get 2 independent agents for redundancy |
+
+**Step 2c: Spawn subagents.** For each group, launch an Agent tool subagent with:
+- The dimension prompt(s) from `prompts/review-*.md`
+- The data it needs (pre-fetch `gh pr diff`, `gh issue view`, etc. and pass in the prompt)
+- Instructions to output structured JSON findings per dimension
+
+Launch independent subagents **in parallel** (multiple Agent tool calls in one message).
+
+**Step 2d: Validate coverage.** After ALL subagents return, verify every dimension was reviewed. Call `validateReviewCoverage()` from `src/review-battery.ts` or manually check: does every dimension from the briefing have findings in the results?
+
+**If any dimensions are MISSING from results** (subagent failed, timed out, or was forgotten): spawn replacement subagents for the missing dimensions. Do NOT proceed with incomplete coverage.
+
+This is the gate: **you cannot move to Phase 3 until all dimensions have findings.**
+
+**Each subagent must:**
 - Read the full diff (not a summary)
-- Read the specific criteria section assigned to it
-- For each finding: cite the file, line, and which criterion it violates
-- Score confidence 0-100 using this scale:
-  - **0-25:** Likely false positive or nitpick
-  - **50:** Real issue but minor or unlikely in practice
-  - **75:** Verified real issue, will impact functionality or maintainability
-  - **100:** Certain issue, confirmed by evidence in the code
+- Read the dimension prompt assigned to it
+- For each finding: cite the file, line, and which dimension it relates to
+- Output structured JSON per the dimension's output format
 
 ### Phase 3: Filter and Classify
 
@@ -124,8 +139,8 @@ Create these tasks at skill start using TaskCreate:
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | Gather context | Load review criteria from `.claude/kaizen/review-criteria.md`, read full diff, read linked issues, scan failure modes (FM-1 through FM-12) |
-| 2 | Review (subagents or sequential) | Small PR (≤50 lines): sequential. Medium (50-300): 2-3 agents. Large (>300): 5 parallel agents (DRY, testability, tooling, security, horizons). Each finding needs file, line, criterion, confidence 0-100. |
+| 1 | Gather context + briefing | Discover dimensions (`npx tsx src/cli-dimensions.ts list`), read full diff, read linked issues, read plan from issue comments, load learned failure modes from `review-criteria.md` |
+| 2 | Review (subagent dimensions) | Decide grouping using priority signals + data overlap + PR size. Spawn subagents for ALL dimensions. Validate coverage — all dimensions must have findings (`validateReviewCoverage()`). |
 | 3 | Filter and classify findings | Drop confidence < 75. MUST-FIX ≥ 90 (blocks merge). SHOULD-FIX 75-89 (fix before merge). |
 | 4 | Fix loop (max 3 rounds) | Fix each finding, commit+push, re-review from task #1. Repeat until clean or 3 rounds. If still unclean at round 3: escalate to human. |
 

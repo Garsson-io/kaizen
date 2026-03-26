@@ -53,17 +53,61 @@ For kaizen issues, always pass `--github-issue` to link the case to the existing
 
 ## Workflow Task Plan — Create at Session Start (MANDATORY)
 
-**Immediately after the case gate passes**, create the full workflow task list using TaskCreate. These tasks are the contract — they make the entire workflow visible from the start so you can't "forget" review, reflection, or cleanup.
+**Immediately after the case gate passes**, discover the review dimensions your PR will be measured on and create the workflow task list.
+
+**Step 0: Discover review dimensions and create the plan.**
+
+First, discover the dimensions your PR will be measured on:
+```bash
+npx tsx src/cli-dimensions.ts list
+```
+These are not aspirational — they are the adversarial rubric. Read the `high_when` signals for each dimension against your issue to understand which dimensions matter most.
+
+**Step 0b: Create the plan.** Post it as an **issue comment** on the linked issue:
+
+```bash
+gh issue comment N --repo "$ISSUES_REPO" --body "$(cat <<'PLAN'
+## Implementation Plan
+
+**Approach**: What to build and how. Key architectural decisions. Why this approach over alternatives.
+
+**Testing Strategy**:
+- Pyramid levels: [unit | integration | E2E] — which and why
+- SUT: what component is the focus of testing
+- Invariants: what must ALWAYS be true (not just "this bug is fixed")
+- For bug fixes: what category of bug does this prevent?
+
+**Scope**:
+- In this PR: [concrete list]
+- Deferred: [with mechanism — follow-up issue #N]
+
+**Risk Assessment**:
+- High-priority review dimensions for this PR (from high_when signals)
+- Suggested subagent grouping for review
+PLAN
+)"
+```
+
+**The plan is mandatory.** It must be posted before you write any code. It lives in three places:
+1. **Issue comment** (primary — persistent, discoverable, works in plugin mode)
+2. **Session context** (you just wrote it — dimension subagents read it during review)
+3. **PR description** (absorbed into Story Spine narrative via `/kaizen-write-pr` after PR creation)
+
+The plan is consumed by: `plan-coverage` (plan vs issue), `plan-fidelity` (PR vs plan), `test-plan` (testing strategy). See `docs/artifact-lifecycle.md` for the full artifact chain.
+
+**Why an issue comment, not a repo file?** Plans are per-issue artifacts, not tooling. They don't belong in the codebase. In plugin mode, kaizen must never commit per-issue files to the host repo. Issue comments are persistent, attached to the issue, and discoverable by future sessions.
 
 **Create ALL of these tasks:**
 
-1. **Assess architecture/tooling fitness** — Right language? Right runtime? Libraries to reuse? E2E harness exists? (From `/kaizen-evaluate` Phase 3.7 assessment — verify it's still valid)
-2. **Write failing tests (TDD RED)** — Express target invariants as tests. They must fail before implementation.
+1. **Create plan** — Post implementation plan as an issue comment (per Step 0b above). Run plan-coverage review against the issue. Iterate until the plan addresses all requirements.
+1b. **Assess architecture/tooling fitness** — Right language? Right runtime? Libraries to reuse? E2E harness exists? (From `/kaizen-evaluate` Phase 3.7 assessment — verify it's still valid)
+2. **Write failing tests (TDD RED)** — Express target invariants from the plan's Testing Strategy. They must fail before implementation.
 3. **Implement (TDD GREEN)** — Make the failing tests pass with the simplest correct change.
-4. **Self-review: invoke `/kaizen-review-pr`** — This invokes the review skill which has its own 4-task workflow: (1) load review criteria from `.claude/kaizen/review-criteria.md`, read full diff, scan failure modes FM-1 through FM-12; (2) review using subagents — small PR (≤50 lines): sequential, medium (50-300): 2-3 agents, large (>300): 5 parallel agents covering DRY, testability, tooling, security, and horizons; (3) filter findings — drop confidence < 75, classify MUST-FIX (≥90) and SHOULD-FIX (75-89); (4) fix loop below.
+4. **Self-review: invoke `/kaizen-review-pr`** — Discover all review dimensions via `npx tsx src/cli-dimensions.ts list`. Get the review briefing (dimensions, data needs, priority signals). Decide subagent grouping based on PR size and dimension priority signals. Spawn subagents for ALL dimensions. Validate coverage — all dimensions must have findings before proceeding. Filter: drop confidence < 75, classify MUST-FIX (≥90) and SHOULD-FIX (75-89). Also scan learned failure modes from `.claude/kaizen/review-criteria.md` (FM-N patterns). See `/kaizen-review-pr` for the full workflow.
 5. **Review fix loop** — Fix all MUST-FIX and SHOULD-FIX findings from the review. Commit + push fixes. Re-run `/kaizen-review-pr` from step (1). Repeat until clean or max 3 rounds. If still unclean at round 3: escalate to human with `gh pr comment`. Hooks `pr-review-loop.ts` and `stop-gate.ts` enforce this — you cannot stop with pending review.
+5b. **Requirements coverage review** — After the PR passes self-review, run the **requirements review battery** to verify the PR addresses every requirement in the linked issue. Use the Agent tool with the `review-requirements` prompt from `prompts/review-requirements.md`, passing the PR URL and issue number. If findings include MISSING or PARTIAL items, fix them before merging. Maximum 3 fix rounds (per `MAX_FIX_ROUNDS` in `src/review-battery.ts`). Budget cap: $2 per battery run. This catches "correct code that doesn't solve the stated problem" — a failure mode that code review alone cannot detect.
 6. **Commit + push** — Stage changes, commit with descriptive message, push to remote branch.
-7. **Create PR** — `gh pr create` with `Fixes $ISSUES_REPO#N` in body (cross-repo prefix required for auto-close). Add `status:has-pr` label to kaizen issue. Add PR link as comment.
+7. **Create PR** — Use `/kaizen-write-pr` to craft the PR description, then `gh pr create` with the result. The description must include `Fixes $ISSUES_REPO#N` (cross-repo prefix required for auto-close). Add `status:has-pr` label to kaizen issue. Add PR link as comment. The `/kaizen-write-pr` skill uses the **Story Spine narrative arc** — a reviewer should understand the PR's value, impact, and technical choices **without reading the diff**. The diff is proof; the description is the argument.
 8. **Wait for CI** — Run `gh pr checks` to watch for CI failures. If checks fail, read the failure, fix, commit, push, and re-check. Do not merge with failing checks.
 9. **Merge (squash)** — Verify no merge conflicts. Squash merge. Verify merge completed cleanly (check PR state is "merged"). If conflicts: merge main into branch, resolve, push, re-check CI, then merge.
 10. **Kaizen reflection (subagent)** — The kaizen-bg subagent handles reflection in the background. It reads the full session transcript (uncompressed — it sees what you may have forgotten), scans for signals (user corrections, failed tool calls, hook denials, retries), and files incidents/issues independently. You launch it via the Agent tool when the hook fires, then wait for its results to clear the gate. Note any impediments you noticed during the session to pass along.

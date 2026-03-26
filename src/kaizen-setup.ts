@@ -139,6 +139,25 @@ Add project-specific enforcement rules here.
 `
   );
 
+  // Ensure kaizen session-local directories are gitignored in the host project
+  const gitignorePath = join(cwd, ".gitignore");
+  const gitignoreEntries = [
+    ".claude/review-fix/",
+    ".claude/audit/",
+    ".claude/kaizen/audit/",
+    ".claude/worktrees/",
+  ];
+  const existing = existsSync(gitignorePath)
+    ? readFileSync(gitignorePath, "utf-8")
+    : "";
+  const missing = gitignoreEntries.filter(e => !existing.includes(e));
+  if (missing.length > 0) {
+    const addition = (existing.endsWith("\n") || existing === "" ? "" : "\n")
+      + "# kaizen session-local state (not committed)\n"
+      + missing.join("\n") + "\n";
+    writeFileSync(gitignorePath, existing + addition);
+  }
+
   return { step: "scaffold", status: "ok", path };
 }
 
