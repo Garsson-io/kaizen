@@ -1,5 +1,8 @@
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { Readable } from 'node:stream';
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { writeHookOutput, getCurrentBranch, readHookInput } from './hook-io.js';
 
 vi.mock('node:child_process', () => ({
@@ -62,6 +65,42 @@ describe('hook-io', () => {
         expect(result).toBeNull();
       } finally {
         Object.defineProperty(process, 'stdin', { value: originalStdin, configurable: true });
+      }
+    });
+
+    it('INVARIANT: writes json_parse_failed trace entry on invalid JSON', async () => {
+      // When JSON.parse fails, readHookInput() MUST write a trace entry
+      // so the failure is visible in the hook trace log. Silent swallow = invisible
+      // failure (incident: PR #965 merged without review gate due to this gap).
+      const traceFile = join(mkdtempSync(join(tmpdir(), 'hook-io-trace-')), 'trace.jsonl');
+      const origTrace = process.env.KAIZEN_HOOK_TRACE;
+      const origEnabled = process.env.KAIZEN_HOOK_TRACE_ENABLED;
+      process.env.KAIZEN_HOOK_TRACE = traceFile;
+      process.env.KAIZEN_HOOK_TRACE_ENABLED = '1';
+
+      const originalStdin = process.stdin;
+      const badJson = '{"tool_name":"Bash","body":"```code\nwith backticks and $vars\n```"}INVALID';
+      const readable = Readable.from([Buffer.from(badJson)]);
+      Object.defineProperty(process, 'stdin', { value: readable, configurable: true });
+
+      try {
+        const result = await readHookInput();
+        expect(result).toBeNull();
+        // MUST have written a trace entry
+        expect(existsSync(traceFile)).toBe(true);
+        const entries = readFileSync(traceFile, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+        expect(entries.length).toBeGreaterThanOrEqual(1);
+        const parseFailEntry = entries.find(e => e.error === 'json_parse_failed');
+        expect(parseFailEntry).toBeDefined();
+        expect(parseFailEntry.raw_length).toBeGreaterThan(0);
+      } finally {
+        Object.defineProperty(process, 'stdin', { value: originalStdin, configurable: true });
+        if (origTrace !== undefined) process.env.KAIZEN_HOOK_TRACE = origTrace;
+        else delete process.env.KAIZEN_HOOK_TRACE;
+        if (origEnabled !== undefined) process.env.KAIZEN_HOOK_TRACE_ENABLED = origEnabled;
+        else delete process.env.KAIZEN_HOOK_TRACE_ENABLED;
+        rmSync(traceFile, { force: true });
+        rmSync(join(traceFile, '..'), { recursive: true, force: true });
       }
     });
 

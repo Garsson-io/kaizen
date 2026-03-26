@@ -6,11 +6,12 @@ needs: [diff, pr_body]
 high_when:
   - "Diff touches any .claude/skills/*/SKILL.md file"
   - "Diff touches any prompts/review-*.md file"
-  - "Diff touches .claude/kaizen/policies.md, workflow.md, zen.md, or verification.md"
+  - "Diff touches .claude/kaizen/workflow.md, zen.md, or verification.md"
   - "Diff touches any CLAUDE.md file"
 low_when:
   - "Diff contains no changes to skill files, prompt templates, or workflow documents"
   - "PR is purely a source code, test, or config change with no skill/prompt edits"
+  - "Diff only touches .claude/kaizen/policies.md without any skill file, prompt template, or workflow document changes"
 ---
 
 Your task: Review PR {{pr_url}} for behavioral proof on skill and prompt changes.

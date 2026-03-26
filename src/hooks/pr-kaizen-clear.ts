@@ -14,7 +14,7 @@
 import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
+import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { stripHeredocBody } from './parse-command.js';
 import {
   buildReflectionRecord,
@@ -765,7 +765,7 @@ function autoCloseKaizenIssues(prUrl: string): void {
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("pr-kaizen-clear"); process.exit(0); }
 
   const output = processHookInput(input);
   if (output) writeHookOutput(output);

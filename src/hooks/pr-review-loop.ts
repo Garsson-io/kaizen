@@ -434,7 +434,10 @@ export function processHookInput(
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) {
+    trace({ action: 'ignore', reason: 'null_input', message: null }, 'null');
+    process.exit(0);
+  }
 
   const decision = processHookInput(input);
 

@@ -5,7 +5,11 @@
  * This module handles the boilerplate.
  */
 
+import { appendFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+
+const getTraceFile = (): string => process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
+const isTraceEnabled = (): boolean => process.env.KAIZEN_HOOK_TRACE !== '0';
 
 export interface HookInput {
   session_id?: string;
@@ -30,8 +34,41 @@ export async function readHookInput(): Promise<HookInput | null> {
   try {
     return JSON.parse(raw) as HookInput;
   } catch {
+    if (isTraceEnabled()) {
+      try {
+        appendFileSync(
+          getTraceFile(),
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            hook: 'hook-io',
+            error: 'json_parse_failed',
+            raw_length: raw.length,
+            raw_preview: raw.slice(0, 300),
+          }) + '\n',
+        );
+      } catch { /* never fail on trace */ }
+    }
     return null;
   }
+}
+
+/**
+ * Write a null-input trace entry to the hook trace log.
+ * Call before `process.exit(0)` in hooks that have no local trace infrastructure.
+ */
+export function traceNullInput(hookName: string): void {
+  if (!isTraceEnabled()) return;
+  try {
+    appendFileSync(
+      getTraceFile(),
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        hook: hookName,
+        action: 'ignore',
+        reason: 'null_input',
+      }) + '\n',
+    );
+  } catch { /* never fail on trace */ }
 }
 
 /** Write advisory output to stdout (shown to the agent in PostToolUse). */

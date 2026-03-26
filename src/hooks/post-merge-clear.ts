@@ -12,7 +12,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { getCurrentBranch, readHookInput, writeHookOutput } from './hook-io.js';
+import { getCurrentBranch, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { isGhPrCommand, stripHeredocBody } from './parse-command.js';
 import {
   DEFAULT_STATE_DIR,
@@ -95,7 +95,7 @@ export function processPostMergeClear(
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("post-merge-clear"); process.exit(0); }
 
   const toolName = input.tool_name ?? '';
   const branch = getCurrentBranch();

@@ -15,7 +15,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readHookInput } from './hook-io.js';
+import { readHookInput, traceNullInput } from './hook-io.js';
 import { isGhPrCommand, stripHeredocBody } from './parse-command.js';
 
 export function bumpPluginVersion(
@@ -82,7 +82,7 @@ export function bumpPluginVersion(
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("bump-plugin-version"); process.exit(0); }
 
   const command = input.tool_input?.command ?? '';
   const result = bumpPluginVersion(command);
