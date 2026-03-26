@@ -114,6 +114,20 @@ The plan is consumed by: `plan-coverage` (plan vs issue), `plan-fidelity` (PR vs
 5. **Review fix loop** — Fix all MUST-FIX and SHOULD-FIX findings from the review. Commit + push fixes. Re-run `/kaizen-review-pr` from step (1). Repeat until clean or max 3 rounds. If still unclean at round 3: escalate to human with `gh pr comment`. Hooks `pr-review-loop.ts` and `stop-gate.ts` enforce this — you cannot stop with pending review.
 5b. **Requirements coverage review** — After the PR passes the review battery, run the **requirements review battery** to verify the PR addresses every requirement in the linked issue. Use the Agent tool with the `review-requirements` prompt from `prompts/review-requirements.md`, passing the PR URL and issue number. If findings include MISSING or PARTIAL items, fix them before merging. Maximum 3 fix rounds (per `MAX_FIX_ROUNDS` in `src/review-battery.ts`). Budget cap: $2 per battery run. This catches "correct code that doesn't solve the stated problem" — a failure mode that code review alone cannot detect.
 6. **Commit + push** — Stage changes, commit with descriptive message, push to remote branch.
+7a. **Related Issues Sweep** — Before creating the PR, search for open issues that this work may fully or partially fix. A PR that broadly addresses a category of bugs often resolves related issues that weren't in the original scope.
+
+```bash
+# Search for related open issues by key terms from your changes
+gh issue list --repo "$ISSUES_REPO" --state open --search "[key terms]" --json number,title,body --limit 15
+```
+
+For each result: "Does this PR fully or partially address it?" If yes:
+- **Fully resolves**: add `Fixes $ISSUES_REPO#N` to PR body (auto-close on merge)
+- **Partially resolves**: add `Related: $ISSUES_REPO#N` and leave a comment on the issue explaining what was addressed and what remains
+- **Not related**: skip
+
+**This step prevents the issue tracker from drifting.** PRs that fix categories of problems should close the issues they fix — not just the one primary issue they were written for.
+
 7. **Create PR** — Use `/kaizen-write-pr` to craft the PR description, then `gh pr create` with the result. The description must include `Fixes $ISSUES_REPO#N` (cross-repo prefix required for auto-close). Add `status:has-pr` label to kaizen issue. Add PR link as comment. The `/kaizen-write-pr` skill uses the **Story Spine narrative arc** — a reviewer should understand the PR's value, impact, and technical choices **without reading the diff**. The diff is proof; the description is the argument.
 8. **Wait for CI** — Run `gh pr checks` to watch for CI failures. If checks fail, read the failure, fix, commit, push, and re-check. Do not merge with failing checks.
 9. **Merge (squash)** — Verify no merge conflicts. Squash merge. Verify merge completed cleanly (check PR state is "merged"). If conflicts: merge main into branch, resolve, push, re-check CI, then merge.

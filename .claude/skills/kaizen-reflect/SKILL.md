@@ -114,6 +114,31 @@ gh issue view {N} --repo "$ISSUES_REPO" --json comments --jq '.comments[] | sele
 
 **If no plan exists**, note that as an impediment — plans are mandatory per kaizen-implement.
 
+### 1.8. HYPOTHESIS RETROSPECTIVE — was the root cause hypothesis correct? (kaizen #959)
+
+If `/kaizen-evaluate` Phase 3.5 or Phase 0.7 formed a root-cause hypothesis before implementation, close the loop here.
+
+```bash
+# Find the evaluation comment with the hypothesis
+gh issue view {N} --repo "$ISSUES_REPO" --json comments \
+  --jq '.comments[] | select(.body | test("hypothesis|HYPOTHESIS|Phase 3.5|Phase 0.7"; "i")) | .body' | head -40
+```
+
+**For each hypothesis found, answer:**
+1. **Was it confirmed, refuted, or untestable?**
+   - Confirmed: "Root cause was exactly as stated — evidence: [what the implementation revealed]"
+   - Refuted: "The actual root cause was [X] — the hypothesis assumed [Y] which turned out to be [wrong because Z]"
+   - Untestable: "Could not determine — [why]"
+
+2. **If refuted: what would have been different?**
+   - Would a different spec have been written?
+   - Would a different implementation path have been taken?
+   - What minimal test would have caught the wrong hypothesis earlier?
+
+3. **File an impediment if the hypothesis was wrong and caused significant rework.** Pattern: "hypothesis X was wrong, we implemented Y before discovering Z — how do we test this earlier next time?"
+
+**If no hypothesis was found:** note it as an impediment — `/kaizen-evaluate` Phase 3.5 is mandatory for non-trivial issues. The absence of a hypothesis means the implementation was speculation.
+
 ### 2. IDENTIFY impediments — patterns first, then details (kaizen #241, #351)
 
 **Lead with categories, not symptoms.** The most common reflection failure mode is dispositioning each impediment individually and never noticing they share a root cause. Reverse the order: name the patterns first, then drill into individual items.
