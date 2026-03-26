@@ -3,7 +3,8 @@
  *
  * Policy: Every change to a SKILL.md file MUST have a before/after behavioral
  * test showing the new skill solves a problem the old skill did not. This file
- * is the test harness for those proofs. See docs/skill-change-policy.md.
+ * is the test harness for those proofs. See .claude/kaizen/verification.md
+ * (section: Skill Change Policy).
  *
  * Run with: KAIZEN_SKILL_TEST=1 npx vitest run src/e2e/skill-change.test.ts
  * Uses haiku for cost efficiency (~$0.01 per test run).
@@ -11,14 +12,20 @@
 
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const KAIZEN_ROOT = resolve(__dirname, "../..");
 const isLive = process.env.KAIZEN_SKILL_TEST === "1";
 
+/** Read a SKILL.md file from the plugin directory. */
+function loadSkill(name: string): string {
+  return readFileSync(resolve(KAIZEN_ROOT, ".claude/skills", name, "SKILL.md"), "utf-8");
+}
+
 /**
  * Run claude -p with the local plugin dir loaded.
- * Returns the text result or throws on error.
+ * Returns the text result or throws on error (including non-zero exit).
  */
 function runSkill(prompt: string, opts: { maxBudget?: number; timeout?: number } = {}): string {
   const proc = spawnSync(
@@ -41,17 +48,27 @@ function runSkill(prompt: string, opts: { maxBudget?: number; timeout?: number }
     },
   );
 
+  // System-level spawn failure (e.g., claude not on PATH)
   if (proc.error) throw new Error(`claude spawn error: ${proc.error.message}`);
+
+  // Non-zero exit: API error, auth failure, budget exceeded, etc.
+  if (proc.status !== 0) {
+    throw new Error(`claude exited ${proc.status}:\nstdout: ${(proc.stdout ?? "").slice(0, 400)}\nstderr: ${(proc.stderr ?? "").slice(0, 400)}`);
+  }
+
+  const raw = (proc.stdout ?? "").trim();
+  if (!raw) throw new Error("claude produced empty output (possible timeout or silent crash)");
 
   let parsed: { result?: string; is_error?: boolean };
   try {
-    parsed = JSON.parse(proc.stdout.trim());
+    parsed = JSON.parse(raw);
   } catch {
-    throw new Error(`claude output not JSON:\nstdout: ${proc.stdout?.slice(0, 800)}\nstderr: ${proc.stderr?.slice(0, 400)}`);
+    throw new Error(`claude output not JSON:\nstdout: ${raw.slice(0, 800)}\nstderr: ${(proc.stderr ?? "").slice(0, 400)}`);
   }
 
-  if (parsed.is_error) throw new Error(`claude returned error: ${proc.stdout?.slice(0, 500)}`);
-  return parsed.result ?? "";
+  if (parsed.is_error) throw new Error(`claude returned error: ${(proc.stdout ?? "").slice(0, 500)}`);
+  if (!parsed.result) throw new Error(`claude returned empty result: ${(proc.stdout ?? "").slice(0, 300)}`);
+  return parsed.result;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,20 +78,15 @@ function runSkill(prompt: string, opts: { maxBudget?: number; timeout?: number }
 //   no distinction between proven gaps and speculative ones.
 // What the new skill adds: Phase 1.7 requires every cluster to be tagged
 //   as [PROVEN] or [HYPOTHESIS] based on empirical testing.
-// Test: invoke the skill with a synthetic cluster; verify tagged output.
+// Test: provide the phase instruction + canned test results; verify tagged output.
 // ---------------------------------------------------------------------------
 
 describe("kaizen-gaps — Phase 1.7: Hypothesis Validation", () => {
   it.skipIf(!isLive)(
     "produces [PROVEN] or [HYPOTHESIS] tags when analyzing a cluster",
     async () => {
-      // This test exercises Phase 1.7 by:
-      // - Providing the phase instruction directly (not relying on skill invocation)
-      // - Providing the test results inline (no tool calls needed — fast and reliable)
-      // - Asserting the model tags its finding as [PROVEN] or [HYPOTHESIS]
-      //
-      // Before Phase 1.7: the model would just describe the cluster and recommend it as
-      // "low-hanging fruit" with no tag. After Phase 1.7: tagged output is required.
+      // Provides Phase 1.7 instruction + pre-run test results (no tool calls needed —
+      // fast, reliable, cheap). Asserts the instruction causes the model to tag output.
       const prompt = [
         "You are applying Phase 1.7 of the kaizen-gaps skill (Hypothesis Validation).",
         "The rule: every cluster finding must be tagged [PROVEN] or [HYPOTHESIS].",
@@ -100,13 +112,8 @@ describe("kaizen-gaps — Phase 1.7: Hypothesis Validation", () => {
     90_000,
   );
 
-  // Fast structural test — no LLM call, always runs in CI
   it("SKILL.md contains Phase 1.7 section", () => {
-    const { readFileSync } = require("node:fs");
-    const skill = readFileSync(
-      resolve(KAIZEN_ROOT, ".claude/skills/kaizen-gaps/SKILL.md"),
-      "utf-8",
-    );
+    const skill = loadSkill("kaizen-gaps");
     expect(skill).toContain("Phase 1.7");
     expect(skill).toContain("[PROVEN]");
     expect(skill).toContain("[HYPOTHESIS]");
@@ -120,6 +127,10 @@ describe("kaizen-gaps — Phase 1.7: Hypothesis Validation", () => {
 //   problem actually exists in the current codebase.
 // New behavior: Phase 0.7 runs a problem-existence check before scoping.
 //   If problem NOT confirmed, outputs "Problem NOT confirmed" and stops.
+// Behavioral test scenario: an issue claiming kaizen-reflect is missing a
+//   plan-vs-delivery check — but that check EXISTS (line 98: "PLAN-VS-DELIVERY CHECK").
+//   The correct answer is "Problem NOT confirmed". The assertion enforces this
+//   direction explicitly — NOT just any confirmation language.
 // ---------------------------------------------------------------------------
 
 describe("kaizen-evaluate — Phase 0.7: Problem Validation", () => {
@@ -141,19 +152,17 @@ describe("kaizen-evaluate — Phase 0.7: Problem Validation", () => {
       ].join("\n");
 
       const output = runSkill(prompt, { maxBudget: 0.10 });
-      // The plan-vs-delivery check EXISTS in kaizen-reflect (line 98), so
-      // the correct answer is "Problem NOT confirmed"
-      expect(output).toMatch(/Problem (NOT )?confirmed/i);
+      // The plan-vs-delivery check EXISTS in kaizen-reflect at line 98.
+      // Phase 0.7 MUST detect this and output "Problem NOT confirmed".
+      // This assertion intentionally requires the NOT form — accepting
+      // "Problem confirmed" here would mean the test passes on failure.
+      expect(output).toMatch(/Problem NOT confirmed/i);
     },
     90_000,
   );
 
   it("SKILL.md contains Phase 0.7 section", () => {
-    const { readFileSync } = require("node:fs");
-    const skill = readFileSync(
-      resolve(KAIZEN_ROOT, ".claude/skills/kaizen-evaluate/SKILL.md"),
-      "utf-8",
-    );
+    const skill = loadSkill("kaizen-evaluate");
     expect(skill).toContain("Phase 0.7");
     expect(skill).toContain("Problem Validation");
     expect(skill).toContain("Problem NOT confirmed");
@@ -166,11 +175,7 @@ describe("kaizen-evaluate — Phase 0.7: Problem Validation", () => {
 
 describe("kaizen-implement — Task 7a: Related Issues Sweep", () => {
   it("SKILL.md contains Related Issues Sweep in Task 7", () => {
-    const { readFileSync } = require("node:fs");
-    const skill = readFileSync(
-      resolve(KAIZEN_ROOT, ".claude/skills/kaizen-implement/SKILL.md"),
-      "utf-8",
-    );
+    const skill = loadSkill("kaizen-implement");
     expect(skill).toContain("Related Issues Sweep");
     expect(skill).toContain("partially fix");
   });
@@ -182,11 +187,7 @@ describe("kaizen-implement — Task 7a: Related Issues Sweep", () => {
 
 describe("kaizen-reflect — Hypothesis Retrospective", () => {
   it("SKILL.md contains Hypothesis Retrospective section", () => {
-    const { readFileSync } = require("node:fs");
-    const skill = readFileSync(
-      resolve(KAIZEN_ROOT, ".claude/skills/kaizen-reflect/SKILL.md"),
-      "utf-8",
-    );
+    const skill = loadSkill("kaizen-reflect");
     expect(skill).toContain("HYPOTHESIS RETROSPECTIVE");
     expect(skill).toContain("root cause hypothesis");
   });
@@ -198,12 +199,21 @@ describe("kaizen-reflect — Hypothesis Retrospective", () => {
 
 describe("kaizen-prd — Hypothesis Gate", () => {
   it("SKILL.md contains Hypothesis Gate section", () => {
-    const { readFileSync } = require("node:fs");
-    const skill = readFileSync(
-      resolve(KAIZEN_ROOT, ".claude/skills/kaizen-prd/SKILL.md"),
-      "utf-8",
-    );
+    const skill = loadSkill("kaizen-prd");
     expect(skill).toContain("Hypothesis Gate");
     expect(skill).toContain("Counter-hypothesis");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// kaizen-file-issue — Duplicate Decision Table
+// ---------------------------------------------------------------------------
+
+describe("kaizen-file-issue — Duplicate Decision Table", () => {
+  it("SKILL.md contains explicit decision table for same/related/distinct duplicates", () => {
+    const skill = loadSkill("kaizen-file-issue");
+    expect(skill).toContain("Same root cause");
+    expect(skill).toContain("Related but distinct");
+    expect(skill).toContain("Superficially similar");
   });
 });
