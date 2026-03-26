@@ -41,7 +41,10 @@ export function issueTarget(issueNum: string, repo: string): AttachmentTarget & 
 export interface ReviewFinding {
   requirement: string;
   status: 'DONE' | 'PARTIAL' | 'MISSING';
+  /** Short label for the table row */
   detail: string;
+  /** Full analysis text — file references, code snippets, fix suggestions. Shown below the table for non-DONE findings. */
+  analysis?: string;
 }
 
 export interface ReviewFindingData {
@@ -77,17 +80,34 @@ function formatFinding(round: number, finding: ReviewFindingData): string {
     '',
     `> ${finding.summary}`,
     '',
-    '| # | Status | Requirement | Detail |',
-    '|---|--------|-------------|--------|',
+    '| # | Status | Requirement |',
+    '|---|--------|-------------|',
   ];
 
   finding.findings.forEach((f, i) => {
     const icon = STATUS_ICON[f.status] ?? '❓';
-    lines.push(`| ${i + 1} | ${icon} ${f.status} | ${f.requirement} | ${f.detail} |`);
+    lines.push(`| ${i + 1} | ${icon} ${f.status} | ${f.requirement} |`);
   });
 
   lines.push('', `**${finding.findings.length} findings**: ${done} DONE, ${partial} PARTIAL, ${missing} MISSING`);
-  return lines.join('\n');
+
+  // Expanded details for non-DONE findings
+  const nonDone = finding.findings.filter(f => f.status !== 'DONE');
+  if (nonDone.length > 0) {
+    lines.push('', '---', '');
+    for (const f of nonDone) {
+      const idx = finding.findings.indexOf(f) + 1;
+      const icon = STATUS_ICON[f.status] ?? '❓';
+      lines.push(`#### ${idx}. ${icon} ${f.requirement}`, '');
+      lines.push(f.detail);
+      if (f.analysis) {
+        lines.push('', f.analysis);
+      }
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n').trimEnd();
 }
 
 /**
