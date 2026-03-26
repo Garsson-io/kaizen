@@ -10,7 +10,10 @@
  * They validate that review prompts produce correct findings on known PRs.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   parseReviewOutput,
   formatBatteryReport,
@@ -286,6 +289,52 @@ describe('discoverDimensions', () => {
     // diff-only dimensions grouped together
     expect(briefing).toContain('security');
     expect(briefing).toContain('correctness');
+  });
+});
+
+// Tier 1: Dimension discovery with isolated temp fixtures (issue #879)
+
+describe('discoverDimensions — isolated temp dir', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'kaizen-dims-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns empty object for empty directory', () => {
+    const dims = discoverDimensions(tmpDir);
+    expect(dims).toEqual({});
+  });
+
+  it('returns empty object for non-existent directory', () => {
+    const dims = discoverDimensions('/dev/null/impossible');
+    expect(dims).toEqual({});
+  });
+
+  it('discovers synthetic dimension files', () => {
+    writeFileSync(join(tmpDir, 'review-alpha.md'), '---\nname: alpha\ndescription: test\napplies_to: pr\n---\n```json\n{}\n```\n');
+    writeFileSync(join(tmpDir, 'review-beta.md'), '---\nname: beta\ndescription: test\napplies_to: both\n---\n```json\n{}\n```\n');
+    writeFileSync(join(tmpDir, 'not-a-dimension.md'), 'ignored');
+
+    const dims = discoverDimensions(tmpDir);
+    expect(Object.keys(dims)).toEqual(['alpha', 'beta']);
+    expect(dims['alpha']).toBe('review-alpha.md');
+    expect(dims['beta']).toBe('review-beta.md');
+  });
+
+  it('loadDimensionMetas reads frontmatter from synthetic files', () => {
+    writeFileSync(join(tmpDir, 'review-gamma.md'), '---\nname: gamma\ndescription: Gamma check\napplies_to: plan\nneeds: [diff, issue]\n---\n```json\n{}\n```\n');
+
+    const metas = loadDimensionMetas(tmpDir);
+    expect(metas).toHaveLength(1);
+    expect(metas[0].name).toBe('gamma');
+    expect(metas[0].description).toBe('Gamma check');
+    expect(metas[0].applies_to).toBe('plan');
+    expect(metas[0].needs).toEqual(['diff', 'issue']);
   });
 });
 

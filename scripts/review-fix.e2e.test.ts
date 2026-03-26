@@ -42,6 +42,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from 
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { stateKey } from './review-fix.js';
+import { findLatestCheckpoint } from './e2e-test-utils.js';
 
 // ── Config ─────────────────────────────────────────────────────────────
 
@@ -65,13 +66,7 @@ const DEV_MODE = !!process.env.CLAUDE_E2E_DEV;
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function findLatestResultFile(): string | null {
-  if (!existsSync(RESULTS_DIR)) return null;
-  const prefix = 'review-fix-smoke-';
-  const files = readdirSync(RESULTS_DIR)
-    .filter(f => f.startsWith(prefix) && f.endsWith('.txt'))
-    .sort()
-    .reverse();
-  return files.length > 0 ? join(RESULTS_DIR, files[0]) : null;
+  return findLatestCheckpoint(RESULTS_DIR, 'review-fix-smoke-');
 }
 
 interface RunResult {
