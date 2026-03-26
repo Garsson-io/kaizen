@@ -18,6 +18,7 @@ import {
   resolvePromptsDir,
   discoverDimensions,
   listDimensions,
+  listPrDimensions,
   loadDimensionMetas,
   reviewBriefing,
   validateReviewCoverage,
@@ -234,6 +235,17 @@ describe('discoverDimensions', () => {
     expect(names).toContain('plan-coverage');
     expect(names).toContain('requirements');
     expect(names).toContain('pr-description');
+  });
+
+  it('listPrDimensions excludes plan-coverage and includes all other dimensions', () => {
+    const all = listDimensions();
+    const pr = listPrDimensions();
+    expect(pr).not.toContain('plan-coverage');
+    for (const name of all) {
+      if (name !== 'plan-coverage') {
+        expect(pr).toContain(name);
+      }
+    }
   });
 
   it('loadDimensionMetas reads frontmatter from each dimension', () => {

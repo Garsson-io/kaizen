@@ -19,22 +19,22 @@ The `pr-review-loop.sh` hook enforces that this review happens. This skill defin
 
 ### Phase 1: Gather Context
 
-1. **Discover dimensions:** `npx tsx src/cli-dimensions.ts list` — these are the review rubric. Also load `.claude/kaizen/review-criteria.md` for supplementary learned failure modes (FM-N patterns).
+1. **Discover dimensions + briefing:** `npx tsx src/cli-dimensions.ts briefing --lines $(gh pr diff <pr-url> | wc -l)` — shows all dimensions, data needs, and natural groupings. Also load `.claude/kaizen/review-criteria.md` for supplementary learned failure modes (FM-N patterns).
 2. **Read the diff:** `gh pr diff <pr-url>` — read every file, not just a summary.
 3. **Read linked issues:** Check PR body, branch name, commits for `#N` or `kaizen#N`. If found, `gh issue view --repo "$ISSUES_REPO"` to understand requirements.
 4. **Scan recent failure modes:** Check the "Learned Failure Modes" section of the criteria file. These are patterns from past incidents — watch for them specifically in this diff.
 
 ### Phase 2: Review Using Subagent Dimensions
 
-**All review checks are dimensions.** Every dimension is a `prompts/review-*.md` file. All dimensions run — no skipping. Run `npx tsx src/cli-dimensions.ts list` to see what's available.
+**All review checks are dimensions.** Every dimension is a `prompts/review-*.md` file. All dimensions run — no skipping.
 
-**Step 2a: Get the briefing.** Discover all applicable dimensions and their data needs:
+**Step 2a: Get the briefing.** Discover all applicable dimensions and their natural groupings:
 
 ```bash
-npx tsx src/cli-dimensions.ts list
+npx tsx src/cli-dimensions.ts briefing --lines $(gh pr diff <pr-url> | wc -l)
 ```
 
-This shows every dimension, what data it needs (`diff`, `issue`, `pr`, `codebase`, `tests`), and which dimensions share data needs (natural grouping signal).
+This shows every dimension, what data it needs, and pre-computed natural groupings based on shared data needs — saving you from manually figuring out the optimal agent grouping.
 
 **Step 2b: Decide grouping.** You decide how to distribute dimensions across subagents. Use these signals:
 
@@ -139,7 +139,7 @@ Create these tasks at skill start using TaskCreate:
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | Gather context + briefing | Discover dimensions (`npx tsx src/cli-dimensions.ts list`), read full diff, read linked issues, read plan from issue comments, load learned failure modes from `review-criteria.md` |
+| 1 | Gather context + briefing | Run `npx tsx src/cli-dimensions.ts briefing --lines N` (N = diff line count), read full diff, read linked issues, read plan from issue comments, load learned failure modes from `review-criteria.md` |
 | 2 | Review (subagent dimensions) | Decide grouping using priority signals + data overlap + PR size. Spawn subagents for ALL dimensions. Validate coverage — all dimensions must have findings (`validateReviewCoverage()`). |
 | 3 | Filter and classify findings | Drop confidence < 75. MUST-FIX ≥ 90 (blocks merge). SHOULD-FIX 75-89 (fix before merge). |
 | 4 | Fix loop (max 3 rounds) | Fix each finding, commit+push, re-review from task #1. Repeat until clean or 3 rounds. If still unclean at round 3: escalate to human. |

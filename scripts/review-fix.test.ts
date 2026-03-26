@@ -687,4 +687,33 @@ describe('runFixLoop', () => {
       expect(state.outcome).toBe('pass');
     } finally { teardown(); }
   });
+
+  it('fix_running resume: proceeds to next round when fix session completed with failure', async () => {
+    const dir = setup();
+    try {
+      const fixRunningState: ReviewFixState = {
+        prUrl: baseOpts.prUrl,
+        issueNum: baseOpts.issueNum,
+        repo: baseOpts.repo,
+        maxRounds: baseOpts.maxRounds,
+        budgetCap: baseOpts.budgetCap,
+        currentRound: 2,
+        totalCostUsd: 0.15,
+        startedAt: new Date().toISOString(),
+        phase: 'fix_running',
+        rounds: [{ round: 1, phase: 'review', verdict: 'fail', gaps: 1, reviewCost: 0.15, fixCost: 0 }],
+        activeFix: { pid: 99999, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') },
+      };
+      saveState(fixRunningState, dir);
+      const runReviewMock = vi.fn().mockResolvedValue(makePassBattery());
+      await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: false, costUsd: 0.05, output: 'failed' }),
+        runReview: runReviewMock,
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+      expect(runReviewMock).toHaveBeenCalled();
+    } finally { teardown(); }
+  });
 });

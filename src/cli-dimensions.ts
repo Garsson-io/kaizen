@@ -269,7 +269,7 @@ Commands:
           prLines = parseInt(args[++i], 10);
         }
       }
-      if (!prLines) {
+      if (Number.isNaN(prLines) || prLines <= 0) {
         console.error('Error: --lines <N> is required');
         process.exit(1);
       }
