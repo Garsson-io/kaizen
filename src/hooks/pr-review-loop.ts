@@ -321,6 +321,15 @@ ${printChecklist(found.prUrl, found.round, MAX_ROUNDS)}
 
 async function main(): Promise<void> {
   const input = await readHookInput();
+
+  // Trace for debugging hook invocation (kaizen #909)
+  try {
+    const cmd = input?.tool_input?.command ?? '';
+    const cmdShort = cmd.replace(/\n/g, '\\n').slice(0, 120);
+    const exitCode = input?.tool_response?.exit_code ?? '?';
+    appendFileSync('/tmp/.pr-review-hook-trace.log', `TS cmd="${cmdShort}" exit=${exitCode}\n`);
+  } catch { /* ignore trace errors */ }
+
   if (!input) process.exit(0);
 
   const output = processHookInput(input);
