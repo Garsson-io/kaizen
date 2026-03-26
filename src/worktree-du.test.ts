@@ -381,6 +381,23 @@ describe("parseCliArgs", () => {
 
 // ── Worktree deletion sentinel (category prevention: #934, #939) ────────────
 
+/**
+ * Build an exec mock that returns values consistent with a single merged worktree
+ * ready for deletion. Records each call to the provided ops array.
+ */
+function makeMergedExec(ops?: Array<{ kind: "write" | "exec"; value: string }>): (cmd: string) => string {
+  return (cmd: string) => {
+    ops?.push({ kind: "exec", value: cmd });
+    if (cmd.includes("rev-parse --abbrev-ref")) return "main";
+    if (cmd.includes("branch --merged")) return "* main";
+    if (cmd.includes("rev-list --count")) return "0";
+    if (cmd.includes("status --porcelain")) return "";
+    if (cmd.includes("worktree list")) return "";
+    if (cmd.includes('branch"') && !cmd.includes("--")) return "* main";
+    return "";
+  };
+}
+
 describe("cleanupWorktrees — deletion sentinel", () => {
   it("writes .worktree-will-delete sentinel before git worktree remove", () => {
     // INVARIANT: before any worktree is deleted, a sentinel file must be written
@@ -392,16 +409,7 @@ describe("cleanupWorktrees — deletion sentinel", () => {
       isDir: () => true,
       exists: () => false,
       writeFile: (p: string) => ops.push({ kind: "write", value: p }),
-      exec: (cmd: string) => {
-        ops.push({ kind: "exec", value: cmd });
-        if (cmd.includes("rev-parse --abbrev-ref")) return "main";
-        if (cmd.includes("branch --merged")) return "* main";
-        if (cmd.includes("rev-list --count")) return "0";
-        if (cmd.includes("status --porcelain")) return "";
-        if (cmd.includes("worktree list")) return "";
-        if (cmd.includes('branch"') && !cmd.includes("--")) return "* main";
-        return "";
-      },
+      exec: makeMergedExec(ops),
     });
 
     cleanupWorktrees(makePaths(), deps, false);
@@ -426,15 +434,7 @@ describe("cleanupWorktrees — deletion sentinel", () => {
       isDir: () => true,
       exists: () => false,
       writeFile: (p: string) => writes.push(p),
-      exec: (cmd: string) => {
-        if (cmd.includes("rev-parse --abbrev-ref")) return "main";
-        if (cmd.includes("branch --merged")) return "* main";
-        if (cmd.includes("rev-list --count")) return "0";
-        if (cmd.includes("status --porcelain")) return "";
-        if (cmd.includes("worktree list")) return "";
-        if (cmd.includes('branch"') && !cmd.includes("--")) return "* main";
-        return "";
-      },
+      exec: makeMergedExec(),
     });
 
     cleanupWorktrees(makePaths(), deps, true);
@@ -453,15 +453,7 @@ describe("cleanupWorktrees — deletion sentinel", () => {
       isDir: () => true,
       exists: () => false,
       writeFile: (p: string) => writes.push(p),
-      exec: (cmd: string) => {
-        if (cmd.includes("rev-parse --abbrev-ref")) return "main";
-        if (cmd.includes("branch --merged")) return "* main";
-        if (cmd.includes("rev-list --count")) return "0";
-        if (cmd.includes("status --porcelain")) return "";
-        if (cmd.includes("worktree list")) return "";
-        if (cmd.includes('branch"') && !cmd.includes("--")) return "* main";
-        return "";
-      },
+      exec: makeMergedExec(),
     });
 
     cleanupWorktrees(paths, deps, false);
@@ -472,3 +464,4 @@ describe("cleanupWorktrees — deletion sentinel", () => {
     expect(sentinel).toContain("wt-abc");
   });
 });
+

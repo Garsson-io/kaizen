@@ -184,8 +184,9 @@ export interface ReviewFixState {
  * deleted on merge and would take their state with them (#929, #934, #939).
  *
  * @param gitCommonDir - output of `git rev-parse --git-common-dir`
- *   - In the main checkout: '.git' (relative)
- *   - In a worktree:        '/abs/path/to/main/.git/worktrees/<name>'
+ *   - In the main checkout: '.git' (relative — note: relative, not absolute)
+ *   - In a worktree:        '/abs/path/to/main/.git' (the COMMON .git dir, NOT the worktree subdir)
+ *     (contrast with --git-dir which returns '/abs/path/to/main/.git/worktrees/<name>')
  * @param cwd - used when gitCommonDir is '.git' (main checkout)
  */
 export function resolveStateDir(gitCommonDir: string, cwd: string = process.cwd()): string {

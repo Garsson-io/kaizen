@@ -183,31 +183,66 @@ describe('kaizen-worktree-setup.sh', () => {
     });
   });
 
-  describe('Invariant 7: deleted CWD rescue — re-anchors to main repo (#934, #939)', () => {
-    it('outputs a warning and exits 0 when CWD does not exist', () => {
-      // INVARIANT: if the session CWD was deleted (post-merge cleanup),
-      // the hook must NOT fail. It should emit a warning on stderr and exit 0.
-      // The hook uses a deleted temp path to simulate a removed worktree.
-      const deletedPath = join(tmpdir(), `kaizen-deleted-wt-${Date.now()}`);
-      mkdirSync(deletedPath, { recursive: true });
-      rmSync(deletedPath, { recursive: true }); // delete immediately
-
+  describe('Invariant 7: deletion sentinel detection (#934, #939)', () => {
+    it('emits warning to stderr and exits 0 when .worktree-will-delete sentinel exists', () => {
+      // INVARIANT: when the sentinel is present, the hook must warn (stderr) and exit 0.
+      // We run the hook from a temp dir with a .worktree-will-delete file present
+      // so the sentinel detection branch is actually triggered.
+      const wdir = mkdtempSync(join(tmpdir(), 'kaizen-sentinel-'));
+      const mainRepo = mkdtempSync(join(tmpdir(), 'kaizen-main-'));
       const mockDir = createMockDir();
       try {
-        // Point git-common-dir to a real main repo (the kaizen repo itself)
-        const mainGitDir = resolve(__dirname, '../../../../.git');
+        // Write the sentinel file in the worktree dir
+        writeFileSync(join(wdir, '.worktree-will-delete'), new Date().toISOString());
+
+        // Create node_modules/dist in main so symlink logic doesn't fail
+        mkdirSync(join(mainRepo, 'node_modules'));
+        mkdirSync(join(mainRepo, 'dist'));
+
+        const mainGitDir = join(mainRepo, '.git');
+        mkdirSync(mainGitDir);
         setGitCommonDir(mockDir, mainGitDir);
 
-        // Run the hook from the deleted path — it can't cd there but the hook
-        // should handle this gracefully and exit 0.
         const result = spawnSync('bash', [HOOK], {
-          cwd: '/', // fallback to root since deleted path can't be used as cwd
+          cwd: wdir,
+          env: { ...process.env, PATH: `${mockDir.path}:${process.env.PATH}` },
+          encoding: 'utf8',
+        });
+
+        // Hook must exit 0 (advisory only, never blocks)
+        expect(result.status).toBe(0);
+        // Warning must appear on stderr
+        expect(result.stderr).toMatch(/worktree.*marked.*deletion|deletion.*worktree/i);
+      } finally {
+        rmSync(wdir, { recursive: true, force: true });
+        rmSync(mainRepo, { recursive: true, force: true });
+        mockDir.cleanup();
+      }
+    });
+
+    it('does not emit deletion warning when sentinel is absent', () => {
+      // INVARIANT: normal operation produces no deletion warning.
+      const wdir = mkdtempSync(join(tmpdir(), 'kaizen-no-sentinel-'));
+      const mainRepo = mkdtempSync(join(tmpdir(), 'kaizen-main-'));
+      const mockDir = createMockDir();
+      try {
+        mkdirSync(join(mainRepo, 'node_modules'));
+        mkdirSync(join(mainRepo, 'dist'));
+        const mainGitDir = join(mainRepo, '.git');
+        mkdirSync(mainGitDir);
+        setGitCommonDir(mockDir, mainGitDir);
+
+        const result = spawnSync('bash', [HOOK], {
+          cwd: wdir,
           env: { ...process.env, PATH: `${mockDir.path}:${process.env.PATH}` },
           encoding: 'utf8',
         });
 
         expect(result.status).toBe(0);
+        expect(result.stderr).not.toMatch(/worktree.*marked.*deletion|deletion.*worktree/i);
       } finally {
+        rmSync(wdir, { recursive: true, force: true });
+        rmSync(mainRepo, { recursive: true, force: true });
         mockDir.cleanup();
       }
     });

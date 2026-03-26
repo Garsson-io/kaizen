@@ -1117,4 +1117,19 @@ describe('validateTransition', () => {
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/invalid.*phase/i);
   });
+
+  it('blocks transition when non-DONE finding has confidence exactly 80 (on the boundary)', () => {
+    // INVARIANT: confidence >= 80 + non-DONE = MUST-FIX. Threshold is inclusive.
+    const findings = [{ status: 'PARTIAL' as const, requirement: 'req', detail: 'partial', confidence: 80 }];
+    const result = validateTransition('needs_review', baseState, findings);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/MUST.FIX/i);
+  });
+
+  it('allows transition when non-DONE finding has confidence 79 (just below threshold)', () => {
+    // INVARIANT: confidence < 80 is SHOULD-FIX, not MUST-FIX — transition is permitted.
+    const findings = [{ status: 'PARTIAL' as const, requirement: 'req', detail: 'minor gap', confidence: 79 }];
+    const result = validateTransition('needs_review', baseState, findings);
+    expect(result.allowed).toBe(true);
+  });
 });
