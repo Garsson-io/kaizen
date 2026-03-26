@@ -43,7 +43,6 @@ export async function readHookInput(): Promise<HookInput | null> {
             hook: 'hook-io',
             error: 'json_parse_failed',
             raw_length: raw.length,
-            raw_preview: raw.slice(0, 300),
           }) + '\n',
         );
       } catch { /* never fail on trace */ }

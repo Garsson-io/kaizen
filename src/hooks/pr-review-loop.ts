@@ -49,11 +49,11 @@ export interface HookDecision {
   context?: Record<string, unknown>;
 }
 
-const TRACE_FILE = process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
-const TRACE_ENABLED = process.env.KAIZEN_HOOK_TRACE !== '0';
+const getTraceFile = (): string => process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
+const isTraceEnabled = (): boolean => process.env.KAIZEN_HOOK_TRACE !== '0';
 
 function trace(decision: HookDecision, trigger: string): void {
-  if (!TRACE_ENABLED) return;
+  if (!isTraceEnabled()) return;
   try {
     const entry = JSON.stringify({
       ts: new Date().toISOString(),
@@ -63,7 +63,7 @@ function trace(decision: HookDecision, trigger: string): void {
       reason: decision.reason,
       ...decision.context,
     });
-    appendFileSync(TRACE_FILE, entry + '\n');
+    appendFileSync(getTraceFile(), entry + '\n');
   } catch { /* never fail on trace */ }
 }
 

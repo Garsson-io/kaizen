@@ -192,3 +192,64 @@ describe('wrapper smoke: pr-kaizen-clear-ts.sh', () => {
     expect(stdout).toContain('PR kaizen gate cleared');
   });
 });
+
+/** Run a bash wrapper with empty stdin, return { stdout, exitCode }. */
+function runWrapperNullInput(
+  wrapperName: string,
+  extraEnv?: Record<string, string>,
+): { stdout: string; exitCode: number } {
+  const wrapperPath = path.join(HOOKS_DIR, wrapperName);
+  if (!fs.existsSync(wrapperPath)) {
+    throw new Error(`Wrapper not found: ${wrapperPath}`);
+  }
+
+  try {
+    const stdout = execSync(
+      `echo -n "" | bash "${wrapperPath}"`,
+      {
+        encoding: 'utf-8',
+        env: {
+          ...process.env,
+          STATE_DIR: tmpDir,
+          HOOK_TIMING_SENTINEL_DISABLED: 'true',
+          KAIZEN_HOOK_TRACE: '0',
+          ...extraEnv,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 15000,
+      },
+    ).trim();
+    return { stdout, exitCode: 0 };
+  } catch (err: any) {
+    return {
+      stdout: err.stdout?.trim?.() ?? '',
+      exitCode: err.status ?? 1,
+    };
+  }
+}
+
+describe('wrapper smoke: null stdin — all traceNullInput hooks exit 0 silently', () => {
+  // INVARIANT: every hook that calls traceNullInput() MUST exit 0 with no stdout
+  // when it receives empty stdin. Null input = Claude Code didn't send a hook event.
+  // The hook must be a no-op, not crash or block the agent.
+  const traceNullInputWrappers = [
+    'pr-review-loop-ts.sh',
+    'kaizen-reflect-ts.sh',
+    'pr-kaizen-clear-ts.sh',
+    'kaizen-check-dirty-files-ts.sh',
+    'kaizen-bump-plugin-version-ts.sh',
+    'kaizen-enforce-pr-review-ts.sh',
+    'kaizen-pr-kaizen-clear-fallback.sh',
+    'kaizen-enforce-pr-reflect-ts.sh',
+    'kaizen-post-merge-clear-ts.sh',
+    'kaizen-pr-quality-checks-ts.sh',
+  ];
+
+  for (const wrapper of traceNullInputWrappers) {
+    it(`${wrapper} exits 0 silently on empty stdin`, () => {
+      const { stdout, exitCode } = runWrapperNullInput(wrapper);
+      expect(exitCode).toBe(0);
+      expect(stdout).toBe('');
+    });
+  }
+});

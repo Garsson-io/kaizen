@@ -11,6 +11,7 @@ import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { cmdList, cmdShow, cmdAdd, cmdValidate, formatValidation, cmdBriefing, parseArgs } from './cli-dimensions.js';
 import { resolvePromptsDir } from './review-battery.js';
+import { resolveProjectRoot } from './lib/resolve-project-root.js';
 
 // Fixture helpers
 
@@ -44,7 +45,8 @@ Some instructions.
 
 describe('kaizen policy invariants', () => {
   it('policies.md contains Policy 10 — skill changes require behavioral proof', () => {
-    const policiesPath = resolve(import.meta.dirname, '../.claude/kaizen/policies.md');
+    const projectRoot = resolveProjectRoot(import.meta.dirname);
+    const policiesPath = resolve(projectRoot, '.claude/kaizen/policies.md');
     const content = readFileSync(policiesPath, 'utf8');
     expect(content).toContain('Skill changes require behavioral proof');
     expect(content).toContain('synthetic case');

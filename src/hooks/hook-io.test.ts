@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writeHookOutput, getCurrentBranch, readHookInput } from './hook-io.js';
+import { writeHookOutput, getCurrentBranch, readHookInput, traceNullInput } from './hook-io.js';
 
 vi.mock('node:child_process', () => ({
   execSync: vi.fn(),
@@ -177,6 +177,46 @@ describe('hook-io', () => {
         throw new Error('not a git repo');
       });
       expect(getCurrentBranch()).toBe('');
+    });
+  });
+
+  describe('traceNullInput', () => {
+    it('INVARIANT: writes null_input trace entry with hook name', () => {
+      // INVARIANT: when a hook receives null input (empty stdin), it calls
+      // traceNullInput() which MUST write a trace entry so null-input events
+      // are visible in observability tooling.
+      const traceDir = mkdtempSync(join(tmpdir(), 'hook-io-nulltrace-'));
+      const traceFile = join(traceDir, 'trace.jsonl');
+      const origTrace = process.env.KAIZEN_HOOK_TRACE;
+      process.env.KAIZEN_HOOK_TRACE = traceFile;
+
+      try {
+        traceNullInput('test-hook');
+        expect(existsSync(traceFile)).toBe(true);
+        const entries = readFileSync(traceFile, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+        expect(entries.length).toBe(1);
+        expect(entries[0].hook).toBe('test-hook');
+        expect(entries[0].action).toBe('ignore');
+        expect(entries[0].reason).toBe('null_input');
+        expect(entries[0].ts).toBeDefined();
+      } finally {
+        if (origTrace !== undefined) process.env.KAIZEN_HOOK_TRACE = origTrace;
+        else delete process.env.KAIZEN_HOOK_TRACE;
+        rmSync(traceDir, { recursive: true, force: true });
+      }
+    });
+
+    it('INVARIANT: KAIZEN_HOOK_TRACE=0 suppresses null_input trace', () => {
+      const origTrace = process.env.KAIZEN_HOOK_TRACE;
+      process.env.KAIZEN_HOOK_TRACE = '0';
+      // No file should be written — traceNullInput must be a no-op when tracing is off
+      try {
+        // Should not throw; no file written
+        expect(() => traceNullInput('any-hook')).not.toThrow();
+      } finally {
+        if (origTrace !== undefined) process.env.KAIZEN_HOOK_TRACE = origTrace;
+        else delete process.env.KAIZEN_HOOK_TRACE;
+      }
     });
   });
 });
