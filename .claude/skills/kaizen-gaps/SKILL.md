@@ -126,6 +126,8 @@ gh pr list --repo "$HOST_REPO" --state merged --limit 20 --json number,title,bod
   --jq '.[] | select(.body | test("KAIZEN_IMPEDIMENTS")) | {number, title, mergedAt, body}'
 ```
 
+Use `/kaizen-sections` to read specific sections from PR bodies efficiently: `npx tsx src/cli-section-editor.ts read-section --pr {N} --repo "$HOST_REPO" --name "Known limitations"` — avoids reading the entire PR body.
+
 **Extract and classify findings from each PR body:**
 - Parse the `KAIZEN_IMPEDIMENTS` JSON block from each PR
 - Separate by `type`: `"meta"` (system improvements), `"positive"` (what worked), standard (work impediments)

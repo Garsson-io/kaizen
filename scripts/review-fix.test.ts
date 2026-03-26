@@ -24,7 +24,7 @@ import {
   type PrefetchResult,
   type ReviewFixState,
 } from './review-fix.js';
-import type { BatteryResult } from '../src/review-battery.js';
+import { DATA_GAP_PREFIX, type BatteryResult } from '../src/review-battery.js';
 
 // ── parseStreamJsonResult ────────────────────────────────────────────
 
@@ -611,6 +611,97 @@ describe('runFixLoop', () => {
       expect(launchFixMock).toHaveBeenCalledTimes(1);
       expect(state.phase).toBe('fix_running');
       expect(state.activeFix?.pid).toBe(12345);
+    } finally { teardown(); }
+  });
+
+  it('no-actionable-gaps path: does not launch fix when verdict=fail but gaps=0 (kaizen #897)', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn();
+      // Simulate: some dims pass, others timed out → verdict=fail but gaps=0
+      // This is the #897 scenario: all returned findings are DONE, but
+      // failed dims make verdict=fail. No actionable gaps to fix.
+      const timeoutBattery: BatteryResult = {
+        verdict: 'fail',
+        costUsd: 0.10,
+        missingCount: 0,
+        partialCount: 0,
+        durationMs: 120_000,
+        failedDimensions: ['test-quality'],
+        skippedDimensions: [],
+        dimensions: [{ dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'all good' }] }],
+      };
+      const state = await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => timeoutBattery,
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('no_actionable_gaps');
+      expect(state.phase).toBe('done');
+      expect(launchFixMock).not.toHaveBeenCalled();
+    } finally { teardown(); }
+  });
+
+  it('plan-only gaps: does not launch fix when all gaps are [data-gap] findings', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn();
+      // All gaps are plan-availability MISSING findings, not code gaps
+      const planOnlyBattery: BatteryResult = {
+        verdict: 'fail',
+        costUsd: 0.10,
+        missingCount: 3,
+        partialCount: 0,
+        durationMs: 5_000,
+        failedDimensions: [],
+        skippedDimensions: ['plan-coverage', 'plan-fidelity', 'improvement-lifecycle'],
+        dimensions: [
+          { dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+          { dimension: 'plan-coverage', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+          { dimension: 'plan-fidelity', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+          { dimension: 'improvement-lifecycle', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+        ],
+      };
+      const state = await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => planOnlyBattery,
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('no_actionable_gaps');
+      expect(state.phase).toBe('done');
+      expect(launchFixMock).not.toHaveBeenCalled();
+    } finally { teardown(); }
+  });
+
+  it('mixed gaps: launches fix when code gaps exist alongside data-gap findings', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn().mockReturnValue({ pid: 555, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') });
+      const mixedBattery: BatteryResult = {
+        verdict: 'fail',
+        costUsd: 0.10,
+        missingCount: 3,
+        partialCount: 1,
+        durationMs: 5_000,
+        failedDimensions: [],
+        skippedDimensions: ['plan-coverage', 'plan-fidelity'],
+        dimensions: [
+          { dimension: 'security', verdict: 'fail', summary: 'issues', findings: [{ requirement: 'No secrets in code', status: 'MISSING', detail: 'API key in config' }] },
+          { dimension: 'plan-coverage', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+          { dimension: 'plan-fidelity', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+        ],
+      };
+      const state = await runFixLoop({ ...baseOpts, maxRounds: 3 }, {
+        prefetch: mockPrefetch,
+        runReview: async () => mixedBattery,
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      // Code gap exists (security MISSING) so fix SHOULD launch despite data-gap findings
+      expect(launchFixMock).toHaveBeenCalledTimes(1);
+      expect(state.phase).toBe('fix_running');
     } finally { teardown(); }
   });
 

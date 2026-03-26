@@ -73,6 +73,8 @@ gh issue edit {N} --repo "$ISSUES_REPO" --add-label "status:backlog"
 gh issue comment {N} --repo "$ISSUES_REPO" --body "Claimed for evaluation by accept-case at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
+Store evaluation findings as a structured attachment: `npx tsx src/cli-section-editor.ts write-attachment --issue {N} --repo "$ISSUES_REPO" --name evaluation --file eval.md`
+
 This labeling is defense-in-depth on top of the L3 enforcement in `ipc-cases.ts` (which blocks duplicate case creation for the same kaizen issue). The label makes the claim visible to other agents checking `gh issue list` before they even reach the code-level check.
 
 ### Phase 0.5: Check for existing spec

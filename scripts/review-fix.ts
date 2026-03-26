@@ -31,9 +31,11 @@ import {
   listPrDimensions,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
+  DATA_GAP_PREFIX,
   type BatteryResult,
   type ReviewFinding,
 } from '../src/review-battery.js';
+import { addSection, writeAttachment } from '../src/section-editor.js';
 import { ghExec } from './auto-dent-github.js';
 
 // ── Stream-JSON parsing ─────────────────────────────────────────────
@@ -542,6 +544,15 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       state.outcome = 'pass';
       state.phase = 'done';
       saveState(state, doStateDir());
+      // Update PR body Validation section and store review report as attachment (best effort)
+      try {
+        const prNum = opts.prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '';
+        if (prNum && opts.repo) {
+          const prTarget = { kind: 'pr' as const, number: prNum, repo: opts.repo };
+          addSection(prTarget, 'Validation', `REVIEW PASSED — ${round} round(s), $${state.totalCostUsd.toFixed(2)} total cost\n\n${formatBatteryReport(battery)}`);
+          writeAttachment(prTarget, 'review-battery', formatBatteryReport(battery));
+        }
+      } catch { /* best effort */ }
       return state;
     }
 
@@ -559,6 +570,23 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       console.log('\n--dry-run: showing fix prompt, not executing\n');
       console.log(buildFixPrompt(opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged));
       state.outcome = 'dry_run';
+      state.phase = 'done';
+      saveState(state, doStateDir());
+      return state;
+    }
+
+    // ── NO ACTIONABLE GAPS? (kaizen #897) ──
+    // Verdict can be 'fail' due to timed-out/failed dimensions even when
+    // all returned findings are DONE. Don't launch a fix with nothing to fix.
+    // Also: when ALL gaps are [data-gap] findings (missing plan text etc.),
+    // a fix agent can't resolve them — they need the caller to provide data.
+    const codeGaps = gaps.filter(f => !f.requirement.startsWith(DATA_GAP_PREFIX));
+    if (gaps.length === 0 || codeGaps.length === 0) {
+      const reason = gaps.length === 0
+        ? `${battery.failedDimensions.length} dim(s) failed to return results`
+        : `${gaps.length} gap(s) are all data-availability issues (e.g. missing plan text), not code gaps`;
+      console.log(`\nVerdict is fail but no actionable code gaps (${reason}). Run with --resume to retry.`);
+      state.outcome = 'no_actionable_gaps';
       state.phase = 'done';
       saveState(state, doStateDir());
       return state;

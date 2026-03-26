@@ -250,7 +250,7 @@ Every PRD produces an **epic issue** — the tracking anchor for the initiative.
 
 ### The Epic Issue
 
-**For issue-only PRDs (default):** The issue body IS the spec — use the full document structure from Phase 3. The issue is both the tracking anchor and the single source of truth.
+**For issue-only PRDs (default):** The issue body IS the spec — use the full document structure from Phase 3. The issue is both the tracking anchor and the single source of truth. Use `/kaizen-sections` (`add-section`, `replace-section`) to manage individual sections. Store related data (plans, metadata) as **attachments** (`write-attachment`) on the issue.
 
 **For file+PR PRDs (large initiatives):** The issue is the epic anchor. Keep it short — the spec document has the details.
 

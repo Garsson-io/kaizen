@@ -28,7 +28,7 @@ user_invocable: true
 |----------|-------------|-------------|-------------|
 | Briefing (dim list + groupings) | `briefing --lines N` | Phase 2 grouping decision | in-context |
 | Diff | `gh pr diff` | All review subagents | pass verbatim into agent prompts |
-| Issue body | `gh issue view` | requirements, scope-fidelity, test-plan, plan-fidelity agents | pass into agent prompts |
+| Issue body | `gh issue view --repo "$ISSUES_REPO"` | requirements, scope-fidelity, test-plan, plan-fidelity agents | pass into agent prompts |
 | PR body | `gh pr view` | pr-description, plan-fidelity agents | pass into agent prompts |
 | Dimension findings (JSON) | Each subagent | Phase 3 classifier | in-context |
 | Classified findings list | Phase 3 | Phase 4 fix work | in-context |
@@ -66,10 +66,16 @@ gh pr diff <pr-url>
 # Diff URL (for humans): https://github.com/<owner>/<repo>/pull/<N>.diff
 
 # Linked issue(s) — scan PR body, branch name, recent commits for #N
-gh issue view <N> --repo <repo> --json title,body
+gh issue view <N> --repo "$ISSUES_REPO" --json title,body
 
 # PR body (includes test plan link if present)
 gh pr view <pr-url> --json title,body,url
+
+# Plan text (for plan-dependent dimensions: plan-fidelity, plan-coverage, improvement-lifecycle)
+npx tsx src/cli-plan-store.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"
+
+# Connected issues (for requirements coverage — verify ALL connected issues are addressed)
+npx tsx src/cli-plan-store.ts query-connected --issue <N> --repo "$ISSUES_REPO"
 ```
 
 **After pre-fetch, display the review context before spawning agents:**
@@ -79,7 +85,8 @@ PR:    <pr-url>
 Diff:  https://github.com/<owner>/<repo>/pull/<N>.diff
 Issues: #N1 <title> <url>
         #N2 <title> <url>
-Plan:  <plan url or "none">
+Plan:  <plan text length or "none — plan dims will emit MISSING">
+Connected: #N1 [role] title, #N2 [role] title (from query-connected)
 
 Agents:
 - Agent 1: <dimension list> (<needs>)
@@ -153,7 +160,11 @@ Fix MUST-FIX first, then SHOULD-FIX:
 
 1. Edit code, add tests, extract helpers — address the root cause, not just the symptom
 2. Commit + push (one commit per logical fix, or batch tightly related fixes)
-3. Return to Phase 1 with the updated diff
+3. Update the PR body using `/kaizen-sections` — add or replace the "Validation" section with current test results, don't rewrite the entire body:
+   ```bash
+   npx tsx src/cli-section-editor.ts replace-section --pr <N> --repo <repo> --name "Validation" --text "- [x] 545 tests pass..."
+   ```
+4. Return to Phase 1 with the updated diff
 
 ---
 

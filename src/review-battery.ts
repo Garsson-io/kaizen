@@ -16,6 +16,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import YAML from 'yaml';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
+import { retrievePlan, issueTarget } from './structured-data.js';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -30,6 +31,10 @@ import { resolveProjectRoot } from './lib/resolve-project-root.js';
 
 /** Status of a single requirement or criterion */
 export type FindingStatus = 'DONE' | 'PARTIAL' | 'MISSING';
+
+/** Prefix for synthetic findings that represent missing input data, not code gaps.
+ * Used by review-fix.ts to distinguish fixable code gaps from unfixable data-availability gaps. */
+export const DATA_GAP_PREFIX = '[data-gap]';
 
 /** A single finding from a review dimension */
 export interface ReviewFinding {
@@ -672,20 +677,46 @@ export interface BatteryOptions {
 export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult> {
   const start = Date.now();
 
-  // Auto-skip dims that require data we don't have
+  // Auto-load planText from GitHub issue when not provided (kaizen #902).
+  // Use a local variable to avoid mutating the caller's opts object.
+  let planText = opts.planText;
+  if (!planText && opts.issueNum && opts.repo) {
+    try {
+      const stored = retrievePlan(issueTarget(opts.issueNum, opts.repo));
+      if (stored) {
+        planText = stored;
+        console.log(`  [review] auto-loaded plan text from issue #${opts.issueNum} (${stored.length} chars)`);
+      }
+    } catch { /* best effort — plan dims will emit MISSING if not found */ }
+  }
+
+  // Dimensions that need 'plan' data but don't have it get a synthetic MISSING
+  // finding instead of being silently skipped (kaizen #901). This ensures the
+  // battery report surfaces the gap and the fix loop knows about it.
   const metas = loadDimensionMetas();
   const skippedDimensions: string[] = [];
+  const skippedResults: DimensionReview[] = [];
   const effective = opts.dimensions.filter(dim => {
     const meta = metas.find(m => m.name === dim);
-    if (meta?.needs.includes('plan') && !opts.planText) {
+    if (meta?.needs.includes('plan') && !planText) {
       skippedDimensions.push(dim);
+      skippedResults.push({
+        dimension: dim,
+        verdict: 'fail',
+        findings: [{
+          requirement: `${DATA_GAP_PREFIX} Plan text available for review`,
+          status: 'MISSING',
+          detail: `Dimension "${dim}" requires plan text but none was provided. Create a plan before running this review.`,
+        }],
+        summary: `Skipped: no plan text provided (requires "plan" data)`,
+      });
       return false;
     }
     return true;
   });
 
   if (skippedDimensions.length > 0) {
-    console.log(`  [review] skipping ${skippedDimensions.length} dim(s) (no plan text): ${skippedDimensions.join(', ')}`);
+    console.log(`  [review] ${skippedDimensions.length} dim(s) missing plan text (MISSING finding): ${skippedDimensions.join(', ')}`);
   }
 
   // Group by shared data needs; batch same-needs dims into one call
@@ -693,7 +724,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   const sharedOpts = {
     prUrl: opts.prUrl, issueNum: opts.issueNum, repo: opts.repo,
     issueBody: opts.issueBody, prBody: opts.prBody, prDiffStat: opts.prDiffStat,
-    planText: opts.planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
+    planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
   };
 
   const batchResultGroups = await Promise.all(
@@ -725,9 +756,11 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
     }
   }
 
-  const dimensions = results
-    .map(r => r.review)
-    .filter((r): r is DimensionReview => r !== null);
+  // Merge real results with synthetic MISSING results for skipped dims (kaizen #901)
+  const dimensions = [
+    ...skippedResults,
+    ...results.map(r => r.review).filter((r): r is DimensionReview => r !== null),
+  ];
 
   const missingCount = dimensions.reduce(
     (sum, d) => sum + d.findings.filter(f => f.status === 'MISSING').length, 0,
@@ -740,7 +773,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
 
   return {
     dimensions,
-    verdict: missingCount === 0 && dimensions.length === effective.length ? 'pass' : 'fail',
+    verdict: missingCount === 0 && dimensions.length === (effective.length + skippedDimensions.length) ? 'pass' : 'fail',
     missingCount,
     partialCount,
     durationMs,

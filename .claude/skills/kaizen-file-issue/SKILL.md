@@ -142,6 +142,10 @@ Print the issue URL and a one-line summary. If this was triggered from `/kaizen-
 - **Becoming a PRD** — if the problem needs mapping, use `/kaizen-prd` instead.
 - **Prescribing a mechanism** — name both failure modes the constraint should prevent, not just the one you observed (#722).
 
+## Structured Issue Bodies
+
+Use `##` section headers in the issue body (Problem, Evidence, Acceptance Criteria, etc.). These are readable by `/kaizen-sections` tools — agents can later read or update individual sections without rewriting the entire body: `npx tsx src/cli-section-editor.ts read-section --issue {N} --repo "$ISSUES_REPO" --name "Acceptance Criteria"`
+
 ## Issue Body Quality Checklist
 
 Before filing, verify the issue body passes these checks:

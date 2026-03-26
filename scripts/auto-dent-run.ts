@@ -27,6 +27,7 @@ import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js';
+import { writeAttachment, addSection } from '../src/section-editor.js';
 import {
   reviewBattery,
   formatBatteryReport,
@@ -209,6 +210,9 @@ export interface RunResult {
   /** Cost of the requirements review in USD */
   reviewCostUsd?: number;
 }
+
+import { extractPlanText } from '../src/structured-data.js';
+export { extractPlanText };
 
 // State I/O
 
@@ -1543,6 +1547,8 @@ async function main(): Promise<void> {
     const repo = state.kaizen_repo || state.host_repo || '';
     try {
       const dimensions = listPrDimensions();
+      // planText is auto-loaded by reviewBattery() via retrievePlan() from plan-store.ts (kaizen #901, #902)
+      // No need to fetch here — just pass issueNum and repo so the auto-load can find it.
       console.log(`  ${color.dim('[review-battery]')} running ${dimensions.join(', ')} review for ${result.prs.length} PR(s)...`);
       for (const prUrl of result.prs) {
         // Emit review round start event
@@ -1591,9 +1597,12 @@ async function main(): Promise<void> {
             }
           }
           appendFileSync(logFile, `\n--- review-battery ---\n${report}\n`);
-          // Post review findings as PR comment (best effort)
+          // Post review findings as structured PR attachment (best effort)
           try {
-            ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(`## Review Battery: FAIL\n\n${report}`)}`);
+            const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '';
+            if (prNum && repo) {
+              writeAttachment({ kind: 'pr', number: prNum, repo }, 'review-battery', `## Review Battery: FAIL\n\n${report}`);
+            }
           } catch { /* best effort */ }
 
           // Spawn fix loop if we have budget remaining

@@ -43,7 +43,7 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 
 | Hook | Level | Blocking | Purpose |
 |------|-------|----------|---------|
-| `kaizen-enforce-pr-review-ts.sh` → `enforce-pr-review.ts` | L3 | Yes (deny) | Blocks Agent tool during PR review (except `kaizen-bg` subagent). Issue #775. |
+| `kaizen-enforce-pr-review-ts.sh` → `enforce-pr-review.ts` | L3 | No (allow) | Agent tool always allowed during PR review — review uses Agent for dimension subagents (kaizen #895). |
 
 ## PostToolUse Hooks — Bash Matcher
 
