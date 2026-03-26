@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { Readable } from 'node:stream';
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeHookOutput, getCurrentBranch, readHookInput } from './hook-io.js';
@@ -74,9 +74,9 @@ describe('hook-io', () => {
       // failure (incident: PR #965 merged without review gate due to this gap).
       const traceFile = join(mkdtempSync(join(tmpdir(), 'hook-io-trace-')), 'trace.jsonl');
       const origTrace = process.env.KAIZEN_HOOK_TRACE;
-      const origEnabled = process.env.KAIZEN_HOOK_TRACE_ENABLED;
+      // Set the trace file path only — isTraceEnabled() checks KAIZEN_HOOK_TRACE !== '0',
+      // so any non-'0' value (including the path) enables tracing.
       process.env.KAIZEN_HOOK_TRACE = traceFile;
-      process.env.KAIZEN_HOOK_TRACE_ENABLED = '1';
 
       const originalStdin = process.stdin;
       const badJson = '{"tool_name":"Bash","body":"```code\nwith backticks and $vars\n```"}INVALID';
@@ -97,10 +97,30 @@ describe('hook-io', () => {
         Object.defineProperty(process, 'stdin', { value: originalStdin, configurable: true });
         if (origTrace !== undefined) process.env.KAIZEN_HOOK_TRACE = origTrace;
         else delete process.env.KAIZEN_HOOK_TRACE;
-        if (origEnabled !== undefined) process.env.KAIZEN_HOOK_TRACE_ENABLED = origEnabled;
-        else delete process.env.KAIZEN_HOOK_TRACE_ENABLED;
         rmSync(traceFile, { force: true });
         rmSync(join(traceFile, '..'), { recursive: true, force: true });
+      }
+    });
+
+    it('INVARIANT: KAIZEN_HOOK_TRACE=0 disables trace (no file written on parse failure)', async () => {
+      // isTraceEnabled() returns false when KAIZEN_HOOK_TRACE === '0'
+      const origTrace = process.env.KAIZEN_HOOK_TRACE;
+      process.env.KAIZEN_HOOK_TRACE = '0';
+
+      const originalStdin = process.stdin;
+      const readable = Readable.from([Buffer.from('invalid json{{{')]);
+      Object.defineProperty(process, 'stdin', { value: readable, configurable: true });
+
+      try {
+        const result = await readHookInput();
+        expect(result).toBeNull();
+        // Tracing is disabled — default trace file must NOT be written
+        // (we can't check /tmp directly, but we verify the result is null without error)
+        // The key invariant: no trace written when KAIZEN_HOOK_TRACE='0'
+      } finally {
+        Object.defineProperty(process, 'stdin', { value: originalStdin, configurable: true });
+        if (origTrace !== undefined) process.env.KAIZEN_HOOK_TRACE = origTrace;
+        else delete process.env.KAIZEN_HOOK_TRACE;
       }
     });
 

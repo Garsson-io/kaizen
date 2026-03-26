@@ -540,16 +540,21 @@ describe('pr-review-loop — null-input observability (kaizen #975)', () => {
     expect(entry.hook).toBe('pr-review-loop');
   });
 
-  it('INVARIANT: malformed JSON writes null_input trace entry', () => {
+  it('INVARIANT: malformed JSON writes null_input trace entry from pr-review-loop', () => {
     // PR bodies with markdown (backticks, $vars, code blocks) can cause
-    // JSON.parse to fail in the hook stdin. Must trace, not silently exit.
+    // JSON.parse to fail in the hook stdin. hook-io.ts writes json_parse_failed,
+    // then readHookInput() returns null, and pr-review-loop.ts MUST write null_input.
     const badJson = '{"tool_name":"Bash","cmd":"gh pr create --body \\"```\\n$var\\n```\\""}EXTRA';
     runHookRaw(badJson, { KAIZEN_HOOK_TRACE: traceFile });
     expect(fs.existsSync(traceFile)).toBe(true);
     const lines = fs.readFileSync(traceFile, 'utf8').trim().split('\n').filter(Boolean);
     expect(lines.length).toBeGreaterThanOrEqual(1);
-    const entry = lines.map(l => JSON.parse(l)).find(e => e.action === 'ignore');
-    expect(entry).toBeDefined();
-    expect(entry.reason).toBe('null_input');
+    // pr-review-loop.ts writes the null_input entry (after hook-io.ts writes json_parse_failed)
+    const prReviewEntry = lines.map(l => JSON.parse(l)).find(
+      e => e.action === 'ignore' && e.hook === 'pr-review-loop'
+    );
+    expect(prReviewEntry).toBeDefined();
+    expect(prReviewEntry.reason).toBe('null_input');
+    expect(prReviewEntry.hook).toBe('pr-review-loop');
   });
 });

@@ -29,7 +29,7 @@ The concrete incident that created this policy: a planning skill was updated to 
 Scan the diff for modifications to:
 - `.claude/skills/*/SKILL.md` — any kaizen skill
 - `prompts/review-*.md` — review battery dimensions
-- `.claude/kaizen/policies.md`, `workflow.md`, `zen.md`, `verification.md` — core workflow docs
+- `.claude/kaizen/workflow.md`, `zen.md`, `verification.md` — core workflow docs (NOT policies.md — policy document edits without skill/prompt changes don't require behavioral proof)
 - Any `CLAUDE.md` file
 
 If **none** of these are present in the diff: return a single DONE finding "No skill or prompt files modified — dimension does not apply."
