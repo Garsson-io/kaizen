@@ -638,10 +638,7 @@ describe('Tier 4 — auto-dent E2E full fix loop (CLAUDE_E2E_AUTODENT=1 to enabl
             `  - Issue #${issue2Num}: NaN on empty in average (src/utils.ts)\n\n` +
             `IMPORTANT: The bugs are on branch "${testBranch}", NOT on main. ` +
             `Clone that branch, create fix branches from it, and PR back to "${testBranch}". ` +
-            `Do NOT target main.\n\n` +
-            `REQUIRED: Include "Closes #${issue1Num}" and "Closes #${issue2Num}" in the PR body ` +
-            `so the issues close automatically when the PR merges. ` +
-            `After merging, verify both issues show as closed.`,
+            `Do NOT target main.`,
           batch_start: Math.floor(ts / 1000),
           max_runs: 1,
           cooldown: 0,

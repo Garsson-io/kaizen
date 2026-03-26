@@ -51,10 +51,18 @@ already resolved, skip it and pick from the backlog as usual.
 
 ## Merge & Labeling Policy
 
-After creating a PR, you MUST queue it for auto-merge:
-  gh pr merge <url> --repo {{host_repo}} --squash --delete-branch --auto
-Do NOT leave PRs open for manual review — this is an unattended batch.
-The harness will also attempt auto-merge as a safety net, but do it yourself first.
+After creating a PR, you MUST:
+
+1. Queue it for auto-merge:
+     gh pr merge <url> --repo {{host_repo}} --squash --delete-branch --auto
+   Do NOT leave PRs open for manual review — this is an unattended batch.
+   The harness will also attempt auto-merge as a safety net, but do it yourself first.
+
+2. Explicitly close every issue this PR fixes:
+     gh issue close <num> --repo {{host_repo}}
+   Do this immediately after queueing auto-merge — do NOT rely on "Closes #N"
+   keywords in the PR body, because GitHub only auto-closes issues that way
+   when the PR targets the repository's default branch. Explicit close always works.
 
 ## Bridging Abstract Work to Concrete Steps
 
@@ -114,7 +122,7 @@ Phases and their expected keys:
 | PR | After creating a PR | url=<PR URL> |
 | MERGE | After queuing auto-merge | url=<PR URL>, status=<queued/merged> |
 | DECOMPOSE | After breaking down an epic/PRD | epic=<#NNN>, issues_created=<#X,#Y,#Z> |
-| REFLECT | After reflection | issues_filed=<N>, lessons=<short summary> |
+| REFLECT | After reflection | issues_filed=<N>, issues_closed=<#A,#B,...>, lessons=<short summary> |
 
 Example:
   AUTO_DENT_PHASE: PICK | issue=#472 | title=improve hook test DRY
