@@ -16,6 +16,7 @@ import {
   discoverDimensions,
   loadDimensionMetas,
   resolvePromptsDir,
+  parseFrontmatter,
 } from './review-battery.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -155,15 +156,14 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
       continue;
     }
 
-    // Check frontmatter exists
-    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!fmMatch) {
+    // Check frontmatter exists and has required fields
+    const fm = parseFrontmatter(content);
+    if (!fm) {
       errors.push('Missing YAML frontmatter');
     } else {
-      const fm = fmMatch[1];
-      if (!/^name\s*:/m.test(fm)) errors.push('Frontmatter missing "name" field');
-      if (!/^description\s*:/m.test(fm)) errors.push('Frontmatter missing "description" field');
-      if (!/^applies_to\s*:/m.test(fm)) errors.push('Frontmatter missing "applies_to" field');
+      if (!fm.name) errors.push('Frontmatter missing "name" field');
+      if (!fm.description) errors.push('Frontmatter missing "description" field');
+      if (!fm.applies_to) errors.push('Frontmatter missing "applies_to" field');
     }
 
     // Check for ```json output format section

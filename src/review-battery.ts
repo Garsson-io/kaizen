@@ -14,6 +14,7 @@
 import { spawnSync, spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
+import YAML from 'yaml';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -194,37 +195,16 @@ export function reviewBriefing(
 
 /**
  * Parse YAML frontmatter from a review prompt file.
- * Handles scalar values and list items (lines starting with "  - ").
- * Returns null if no frontmatter found.
+ * Returns null if no frontmatter found or YAML is invalid.
  */
-function parseFrontmatter(content: string): Record<string, string | string[]> | null {
+export function parseFrontmatter(content: string): Record<string, unknown> | null {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return null;
-  const result: Record<string, string | string[]> = {};
-  let currentKey = '';
-  for (const line of match[1].split('\n')) {
-    // List item: "  - value"
-    const listItem = line.match(/^\s+-\s+"?([^"]*)"?$/);
-    if (listItem && currentKey) {
-      if (!Array.isArray(result[currentKey])) result[currentKey] = [];
-      (result[currentKey] as string[]).push(listItem[1].trim());
-      continue;
-    }
-    // Scalar: "key: value"
-    const kv = line.match(/^(\w[\w_-]*)\s*:\s*(.+)$/);
-    if (kv) {
-      currentKey = kv[1];
-      result[currentKey] = kv[2].trim();
-      continue;
-    }
-    // Key with no inline value (list follows): "key:"
-    const listKey = line.match(/^(\w[\w_-]*)\s*:\s*$/);
-    if (listKey) {
-      currentKey = listKey[1];
-      result[currentKey] = [];
-    }
+  try {
+    return YAML.parse(match[1]) as Record<string, unknown>;
+  } catch {
+    return null;
   }
-  return result;
 }
 
 /**
@@ -254,6 +234,17 @@ export function listDimensions(promptsDir?: string): string[] {
   return Object.keys(discoverDimensions(promptsDir));
 }
 
+/** Dimensions excluded from post-PR review (plan-phase-only dimensions). */
+const PR_SKIP_DIMENSIONS = ['plan-coverage'];
+
+/**
+ * List dimensions applicable to post-PR review.
+ * Excludes plan-phase-only dimensions (e.g. plan-coverage).
+ */
+export function listPrDimensions(promptsDir?: string): string[] {
+  return listDimensions(promptsDir).filter(d => !PR_SKIP_DIMENSIONS.includes(d));
+}
+
 /**
  * Load metadata for all review dimensions.
  * Reads frontmatter from each prompts/review-*.md file.
@@ -269,7 +260,7 @@ export function loadDimensionMetas(promptsDir?: string): DimensionMeta[] {
       const needsRaw = fm?.needs;
       const needs: DataNeed[] = Array.isArray(needsRaw)
         ? needsRaw as DataNeed[]
-        : (typeof needsRaw === 'string' ? needsRaw.replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean) as DataNeed[] : ['diff']);
+        : (typeof needsRaw === 'string' ? [needsRaw as DataNeed] : ['diff']);
       const highWhen = Array.isArray(fm?.high_when) ? fm.high_when as string[] : [];
       const lowWhen = Array.isArray(fm?.low_when) ? fm.low_when as string[] : [];
       metas.push({

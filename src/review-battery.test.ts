@@ -28,6 +28,7 @@ import {
   spawnBatchReview,
   parseAllReviewOutputs,
   groupByDataNeeds,
+  parseFrontmatter,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
@@ -47,6 +48,20 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, spawnSync: vi.fn(actual.spawnSync), spawn: vi.fn(actual.spawn) };
 });
+
+// Shared test helpers — module-level to avoid copy-paste across describe blocks
+
+/** Build a stream-json JSONL payload as claude emits with --output-format stream-json --verbose. */
+function streamJsonPayload(text: string, costUsd: number): string {
+  const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+  const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
+  return `${assistant}\n${result}\n`;
+}
+
+/** Build a minimal DimensionMeta for unit tests. */
+function makeMeta(name: string, needs: string[] = ['diff']): DimensionMeta {
+  return { name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md` };
+}
 
 // Tier 1: Schema and parser tests
 
@@ -327,9 +342,6 @@ describe('loadReviewPrompt', () => {
 // Tier 1: Coverage validation gate
 
 describe('validateReviewCoverage', () => {
-  const makeMeta = (name: string): DimensionMeta => ({
-    name, description: '', applies_to: 'pr', needs: ['diff'], file: `review-${name}.md`,
-  });
   const makeReview = (dim: string): DimensionReview => ({
     dimension: dim, verdict: 'pass', findings: [], summary: 'ok',
   });
@@ -412,10 +424,6 @@ describe('renderTemplate', () => {
 // Tier 1: computeDataOverlap
 
 describe('computeDataOverlap', () => {
-  const makeMeta = (name: string, needs: string[]): DimensionMeta => ({
-    name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md`,
-  });
-
   it('returns empty array for no metas', () => {
     expect(computeDataOverlap([])).toEqual([]);
   });
@@ -486,14 +494,6 @@ describe('spawnReview', () => {
       });
       return proc;
     });
-  }
-
-  // Build stream-json JSONL output as claude now emits (--output-format stream-json --verbose).
-  // The result.result field is always empty; text lives in assistant content blocks.
-  function streamJsonPayload(text: string, costUsd: number): string {
-    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
-    return `${assistant}\n${result}\n`;
   }
 
   it('returns parsed review when claude exits 0 with valid JSON', async () => {
@@ -569,12 +569,6 @@ describe('reviewBattery', () => {
       });
       return proc;
     });
-  }
-
-  function streamJsonPayload(text: string, costUsd: number): string {
-    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
-    return `${assistant}\n${result}\n`;
   }
 
   const passingOutput = streamJsonPayload(
@@ -688,10 +682,6 @@ Second dimension:
 // Tier 1: groupByDataNeeds (pure)
 
 describe('groupByDataNeeds', () => {
-  const makeMeta = (name: string, needs: string[]): DimensionMeta => ({
-    name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md`,
-  });
-
   it('groups dims with identical data needs together', () => {
     const metas = [
       makeMeta('error-handling', ['diff']),
@@ -827,12 +817,6 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     vi.mocked(spawnSync).mockRestore();
     vi.mocked(spawn).mockRestore();
   });
-
-  function streamJsonPayload(text: string, costUsd: number): string {
-    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
-    return `${assistant}\n${result}\n`;
-  }
 
   function mockClaudeSequential(responses: Array<{ stdout: string; exitCode?: number }>) {
     vi.mocked(spawnSync).mockImplementation((cmd: string) => {
@@ -1080,18 +1064,6 @@ describe('Tier 1 — prompt file structure (all dimensions)', () => {
   const promptsDir = resolvePromptsDir();
   const validAppliesTo = new Set(['pr', 'plan', 'both']);
 
-  // Parse YAML frontmatter between --- delimiters
-  function parseFrontmatterFields(content: string): Record<string, string> | null {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!match) return null;
-    const fields: Record<string, string> = {};
-    for (const line of match[1].split('\n')) {
-      const kv = line.match(/^(\w+):\s*(.+)$/);
-      if (kv) fields[kv[1]] = kv[2].trim().replace(/^["']|["']$/g, '');
-    }
-    return fields;
-  }
-
   const dimensions = [
     'dry', 'error-handling', 'improvement-lifecycle', 'logic-correctness',
     'plan-coverage', 'plan-fidelity', 'pr-description', 'requirements',
@@ -1107,25 +1079,25 @@ describe('Tier 1 — prompt file structure (all dimensions)', () => {
 
     it(`review-${dim}.md has parseable frontmatter`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content);
+      const fm = parseFrontmatter(content) as Record<string, string> | null;
       expect(fm, `Could not parse frontmatter in review-${dim}.md`).not.toBeNull();
     });
 
     it(`review-${dim}.md frontmatter name matches filename`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content)!;
+      const fm = parseFrontmatter(content) as Record<string, string>;
       expect(fm.name, `name field in review-${dim}.md should be "${dim}"`).toBe(dim);
     });
 
     it(`review-${dim}.md has non-empty description`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content)!;
+      const fm = parseFrontmatter(content) as Record<string, string>;
       expect(fm.description, `description missing in review-${dim}.md`).toBeTruthy();
     });
 
     it(`review-${dim}.md applies_to is valid`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content)!;
+      const fm = parseFrontmatter(content) as Record<string, string>;
       expect(
         validAppliesTo.has(fm.applies_to),
         `applies_to in review-${dim}.md is "${fm.applies_to}", must be pr|plan|both`,

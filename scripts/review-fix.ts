@@ -28,7 +28,7 @@ import { join } from 'node:path';
 import {
   reviewBattery,
   formatBatteryReport,
-  listDimensions,
+  listPrDimensions,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   type BatteryResult,
@@ -481,7 +481,7 @@ async function main() {
     // ── REVIEW ──
     console.log(`--- Round ${round}/${maxRounds}: REVIEW ---`);
 
-    const dimensions = listDimensions().filter(d => d !== 'plan-coverage'); // plan-coverage is for pre-implementation
+    const dimensions = listPrDimensions();
     const battery = await reviewBattery({
       dimensions,
       prUrl: opts.prUrl,
