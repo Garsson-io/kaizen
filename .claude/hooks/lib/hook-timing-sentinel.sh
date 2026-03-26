@@ -57,7 +57,14 @@ run_hook_benchmark() {
   project_root="$(cd "$hook_dir/../.." && pwd)"
 
   for hook_path in "$hook_dir"/*.sh; do
-    [ -f "$hook_path" ] && [ -x "$hook_path" ] && hooks+=("$hook_path")
+    [ -f "$hook_path" ] && [ -x "$hook_path" ] || continue
+    # Skip TS wrapper shims — they invoke 'exec npx tsx' and carry ~1-2s Node.js
+    # startup overhead per call. Benchmarking them gives misleading results and
+    # causes total benchmark time to exceed test timeouts when many wrappers exist.
+    # Regression introduced by PR #804 which replaced 4 fast bash hooks with 1
+    # TS wrapper, tipping the total benchmark time past the 10s test timeout.
+    grep -qE 'exec npx|^\s*npx ' "$hook_path" && continue
+    hooks+=("$hook_path")
   done
 
   if [ "${#hooks[@]}" -lt "$MIN_HOOKS_FOR_BENCHMARK" ]; then

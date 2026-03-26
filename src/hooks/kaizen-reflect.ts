@@ -154,7 +154,6 @@ function getPrTitle(prUrl: string): string {
 
 /** Run the hook timing sentinel and return its report (empty if all hooks are fast). */
 function runHookTimingSentinel(changedFiles: string): string {
-  if (process.env.HOOK_TIMING_SENTINEL_DISABLED === 'true') return '';
   try {
     // Convert newline-separated changed files to comma-separated for sentinel
     const csvFiles = changedFiles.split('\n').filter(Boolean).join(',');

@@ -71,7 +71,6 @@ function hookEnv(opts?: { branch?: string; isWorktree?: boolean }): Record<strin
     PATH: mockDir.pathWithMocks,
     DEBUG_LOG: "/dev/null",
     IPC_DIR: join(stateDir.path, "ipc"),
-    HOOK_TIMING_SENTINEL_DISABLED: "true",
   };
 }
 
