@@ -35,6 +35,10 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `docs/artifact-lifecycle.md` | Artifact chain — where outputs live, who consumes them, recursive loops |
 | `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume |
 | `src/cli-dimensions.ts` | Dimension CLI: list/show/add/validate `prompts/review-*.md` files |
+| `src/plan-store.ts` | Mechanistic plan/metadata storage against GitHub issues |
+| `src/cli-plan-store.ts` | CLI: store/retrieve plan, testplan, metadata on GitHub issues |
+| `src/section-editor.ts` | Section-based PR/issue body editing (list/read/add/replace/remove named ## sections) |
+| `src/cli-section-editor.ts` | CLI: section editing for PR and issue bodies |
 
 ## Skills
 

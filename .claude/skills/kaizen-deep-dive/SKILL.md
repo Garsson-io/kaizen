@@ -86,6 +86,19 @@ Write this as a GitHub issue with:
 - Root cause: why it keeps happening
 - Solution: the compound fix (concrete bugs + category prevention + skill)
 
+### Phase 2b: Validate Plan Against User Request (MANDATORY)
+
+**Before writing any code**, cross-check the plan against what the user actually asked for. This catches the "filed issue instead of building it" failure mode.
+
+For each item the user mentioned:
+1. Is it in the plan as a **primary** work item (not a follow-up issue)?
+2. If the user said "create X" or "build X", does the plan include building it — not just filing an issue?
+3. Are all user-requested items classified as `role: primary` in the YAML metadata?
+
+**If any user request is missing from the plan**: add it before proceeding. The plan must cover everything the user asked for. Filing an issue is not the same as doing the work.
+
+Use `npx tsx src/cli-plan-store.ts store-metadata` to persist the validated plan on the overarching issue. Use `npx tsx src/cli-plan-store.ts query-connected` to verify all primary issues are accounted for.
+
 ### Phase 3: Fix Concrete Bugs (Immediate value)
 
 Fix all the concrete open bugs that are symptoms of the root cause category. These are the "low-hanging fruit" — they unblock agents TODAY.

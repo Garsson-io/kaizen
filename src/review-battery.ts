@@ -16,6 +16,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import YAML from 'yaml';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
+import { retrievePlan } from './plan-store.js';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -675,6 +676,17 @@ export interface BatteryOptions {
  */
 export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult> {
   const start = Date.now();
+
+  // Auto-load planText from GitHub issue when not provided (kaizen #902)
+  if (!opts.planText && opts.issueNum && opts.repo) {
+    try {
+      const stored = retrievePlan({ issueNum: opts.issueNum, repo: opts.repo });
+      if (stored) {
+        opts.planText = stored.planText;
+        console.log(`  [review] auto-loaded plan text from issue #${opts.issueNum} (${stored.planText.length} chars)`);
+      }
+    } catch { /* best effort — plan dims will emit MISSING if not found */ }
+  }
 
   // Dimensions that need 'plan' data but don't have it get a synthetic MISSING
   // finding instead of being silently skipped (kaizen #901). This ensures the
