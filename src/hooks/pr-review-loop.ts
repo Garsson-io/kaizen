@@ -248,20 +248,37 @@ Track your round: "ROUND N/${MAX_ROUNDS}: [reviewing|issues found|clean]"
     const round = parseInt(found.round, 10);
     const nextRound = round + 1;
 
-    // Diff-size scaling (kaizen #117)
+    // Diff-size scaling (kaizen #117, #909)
+    // Two thresholds: incremental diff (since last push) and cumulative diff
+    // (since last full review). A series of small pushes can accumulate large
+    // changes — only auto-pass when BOTH incremental AND cumulative are small.
     const rawState = parseStateFile(readFileSync(found.filepath, 'utf-8'));
-    const lastSha =
+    const lastPushSha =
       (rawState as Record<string, string>).LAST_REVIEWED_SHA ?? '';
-    let diffLines = 0;
-    if (lastSha) {
+    const lastFullReviewSha =
+      (rawState as Record<string, string>).LAST_FULL_REVIEW_SHA ?? lastPushSha;
+
+    let incrementalLines = 0;
+    let cumulativeLines = 0;
+    if (lastPushSha) {
       const statLine =
-        git(`diff --stat ${lastSha}..HEAD`).split('\n').pop() ?? '';
+        git(`diff --stat ${lastPushSha}..HEAD`).split('\n').pop() ?? '';
       const ins = parseInt(statLine.match(/(\d+) insertion/)?.[1] ?? '0', 10);
       const del = parseInt(statLine.match(/(\d+) deletion/)?.[1] ?? '0', 10);
-      diffLines = ins + del;
+      incrementalLines = ins + del;
+    }
+    if (lastFullReviewSha) {
+      const statLine =
+        git(`diff --stat ${lastFullReviewSha}..HEAD`).split('\n').pop() ?? '';
+      const ins = parseInt(statLine.match(/(\d+) insertion/)?.[1] ?? '0', 10);
+      const del = parseInt(statLine.match(/(\d+) deletion/)?.[1] ?? '0', 10);
+      cumulativeLines = ins + del;
     }
 
-    if (diffLines > 0 && diffLines <= 15) {
+    // Auto-pass only when BOTH incremental AND cumulative are small
+    const SMALL_PUSH = 15;
+    const CUMULATIVE_CAP = 100;
+    if (incrementalLines > 0 && incrementalLines <= SMALL_PUSH && cumulativeLines <= CUMULATIVE_CAP) {
       const fp = writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {
         PR_URL: found.prUrl,
         ROUND: String(nextRound),
@@ -270,7 +287,9 @@ Track your round: "ROUND N/${MAX_ROUNDS}: [reviewing|issues found|clean]"
       });
       const sha = git('rev-parse HEAD');
       if (sha) appendFileSync(fp, `LAST_REVIEWED_SHA=${sha}\n`);
-      return `\n\ud83d\udd0d Small push (${diffLines} lines) \u2014 abbreviated review (round ${nextRound}/${MAX_ROUNDS}). Auto-passed.\n`;
+      // Preserve the full-review SHA so cumulative diff keeps growing
+      if (lastFullReviewSha) appendFileSync(fp, `LAST_FULL_REVIEW_SHA=${lastFullReviewSha}\n`);
+      return `\n\ud83d\udd0d Small push (${incrementalLines} lines, ${cumulativeLines} cumulative) \u2014 abbreviated review (round ${nextRound}/${MAX_ROUNDS}). Auto-passed.\n`;
     }
 
     if (nextRound > MAX_ROUNDS) {
@@ -305,7 +324,11 @@ Track your round: "ROUND N/${MAX_ROUNDS}: [reviewing|issues found|clean]"
       BRANCH: branch,
     });
     const sha = git('rev-parse HEAD');
-    if (sha) appendFileSync(fp, `LAST_REVIEWED_SHA=${sha}\n`);
+    if (sha) {
+      appendFileSync(fp, `LAST_REVIEWED_SHA=${sha}\n`);
+      // Full review: reset the cumulative diff baseline
+      appendFileSync(fp, `LAST_FULL_REVIEW_SHA=${sha}\n`);
+    }
 
     return `
 \ud83d\udccb REVIEW ROUND ${found.round}/${MAX_ROUNDS}
@@ -321,14 +344,6 @@ ${printChecklist(found.prUrl, found.round, MAX_ROUNDS)}
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-
-  // Trace for debugging hook invocation (kaizen #909)
-  try {
-    const cmd = input?.tool_input?.command ?? '';
-    const cmdShort = cmd.replace(/\n/g, '\\n').slice(0, 120);
-    const exitCode = input?.tool_response?.exit_code ?? '?';
-    appendFileSync('/tmp/.pr-review-hook-trace.log', `TS cmd="${cmdShort}" exit=${exitCode}\n`);
-  } catch { /* ignore trace errors */ }
 
   if (!input) process.exit(0);
 
