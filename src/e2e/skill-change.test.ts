@@ -217,3 +217,101 @@ describe("kaizen-file-issue — Duplicate Decision Table", () => {
     expect(skill).toContain("Superficially similar");
   });
 });
+
+// ---------------------------------------------------------------------------
+// kaizen-evaluate — Phase 4.5: Plan Formation (kaizen #981)
+// ---------------------------------------------------------------------------
+
+describe("kaizen-evaluate — Phase 4.5: Plan Formation", () => {
+  it("INVARIANT: SKILL.md contains Phase 4.5 with structured plan formation", () => {
+    // DONE WHEN: kaizen-evaluate/SKILL.md has Phase 4.5 requiring agents to answer
+    // GOAL/DONE WHEN/hypothesis/alternatives/seam before writing any plan.
+    // Root of #981: agents wrote plans without grounding (no DONE WHEN, no hypothesis).
+    const skill = loadSkill("kaizen-evaluate");
+    expect(skill).toContain("Phase 4.5");
+    expect(skill).toContain("DONE WHEN");
+    expect(skill).toContain("GOAL:");
+    expect(skill).toContain("Information Retrieved");
+    expect(skill).toContain("HYPOTHESIS:");
+    expect(skill).toContain("Seam Map");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Behavioral smoke test — dry dimension detects known DRY violation (kaizen #952)
+// ---------------------------------------------------------------------------
+
+describe("Behavioral: dry dimension detects copy-paste in kaizen-test-fixture#24", () => {
+  it.skipIf(!isLive)(
+    "INVARIANT: dry dimension returns MISSING/PARTIAL for pad() copy-paste across 3 functions",
+    () => {
+      // Fixture: Garsson-io/kaizen-test-fixture PR #24 contains formatters.ts
+      // with pad() helper copy-pasted identically into formatDate, formatPrice,
+      // and formatDuration — a classic 3-copy DRY violation.
+      //
+      // The dry review dimension MUST detect this as MISSING or PARTIAL.
+      // Before this test existed: no behavioral proof that dimensions work at all.
+      // After: any regression in the dry dimension is caught before it ships.
+      const fixtureDiff = `diff --git a/src/formatters.ts b/src/formatters.ts
+new file mode 100644
+--- /dev/null
++++ b/src/formatters.ts
+@@ -0,0 +1,37 @@
++export function formatDate(date: Date): string {
++  const pad = (n: number) => String(n).padStart(2, '0');
++  const year = date.getFullYear();
++  const month = pad(date.getMonth() + 1);
++  const day = pad(date.getDate());
++  if (!year || isNaN(year)) return 'invalid';
++  return \`\${year}-\${month}-\${day}\`;
++}
++export function formatPrice(cents: number): string {
++  const pad = (n: number) => String(n).padStart(2, '0');
++  const dollars = Math.floor(cents / 100);
++  const remainder = pad(cents % 100);
++  if (!dollars && !cents) return 'invalid';
++  return \`$\${dollars}.\${remainder}\`;
++}
++export function formatDuration(seconds: number): string {
++  const pad = (n: number) => String(n).padStart(2, '0');
++  const hours = Math.floor(seconds / 3600);
++  const minutes = pad(Math.floor((seconds % 3600) / 60));
++  const secs = pad(seconds % 60);
++  if (!seconds || isNaN(seconds)) return 'invalid';
++  return \`\${hours}:\${minutes}:\${secs}\`;
++}`;
+
+      const dimPrompt = readFileSync(
+        resolve(KAIZEN_ROOT, "prompts/review-dry.md"),
+        "utf-8",
+      );
+
+      const prompt = `${dimPrompt}
+
+## PR Diff to Review
+
+\`\`\`diff
+${fixtureDiff}
+\`\`\`
+
+Review this diff for DRY violations. Output JSON only.`;
+
+      const output = runSkill(prompt, { maxBudget: 0.15, timeout: 90_000 });
+
+      // Parse the JSON findings block from the output
+      const jsonMatch = output.match(/```json\s*([\s\S]+?)\s*```/);
+      expect(jsonMatch, "output should contain a JSON findings block").toBeTruthy();
+      const findings = JSON.parse(jsonMatch![1]);
+
+      // The dry dimension MUST find the pad() duplication
+      expect(findings.dimension).toBe("dry");
+      const hasDuplication = findings.findings.some(
+        (f: { status: string }) => f.status === "MISSING" || f.status === "PARTIAL",
+      );
+      expect(
+        hasDuplication,
+        "dry dimension must detect the pad() copy-paste across 3 functions",
+      ).toBe(true);
+    },
+  );
+});

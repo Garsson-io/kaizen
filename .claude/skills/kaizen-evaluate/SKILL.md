@@ -250,6 +250,105 @@ You may only recommend reduced scope if you also provide **at least one** of:
 **Example — right:**
 > "Start with L1 prompt + L2-warn hook that counts mocks and emits warnings. The warnings create the signal — if we see repeated warnings over the next few cases, that's the trigger to upgrade to L2-block. Filed as kaizen #N with trigger criteria."
 
+### Phase 4.5: Plan Formation
+
+Before writing any plan, form it through five grounding steps. These steps exist because the first plan you write without grounding will address what the issue *says* to build, not what will make the problem *stop happening*. The grounding takes 10-20 minutes. It prevents the 30-minute implementation of the wrong thing.
+
+**Extract the success criteria first.** Read the issue body. Find the observable failure that motivated the issue — not the proposed fix, the original pain. Write it in two lines:
+
+```
+GOAL: [what the user/system can't do now]
+DONE WHEN: [the specific verifiable outcome that means it's fixed]
+```
+
+Verifiable means: an external observer can check it without reading the implementation. Write this before you look at any code. Every plan step you add must connect back to DONE WHEN. Steps that don't are building infrastructure, not solving the problem.
+
+**Survey what already exists.** Before designing a solution, read CLAUDE.md's Key Files table. Then grep for existing tools in your problem domain:
+
+```bash
+# Storage/attachment problems:
+grep -r "cli-section-editor\|write-attachment\|store-plan\|store-metadata" src/ --include="*.ts" -l
+
+# Hook problems:
+cat docs/hooks-design.md
+
+# Review/dimension problems:
+npx tsx src/cli-dimensions.ts list && ls prompts/
+```
+
+For each existing tool you find: does it solve the core problem, or an adjacent one? If it solves the core problem, use it. If it solves an adjacent problem, note the integration point. State what you found (or that nothing was found) in the plan's "Information Retrieved" section. Skipping this step is how plans design custom storage over `cli-section-editor.ts`, which already exists and is tested.
+
+**Generate and reject at least one alternative.** Identify the highest-risk design choice in your plan — the choice that determines where state lives or who owns an inter-component contract. Write two options and reject all but one:
+
+```
+OPTION A: [description] — SELECTED
+Failure mode if wrong: [one sentence]
+
+OPTION B: [description] — REJECTED
+Rejected because: [specific failure mode that disqualifies it]
+```
+
+The rejection rationale must name a failure mode, not a preference. "Cleaner" is not a failure mode. "Loses all state if the session dies before the batch write completes" is a failure mode. If there is no irreversible choice in your plan, two options with one-sentence rationale is sufficient. If the plan touches state ownership or interface contracts, three options with named failure modes.
+
+**Validate the proposed fix's assumption.** The issue body's "proposed fix" is the issue author's best guess. Before planning to implement it, state what it assumes and run the fastest test to confirm or falsify:
+
+```
+HYPOTHESIS: [what the proposed fix assumes about the root cause]
+VALIDATION: [what you will run or read to confirm — must take <15 min]
+IF WRONG: [what evidence would disqualify this hypothesis]
+```
+
+Run the validation before committing to the plan. For a code behavior issue: reproduce the failure and confirm it matches the description. For a configuration or regex issue: check the proposed value against a concrete case. For an architecture issue: read the affected file and confirm the structure matches what the issue describes. Do not skip this for "obvious" fixes — three of kaizen's most expensive multi-PR cycles came from planning implementations of plausible but wrong hypotheses.
+
+**Map the testability seams before placing any code.** For each significant behavior in the plan, state:
+
+```
+BEHAVIOR: [what it does]
+LIVES IN: [file.ts, functionName()]
+TESTED IN: [tests/test_file.ts or tests/test_file.sh]
+SEAM: [the injection point that isolates this for testing]
+```
+
+If you cannot name the seam, the behavior is not testable in isolation. Add an extraction task before the implementation task. Red flags requiring extraction: the target location has more than 5 imports, the location is a CLI entry point or script's global scope, or testing it would require mocking more than 3 modules. Extract first, implement second — this is never the optional step.
+
+**Write the plan.** With all five steps complete, write the plan using this structure:
+
+```markdown
+## Success Criteria
+GOAL: [from step 1]
+DONE WHEN: [from step 1]
+
+## Information Retrieved
+- [source]: [what you found] — [how it changes or confirms the plan]
+- (or: "No relevant existing tools found for [domain]")
+
+## Design Alternatives Considered
+### Option A: [description] — SELECTED
+Failure mode if wrong: ...
+
+### Option B: [description] — REJECTED
+Rejected because: ...
+
+## Tasks
+[Ordered, concrete, traceable to DONE WHEN]
+
+## Seam Map
+[Per-behavior: file, test file, seam]
+
+## Test Plan
+[Per-task: what invariant is tested, which test file, unit/integration/E2E]
+```
+
+Store the plan immediately after writing it:
+
+```bash
+npx tsx src/cli-structured-data.ts store-plan --issue {N} --repo "$ISSUES_REPO" --file plan.md
+```
+
+Then proceed to Phase 5 (Ask the Admin). The plan coverage review (Phase 5.5) runs after the admin approves direction. The plan formed here is the input to that review.
+
+**Time budget:** Simple issue (single file, no new abstractions): 10-12 minutes total. Complex issue (new module, state decision, multi-component wiring): 15-20 minutes. If this phase is taking longer than 20 minutes, you are either designing rather than surveying (go back to step 2 and find what already exists) or the issue requires `/kaizen-prd` before evaluation.
+
 ### Phase 4: Critique the spec (if one exists)
 
 Read the spec with the incidents in hand. Evaluate:
