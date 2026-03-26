@@ -246,7 +246,7 @@ const VALID_TRANSITION_PHASES = new Set(['needs_review', 'needs_fix', 'fix_runni
  */
 export function validateTransition(
   targetPhase: string,
-  _state: ReviewFixState,
+  _state: ReviewFixState, // reserved: future phase-from→phase-to validation; currently unused
   findings: ReviewFinding[],
 ): { allowed: boolean; reason?: string } {
   if (!VALID_TRANSITION_PHASES.has(targetPhase)) {
