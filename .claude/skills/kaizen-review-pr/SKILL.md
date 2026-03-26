@@ -127,10 +127,27 @@ Send **one message with all Agent tool calls** (parallel launch). For each group
 - Include the full text of each assigned `prompts/review-*.md` verbatim
 - Include pre-fetched diff, issue body, PR body directly in the prompt
 - Instruct the agent to output one JSON findings block per dimension
+- **Instruct each agent to store its own findings immediately** (see storage instruction below)
+
+**Storage instruction to include in every subagent prompt** (substitute actual PR number, repo, round):
+> After outputting your JSON findings blocks, immediately store each dimension you reviewed:
+> ```bash
+> npx tsx src/cli-structured-data.ts store-review-finding \
+>   --pr <PR_NUMBER> --repo <owner/repo> --round <ROUND> \
+>   --dimension <dimension_name> --text '<your findings JSON>'
+> ```
+> Call this once per dimension your group covers, before ending your response.
+
+**Why per-agent storage (not orchestrator batch):** If the orchestrating session is interrupted after some agents complete, already-stored findings survive on the PR. The orchestrator only stores the summary (Phase 5) — per-dimension storage is each agent's own responsibility.
 
 ### Step 2c: Coverage gate
 
-After all agents return: verify every dimension has a JSON findings block. Any dimension missing → spawn a replacement agent for it. **Do not proceed to Phase 3 until all dimensions have findings.**
+After all agents return: verify every dimension has a JSON findings block in the responses AND a marker comment on the PR (`list-review-dims`). Any dimension missing → spawn a replacement agent. **Do not proceed to Phase 3 until all dimensions have findings stored.**
+
+```bash
+npx tsx src/cli-structured-data.ts list-review-dims \
+  --pr <PR_NUMBER> --repo <owner/repo> --round <ROUND>
+```
 
 ---
 
@@ -149,20 +166,6 @@ After all agents return: verify every dimension has a JSON findings block. Any d
 | 1 | Short title of finding | MUST-FIX / SHOULD-FIX | dimension-name |
 
 Then provide detail for each finding below the table.
-
-**MANDATORY: Store findings before Phase 4.** Findings live only in session memory until stored. If the session ends, the worktree is deleted, or KAIZEN_UNFINISHED is used, un-stored findings are lost permanently and the PR has no review record.
-
-Store ALL dimension findings in one call (also writes the review sentinel so the gate guard passes):
-```bash
-# Build the JSON array from all dimension findings collected in Phase 2/3, then:
-echo '[
-  {"dimension": "correctness", "verdict": "pass", "summary": "...", "findings": [...]},
-  {"dimension": "security", "verdict": "fail", "summary": "...", "findings": [...]}
-]' | npx tsx src/cli-structured-data.ts store-review-batch \
-  --pr <PR_NUMBER> --repo <owner/repo> --round <N>
-```
-
-This posts one marker comment per dimension on the PR and writes the review sentinel. The sentinel is required for the `pr-review-loop` gate to clear — without it, the gate stays blocked even after all fixes are made.
 
 If the list is empty after this: → **Phase 5 (Verdict)**.
 
