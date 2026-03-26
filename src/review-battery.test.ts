@@ -968,6 +968,73 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     expect(result.skippedDimensions).toHaveLength(0);
   });
 
+  it('auto-loads planText from GitHub issue when issueNum+repo provided but no planText (kaizen #902)', async () => {
+    // INVARIANT: when issueNum and repo are provided but no planText, reviewBattery
+    // must call retrievePlan() and use the result so plan-requiring dims can run.
+    // Without auto-load, plan-fidelity would be skipped and emit a [data-gap] MISSING finding.
+    // With auto-load, it should be included in the actual review.
+    const planBody = '## Plan\n\n1. Fix the bug\n2. Add tests';
+    // Two responses: one for requirements, one for plan-fidelity (same-needs dims may batch)
+    const reqOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] }),
+      0.05,
+    );
+    const planOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'plan-fidelity', summary: 'ok', findings: [{ requirement: 'Plan exists', status: 'DONE', detail: 'found' }] }),
+      0.05,
+    );
+
+    // spawnSync is called by gh-exec.ts (for retrievePlan) and possibly git.
+    // Mock: gh comments call returns empty (no marker), gh body call returns planBody.
+    vi.mocked(spawnSync).mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      if (cmd === 'gh') {
+        const argStr = (args as string[]).join(' ');
+        // findMarkerComment calls: --jq with comments filter → return empty (no marker)
+        if (argStr.includes('comments')) {
+          return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+        }
+        // fallback body fetch: --json body --jq .body → return plan body
+        if (argStr.includes('.body')) {
+          return { status: 0, stdout: planBody, stderr: '', signal: null, pid: 0, output: [] } as any;
+        }
+        return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      }
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+
+    const outputs = [reqOutput, planOutput];
+    let callCount = 0;
+    vi.mocked(spawn).mockImplementation(() => {
+      const out = outputs[callCount] ?? outputs[outputs.length - 1];
+      callCount++;
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => {
+        proc.stdout.emit('data', Buffer.from(out));
+        proc.emit('close', 0);
+      });
+      return proc;
+    });
+
+    const result = await reviewBattery({
+      dimensions: ['requirements', 'plan-fidelity'],
+      issueNum: '904',
+      repo: 'Garsson-io/kaizen',
+      // No planText — should be auto-loaded from issue body
+    });
+
+    // INVARIANT: plan-fidelity must NOT be in skippedDimensions when plan was auto-loaded
+    expect(result.skippedDimensions).not.toContain('plan-fidelity');
+    // INVARIANT: plan-fidelity dim must exist in results (was not silently dropped)
+    const planDim = result.dimensions.find(d => d.dimension === 'plan-fidelity');
+    expect(planDim, 'plan-fidelity should be in dimensions after auto-load').toBeDefined();
+    // INVARIANT: findings must not be the synthetic [data-gap] MISSING finding
+    expect(planDim!.findings[0].requirement).not.toContain('[data-gap]');
+  });
+
   it('batches same-needs dims into fewer claude calls', async () => {
     // error-handling and logic-correctness both need [diff] — should be one call
     const batchOutput = streamJsonPayload(

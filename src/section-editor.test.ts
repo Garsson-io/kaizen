@@ -191,8 +191,20 @@ describe('addSection — upserts a named section', () => {
   });
 });
 
-describe('replaceSection — throws if section missing', () => {
+describe('replaceSection — replaces existing section or throws if missing', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('replaces existing section content', () => {
+    ghReturns('## Plan\n\nOld content.\n\n## Notes\n\nStay.'); // fetchBody
+    ghReturns(''); // writeBody
+    replaceSection(target, 'Plan', 'New content.');
+    const writeCall = mockGh.mock.calls[1];
+    const body = writeCall[1]![writeCall[1]!.indexOf('--body') + 1] as string;
+    expect(body).toContain('New content');
+    expect(body).not.toContain('Old content');
+    expect(body).toContain('## Notes');
+    expect(body).toContain('Stay');
+  });
 
   it('throws when section does not exist', () => {
     ghReturns('## Plan\n\nContent.');
