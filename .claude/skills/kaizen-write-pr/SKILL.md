@@ -43,7 +43,7 @@ Follow the story with structured sections:
 
 1. **Read the commits**: `git log main..HEAD --oneline` — understand what was built
 2. **Read the diff**: `git diff main..HEAD --stat` — understand the scope
-3. **Read the linked issue**: `gh issue view <N>` — understand the motivation
+3. **Read the linked issue**: `gh issue view <N> --repo "$ISSUES_REPO"` — understand the motivation
 4. **Find the inciting incident**: What specific failure, discovery, or user request triggered this work? If you can't name it, the PR may be solving a theoretical problem.
 5. **Gather evidence**: Test results, cost data, performance numbers, real output. The "Because of that" beats need concrete data, not assertions.
 6. **Write the narrative first**, then the structured sections. The story is the skeleton — the sections are the flesh.
