@@ -75,6 +75,35 @@ Worktree state assumed but not checked | #233,#232,#196|   3  | Yes — add guar
 
 Clusters feed directly into the "Low-Hanging Fruit" and "Feature PRD Candidates" lists in Phase 5. A cluster with a compound fix is worth more than the sum of its individual issues.
 
+### Phase 1.7: Hypothesis Validation (kaizen #948)
+
+Before classifying gaps, **validate each cluster as a hypothesis**. A cluster derived from issue-title pattern-matching is a guess, not a finding. Nothing enters the actionable lists as "low-hanging fruit" until it is either proven or explicitly flagged as speculation.
+
+**For each root-cause cluster from Phase 1.5:**
+
+1. **State the hypothesis explicitly:**
+   > "We believe [X] is true because we observe [Y]."
+
+2. **Design the minimal test** — the fastest thing that would confirm or falsify it:
+   - Grep the codebase for the claimed pattern
+   - Read the relevant file/hook/skill to confirm the gap exists
+   - Run a command that would fail if the problem were absent
+   - Check git log for recent commits that may have already fixed it
+
+3. **Run the test or defer with a reason:**
+   - If run: record the evidence ("confirmed — found X at file:line" or "refuted — Y is already handled at Z")
+   - If deferred: state why ("requires running claude -p, too slow for this session") and mark as `[HYPOTHESIS]`
+
+4. **Tag every item** in the actionable lists:
+   - `[PROVEN]` — hypothesis tested, concrete evidence gathered
+   - `[HYPOTHESIS]` — not yet tested, test described, treat as speculation
+
+**Rule:** Nothing ships as "low-hanging fruit" tagged `[HYPOTHESIS]`. Hypothesis items belong in a separate "Unvalidated — needs testing first" section, not the actionable lists.
+
+**Dual failure mode check:**
+- If absent: actionable lists contain guesses formatted as findings — agents act on speculation
+- If present: analysis takes slightly longer, some real gaps get deferred — acceptable trade-off
+
 ### Phase 2: Classify Gaps
 
 Organize findings into three categories:
@@ -272,6 +301,8 @@ gh pr list --repo "$HOST_REPO" --state merged --search "kaizen #NNN" --limit 3
 
 If matches found, flag the issue as: **"Possibly already addressed — verify before starting. Recent: [commit/PR references]"** and move it to a separate "needs verification" list rather than recommending it as ready work.
 
+**Tag requirement (from Phase 1.7):** Every item in List 1 must be tagged `[PROVEN]` (hypothesis tested) or `[HYPOTHESIS]` (not yet tested). Items tagged `[HYPOTHESIS]` go into a separate "Unvalidated — needs testing first" section, NOT into the main low-hanging fruit list.
+
 Format each verified issue as a ready-to-file kaizen issue with: title, body (what/why/how), labels.
 
 #### List 2: Feature PRD Candidates
@@ -348,6 +379,7 @@ Create these tasks at skill start using TaskCreate:
 |---|------|-------------|
 | 1 | Gather landscape (parallel agents) | Agent A: issues + structure. Agent B: incidents + friction. |
 | 2 | Cluster by root cause | Group issues with common roots. Identify clusters of 3+ (high-value for deep-dive). |
+| 2.7 | Validate hypotheses (Phase 1.7) | For each cluster: state hypothesis, design test, run or defer, tag as [PROVEN] or [HYPOTHESIS]. |
 | 3 | Classify gaps | Testing gaps, tooling gaps, taxonomy/horizon gaps. Failure mode analysis (FM1-FM12). |
 | 4 | Analyze concentration | Per-horizon: open issues, incidents, active work. Over/under-concentrated, orphaned. |
 | 5 | Identify unnamed dimensions | Incident clusters not in existing horizons. Missing axes. Evaluate: new horizon vs axis vs feature. |

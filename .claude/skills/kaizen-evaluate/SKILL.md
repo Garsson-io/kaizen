@@ -97,6 +97,37 @@ This prevents redundant analysis when someone already invested in understanding 
 
 **If this issue is part of an epic (has a `Parent: #N` reference):** Read the parent epic. Check whether it contains methodology or process patterns that should already be in skills/docs/hooks but aren't. Epics accumulate process insights ("always form hypotheses," "use progressive detail," "escalate on recurrence") that are more valuable than the feature work itself — but they only help future agents if they're in the repo. If you find unapplied methodology, include applying it in this case's scope. (kaizen #381)
 
+### Phase 0.7: Problem Validation (kaizen #949)
+
+**Before gathering incidents or scoping anything, verify the claimed problem actually exists right now.**
+
+Issues — especially those from gap analysis or auto-dent explore runs — may describe problems that have since been fixed, were misdiagnosed, or never existed as stated. Validating the problem first prevents implementing solutions to problems that don't exist.
+
+**Steps:**
+
+1. **Re-state the claim as a falsifiable hypothesis:**
+   > "We believe [issue title claim] is observable as [specific symptom] in the current codebase."
+
+2. **Design the minimal test** — the simplest thing that would confirm or deny the problem exists right now:
+   - Grep for the claimed pattern: `grep -rn "pattern" src/ .claude/`
+   - Read the relevant file at the claimed location
+   - Run a command and check the output
+   - Check if the reported behavior actually reproduces
+
+3. **Run the test. Report the result:**
+   - **"Problem confirmed — evidence: [X at file:line]"** → proceed to Phase 1
+   - **"Problem NOT confirmed — found: [Y instead]"** → do NOT proceed to scope; see below
+
+**If problem NOT confirmed:**
+- Comment on the issue: "Phase 0.7 check: claimed problem not confirmed in current codebase. Found: [Y]. Recommend: [close as already-fixed | update issue description | investigate further]."
+- Do not implement the solution.
+- Consider closing the issue as "cannot reproduce" or updating the issue body with what was actually found.
+- This is a success, not a failure — you saved a session of work on the wrong problem.
+
+**Dual failure mode check:**
+- If absent: agents implement solutions to problems that may not exist, especially when issues come from stale gap analyses
+- If present (over-correction): valid problems with non-obvious symptoms get dismissed — mitigated by "design a test that WOULD reproduce the problem" rather than "I grepped and didn't find it"
+
 ### Phase 1: Gather the incidents
 
 Don't work in the abstract. Find what actually happened.

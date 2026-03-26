@@ -66,6 +66,53 @@ Always test the **actual deployed artifact**, not just source presence:
 - If a mount provides a file, verify the mount exists AND the consumer reads it
 - "The file exists in the repo" is not verification — "the agent receives it at runtime" is
 
+## Skill Change Policy — MANDATORY before modifying any SKILL.md (kaizen #959)
+
+**Never change a skill without proving the change improves agent behavior.**
+
+A skill change that isn't tested is speculation shipped as code. The structural tests in `src/e2e/skill-change.test.ts` are the enforcement mechanism — they fail until the required content is present.
+
+### Every SKILL.md change requires:
+
+1. **A structural test** — add to `src/e2e/skill-change.test.ts`:
+   - Assert the new section/phrase exists in the file after the change
+   - Must fail BEFORE the change, pass AFTER (TDD RED-GREEN discipline)
+
+2. **A behavioral smoke test** (for changes that affect agent decision-making):
+   - A `it.skipIf(!isLive)(...)` test in `src/e2e/skill-change.test.ts`
+   - Uses `KAIZEN_SKILL_TEST=1 npx vitest run src/e2e/skill-change.test.ts`
+   - Constructs a synthetic scenario where the OLD skill would fail
+   - Runs `claude -p --plugin-dir . "[scenario]"` with the skill loaded
+   - Asserts the NEW behavior in the output
+
+3. **Before/after evidence in the PR body** — required sections:
+   ```
+   ## Skill Change Evidence
+   Old behavior: [what the skill did before — quote or describe]
+   New behavior: [what the skill does now — confirmed by smoke test run]
+   Smoke test output: [paste actual output or link to CI run]
+   ```
+
+4. **Dual failure mode documentation** — for behavioral constraints:
+   - If absent: [what goes wrong]
+   - If present (over-correction risk): [what valid behavior might be blocked]
+
+### Anti-patterns
+
+- "Deferred to #NNN" for behavioral E2E tests — NOT acceptable. If you can't test the change now, don't make the change now.
+- "The change is obvious" — obvious changes still need structural tests.
+- "I'll add tests in a follow-up" — the follow-up never comes. The test is part of the change.
+
+### Running skill tests
+
+```bash
+# Structural only (fast, no LLM, runs in CI):
+npx vitest run src/e2e/skill-change.test.ts
+
+# Full behavioral (requires KAIZEN_SKILL_TEST=1, uses haiku, ~$0.01/test):
+KAIZEN_SKILL_TEST=1 npx vitest run src/e2e/skill-change.test.ts
+```
+
 ## Smoke Tests — MANDATORY when review identifies them
 
 When a PR review says a smoke test is needed, **you must perform it before declaring the PR ready**. "Pending manual smoke test" is not an acceptable review outcome — it means the review is incomplete.

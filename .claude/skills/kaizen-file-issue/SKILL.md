@@ -62,7 +62,17 @@ gh issue list --repo "$ISSUES_REPO" --state open --search "<keywords from the in
 gh issue list --repo "$ISSUES_REPO" --state closed --search "<keywords>" --json number,title,labels --limit 5
 ```
 
-**If a match exists:** Add an incident comment to the existing issue instead of filing a new one. Use this format:
+**If a match exists — explicit decision required (kaizen #959):**
+
+| Similarity | Action |
+|---|---|
+| Same root cause, same problem space | Add an incident comment to the existing issue. Do NOT file a new issue. |
+| Related but distinct failure mode | File new issue AND cross-reference: "Related: #N — same problem space, different failure mode" |
+| Superficially similar but different cause | File new issue with explicit note: "Differs from #N because [specific distinction]" |
+
+**Do not proceed to file without making this decision explicit.** The choice between "same issue" and "new issue" is the most important quality gate in the filing workflow.
+
+Add an incident comment to the existing issue using this format:
 
 ```markdown
 ## Incident — [date]
