@@ -26,6 +26,7 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
     isDir: () => true,
     dirSize: () => 0,
     unlink: () => {},
+    writeFile: () => {},
     ...overrides,
   };
 }
@@ -377,3 +378,90 @@ describe("parseCliArgs", () => {
     expect(result).toEqual({ error: "Unknown arg: --bogus" });
   });
 });
+
+// ── Worktree deletion sentinel (category prevention: #934, #939) ────────────
+
+/**
+ * Build an exec mock that returns values consistent with a single merged worktree
+ * ready for deletion. Records each call to the provided ops array.
+ */
+function makeMergedExec(ops?: Array<{ kind: "write" | "exec"; value: string }>): (cmd: string) => string {
+  return (cmd: string) => {
+    ops?.push({ kind: "exec", value: cmd });
+    if (cmd.includes("rev-parse --abbrev-ref")) return "main";
+    if (cmd.includes("branch --merged")) return "* main";
+    if (cmd.includes("rev-list --count")) return "0";
+    if (cmd.includes("status --porcelain")) return "";
+    if (cmd.includes("worktree list")) return "";
+    if (cmd.includes('branch"') && !cmd.includes("--")) return "* main";
+    return "";
+  };
+}
+
+describe("cleanupWorktrees — deletion sentinel", () => {
+  it("writes .worktree-will-delete sentinel before git worktree remove", () => {
+    // INVARIANT: before any worktree is deleted, a sentinel file must be written
+    // so sessions inside the worktree get a chance to detect imminent deletion.
+    const ops: Array<{ kind: "write" | "exec"; value: string }> = [];
+
+    const deps = makeDeps({
+      readdir: () => ["wt-merged"],
+      isDir: () => true,
+      exists: () => false,
+      writeFile: (p: string) => ops.push({ kind: "write", value: p }),
+      exec: makeMergedExec(ops),
+    });
+
+    cleanupWorktrees(makePaths(), deps, false);
+
+    const sentinelIdx = ops.findIndex(
+      (o) => o.kind === "write" && o.value.includes(".worktree-will-delete"),
+    );
+    const removeIdx = ops.findIndex(
+      (o) => o.kind === "exec" && o.value.includes("worktree remove"),
+    );
+
+    expect(sentinelIdx).toBeGreaterThanOrEqual(0);
+    expect(removeIdx).toBeGreaterThanOrEqual(0);
+    expect(sentinelIdx).toBeLessThan(removeIdx);
+  });
+
+  it("dry-run does NOT write sentinel", () => {
+    // INVARIANT: dry-run is read-only; sentinel must not appear.
+    const writes: string[] = [];
+    const deps = makeDeps({
+      readdir: () => ["wt-merged"],
+      isDir: () => true,
+      exists: () => false,
+      writeFile: (p: string) => writes.push(p),
+      exec: makeMergedExec(),
+    });
+
+    cleanupWorktrees(makePaths(), deps, true);
+
+    expect(writes.filter((p) => p.includes(".worktree-will-delete"))).toHaveLength(0);
+  });
+
+  it("sentinel path is inside the worktree being deleted", () => {
+    // INVARIANT: sentinel must be placed inside the worktree so a process
+    // with that CWD can detect it.
+    const writes: string[] = [];
+    const paths = makePaths("/project");
+
+    const deps = makeDeps({
+      readdir: () => ["wt-abc"],
+      isDir: () => true,
+      exists: () => false,
+      writeFile: (p: string) => writes.push(p),
+      exec: makeMergedExec(),
+    });
+
+    cleanupWorktrees(paths, deps, false);
+
+    const sentinel = writes.find((p) => p.includes(".worktree-will-delete"));
+    expect(sentinel).toBeDefined();
+    expect(sentinel).toContain(paths.worktreesDir);
+    expect(sentinel).toContain("wt-abc");
+  });
+});
+

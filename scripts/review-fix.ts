@@ -22,9 +22,9 @@
  * --dry-run: review only, print the fix prompt, don't spawn fix session
  */
 
-import { spawn as asyncSpawn, spawnSync } from 'node:child_process';
+import { spawn as asyncSpawn, spawnSync, execSync } from 'node:child_process';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, openSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import {
   reviewBattery,
   formatBatteryReport,
@@ -177,8 +177,32 @@ export interface ReviewFixState {
   isMerged?: boolean;
 }
 
+/**
+ * Resolve the state directory from a git-common-dir value.
+ *
+ * State must live in the MAIN repo, never inside a worktree — worktrees are
+ * deleted on merge and would take their state with them (#929, #934, #939).
+ *
+ * @param gitCommonDir - output of `git rev-parse --git-common-dir`
+ *   - In the main checkout: '.git' (relative — note: relative, not absolute)
+ *   - In a worktree:        '/abs/path/to/main/.git' (the COMMON .git dir, NOT the worktree subdir)
+ *     (contrast with --git-dir which returns '/abs/path/to/main/.git/worktrees/<name>')
+ * @param cwd - used when gitCommonDir is '.git' (main checkout)
+ */
+export function resolveStateDir(gitCommonDir: string, cwd: string = process.cwd()): string {
+  const mainRoot =
+    gitCommonDir === '.git'
+      ? cwd
+      : resolve(dirname(gitCommonDir)); // parent of .git dir
+  return join(mainRoot, '.claude', 'review-fix');
+}
+
 function stateDir(): string {
-  const dir = join(process.cwd(), '.claude', 'review-fix');
+  let gitCommonDir = '.git';
+  try {
+    gitCommonDir = execSync('git rev-parse --git-common-dir', { encoding: 'utf8' }).trim();
+  } catch { /* not in a git repo — fall back to CWD */ }
+  const dir = resolveStateDir(gitCommonDir);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -204,6 +228,43 @@ export function saveState(state: ReviewFixState, dir?: string): void {
   const d = dir ?? stateDir();
   const path = join(d, `${stateKey(state.prUrl)}.json`);
   writeFileSync(path, JSON.stringify(state, null, 2));
+}
+
+// ── Transition guard (#929, #939) ────────────────────────────────────
+
+const VALID_TRANSITION_PHASES = new Set(['needs_review', 'needs_fix', 'fix_running']);
+
+/**
+ * Validate whether a manual --transition is permitted.
+ *
+ * Guards against gaming the review gate:
+ *   1. Requires at least one finding for the current round (evidence of review)
+ *   2. Blocks if any finding is MUST-FIX (confidence >= 80, non-DONE)
+ *   3. Rejects unknown target phases
+ *
+ * Pure function — no I/O, fully testable.
+ */
+export function validateTransition(
+  targetPhase: string,
+  _state: ReviewFixState, // reserved: future phase-from→phase-to validation; currently unused
+  findings: ReviewFinding[],
+): { allowed: boolean; reason?: string } {
+  if (!VALID_TRANSITION_PHASES.has(targetPhase)) {
+    return { allowed: false, reason: `Invalid target phase: "${targetPhase}". Valid phases: ${[...VALID_TRANSITION_PHASES].join(', ')}` };
+  }
+  if (findings.length === 0) {
+    return { allowed: false, reason: 'Transition blocked: no findings recorded for the current round. Run the review battery first.' };
+  }
+  const mustFix = findings.filter(
+    (f) => f.status !== 'DONE' && (f.confidence ?? 0) >= 80,
+  );
+  if (mustFix.length > 0) {
+    return {
+      allowed: false,
+      reason: `Transition blocked: ${mustFix.length} MUST-FIX finding${mustFix.length !== 1 ? 's' : ''} remain. Fix all MUST-FIX items before advancing.`,
+    };
+  }
+  return { allowed: true };
 }
 
 // ── CLI ─────────────────────────────────────────────────────────────

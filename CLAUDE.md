@@ -21,7 +21,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `src/hooks/` | TypeScript hooks |
 | `src/hooks/lib/gate-manager.ts` | Unified stop gate — read/format/clear all pending gates |
 | `src/hooks/stop-gate.ts` | Unified stop hook entry point (replaces 3 bash stop hooks) |
-| `.claude/hooks/kaizen-worktree-setup.sh` | SessionStart hook — symlinks node_modules/dist from main repo into fresh worktrees |
+| `.claude/hooks/kaizen-worktree-setup.sh` | SessionStart hook — symlinks node_modules/dist from main repo into fresh worktrees; warns if `.worktree-will-delete` sentinel is present (worktree marked for deletion, #934) |
 | `.claude-plugin/plugin.json` | Plugin manifest with hook registrations |
 | `docs/hooks-design.md` | Hooks patterns, anti-patterns, regex traps, gate design, testing conventions |
 | `docs/hook-test-dry-spec.md` | DRY refactoring spec for hook test infrastructure |
@@ -33,7 +33,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `docs/test-side-effects-and-kaizen-escalation-spec.md` | Test side-effects and L1→L2 escalation patterns |
 | `docs/auto-dent-operations.md` | Auto-dent operational guide — how to run, monitor, debug batch operations |
 | `docs/artifact-lifecycle.md` | Artifact chain — where outputs live, who consumes them, recursive loops |
-| `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume |
+| `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume. `resolveStateDir(gitCommonDir)` stores state in the **main repo** (never inside a worktree) — survives worktree deletion (#929, #934) |
 | `scripts/auto-dent-artifacts.ts` | Run artifact manifest + bundle — `buildRunManifest`, `writeRunManifest`, `bundleArtifacts` (auto-called at run completion) |
 | `src/cli-dimensions.ts` | Dimension CLI: list/show/add/validate `prompts/review-*.md` files |
 | `src/structured-data.ts` | **Structured data API**: reviews, plans, metadata, connected issues, PR sections, iteration state |

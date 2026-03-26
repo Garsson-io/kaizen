@@ -12,6 +12,17 @@
 #
 # SessionStart hook — always exits 0 (advisory only, never blocks).
 
+# Fix A (advisory) for #934/#939: warn when the .worktree-will-delete sentinel is present.
+# worktree-du.ts writes this sentinel before calling git worktree remove, giving sessions
+# a chance to notice the worktree is about to disappear.
+# NOTE: A shell hook cannot change the Claude session's CWD — this is warning-only.
+# Full re-anchoring (actual cd to main repo) requires Claude Code session support (#934).
+if [ -f ".worktree-will-delete" ] 2>/dev/null; then
+  MAIN_REPO_CANDIDATE=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  ANCHOR_MSG="${MAIN_REPO_CANDIDATE:+Consider moving to: $MAIN_REPO_CANDIDATE}"
+  echo "kaizen-worktree-setup: ⚠️  Worktree marked for deletion — session CWD will become invalid. $ANCHOR_MSG" >&2
+fi
+
 GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)
 
 # Skip if git failed (not in a git repo, or git not found)
