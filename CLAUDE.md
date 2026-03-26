@@ -35,12 +35,10 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `docs/artifact-lifecycle.md` | Artifact chain — where outputs live, who consumes them, recursive loops |
 | `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume |
 | `src/cli-dimensions.ts` | Dimension CLI: list/show/add/validate `prompts/review-*.md` files |
-| `src/structured-data.ts` | **High-level API**: reviews (store/list/read per-round per-dimension), plans, metadata, connected issues, PR sections, iteration state |
-| `src/cli-structured-data.ts` | CLI for the high-level API — the primary interface for skills |
-| `src/section-editor.ts` | **Low-level**: sections (## in bodies) + attachments (marker comments) — CRUD primitives |
-| `src/cli-section-editor.ts` | CLI for low-level section/attachment operations |
-| `src/plan-store.ts` | Legacy plan storage — delegates to section-editor. Prefer `structured-data.ts` for new code. |
-| `src/cli-plan-store.ts` | Legacy CLI — prefer `cli-structured-data.ts` |
+| `src/structured-data.ts` | **Structured data API**: reviews, plans, metadata, connected issues, PR sections, iteration state |
+| `src/cli-structured-data.ts` | CLI for structured data — the primary interface for skills |
+| `src/section-editor.ts` | Low-level: sections (## in bodies) + attachments (marker comments) — CRUD primitives |
+| `src/plan-store.ts` | Plan-specific helpers (extractPlanText, re-exports from structured-data) |
 
 ## Skills
 

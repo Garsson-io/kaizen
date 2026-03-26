@@ -55,9 +55,9 @@ import {
   type ReviewFindingData,
 } from './structured-data.js';
 
-function parseArgs() {
+function parseArgs(): Record<string, string> & { command: string } {
   const args = process.argv.slice(2);
-  const command = args[0];
+  const command = args[0] ?? '';
   const flags: Record<string, string> = {};
   for (let i = 1; i < args.length; i++) {
     if (args[i].startsWith('--') && args[i + 1]) {
