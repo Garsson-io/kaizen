@@ -1,95 +1,27 @@
 # Code Review Criteria
 
-This file is the **modifiable review prompt** consumed by `/kaizen-review-pr`. It defines what the reviewer checks for. When new failure modes are discovered, add them here — the review gets smarter without touching any skill.
+This file supplements the dimension-based review (`prompts/review-*.md`). It records **learned failure modes** from past incidents — process-level patterns that can't be detected by reading a single diff.
 
 ## How This File Is Used
 
-The review skill reads this file and applies each section against the PR diff. Findings are scored by confidence (0-100) and only high-confidence issues (≥75) are reported. The reviewer should cite specific lines and link to code.
+`/kaizen-review-pr` reads this file in Phase 1 alongside the dimension briefing. The failure modes here are pattern-matching hints for the review agents, not structured checks. They augment the dimensions — they don't replace them.
 
----
+**Note on coverage:** Sections §1–§8 from the original criteria have been promoted to structured dimension files:
+- §1 DRY → `prompts/review-dry.md`
+- §2–§4 Testability + Testing + Harness → `prompts/review-test-quality.md` + `prompts/review-test-plan.md`
+- §5 Tooling Fitness + §7 Reuse → `prompts/review-tooling.md` *(new)*
+- §6 Security → `prompts/review-security.md` *(new)*
+- §8 Best Practices → absorbed into `prompts/review-error-handling.md` + `prompts/review-tooling.md`
 
-## 1. DRY
-
-- No duplicated logic across files — extract shared helpers
-- No duplicated logic within a file — unify branches with a variable or loop
-- No copy-pasted test setup — use shared fixtures (`makeDeps`, `setup_mock_*`)
-- Shell wrappers / thin delegators share a common launcher pattern
-- If 3+ lines appear twice, it's a DRY violation
-
-**How to check:** For each new function or block, grep the codebase for similar patterns. If one exists, the PR should reuse or extend it — not duplicate it.
-
-## 2. Testability
-
-- All I/O is injectable via a `Deps` interface — no raw `execSync`, `fs.*`, `process.kill` in business logic
-- Functions that read data don't also format/print it (separate data from presentation)
-- No function reads the same resource twice when it could be passed as a parameter
-- `process.exit()` only in CLI entrypoints, never in testable functions
-- New branching logic in a 500+ line file with 10+ imports → extract first, then add
-
-**How to check:** Can each new function be tested with zero filesystem, zero network, zero subprocess calls? If not, the I/O boundary needs to be pushed outward.
-
-## 3. Testing
-
-- Every exported pure function has at least one test
-- Edge cases covered: empty input, error paths, boundary values
-- Mocks match real interface (mock `exec` returns what real git returns)
-- Tests don't accidentally use real I/O (missing mock injection falls through to real `execSync`)
-- Tests must pass in CI, not just locally — check for environment assumptions (git config, PATH, temp dirs)
-
-**How to check:** Run the tests. Check if any SKIP in CI. Check if any test creates resources without cleanup.
-
-## 4. Testing Harness / E2E Coverage
-
-- New execution paths (hook, script, CLI, IPC handler) have trigger-to-outcome tests
-- "Tests later" = no tests — smoke tests ship WITH the feature (Policy #18)
-- Reuse and extend existing test harnesses rather than building from scratch
-- Test helpers are DRY (`makeDeps` with spread overrides, not copy-pasted per test)
-- No filesystem setup needed for unit tests (inject, don't mkdir)
-- Integration tests that need filesystem use `mkdtemp` + cleanup
-
-**How to check:** Does a trigger-to-outcome test exist that exercises the real deployment path? Not just unit tests of internal functions, but the actual hook/script/CLI being invoked the way Claude Code invokes it.
-
-## 5. Tooling Fitness
-
-- No hand-rolled parsers for solved formats (YAML, JSON schema, TOML, INI, markdown frontmatter) — use libraries
-- No bash scripts with complex branching logic — use TypeScript
-- Shell scripts should be thin wrappers that delegate to TS (`tsx-exec.sh` pattern)
-- Use bun over tsx when available (faster startup)
-- Check `package.json` for existing libraries before adding new ones or hand-rolling
-
-**How to check:** Is there a library in the ecosystem that does this? Is there already one in package.json? If yes to either, the PR should use it.
-
-## 6. Security
-
-- No shell injection via interpolated user/git data (branch names, paths, PR titles)
-- Validate or reject unsafe characters before interpolating into shell commands
-- No secrets in committed files
-- No `eval` or unquoted variable expansion in bash
-
-**How to check:** Find every place user-controlled data enters a shell command. Is it quoted? Is it sanitized?
-
-## 7. Reuse & Patterns
-
-- Shared types exported from a single module (not redefined per file)
-- Common patterns (project root resolution, tsx exec, config reading) live in shared libs
-- Follows existing codebase patterns — check how similar features are implemented
-- When adding to test-helpers.sh or hook libs, check if the pattern already exists
-
-**How to check:** Before writing a helper, grep for it. Before defining a type, check if it's already exported. Before creating a pattern, see if the codebase already has one.
-
-## 8. Best Practices
-
-- No unused imports or variables
-- No broken string escapes / quote splicing hacks
-- Worktree-safe: works when `node_modules` is in main checkout, not worktree
-- Error messages are actionable (tell the user what to do, not just what failed)
-- Comments explain WHY, not WHAT — code should be self-documenting for the WHAT
+Run `npx tsx src/cli-dimensions.ts list` to see all active dimensions.
 
 ---
 
 ## Learned Failure Modes
 
-This section grows over time. Each entry is a pattern discovered through kaizen reflections or incidents. Reviewers should watch for these specifically.
+Process-level patterns from past incidents. Reviewers scan for these specifically in Phase 1.
+
+**Dimension coverage:** FM-3 is in `review-dry.md`. FM-5, FM-6, FM-9 are in `review-tooling.md`. FM-7 is in `review-test-plan.md`. FM-8 is in `review-improvement-lifecycle.md`. The FMs below that remain here (FM-1, FM-2, FM-4, FM-10, FM-11, FM-12) are process-level patterns that dimensions can't catch from a single diff.
 
 ### FM-1: Tests that pass locally but skip/fail in CI
 **Pattern:** Test creates temp git repo without setting `user.name`/`user.email`. Passes locally (global config exists), fails in CI (no global config).
