@@ -40,6 +40,21 @@ Some instructions.
 \`\`\`
 `;
 
+import { readFileSync as readFS } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+
+// Policy invariants
+
+describe('kaizen policy invariants', () => {
+  it('policies.md contains Policy 10 — skill changes require behavioral proof', () => {
+    const policiesPath = resolvePath(import.meta.dirname, '../.claude/kaizen/policies.md');
+    const content = readFS(policiesPath, 'utf8');
+    expect(content).toContain('Skill changes require behavioral proof');
+    expect(content).toContain('synthetic case');
+    expect(content).toContain('smoke test');
+  });
+});
+
 // Tests against the real prompts directory
 
 describe('cli-dimensions against real prompts', () => {
@@ -57,9 +72,10 @@ describe('cli-dimensions against real prompts', () => {
     expect(output).toContain('multi-pr-spiral');
     expect(output).toContain('reflection-quality');
     expect(output).toContain('test-quality');
+    expect(output).toContain('skill-changes');
     // header + separator + N data rows
     const lines = output.split('\n');
-    expect(lines.length).toBeGreaterThanOrEqual(11); // 2 header + 9+ dimensions
+    expect(lines.length).toBeGreaterThanOrEqual(12); // 2 header + 10+ dimensions
   });
 
   it('show reads a dimension by name', () => {
