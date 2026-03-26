@@ -31,6 +31,7 @@ import {
   listPrDimensions,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
+  DATA_GAP_PREFIX,
   type BatteryResult,
   type ReviewFinding,
 } from '../src/review-battery.js';
@@ -569,7 +570,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
     // all returned findings are DONE. Don't launch a fix with nothing to fix.
     // Also: when ALL gaps are [data-gap] findings (missing plan text etc.),
     // a fix agent can't resolve them — they need the caller to provide data.
-    const codeGaps = gaps.filter(f => !f.requirement.startsWith('[data-gap]'));
+    const codeGaps = gaps.filter(f => !f.requirement.startsWith(DATA_GAP_PREFIX));
     if (gaps.length === 0 || codeGaps.length === 0) {
       const reason = gaps.length === 0
         ? `${battery.failedDimensions.length} dim(s) failed to return results`

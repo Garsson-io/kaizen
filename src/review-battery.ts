@@ -31,6 +31,10 @@ import { resolveProjectRoot } from './lib/resolve-project-root.js';
 /** Status of a single requirement or criterion */
 export type FindingStatus = 'DONE' | 'PARTIAL' | 'MISSING';
 
+/** Prefix for synthetic findings that represent missing input data, not code gaps.
+ * Used by review-fix.ts to distinguish fixable code gaps from unfixable data-availability gaps. */
+export const DATA_GAP_PREFIX = '[data-gap]';
+
 /** A single finding from a review dimension */
 export interface ReviewFinding {
   /** The requirement or criterion being evaluated */
@@ -686,7 +690,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
         dimension: dim,
         verdict: 'fail',
         findings: [{
-          requirement: '[data-gap] Plan text available for review',
+          requirement: `${DATA_GAP_PREFIX} Plan text available for review`,
           status: 'MISSING',
           detail: `Dimension "${dim}" requires plan text but none was provided. Create a plan before running this review.`,
         }],

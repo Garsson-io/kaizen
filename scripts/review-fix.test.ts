@@ -24,7 +24,7 @@ import {
   type PrefetchResult,
   type ReviewFixState,
 } from './review-fix.js';
-import type { BatteryResult } from '../src/review-battery.js';
+import { DATA_GAP_PREFIX, type BatteryResult } from '../src/review-battery.js';
 
 // ── parseStreamJsonResult ────────────────────────────────────────────
 
@@ -658,8 +658,8 @@ describe('runFixLoop', () => {
         skippedDimensions: ['plan-coverage', 'plan-fidelity'],
         dimensions: [
           { dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
-          { dimension: 'plan-coverage', verdict: 'fail', summary: 'no plan', findings: [{ requirement: '[data-gap] Plan text available for review', status: 'MISSING', detail: 'no plan text' }] },
-          { dimension: 'plan-fidelity', verdict: 'fail', summary: 'no plan', findings: [{ requirement: '[data-gap] Plan text available for review', status: 'MISSING', detail: 'no plan text' }] },
+          { dimension: 'plan-coverage', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+          { dimension: 'plan-fidelity', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
         ],
       };
       const state = await runFixLoop(baseOpts, {
