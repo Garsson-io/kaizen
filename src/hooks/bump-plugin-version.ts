@@ -64,13 +64,17 @@ export function bumpPluginVersion(
   content.version = newVersion;
   writeFileSync(pluginJson, JSON.stringify(content, null, 2) + '\n');
 
-  // Stage and commit
+  // Stage, commit, and push (#919: push so gh pr create doesn't fail)
   try {
-    execSync(`git add "${pluginJson}" && git commit -m "chore: bump plugin version to ${newVersion}\n\nAuto-bumped by kaizen-bump-plugin-version hook."`, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    git(`add "${pluginJson}"`);
+    git(`commit -m "chore: bump plugin version to ${newVersion}" -m "Auto-bumped by kaizen-bump-plugin-version hook."`);
   } catch {
     // If commit fails (nothing to commit, etc.), ignore
+  }
+  try {
+    git('push');
+  } catch {
+    // Push failure is non-blocking — agent can retry (#919: fail-open)
   }
 
   return `Plugin version bumped: ${currentVersion} -> ${newVersion}`;

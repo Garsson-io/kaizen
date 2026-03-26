@@ -12,13 +12,20 @@ function writePlugin(version: string) {
   writeFileSync(PLUGIN_JSON, JSON.stringify({ name: 'test', version }, null, 2));
 }
 
-const mockGit = (mainVersion: string) => (args: string) => {
-  if (args.includes('rev-parse --show-toplevel')) return TEST_DIR;
-  if (args.includes('show origin/main:.claude-plugin/plugin.json')) {
-    return JSON.stringify({ version: mainVersion });
-  }
-  return '';
-};
+function trackingGit(mainVersion: string) {
+  const calls: string[] = [];
+  const runner = (args: string) => {
+    calls.push(args);
+    if (args.includes('rev-parse --show-toplevel')) return TEST_DIR;
+    if (args.includes('show origin/main:.claude-plugin/plugin.json')) {
+      return JSON.stringify({ version: mainVersion });
+    }
+    return '';
+  };
+  return { runner, calls };
+}
+
+const mockGit = (mainVersion: string) => trackingGit(mainVersion).runner;
 
 beforeEach(() => {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
@@ -70,5 +77,77 @@ describe('bumpPluginVersion', () => {
       projectRoot: TEST_DIR,
     });
     expect(existsSync(join(PLUGIN_DIR, 'plugin.json.tmp'))).toBe(false);
+  });
+});
+
+// #919, #921: INVARIANT — bump hook commits AND pushes so gh pr create doesn't fail
+describe('INVARIANT: bump hook pushes after committing (#919)', () => {
+  it('calls git push after git add + git commit', () => {
+    writePlugin('1.0.5');
+    const { runner, calls } = trackingGit('1.0.5');
+    bumpPluginVersion('gh pr create --title "test"', {
+      gitRunner: runner,
+      projectRoot: TEST_DIR,
+    });
+    // Must have add → commit → push in order
+    const addIdx = calls.findIndex(c => c.includes('add'));
+    const commitIdx = calls.findIndex(c => c.includes('commit'));
+    const pushIdx = calls.findIndex(c => c === 'push');
+    expect(addIdx).toBeGreaterThanOrEqual(0);
+    expect(commitIdx).toBeGreaterThan(addIdx);
+    expect(pushIdx).toBeGreaterThan(commitIdx);
+  });
+
+  it('returns success even if push fails (fail-open)', () => {
+    writePlugin('1.0.5');
+    const { runner } = trackingGit('1.0.5');
+    // Override to throw on push
+    const failOnPush = (args: string) => {
+      if (args.includes('push')) throw new Error('push failed');
+      return runner(args);
+    };
+    const result = bumpPluginVersion('gh pr create --title "test"', {
+      gitRunner: failOnPush,
+      projectRoot: TEST_DIR,
+    });
+    // Should still succeed — push failure is non-blocking
+    expect(result).toContain('1.0.5 -> 1.0.6');
+  });
+});
+
+// #923: INVARIANT — no cross-module hook imports from non-hook files
+describe('INVARIANT: architectural boundary — no hook entry point imports (#923)', () => {
+  it('non-hook files must not import from src/hooks/ entry points', () => {
+    const { readdirSync, readFileSync } = require('node:fs');
+    const path = require('node:path');
+
+    // Walk up from this test file to find src/ — no shell needed
+    const srcDir = path.resolve(__dirname, '..');
+
+    // Collect all .ts files in src/ that are NOT under src/hooks/
+    const violations: string[] = [];
+    const importPattern = /from\s+['"].*\/hooks\/[^l]/;
+
+    function scanDir(dir: string) {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          // Skip the hooks directory itself
+          if (fullPath === path.join(srcDir, 'hooks')) continue;
+          scanDir(fullPath);
+        } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
+          const content = readFileSync(fullPath, 'utf-8');
+          const lines = content.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            if (importPattern.test(lines[i])) {
+              violations.push(`${fullPath}:${i + 1}: ${lines[i].trim()}`);
+            }
+          }
+        }
+      }
+    }
+
+    scanDir(srcDir);
+    expect(violations).toEqual([]);
   });
 });
