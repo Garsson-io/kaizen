@@ -137,10 +137,10 @@ After all agents return: verify every dimension has a JSON findings block. Any d
 ## Phase 3: Classify
 
 1. **Auto-classify showstoppers first** (see above). These are MUST-FIX at confidence 100 regardless of anything else.
-2. Drop all other findings with confidence < 75.
+2. Drop all other findings with confidence < 60.
 3. Classify remaining:
    - **MUST-FIX** (confidence ≥ 90): blocks merge — bugs, security issues, missing tests for new logic, DRY violations with 3+ copies
-   - **SHOULD-FIX** (confidence 75–89): fix before merge — minor DRY, testability gaps, pattern inconsistencies
+   - **SHOULD-FIX** (confidence 60–89): fix before merge — minor DRY, testability gaps, pattern inconsistencies
 
 **Present findings as a table before fixing:**
 

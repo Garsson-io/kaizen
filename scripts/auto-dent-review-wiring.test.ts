@@ -246,4 +246,97 @@ describe('runReviewWiring', () => {
     const fixArgs = (deps.runFixLoop as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(fixArgs.budgetCap).toBeCloseTo(1.5, 1);
   });
+
+  it('INVARIANT: budget cap is capped at $2 even with large remaining budget (#898)', async () => {
+    const deps = makeDeps({
+      reviewBattery: vi.fn().mockResolvedValue({
+        verdict: 'fail',
+        missingCount: 1,
+        partialCount: 0,
+        durationMs: 1000,
+        costUsd: 0.10,
+        failedDimensions: [],
+        skippedDimensions: [],
+        dimensions: [{
+          dimension: 'requirements',
+          verdict: 'fail',
+          findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
+          summary: 'fail',
+        }],
+      } satisfies BatteryResult),
+    });
+    const input = makeInput({ totalBudget: 20.0, implementationCost: 0 });
+    await runReviewWiring(input, deps);
+
+    const fixArgs = (deps.runFixLoop as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    // Cap is min(20*0.4, 2.0) = 2.0, minus review cost 0.10 = 1.90
+    expect(fixArgs.budgetCap).toBeCloseTo(1.9, 1);
+  });
+
+  it('INVARIANT: events emitted with correct types and shared base fields (#899)', async () => {
+    const deps = makeDeps({
+      reviewBattery: vi.fn().mockResolvedValue({
+        verdict: 'fail',
+        missingCount: 1,
+        partialCount: 0,
+        durationMs: 500,
+        costUsd: 0.05,
+        failedDimensions: [],
+        skippedDimensions: [],
+        dimensions: [{
+          dimension: 'requirements',
+          verdict: 'fail',
+          findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
+          summary: 'fail',
+        }],
+      } satisfies BatteryResult),
+    });
+    const input = makeInput({ runId: 'b1/run-1', batchId: 'b1', runNum: 3 });
+    await runReviewWiring(input, deps);
+
+    const emitCalls = (deps.emit as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]);
+
+    expect(emitCalls.map(e => e.type)).toEqual([
+      'review.round_start',
+      'review.round_complete',
+      'review.fix_spawned',
+      'review.fix_complete',
+    ]);
+
+    for (const event of emitCalls) {
+      expect(event.run_id).toBe('b1/run-1');
+      expect(event.batch_id).toBe('b1');
+      expect(event.run_num).toBe(3);
+      expect(event.pr_url).toBe('https://github.com/test/repo/pull/1');
+    }
+  });
+
+  it('INVARIANT: budget exceeded emits round events but NOT fix_spawned', async () => {
+    const deps = makeDeps({
+      reviewBattery: vi.fn().mockResolvedValue({
+        verdict: 'fail',
+        missingCount: 1,
+        partialCount: 0,
+        durationMs: 1000,
+        costUsd: 0.10,
+        failedDimensions: [],
+        skippedDimensions: [],
+        dimensions: [{
+          dimension: 'requirements',
+          verdict: 'fail',
+          findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
+          summary: 'fail',
+        }],
+      } satisfies BatteryResult),
+    });
+    const input = makeInput({ totalBudget: 2.0, implementationCost: 1.80 });
+    await runReviewWiring(input, deps);
+
+    const emitCalls = (deps.emit as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]);
+    const types = emitCalls.map(e => e.type);
+
+    expect(types).toContain('review.round_start');
+    expect(types).toContain('review.round_complete');
+    expect(types).not.toContain('review.fix_spawned');
+  });
 });
