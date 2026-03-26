@@ -35,10 +35,10 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `docs/artifact-lifecycle.md` | Artifact chain — where outputs live, who consumes them, recursive loops |
 | `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume |
 | `src/cli-dimensions.ts` | Dimension CLI: list/show/add/validate `prompts/review-*.md` files |
-| `src/plan-store.ts` | Mechanistic plan/metadata storage against GitHub issues |
-| `src/cli-plan-store.ts` | CLI: store/retrieve plan, testplan, metadata on GitHub issues |
-| `src/section-editor.ts` | Section-based PR/issue body editing (list/read/add/replace/remove named ## sections) |
-| `src/cli-section-editor.ts` | CLI: section editing for PR and issue bodies |
+| `src/section-editor.ts` | **Structured PRs and issues** — list/read/add/replace/remove named `##` sections in PR/issue bodies without full read/rewrite. The general-purpose capability. |
+| `src/cli-section-editor.ts` | CLI for structured PR/issue editing |
+| `src/plan-store.ts` | Plan/metadata storage on GitHub issues — uses marker comments for plan, testplan, and YAML metadata. Built on the structured issues capability. |
+| `src/cli-plan-store.ts` | CLI: store/retrieve plan, testplan, metadata, query connected issues |
 
 ## Skills
 
@@ -66,6 +66,10 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 ## Mandatory Practices
 
 **PR bodies**: Always use `/kaizen-write-pr` when creating or editing PR descriptions. Never write a bare `gh pr create --body` with a few bullet points. The Story Spine narrative makes PRs reviewable without reading the diff.
+
+**Structured PRs and issues**: Use `npx tsx src/cli-section-editor.ts` to read/write named `##` sections in PR bodies and issue bodies. This avoids full body read/rewrite (saves tokens). Available commands: `list-sections`, `read-section`, `add-section`, `replace-section`, `remove-section`. When updating a PR body, prefer editing individual sections over rewriting the entire body.
+
+**Plan storage**: Use `npx tsx src/cli-plan-store.ts` to store/retrieve plans, test plans, and YAML metadata on GitHub issues. Plans stored this way are auto-loaded by `reviewBattery()` for plan-dependent review dimensions. Store plans immediately after creating them — don't rely on context window persistence.
 
 **PR review dimensions**: When running `/kaizen-review-pr`, bundle dimensions by shared data needs (use the briefing from `npx tsx src/cli-dimensions.ts briefing --lines N`). Don't spawn one agent per dimension — batch dims with identical `needs` into single agents.
 
