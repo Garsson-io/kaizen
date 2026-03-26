@@ -167,6 +167,9 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
       if (!fm.name) errors.push('Frontmatter missing "name" field');
       if (!fm.description) errors.push('Frontmatter missing "description" field');
       if (!fm.applies_to) errors.push('Frontmatter missing "applies_to" field');
+      if (fm.name && fm.name !== dimName) {
+        errors.push(`Frontmatter "name" field "${fm.name}" does not match filename stem "${dimName}" (from ${file})`);
+      }
     }
 
     // Check for ```json output format section

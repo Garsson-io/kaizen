@@ -231,6 +231,17 @@ describe('cli-dimensions with temp fixtures', () => {
     expect(v.results[0].errors).toContain('Missing ```json output format section');
   });
 
+  it('validate catches frontmatter name/filename mismatch', () => {
+    writeFileSync(resolve(tmpDir, 'review-correct-name.md'), '---\nname: wrong-name\ndescription: test\napplies_to: pr\n---\n```json\n{}\n```\n');
+    const v = cmdValidate(tmpDir);
+    expect(v.ok).toBe(false);
+    const entry = v.results.find(r => r.file === 'review-correct-name.md');
+    expect(entry).toBeDefined();
+    expect(entry!.errors.some(e => e.includes('does not match filename stem'))).toBe(true);
+    expect(entry!.errors.some(e => e.includes('"wrong-name"'))).toBe(true);
+    expect(entry!.errors.some(e => e.includes('"correct-name"'))).toBe(true);
+  });
+
   it('validate distinguishes malformed YAML from missing frontmatter', () => {
     // Has --- markers but invalid YAML inside (unquoted colon in value)
     writeFileSync(resolve(tmpDir, 'review-badyaml.md'), '---\nname: bad: yaml\ndescription: test\n---\nBody\n```json\n{}\n```\n');
