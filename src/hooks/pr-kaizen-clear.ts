@@ -476,8 +476,14 @@ export function processHookInput(
   // ── Trigger 0: KAIZEN_UNFINISHED (kaizen #775) ────────────────
   // Check BEFORE the kaizen gate check — KAIZEN_UNFINISHED clears ALL gates
   // (review, reflection, post-merge), even if no kaizen reflection gate exists.
-  if (/KAIZEN_UNFINISHED:/.test(cmdLine) || /KAIZEN_UNFINISHED:/.test(stdout)) {
-    const reasonMatch = (stdout || cmdLine).match(/KAIZEN_UNFINISHED:\s*(.*)/);
+  //
+  // Only check stdout — not cmdLine — to prevent false positives when the agent
+  // runs `grep "KAIZEN_UNFINISHED:" logs.txt`. The search pattern itself would
+  // match the cmdLine regex but is not an agent declaration. Since any legitimate
+  // KAIZEN_UNFINISHED declaration (e.g., `echo "KAIZEN_UNFINISHED: reason"`)
+  // produces stdout, checking stdout is sufficient. (kaizen #928)
+  if (/KAIZEN_UNFINISHED:/.test(stdout)) {
+    const reasonMatch = stdout.match(/KAIZEN_UNFINISHED:\s*(.*)/);
     const reason = reasonMatch?.[1]?.trim().replace(/^['"]/, '').replace(/['"]$/, '').trim() || 'no reason given';
 
     const branch = currentBranch();
