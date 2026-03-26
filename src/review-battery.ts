@@ -11,9 +11,11 @@
  * Linear: ENG-6638
  */
 
-import { spawnSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
+import YAML from 'yaml';
+import { resolveProjectRoot } from './lib/resolve-project-root.js';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -97,7 +99,7 @@ export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
 export type ReviewDimension = string;
 
 /** Data categories a dimension can require */
-export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'session' | 'git-history';
+export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'session' | 'git-history' | 'multiple_prs' | 'reflection_history';
 
 /** Frontmatter metadata from a review dimension prompt */
 export interface DimensionMeta {
@@ -194,37 +196,16 @@ export function reviewBriefing(
 
 /**
  * Parse YAML frontmatter from a review prompt file.
- * Handles scalar values and list items (lines starting with "  - ").
- * Returns null if no frontmatter found.
+ * Returns null if no frontmatter found or YAML is invalid.
  */
-function parseFrontmatter(content: string): Record<string, string | string[]> | null {
+export function parseFrontmatter(content: string): Record<string, unknown> | null {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return null;
-  const result: Record<string, string | string[]> = {};
-  let currentKey = '';
-  for (const line of match[1].split('\n')) {
-    // List item: "  - value"
-    const listItem = line.match(/^\s+-\s+"?([^"]*)"?$/);
-    if (listItem && currentKey) {
-      if (!Array.isArray(result[currentKey])) result[currentKey] = [];
-      (result[currentKey] as string[]).push(listItem[1].trim());
-      continue;
-    }
-    // Scalar: "key: value"
-    const kv = line.match(/^(\w[\w_-]*)\s*:\s*(.+)$/);
-    if (kv) {
-      currentKey = kv[1];
-      result[currentKey] = kv[2].trim();
-      continue;
-    }
-    // Key with no inline value (list follows): "key:"
-    const listKey = line.match(/^(\w[\w_-]*)\s*:\s*$/);
-    if (listKey) {
-      currentKey = listKey[1];
-      result[currentKey] = [];
-    }
+  try {
+    return YAML.parse(match[1]) as Record<string, unknown>;
+  } catch {
+    return null;
   }
-  return result;
 }
 
 /**
@@ -255,6 +236,17 @@ export function listDimensions(promptsDir?: string): string[] {
 }
 
 /**
+ * List dimensions applicable to post-PR review.
+ * Includes only dimensions with applies_to === 'pr' or 'both'.
+ * Automatically excludes plan-only and reflection-only dimensions.
+ */
+export function listPrDimensions(promptsDir?: string): string[] {
+  return loadDimensionMetas(promptsDir)
+    .filter(m => m.applies_to === 'pr' || m.applies_to === 'both')
+    .map(m => m.name);
+}
+
+/**
  * Load metadata for all review dimensions.
  * Reads frontmatter from each prompts/review-*.md file.
  */
@@ -269,7 +261,7 @@ export function loadDimensionMetas(promptsDir?: string): DimensionMeta[] {
       const needsRaw = fm?.needs;
       const needs: DataNeed[] = Array.isArray(needsRaw)
         ? needsRaw as DataNeed[]
-        : (typeof needsRaw === 'string' ? needsRaw.replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean) as DataNeed[] : ['diff']);
+        : (typeof needsRaw === 'string' ? [needsRaw as DataNeed] : ['diff']);
       const highWhen = Array.isArray(fm?.high_when) ? fm.high_when as string[] : [];
       const lowWhen = Array.isArray(fm?.low_when) ? fm.low_when as string[] : [];
       metas.push({
@@ -386,17 +378,12 @@ export function renderTemplate(template: string, vars: Record<string, string>): 
  * Resolve the prompts directory. Checks repo-root/prompts first,
  * then falls back to the directory relative to this file.
  */
-export function resolvePromptsDir(): string {
-  try {
-    const toplevel = spawnSync('git', ['rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-    }).stdout.trim();
-    const dir = resolve(toplevel, 'prompts');
-    if (existsSync(dir)) return dir;
-  } catch {
-    // Fall through
-  }
-  return resolve(dirname(new URL(import.meta.url).pathname), '..', 'prompts');
+export function resolvePromptsDir(exec?: (cmd: string) => string): string {
+  const thisDir = dirname(new URL(import.meta.url).pathname);
+  const root = resolveProjectRoot(thisDir, exec);
+  const dir = resolve(root, 'prompts');
+  if (existsSync(dir)) return dir;
+  return resolve(thisDir, '..', 'prompts');
 }
 
 /**

@@ -52,6 +52,7 @@ import { spawn } from 'node:child_process';
 import { expect } from 'vitest';
 import { spawnReview } from '../src/review-battery.js';
 import type { DimensionReview } from '../src/review-battery.js';
+import { findLatestCheckpoint as findLatestCheckpointShared } from './e2e-test-utils.js';
 
 // ── Results dir ───────────────────────────────────────────────────────
 
@@ -130,13 +131,7 @@ const SMOKE_BUDGET_USD = 0.30;
  * They contain the full SmokeResult JSON for that run.
  */
 function findLatestCheckpoint(dim: string, tier: 'smoke' | 'replay'): string | null {
-  if (!existsSync(RESULTS_DIR)) return null;
-  const prefix = `${dim}-${tier}-`;
-  const files = readdirSync(RESULTS_DIR)
-    .filter(f => f.startsWith(prefix) && f.endsWith('.txt'))
-    .sort()
-    .reverse(); // most recent first (timestamp in filename)
-  return files.length > 0 ? join(RESULTS_DIR, files[0]) : null;
+  return findLatestCheckpointShared(RESULTS_DIR, `${dim}-${tier}-`);
 }
 
 interface CheckpointData {

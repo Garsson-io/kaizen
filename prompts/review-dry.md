@@ -36,6 +36,10 @@ Autonomous agents frequently hand-roll solutions that already exist — in the c
    - Is it 3+ copies? → MISSING (extract immediately)
    - Is it 2 copies? → PARTIAL (note it, may be premature to extract)
    - Is it reimplementing a library? → MISSING (use the library)
+5. **Check for missed reuse of existing codebase patterns:**
+   - Does the diff add a type, interface, or enum that belongs in a shared module but is defined locally instead?
+   - Does the diff write a helper (path resolution, config reading, subprocess retries, table formatting) when a shared version already exists? Use `grep -r "functionName\|similarPattern" --include="*.ts"` to check.
+   - Rule: before writing any utility, search the codebase. If something equivalent exists: use it, or extract a shared version. Writing a second implementation when one already exists is a MISSING finding.
 
 ## Output Format
 

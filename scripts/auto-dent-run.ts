@@ -30,7 +30,7 @@ import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js
 import {
   reviewBattery,
   formatBatteryReport,
-  listDimensions,
+  listPrDimensions,
   resolvePromptsDir,
   renderTemplate,
 } from '../src/review-battery.js';
@@ -1537,7 +1537,7 @@ async function main(): Promise<void> {
   if (result.prs.length > 0 && pickedIssue) {
     const repo = state.kaizen_repo || state.host_repo || '';
     try {
-      const dimensions = listDimensions().filter(d => d !== 'plan-coverage'); // plan-coverage is for pre-implementation
+      const dimensions = listPrDimensions();
       console.log(`  ${color.dim('[review-battery]')} running ${dimensions.join(', ')} review for ${result.prs.length} PR(s)...`);
       for (const prUrl of result.prs) {
         const batteryResult = await reviewBattery({

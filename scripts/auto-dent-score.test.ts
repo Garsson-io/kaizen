@@ -274,6 +274,30 @@ describe('scoreBatch', () => {
     expect(score.runs[0].success).toBe(true);
     expect(score.runs[1].success).toBe(false);
   });
+
+  it('counts review failures and computes fail rate', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, review_verdict: 'pass', review_cost_usd: 0.10 }),
+      makeRunMetrics({ run: 2, review_verdict: 'fail', review_cost_usd: 0.15 }),
+      makeRunMetrics({ run: 3, review_verdict: 'fail', review_cost_usd: 0.12 }),
+      makeRunMetrics({ run: 4, review_verdict: 'skipped', review_cost_usd: 0 }),
+    ];
+    const score = scoreBatch(history);
+    expect(score.review_fail_count).toBe(2);
+    expect(score.review_fail_rate).toBeCloseTo(2 / 3); // 2 fails out of 3 non-skipped
+    expect(score.review_total_cost_usd).toBeCloseTo(0.37);
+  });
+
+  it('review_fail_rate is 0 when all runs are skipped', () => {
+    const history: RunMetrics[] = [
+      makeRunMetrics({ run: 1, review_verdict: 'skipped' }),
+      makeRunMetrics({ run: 2 }), // no verdict = skipped
+    ];
+    const score = scoreBatch(history);
+    expect(score.review_fail_count).toBe(0);
+    expect(score.review_fail_rate).toBe(0);
+    expect(score.review_total_cost_usd).toBe(0);
+  });
 });
 
 describe('formatRunScoreLine', () => {
