@@ -131,7 +131,7 @@ Each dimension declares `needs:` in frontmatter. How subagents access each:
 | `diff` | Code changes | `gh pr diff <url>` | Git (permanent) |
 | `issue` | Issue body | `gh issue view <N> --json body` | GitHub (permanent) |
 | `pr` | PR metadata + body | `gh pr view <url> --json body` | GitHub (permanent) |
-| `plan` | Plan (issue comment) | `npx tsx src/cli-plan-store.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"` (falls back to issue body regex if no plan-store marker) | GitHub (permanent) |
+| `plan` | Plan (issue comment) | `npx tsx src/cli-structured-data.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"` (falls back to issue body regex if no plan-store marker) | GitHub (permanent) |
 | `attachment` | Named machine-readable data on issue/PR (plans, metadata, review findings) | `npx tsx src/cli-section-editor.ts read-attachment --issue <N> --repo "$ISSUES_REPO" --name <name>` or `list-attachments` | GitHub (permanent — issue/PR comments with `<!-- kaizen:<name> -->` marker) |
 | `tests` | Test output | `npm test` or test files in diff | Ephemeral (re-runnable) |
 | `codebase` | Existing code | `grep`, `glob` on repo | Git (permanent) |

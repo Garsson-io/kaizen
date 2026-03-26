@@ -1418,6 +1418,167 @@ export function validateRunLifecycle(logFile: string): LifecycleValidation {
   return { valid: violations.length === 0, phasesPresent, phasesMissing, violations };
 }
 
+// Review wiring — extracted for testability (#896, #914)
+
+export interface ReviewWiringDeps {
+  reviewBattery: typeof reviewBattery;
+  runFixLoop: typeof runFixLoop;
+  listPrDimensions: typeof listPrDimensions;
+  formatBatteryReport: typeof formatBatteryReport;
+  emit: (event: AutoDentEvent) => void;
+  appendLog: (text: string) => void;
+  writeAttachment: typeof writeAttachment;
+  ghExec: (cmd: string) => string;
+}
+
+export interface ReviewWiringInput {
+  prs: string[];
+  pickedIssue: string;
+  repo: string;
+  totalBudget: number;
+  implementationCost: number;
+  runId: string;
+  batchId: string;
+  runNum: number;
+}
+
+export interface ReviewWiringResult {
+  reviewVerdict: 'pass' | 'fail' | 'skipped';
+  reviewCostUsd: number;
+}
+
+export async function runReviewWiring(
+  input: ReviewWiringInput,
+  deps: ReviewWiringDeps,
+): Promise<ReviewWiringResult> {
+  let reviewVerdict: 'pass' | 'fail' | 'skipped' = 'skipped';
+  let reviewCostUsd = 0;
+
+  // #898: Use remaining budget after implementation, not total budget
+  const reviewBudgetCap = Math.min(
+    (input.totalBudget - input.implementationCost) * 0.4,
+    2.0,
+  );
+
+  if (input.prs.length === 0 || !input.pickedIssue) {
+    return { reviewVerdict, reviewCostUsd };
+  }
+
+  try {
+    const dimensions = deps.listPrDimensions();
+    for (const prUrl of input.prs) {
+      // #899: Shared event fields to avoid repetition
+      const reviewEventBase = { run_id: input.runId, batch_id: input.batchId, run_num: input.runNum, pr_url: prUrl };
+
+      deps.emit({
+        ...reviewEventBase,
+        type: 'review.round_start',
+        round: 1,
+        dimensions: dimensions.map(d => typeof d === 'string' ? d : (d as any).name ?? d),
+      } as AutoDentEvent);
+
+      const batteryResult = await deps.reviewBattery({
+        dimensions,
+        prUrl,
+        issueNum: input.pickedIssue,
+        repo: input.repo,
+        timeoutMs: 120_000,
+      });
+      reviewCostUsd += batteryResult.costUsd;
+
+      deps.emit({
+        ...reviewEventBase,
+        type: 'review.round_complete',
+        round: 1,
+        verdict: batteryResult.verdict,
+        missing_count: batteryResult.missingCount,
+        partial_count: batteryResult.partialCount,
+        cost_usd: batteryResult.costUsd,
+        duration_ms: batteryResult.durationMs,
+      } as AutoDentEvent);
+
+      if (batteryResult.verdict === 'fail') {
+        const report = deps.formatBatteryReport(batteryResult);
+        deps.appendLog(`\n--- review-battery ---\n${report}\n`);
+        try {
+          const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '';
+          if (prNum && input.repo) {
+            deps.writeAttachment({ kind: 'pr', number: prNum, repo: input.repo }, 'review-battery', `## Review Battery: FAIL\n\n${report}`);
+          }
+        } catch { /* best effort */ }
+
+        // #897: Count gaps before deciding whether to spawn fix loop
+        const gapsCount = batteryResult.dimensions.reduce(
+          (acc, d) => acc + d.findings.filter(f => f.status !== 'DONE').length, 0,
+        );
+        const remainingBudget = reviewBudgetCap - reviewCostUsd;
+
+        if (gapsCount > 0 && remainingBudget > 0.10) {
+          deps.emit({
+            ...reviewEventBase,
+            type: 'review.fix_spawned',
+            round: 1,
+            gaps_count: gapsCount,
+          } as AutoDentEvent);
+
+          try {
+            const fixState = await deps.runFixLoop({
+              prUrl,
+              issueNum: input.pickedIssue,
+              repo: input.repo,
+              dryRun: false,
+              maxRounds: 2, // fix loop runs up to 2 fix+re-review rounds internally
+              budgetCap: remainingBudget,
+              resume: false, // fresh run within auto-dent; not crash recovery
+            });
+            const fixCost = fixState.totalCostUsd ?? 0;
+            reviewCostUsd += fixCost;
+
+            deps.emit({
+              ...reviewEventBase,
+              type: 'review.fix_complete',
+              round: fixState.currentRound,
+              success: fixState.outcome === 'pass',
+              cost_usd: fixCost,
+            } as AutoDentEvent);
+
+            if (fixState.outcome === 'pass') {
+              reviewVerdict = 'pass';
+              deps.appendLog(`\nreview_fix=pass rounds=${fixState.currentRound} cost=$${fixCost.toFixed(2)} pr=${prUrl}\n`);
+            } else {
+              reviewVerdict = 'fail';
+              deps.appendLog(`\nreview_fix=fail rounds=${fixState.currentRound} cost=$${fixCost.toFixed(2)} pr=${prUrl}\n`);
+              try {
+                deps.ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(
+                  `## Review Fix Loop: Exhausted\n\n` +
+                  `Ran ${fixState.currentRound} fix round(s) but gaps remain. ` +
+                  `Total review+fix cost: $${reviewCostUsd.toFixed(2)}.\n\n` +
+                  `@aviadr1 needs human review.`
+                )}`);
+              } catch { /* best effort */ }
+            }
+          } catch (e: any) {
+            deps.appendLog(`\nreview_fix_error=${e.message}\n`);
+            reviewVerdict = 'fail';
+          }
+        } else if (gapsCount === 0) {
+          // #897: All dimensions timed out / returned no findings
+          reviewVerdict = 'fail';
+        } else {
+          reviewVerdict = 'fail';
+        }
+      } else if (reviewVerdict !== 'fail') {
+        reviewVerdict = 'pass';
+        deps.appendLog(`\nreview_battery=pass pr=${prUrl} cost=$${batteryResult.costUsd.toFixed(2)}\n`);
+      }
+    }
+  } catch {
+    // Review battery error — non-fatal
+  }
+
+  return { reviewVerdict, reviewCostUsd };
+}
+
 // Main
 
 const MIN_RUN_SECONDS = 60;
@@ -1535,158 +1696,29 @@ async function main(): Promise<void> {
     }
   }
 
-  // Post-run review battery with fix loop (#891, #ENG-6638)
-  // Runs review on each PR. If gaps found, spawns fix sessions (max 3 rounds).
-  let reviewVerdict: 'pass' | 'fail' | 'skipped' = 'skipped';
-  let reviewCostUsd = 0;
-  const reviewBudgetCap = Math.min(
-    parseFloat(state.budget || '2') * 0.4, // max 40% of remaining run budget for review+fix
-    2.0, // hard cap $2
+  // Post-run review battery with fix loop (#891, #914)
+  const { reviewVerdict, reviewCostUsd } = await runReviewWiring(
+    {
+      prs: result.prs,
+      pickedIssue: pickedIssue ?? '',
+      repo: state.kaizen_repo || state.host_repo || '',
+      totalBudget: parseFloat(state.budget) || 2,
+      implementationCost: result.cost ?? 0,
+      runId,
+      batchId: state.batch_id,
+      runNum,
+    },
+    {
+      reviewBattery,
+      runFixLoop,
+      listPrDimensions,
+      formatBatteryReport,
+      emit: (event) => events.emit(event),
+      appendLog: (text) => appendFileSync(logFile, text),
+      writeAttachment,
+      ghExec,
+    },
   );
-  if (result.prs.length > 0 && pickedIssue) {
-    const repo = state.kaizen_repo || state.host_repo || '';
-    try {
-      const dimensions = listPrDimensions();
-      // planText is auto-loaded by reviewBattery() via retrievePlan() from plan-store.ts (kaizen #901, #902)
-      // No need to fetch here — just pass issueNum and repo so the auto-load can find it.
-      console.log(`  ${color.dim('[review-battery]')} running ${dimensions.join(', ')} review for ${result.prs.length} PR(s)...`);
-      for (const prUrl of result.prs) {
-        // Emit review round start event
-        events.emit({
-          type: 'review.round_start',
-          run_id: runId,
-          batch_id: state.batch_id,
-          run_num: runNum,
-          pr_url: prUrl,
-          round: 1,
-          dimensions: dimensions.map(d => typeof d === 'string' ? d : d.name ?? d),
-        });
-
-        const batteryResult = await reviewBattery({
-          dimensions,
-          prUrl,
-          issueNum: pickedIssue,
-          repo,
-          timeoutMs: 120_000,
-        });
-        reviewCostUsd += batteryResult.costUsd;
-
-        // Emit review round complete event
-        events.emit({
-          type: 'review.round_complete',
-          run_id: runId,
-          batch_id: state.batch_id,
-          run_num: runNum,
-          pr_url: prUrl,
-          round: 1,
-          verdict: batteryResult.verdict,
-          missing_count: batteryResult.missingCount,
-          partial_count: batteryResult.partialCount,
-          cost_usd: batteryResult.costUsd,
-          duration_ms: batteryResult.durationMs,
-        });
-
-        if (batteryResult.verdict === 'fail') {
-          const report = formatBatteryReport(batteryResult);
-          console.log(`  ${color.yellow('[review-battery]')} FAIL for ${prUrl}`);
-          for (const dim of batteryResult.dimensions) {
-            for (const f of dim.findings) {
-              if (f.status !== 'DONE') {
-                console.log(`    ${f.status}: ${f.requirement} — ${f.detail}`);
-              }
-            }
-          }
-          appendFileSync(logFile, `\n--- review-battery ---\n${report}\n`);
-          // Post review findings as structured PR attachment (best effort)
-          try {
-            const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '';
-            if (prNum && repo) {
-              writeAttachment({ kind: 'pr', number: prNum, repo }, 'review-battery', `## Review Battery: FAIL\n\n${report}`);
-            }
-          } catch { /* best effort */ }
-
-          // Spawn fix loop if we have budget remaining
-          const remainingBudget = reviewBudgetCap - reviewCostUsd;
-          if (remainingBudget > 0.10) {
-            const gapsCount = batteryResult.dimensions.reduce(
-              (acc, d) => acc + d.findings.filter(f => f.status !== 'DONE').length, 0,
-            );
-            events.emit({
-              type: 'review.fix_spawned',
-              run_id: runId,
-              batch_id: state.batch_id,
-              run_num: runNum,
-              pr_url: prUrl,
-              round: 1,
-              gaps_count: gapsCount,
-            });
-            console.log(`  ${color.dim('[review-fix]')} spawning fix loop (budget $${remainingBudget.toFixed(2)}, ${gapsCount} gaps)...`);
-
-            try {
-              const fixArgs: ReviewFixArgs = {
-                prUrl,
-                issueNum: pickedIssue,
-                repo,
-                dryRun: false,
-                maxRounds: 2, // 1 initial review already done, 2 more fix+re-review rounds
-                budgetCap: remainingBudget,
-                resume: false,
-              };
-              const fixState = await runFixLoop(fixArgs);
-              const fixCost = fixState.totalCostUsd ?? 0;
-              reviewCostUsd += fixCost;
-
-              events.emit({
-                type: 'review.fix_complete',
-                run_id: runId,
-                batch_id: state.batch_id,
-                run_num: runNum,
-                pr_url: prUrl,
-                round: fixState.currentRound,
-                success: fixState.outcome === 'pass',
-                cost_usd: fixCost,
-              });
-
-              if (fixState.outcome === 'pass') {
-                reviewVerdict = 'pass';
-                console.log(`  ${color.green('[review-fix]')} PASS after ${fixState.currentRound} round(s), $${fixCost.toFixed(2)}`);
-                appendFileSync(logFile, `\nreview_fix=pass rounds=${fixState.currentRound} cost=$${fixCost.toFixed(2)} pr=${prUrl}\n`);
-              } else {
-                reviewVerdict = 'fail';
-                console.log(`  ${color.yellow('[review-fix]')} still FAIL after ${fixState.currentRound} round(s), $${fixCost.toFixed(2)}`);
-                appendFileSync(logFile, `\nreview_fix=fail rounds=${fixState.currentRound} cost=$${fixCost.toFixed(2)} pr=${prUrl}\n`);
-                // Escalate to human
-                try {
-                  ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(
-                    `## Review Fix Loop: Exhausted\n\n` +
-                    `Ran ${fixState.currentRound} fix round(s) but gaps remain. ` +
-                    `Total review+fix cost: $${reviewCostUsd.toFixed(2)}.\n\n` +
-                    `@aviadr1 needs human review.`
-                  )}`);
-                } catch { /* best effort */ }
-              }
-            } catch (e: any) {
-              console.log(`  ${color.dim('[review-fix]')} error: ${e.message}`);
-              appendFileSync(logFile, `\nreview_fix_error=${e.message}\n`);
-              reviewVerdict = 'fail';
-            }
-          } else {
-            reviewVerdict = 'fail';
-            console.log(`  ${color.dim('[review-fix]')} skipped — budget exhausted ($${reviewCostUsd.toFixed(2)}/$${reviewBudgetCap.toFixed(2)})`);
-          }
-        } else if (reviewVerdict !== 'fail') {
-          reviewVerdict = 'pass';
-          console.log(`  ${color.green('[review-battery]')} PASS for ${prUrl}`);
-          appendFileSync(logFile, `\nreview_battery=pass pr=${prUrl} cost=$${batteryResult.costUsd.toFixed(2)}\n`);
-        }
-      }
-    } catch (e: any) {
-      console.log(`  ${color.dim('[review-battery]')} error: ${e.message}`);
-      appendFileSync(logFile, `\nreview_battery_error=${e.message}\n`);
-    }
-  }
-
-  // Store review verdict back onto result so scoreRunResult picks it up
   result.reviewVerdict = reviewVerdict;
   result.reviewCostUsd = reviewCostUsd;
 

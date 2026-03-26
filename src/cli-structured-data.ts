@@ -30,7 +30,7 @@
  *   npx tsx src/cli-structured-data.ts retrieve-iteration --pr 903 --repo R
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import YAML from 'yaml';
 import {
@@ -141,6 +141,13 @@ function main(): void {
       const text = a.file ? readFileSync(a.file, 'utf8') : a.text;
       const r = round();
       const url = storeReviewSummary(prTarget(a.pr, repo), r, text || undefined);
+      // #920: Write review sentinel so pr-review-loop.ts can verify outcome
+      try {
+        const stateDir = process.env.STATE_DIR ?? '/tmp/.pr-review-state';
+        const stateKey = `${repo.replace('/', '_')}_${a.pr ?? ''}`;
+        mkdirSync(stateDir, { recursive: true });
+        appendFileSync(`${stateDir}/${stateKey}.reviewed-r${r}`, `reviewed_at=${new Date().toISOString()}\n`);
+      } catch { /* best effort — sentinel is advisory */ }
       console.log(`Review summary stored (round ${r}): ${url}`);
       break;
     }

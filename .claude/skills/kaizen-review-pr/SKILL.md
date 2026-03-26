@@ -72,10 +72,10 @@ gh issue view <N> --repo "$ISSUES_REPO" --json title,body
 gh pr view <pr-url> --json title,body,url
 
 # Plan text (for plan-dependent dimensions: plan-fidelity, plan-coverage, improvement-lifecycle)
-npx tsx src/cli-plan-store.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"
+npx tsx src/cli-structured-data.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"
 
 # Connected issues (for requirements coverage — verify ALL connected issues are addressed)
-npx tsx src/cli-plan-store.ts query-connected --issue <N> --repo "$ISSUES_REPO"
+npx tsx src/cli-structured-data.ts query-connected --issue <N> --repo "$ISSUES_REPO"
 ```
 
 **After pre-fetch, display the review context before spawning agents:**
@@ -137,10 +137,10 @@ After all agents return: verify every dimension has a JSON findings block. Any d
 ## Phase 3: Classify
 
 1. **Auto-classify showstoppers first** (see above). These are MUST-FIX at confidence 100 regardless of anything else.
-2. Drop all other findings with confidence < 75.
+2. Drop all other findings with confidence < 60.
 3. Classify remaining:
    - **MUST-FIX** (confidence ≥ 90): blocks merge — bugs, security issues, missing tests for new logic, DRY violations with 3+ copies
-   - **SHOULD-FIX** (confidence 75–89): fix before merge — minor DRY, testability gaps, pattern inconsistencies
+   - **SHOULD-FIX** (confidence 60–89): fix before merge — minor DRY, testability gaps, pattern inconsistencies
 
 **Present findings as a table before fixing:**
 

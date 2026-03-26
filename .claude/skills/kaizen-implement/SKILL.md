@@ -88,11 +88,11 @@ PLAN
 )"
 ```
 
-**The plan is mandatory.** It must be posted before you write any code. Use `npx tsx src/cli-plan-store.ts store-plan` to persist it on the issue:
+**The plan is mandatory.** It must be posted before you write any code. Use `npx tsx src/cli-structured-data.ts store-plan` to persist it on the issue:
 
 ```bash
-npx tsx src/cli-plan-store.ts store-plan --issue {N} --repo "$ISSUES_REPO" --file plan.md
-npx tsx src/cli-plan-store.ts store-testplan --issue {N} --repo "$ISSUES_REPO" --file testplan.md
+npx tsx src/cli-structured-data.ts store-plan --issue {N} --repo "$ISSUES_REPO" --file plan.md
+npx tsx src/cli-structured-data.ts store-testplan --issue {N} --repo "$ISSUES_REPO" --file testplan.md
 ```
 
 The plan lives in three places:
@@ -100,7 +100,7 @@ The plan lives in three places:
 2. **Session context** (you just wrote it — dimension subagents read it during review)
 3. **PR description** (absorbed into Story Spine narrative via `/kaizen-write-pr` after PR creation)
 
-The plan is consumed by: `plan-coverage` (plan vs issue), `plan-fidelity` (PR vs plan), `test-plan` (testing strategy). `reviewBattery()` auto-loads plan text from the issue when `planText` is not explicitly provided — so storing it with `cli-plan-store.ts` makes it available to all downstream review dimensions automatically. See `docs/artifact-lifecycle.md` for the full artifact chain.
+The plan is consumed by: `plan-coverage` (plan vs issue), `plan-fidelity` (PR vs plan), `test-plan` (testing strategy). `reviewBattery()` auto-loads plan text from the issue when `planText` is not explicitly provided — so storing it with `cli-structured-data.ts` makes it available to all downstream review dimensions automatically. See `docs/artifact-lifecycle.md` for the full artifact chain.
 
 **Why an issue comment, not a repo file?** Plans are per-issue artifacts, not tooling. They don't belong in the codebase. In plugin mode, kaizen must never commit per-issue files to the host repo. Issue comments are persistent, attached to the issue, and discoverable by future sessions.
 

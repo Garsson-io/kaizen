@@ -36,6 +36,7 @@ import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { processHookInput, writeReviewSentinel } from './pr-review-loop.js';
 
 let testStateDir: string;
 const HOOK_PATH = path.resolve(__dirname, 'pr-review-loop.ts');
@@ -256,7 +257,12 @@ describe('pr-review-loop: cross-worktree isolation', () => {
 });
 
 describe('pr-review-loop: gh pr diff', () => {
-  it('outputs checklist and transitions to passed', () => {
+  /** Write a review sentinel to simulate store-review-summary having been called */
+  function writeSentinel(stateKey: string, round: string): void {
+    fs.writeFileSync(path.join(testStateDir, `${stateKey}.reviewed-r${round}`), `reviewed_at=${new Date().toISOString()}\n`);
+  }
+
+  it('outputs checklist and transitions to passed (with sentinel)', () => {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       encoding: 'utf-8',
     }).trim();
@@ -266,6 +272,7 @@ describe('pr-review-loop: gh pr diff', () => {
       STATUS: 'needs_review',
       BRANCH: branch,
     });
+    writeSentinel('Garsson-io_kaizen_55', '2');
 
     const output = runHook(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/55'),
@@ -289,6 +296,7 @@ describe('pr-review-loop: gh pr diff', () => {
       STATUS: 'needs_review',
       BRANCH: branch,
     });
+    writeSentinel('Garsson-io_kaizen_201', '1');
 
     runHook(prDiffInput('https://github.com/Garsson-io/kaizen/pull/201'));
 
@@ -425,4 +433,66 @@ describe('pr-review-loop: non-PR commands ignored', () => {
     });
     expect(output).toBe('');
   });
+});
+
+// ONE TEST TO RULE THEM ALL (#920, #921)
+// Gate transitions must verify structured outcomes, not just command detection.
+// Parameterized over all gate transitions in the system.
+describe('INVARIANT: gate transitions verify outcome, not just trigger command', () => {
+  const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
+  const PR_URL = 'https://github.com/Garsson-io/kaizen/pull/999';
+
+  const gates = [
+    {
+      name: 'review gate (gh pr diff)',
+      setupGate: () => {
+        createState('Garsson-io_kaizen_999', {
+          PR_URL,
+          ROUND: '1',
+          STATUS: 'needs_review',
+          BRANCH: branch,
+        });
+      },
+      triggerInput: {
+        tool_input: { command: `gh pr diff ${PR_URL}` },
+        tool_response: { stdout: 'diff --git a/foo b/foo', stderr: '', exit_code: '0' },
+      },
+      provideOutcome: () => {
+        writeReviewSentinel(PR_URL, '1', testStateDir);
+      },
+      expectBlockedAction: 'needs_review',
+      expectPassedAction: 'review_passed',
+    },
+  ];
+
+  for (const gate of gates) {
+    it(`${gate.name}: trigger WITHOUT outcome keeps gate BLOCKED`, () => {
+      gate.setupGate();
+      // Trigger the command but do NOT provide the outcome
+      const result = processHookInput(gate.triggerInput as any, {
+        stateDir: testStateDir,
+        branch,
+        checkReviewSentinel: (_url: string, _round: string, dir: string) => {
+          // Check for real sentinel file in test state dir
+          const sentinel = path.join(dir, `Garsson-io_kaizen_999.reviewed-r1`);
+          return fs.existsSync(sentinel);
+        },
+      });
+      expect(result.action).toBe(gate.expectBlockedAction);
+    });
+
+    it(`${gate.name}: trigger WITH outcome clears gate`, () => {
+      gate.setupGate();
+      gate.provideOutcome(); // Write the sentinel
+      const result = processHookInput(gate.triggerInput as any, {
+        stateDir: testStateDir,
+        branch,
+        checkReviewSentinel: (_url: string, _round: string, dir: string) => {
+          const sentinel = path.join(dir, `Garsson-io_kaizen_999.reviewed-r1`);
+          return fs.existsSync(sentinel);
+        },
+      });
+      expect(result.action).toBe(gate.expectPassedAction);
+    });
+  }
 });
