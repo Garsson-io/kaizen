@@ -4,7 +4,8 @@
  * Handles ALL tool types during review enforcement (kaizen #775, #789):
  *   - Bash: allowlist-based (review commands like gh pr diff, git diff pass through)
  *   - Edit/Write: always blocked during review (write tools, not useful for reviewing)
- *   - Agent: blocked except kaizen-bg subagent (background reflection, kaizen #151)
+ *   - Agent: always allowed — review itself uses Agent to spawn dimension subagents
+ *     (kaizen #895, #856). Blocking Agent blocked the review from running.
  *   - Read-only tools (Read, Glob, Grep): not registered — useful for reviewing code
  *
  * Fast path: allowed commands/tools exit immediately without checking state.
@@ -50,13 +51,14 @@ export function processPreToolUse(
 ): { allowed: boolean; reason?: string } {
   const toolName = context?.toolName ?? '';
 
-  // For Edit/Write/Agent: no command allowlist — go straight to state check
-  if (BLOCKED_TOOLS.has(toolName) || toolName === 'Agent') {
-    // Agent(kaizen-bg) is always allowed (background reflection, kaizen #151)
-    if (toolName === 'Agent' && context?.toolInput?.subagent_type === 'kaizen-bg') {
-      return { allowed: true };
-    }
+  // Agent tool is always allowed — the review itself uses Agent to spawn
+  // dimension subagents. Blocking it prevented review from running (kaizen #895, #856).
+  if (toolName === 'Agent') {
+    return { allowed: true };
+  }
 
+  // For Edit/Write: no command allowlist — go straight to state check
+  if (BLOCKED_TOOLS.has(toolName)) {
     const reviewState = findStateWithStatus('needs_review', currentBranch, stateDir);
     if (!reviewState) return { allowed: true };
 

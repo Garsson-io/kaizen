@@ -614,6 +614,35 @@ describe('runFixLoop', () => {
     } finally { teardown(); }
   });
 
+  it('no-actionable-gaps path: does not launch fix when verdict=fail but gaps=0 (kaizen #897)', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn();
+      // Simulate: some dims pass, others timed out → verdict=fail but gaps=0
+      // This is the #897 scenario: all returned findings are DONE, but
+      // failed dims make verdict=fail. No actionable gaps to fix.
+      const timeoutBattery: BatteryResult = {
+        verdict: 'fail',
+        costUsd: 0.10,
+        missingCount: 0,
+        partialCount: 0,
+        durationMs: 120_000,
+        failedDimensions: ['test-quality'],
+        skippedDimensions: [],
+        dimensions: [{ dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'all good' }] }],
+      };
+      const state = await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => timeoutBattery,
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('no_actionable_gaps');
+      expect(state.phase).toBe('done');
+      expect(launchFixMock).not.toHaveBeenCalled();
+    } finally { teardown(); }
+  });
+
   it('state is persisted to getStateDir after completion', async () => {
     const dir = setup();
     try {

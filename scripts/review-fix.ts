@@ -564,6 +564,17 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       return state;
     }
 
+    // ── NO ACTIONABLE GAPS? (kaizen #897) ──
+    // Verdict can be 'fail' due to timed-out/failed dimensions even when
+    // all returned findings are DONE. Don't launch a fix with nothing to fix.
+    if (gaps.length === 0) {
+      console.log(`\nVerdict is fail but no actionable gaps (${battery.failedDimensions.length} dim(s) failed to return results). Run with --resume to retry.`);
+      state.outcome = 'no_actionable_gaps';
+      state.phase = 'done';
+      saveState(state, doStateDir());
+      return state;
+    }
+
     // ── LAST ROUND? ──
     if (round === maxRounds) {
       console.log(`\nMax rounds (${maxRounds}) reached with ${gaps.length} remaining gaps`);

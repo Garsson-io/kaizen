@@ -922,7 +922,7 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     expect(result.failedDimensions).toHaveLength(0);
   });
 
-  it('auto-skips plan-requiring dims when no planText provided', async () => {
+  it('emits MISSING findings for plan-requiring dims when no planText provided (kaizen #901)', async () => {
     const passingOutput = streamJsonPayload(
       JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [] }),
       0.10,
@@ -931,10 +931,25 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     const result = await reviewBattery({
       dimensions: ['requirements', 'plan-coverage', 'plan-fidelity', 'improvement-lifecycle'],
     });
+    // Still tracked as skipped
     expect(result.skippedDimensions).toContain('plan-coverage');
     expect(result.skippedDimensions).toContain('plan-fidelity');
     expect(result.skippedDimensions).toContain('improvement-lifecycle');
     expect(result.skippedDimensions).not.toContain('requirements');
+
+    // NEW: skipped dims produce MISSING findings in the results (kaizen #901)
+    const planCovDim = result.dimensions.find(d => d.dimension === 'plan-coverage');
+    expect(planCovDim).toBeDefined();
+    expect(planCovDim!.verdict).toBe('fail');
+    expect(planCovDim!.findings).toHaveLength(1);
+    expect(planCovDim!.findings[0].status).toBe('MISSING');
+    expect(planCovDim!.findings[0].detail).toContain('plan text');
+
+    // Skipped dims contribute to missingCount
+    expect(result.missingCount).toBeGreaterThanOrEqual(3);
+
+    // Overall verdict is fail because of MISSING findings
+    expect(result.verdict).toBe('fail');
   });
 
   it('includes plan-requiring dims when planText is provided', async () => {
