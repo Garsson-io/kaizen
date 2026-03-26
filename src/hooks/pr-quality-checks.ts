@@ -16,7 +16,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { readHookInput } from './hook-io.js';
+import { readHookInput, traceNullInput } from './hook-io.js';
 import {
   isGhPrCommand,
   isGitCommand,
@@ -417,7 +417,7 @@ export function runQualityChecks(
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("pr-quality-checks"); process.exit(0); }
 
   const command = input.tool_input?.command ?? '';
   const result = runQualityChecks(command);

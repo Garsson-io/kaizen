@@ -76,6 +76,16 @@ describe('enforce-pr-review PreToolUse — Bash commands', () => {
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('round 3');
   });
+
+  it('INVARIANT: Bash deny message identifies the blocked tool as "Bash" (kaizen #971)', () => {
+    // The gate message must identify WHICH matcher fired (Bash/Edit|Write/Agent).
+    // PR #964 debugging wasted significant time because the message said
+    // "PR review required before proceeding" — no indication it was a Bash command.
+    createReviewGate('https://github.com/org/repo/pull/42');
+    const result = processPreToolUse('git push origin feature', TEST_BRANCH, TEST_STATE_DIR);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/BLOCKED.*Bash/i);
+  });
 });
 
 describe('enforce-pr-review PreToolUse — Edit/Write tools (kaizen #789)', () => {
