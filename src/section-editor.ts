@@ -324,14 +324,74 @@ export function removeAttachment(target: AttachmentTarget, name: string): void {
   } catch { /* best effort */ }
 }
 
+// ── Sections within attachments ─────────────────────────────────────
+// Compose attachment CRUD with section parsing for full structured editing.
+
+/** Helper: rewrite an attachment's content and update the comment. */
+function rewriteAttachmentContent(target: AttachmentTarget, attachmentName: string, newContent: string): void {
+  const existing = readAttachment(target, attachmentName);
+  if (!existing || !existing.commentId) {
+    throw new Error(`Attachment "${attachmentName}" not found. Use writeAttachment to create it.`);
+  }
+  const marker = `<!-- kaizen:${attachmentName} -->`;
+  const body = `${marker}\n${newContent}`;
+  gh(['api', '--method', 'PATCH', `/repos/${target.repo}/issues/comments/${existing.commentId}`, '-f', `body=${body}`]);
+}
+
 /**
- * Parse sections within an attachment's content.
- * Useful for reading specific ## sections inside a marker comment.
+ * List section names within an attachment.
+ */
+export function listAttachmentSections(target: AttachmentTarget, attachmentName: string): string[] {
+  const attachment = readAttachment(target, attachmentName);
+  if (!attachment) return [];
+  return parseSections(attachment.content).map(s => s.name).filter(Boolean);
+}
+
+/**
+ * Read a specific ## section from inside an attachment.
  */
 export function readAttachmentSection(target: AttachmentTarget, attachmentName: string, sectionName: string): string | null {
   const attachment = readAttachment(target, attachmentName);
   if (!attachment) return null;
-  const sections = parseSections(attachment.content);
-  const section = sections.find(s => s.name === sectionName);
+  const section = parseSections(attachment.content).find(s => s.name === sectionName);
   return section?.content ?? null;
+}
+
+/**
+ * Add or replace a ## section inside an attachment.
+ * Creates the section if it doesn't exist, replaces it if it does.
+ */
+export function addAttachmentSection(target: AttachmentTarget, attachmentName: string, sectionName: string, content: string): void {
+  const attachment = readAttachment(target, attachmentName);
+  if (!attachment) {
+    throw new Error(`Attachment "${attachmentName}" not found. Use writeAttachment to create it first.`);
+  }
+  const sections = parseSections(attachment.content);
+  const existing = sections.find(s => s.name === sectionName);
+  const sectionText = `## ${sectionName}\n\n${content}`;
+
+  let newContent: string;
+  if (existing) {
+    newContent = attachment.content.slice(0, existing.startOffset) + sectionText + '\n\n' + attachment.content.slice(existing.endOffset);
+  } else {
+    newContent = attachment.content.trimEnd() + '\n\n' + sectionText;
+  }
+  rewriteAttachmentContent(target, attachmentName, newContent.replace(/\n{3,}/g, '\n\n').trimEnd());
+}
+
+/**
+ * Remove a ## section from inside an attachment.
+ * No-op if the section doesn't exist.
+ */
+export function removeAttachmentSection(target: AttachmentTarget, attachmentName: string, sectionName: string): void {
+  const attachment = readAttachment(target, attachmentName);
+  if (!attachment) return;
+  const sections = parseSections(attachment.content);
+  const existing = sections.find(s => s.name === sectionName);
+  if (!existing) return;
+
+  const newContent = (attachment.content.slice(0, existing.startOffset) + attachment.content.slice(existing.endOffset))
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd();
+  rewriteAttachmentContent(target, attachmentName, newContent);
 }

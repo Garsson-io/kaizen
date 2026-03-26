@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { parseSections, listSections, readSection, addSection, replaceSection, removeSection, listAttachments, readAttachment, writeAttachment, removeAttachment, readAttachmentSection, type AttachmentTarget } from './section-editor.js';
+import { parseSections, listSections, readSection, addSection, replaceSection, removeSection, listAttachments, readAttachment, writeAttachment, removeAttachment, listAttachmentSections, readAttachmentSection, addAttachmentSection, removeAttachmentSection, type AttachmentTarget } from './section-editor.js';
 
 vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
@@ -354,5 +354,96 @@ describe('readAttachmentSection — sections within an attachment', () => {
       body: '<!-- kaizen:plan -->\n## Plan\n\nStuff.',
     }));
     expect(readAttachmentSection(issueAttach, 'plan', 'Missing Section')).toBeNull();
+  });
+});
+
+describe('listAttachmentSections', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('lists section names within an attachment', () => {
+    ghReturns(JSON.stringify({
+      url: 'https://...#issuecomment-456',
+      body: '<!-- kaizen:plan -->\n## Plan\n\n1. Do X\n\n## Risk\n\nLow.\n\n## Timeline\n\nQ1.',
+    }));
+    expect(listAttachmentSections(issueAttach, 'plan')).toEqual(['Plan', 'Risk', 'Timeline']);
+  });
+
+  it('returns empty when attachment not found', () => {
+    ghReturns('');
+    expect(listAttachmentSections(issueAttach, 'plan')).toEqual([]);
+  });
+});
+
+describe('addAttachmentSection', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('appends new section to attachment', () => {
+    // readAttachment (for current content)
+    ghReturns(JSON.stringify({
+      url: 'https://...#issuecomment-456',
+      body: '<!-- kaizen:plan -->\n## Plan\n\n1. Do X',
+    }));
+    // rewriteAttachmentContent: readAttachment again
+    ghReturns(JSON.stringify({
+      url: 'https://...#issuecomment-456',
+      body: '<!-- kaizen:plan -->\n## Plan\n\n1. Do X',
+    }));
+    // PATCH
+    ghReturns('');
+    addAttachmentSection(issueAttach, 'plan', 'Risk', 'Low risk.');
+    const patchArgs = mockGh.mock.calls[2][1] as string[];
+    const bodyArg = patchArgs.find(a => a.startsWith('body='))!;
+    expect(bodyArg).toContain('## Plan');
+    expect(bodyArg).toContain('## Risk');
+    expect(bodyArg).toContain('Low risk');
+  });
+
+  it('replaces existing section in attachment', () => {
+    ghReturns(JSON.stringify({
+      url: 'https://...#issuecomment-456',
+      body: '<!-- kaizen:plan -->\n## Plan\n\nOld.\n\n## Risk\n\nOld risk.',
+    }));
+    ghReturns(JSON.stringify({
+      url: 'https://...#issuecomment-456',
+      body: '<!-- kaizen:plan -->\n## Plan\n\nOld.\n\n## Risk\n\nOld risk.',
+    }));
+    ghReturns('');
+    addAttachmentSection(issueAttach, 'plan', 'Risk', 'New risk.');
+    const patchArgs = mockGh.mock.calls[2][1] as string[];
+    const bodyArg = patchArgs.find(a => a.startsWith('body='))!;
+    expect(bodyArg).toContain('New risk');
+    expect(bodyArg).not.toContain('Old risk');
+    expect(bodyArg).toContain('## Plan');
+  });
+});
+
+describe('removeAttachmentSection', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('removes a section from an attachment', () => {
+    ghReturns(JSON.stringify({
+      url: 'https://...#issuecomment-456',
+      body: '<!-- kaizen:plan -->\n## Plan\n\nKeep.\n\n## Draft\n\nRemove.\n\n## Notes\n\nAlso keep.',
+    }));
+    ghReturns(JSON.stringify({
+      url: 'https://...#issuecomment-456',
+      body: '<!-- kaizen:plan -->\n## Plan\n\nKeep.\n\n## Draft\n\nRemove.\n\n## Notes\n\nAlso keep.',
+    }));
+    ghReturns('');
+    removeAttachmentSection(issueAttach, 'plan', 'Draft');
+    const patchArgs = mockGh.mock.calls[2][1] as string[];
+    const bodyArg = patchArgs.find(a => a.startsWith('body='))!;
+    expect(bodyArg).toContain('Keep');
+    expect(bodyArg).toContain('Also keep');
+    expect(bodyArg).not.toContain('Remove');
+  });
+
+  it('no-ops when section not in attachment', () => {
+    ghReturns(JSON.stringify({
+      url: 'https://...#issuecomment-456',
+      body: '<!-- kaizen:plan -->\n## Plan\n\nStuff.',
+    }));
+    removeAttachmentSection(issueAttach, 'plan', 'Missing');
+    expect(mockGh).toHaveBeenCalledTimes(1); // only readAttachment, no PATCH
   });
 });
