@@ -150,6 +150,18 @@ describe('pr-kaizen-clear-fallback: no-op cases', () => {
     expect(gateStatus()).toBe('needs_pr_kaizen');
   });
 
+  it('INVARIANT: no-op when Bash command exits non-zero (failed command)', () => {
+    writeGate('needs_pr_kaizen');
+    const input = {
+      tool_name: 'Bash',
+      tool_input: { command: 'echo KAIZEN_IMPEDIMENTS: []' },
+      tool_response: { stdout: 'KAIZEN_IMPEDIMENTS: []', stderr: 'error', exit_code: '1' },
+    };
+    runFallback(input);
+    // Failed commands should not clear gates — the declaration may not have succeeded
+    expect(gateStatus()).toBe('needs_pr_kaizen');
+  });
+
   it('INVARIANT: ignores non-Bash tool calls', () => {
     writeGate('needs_pr_kaizen');
     const input = {

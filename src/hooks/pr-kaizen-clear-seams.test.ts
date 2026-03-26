@@ -113,6 +113,33 @@ describe('KAIZEN_UNFINISHED seam: grep pattern false-positive prevention', () =>
   });
 });
 
+// ── Piped KAIZEN_IMPEDIMENTS seam ────────────────────────────────────
+
+describe('KAIZEN_IMPEDIMENTS seam: piped command extraction', () => {
+  it('INVARIANT: KAIZEN_IMPEDIMENTS declaration piped through cat reaches extraction', () => {
+    writeGate();
+    // When stdout contains the declaration (even if piped through commands), it must be extracted
+    const json = JSON.stringify([
+      { impediment: 'test', disposition: 'filed', ref: '#1' },
+    ]);
+    const result = processHookInput(
+      {
+        tool_name: 'Bash',
+        tool_input: { command: `echo 'KAIZEN_IMPEDIMENTS: ${json}' | cat` },
+        tool_response: {
+          stdout: `KAIZEN_IMPEDIMENTS: ${json}`,
+          stderr: '',
+          exit_code: '0',
+        },
+      },
+      { stateDir: testStateDir },
+    );
+    // Declaration in stdout must succeed regardless of how the command was structured
+    expect(result).not.toBeNull();
+    expect(result).toContain('gate cleared');
+  });
+});
+
 // ── Non-array JSON seam ───────────────────────────────────────────────
 
 describe('KAIZEN_IMPEDIMENTS seam: non-array JSON', () => {
