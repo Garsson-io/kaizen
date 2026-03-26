@@ -51,12 +51,15 @@ describe('cli-dimensions against real prompts', () => {
     expect(output).toContain('requirements');
     expect(output).toContain('pr-description');
     expect(output).toContain('scope-fidelity');
-    expect(output).toContain('logic-correctness');
-    expect(output).toContain('error-handling');
+    expect(output).toContain('correctness');
+    expect(output).toContain('security');
+    expect(output).toContain('tooling-fitness');
+    expect(output).toContain('multi-pr-spiral');
+    expect(output).toContain('reflection-quality');
     expect(output).toContain('test-quality');
     // header + separator + N data rows
     const lines = output.split('\n');
-    expect(lines.length).toBeGreaterThanOrEqual(9); // 2 header + 7 dimensions
+    expect(lines.length).toBeGreaterThanOrEqual(11); // 2 header + 9+ dimensions
   });
 
   it('show reads a dimension by name', () => {

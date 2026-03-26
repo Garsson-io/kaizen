@@ -237,13 +237,14 @@ describe('discoverDimensions', () => {
     expect(names).toContain('pr-description');
   });
 
-  it('listPrDimensions excludes plan-coverage and includes all other dimensions', () => {
-    const all = listDimensions();
+  it('listPrDimensions includes only pr and both dimensions', () => {
+    const metas = loadDimensionMetas();
     const pr = listPrDimensions();
-    expect(pr).not.toContain('plan-coverage');
-    for (const name of all) {
-      if (name !== 'plan-coverage') {
-        expect(pr).toContain(name);
+    for (const meta of metas) {
+      if (meta.applies_to === 'pr' || meta.applies_to === 'both') {
+        expect(pr).toContain(meta.name);
+      } else {
+        expect(pr).not.toContain(meta.name);
       }
     }
   });
@@ -278,13 +279,13 @@ describe('discoverDimensions', () => {
     expect(typeof briefing).toBe('string');
     expect(briefing).toContain('Review Briefing');
     expect(briefing).toContain('200 lines');
-    expect(briefing).toContain('logic-correctness');
+    expect(briefing).toContain('security');
     expect(briefing).toContain('High priority when');
     expect(briefing).toContain('Low priority when');
     expect(briefing).toContain('Natural Groupings');
     // diff-only dimensions grouped together
-    expect(briefing).toContain('logic-correctness');
-    expect(briefing).toContain('error-handling');
+    expect(briefing).toContain('security');
+    expect(briefing).toContain('correctness');
   });
 });
 
@@ -696,14 +697,14 @@ Second dimension:
 describe('groupByDataNeeds', () => {
   it('groups dims with identical data needs together', () => {
     const metas = [
-      makeMeta('error-handling', ['diff']),
-      makeMeta('logic-correctness', ['diff']),
+      makeMeta('correctness', ['diff']),
+      makeMeta('security', ['diff']),
       makeMeta('requirements', ['diff', 'issue']),
     ];
-    const groups = groupByDataNeeds(['error-handling', 'logic-correctness', 'requirements'], metas);
+    const groups = groupByDataNeeds(['correctness', 'security', 'requirements'], metas);
     expect(groups).toHaveLength(2);
-    const diffGroup = groups.find(g => g.includes('error-handling'));
-    expect(diffGroup).toContain('logic-correctness');
+    const diffGroup = groups.find(g => g.includes('correctness'));
+    expect(diffGroup).toContain('security');
     expect(diffGroup).not.toContain('requirements');
   });
 
@@ -769,55 +770,55 @@ describe('spawnBatchReview', () => {
 
   it('returns parsed reviews for each requested dimension', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
-      { dim: 'logic-correctness', verdict: 'pass', findings: [{ requirement: 'R2', status: 'DONE', detail: 'ok' }] },
+      { dim: 'correctness', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+      { dim: 'security', verdict: 'pass', findings: [{ requirement: 'R2', status: 'DONE', detail: 'ok' }] },
     ], 0.15);
     mockClaudeOnce(payload);
 
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results).toHaveLength(2);
-    expect(results[0].review?.dimension).toBe('error-handling');
-    expect(results[1].review?.dimension).toBe('logic-correctness');
+    expect(results[0].review?.dimension).toBe('correctness');
+    expect(results[1].review?.dimension).toBe('security');
   });
 
   it('returns null for dimensions missing from the batch response', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+      { dim: 'correctness', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
     ], 0.10); // only one dim returned
     mockClaudeOnce(payload);
 
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results[0].review).not.toBeNull();
     expect(results[1].review).toBeNull(); // logic-correctness missing from response
   });
 
   it('splits cost evenly across dimensions', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [] },
-      { dim: 'logic-correctness', verdict: 'pass', findings: [] },
+      { dim: 'correctness', verdict: 'pass', findings: [] },
+      { dim: 'security', verdict: 'pass', findings: [] },
     ], 0.20);
     mockClaudeOnce(payload);
 
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results[0].costUsd).toBeCloseTo(0.10);
     expect(results[1].costUsd).toBeCloseTo(0.10);
   });
 
   it('returns all nulls when claude fails', async () => {
     mockClaudeOnce('', 1);
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results[0].review).toBeNull();
     expect(results[1].review).toBeNull();
   });
 
   it('uses a single claude call regardless of dimension count', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [] },
-      { dim: 'logic-correctness', verdict: 'pass', findings: [] },
+      { dim: 'correctness', verdict: 'pass', findings: [] },
+      { dim: 'security', verdict: 'pass', findings: [] },
     ], 0.10);
     mockClaudeOnce(payload);
 
-    await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
   });
 });
@@ -904,13 +905,13 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     // error-handling and logic-correctness both need [diff] — should be one call
     const batchOutput = streamJsonPayload(
       [
-        '```json\n' + JSON.stringify({ dimension: 'error-handling', summary: 'ok', findings: [] }) + '\n```',
-        '```json\n' + JSON.stringify({ dimension: 'logic-correctness', summary: 'ok', findings: [] }) + '\n```',
+        '```json\n' + JSON.stringify({ dimension: 'correctness', summary: 'ok', findings: [] }) + '\n```',
+        '```json\n' + JSON.stringify({ dimension: 'security', summary: 'ok', findings: [] }) + '\n```',
       ].join('\n\n'),
       0.15,
     );
     mockClaudeSequential([{ stdout: batchOutput }]);
-    await reviewBattery({ dimensions: ['error-handling', 'logic-correctness'] });
+    await reviewBattery({ dimensions: ['correctness', 'security'] });
     // Both dims share [diff] needs → batched into 1 spawn call
     expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
   });
@@ -1074,12 +1075,13 @@ describe('replay tests', () => {
 
 describe('Tier 1 — prompt file structure (all dimensions)', () => {
   const promptsDir = resolvePromptsDir();
-  const validAppliesTo = new Set(['pr', 'plan', 'both']);
+  const validAppliesTo = new Set(['pr', 'plan', 'both', 'reflection']);
 
   const dimensions = [
-    'dry', 'error-handling', 'improvement-lifecycle', 'logic-correctness',
-    'plan-coverage', 'plan-fidelity', 'pr-description', 'requirements',
-    'scope-fidelity', 'test-plan', 'test-quality',
+    'correctness', 'dry', 'improvement-lifecycle',
+    'multi-pr-spiral', 'plan-coverage', 'plan-fidelity', 'pr-description',
+    'reflection-quality', 'requirements', 'scope-fidelity',
+    'security', 'test-plan', 'test-quality', 'tooling-fitness',
   ];
 
   for (const dim of dimensions) {

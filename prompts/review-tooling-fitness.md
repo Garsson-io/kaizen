@@ -106,24 +106,7 @@ Also check for:
 - Assumptions that the `.claude` directory is at `./` — in a worktree, it's at the main checkout
 - Missing `-C` flag on `git status`, `git diff`, `git log`, `git rev-parse` calls in hooks
 
-### Step 4: Check for missing library reuse
-
-For each utility function added in the diff that does one of these things:
-- Resolves project root or git toplevel
-- Reads a config file
-- Executes a subprocess with retries
-- Formats a table or structured output
-- Parses or validates structured data
-
-Search the codebase: does a function already exist that does this?
-```
-grep -r "functionName\|similarPattern" --include="*.ts" src/
-```
-
-If yes and the PR doesn't use it: MISSING (reuse the existing one).
-If no: is there a `src/lib/` pattern that establishes how to write this kind of utility? If so, follow it.
-
-### Step 5: Check CI assumptions
+### Step 4: Check CI assumptions
 
 For any test in the diff that:
 - Calls `git init` without setting `user.name` and `user.email` locally (fails in CI — no global git config)

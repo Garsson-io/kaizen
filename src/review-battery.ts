@@ -99,7 +99,7 @@ export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
 export type ReviewDimension = string;
 
 /** Data categories a dimension can require */
-export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'session' | 'git-history';
+export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'session' | 'git-history' | 'multiple_prs' | 'reflection_history';
 
 /** Frontmatter metadata from a review dimension prompt */
 export interface DimensionMeta {
@@ -235,15 +235,15 @@ export function listDimensions(promptsDir?: string): string[] {
   return Object.keys(discoverDimensions(promptsDir));
 }
 
-/** Dimensions excluded from post-PR review (plan-phase-only dimensions). */
-const PR_SKIP_DIMENSIONS = ['plan-coverage'];
-
 /**
  * List dimensions applicable to post-PR review.
- * Excludes plan-phase-only dimensions (e.g. plan-coverage).
+ * Includes only dimensions with applies_to === 'pr' or 'both'.
+ * Automatically excludes plan-only and reflection-only dimensions.
  */
 export function listPrDimensions(promptsDir?: string): string[] {
-  return listDimensions(promptsDir).filter(d => !PR_SKIP_DIMENSIONS.includes(d));
+  return loadDimensionMetas(promptsDir)
+    .filter(m => m.applies_to === 'pr' || m.applies_to === 'both')
+    .map(m => m.name);
 }
 
 /**

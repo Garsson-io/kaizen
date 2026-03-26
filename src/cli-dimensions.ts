@@ -82,7 +82,7 @@ export function cmdAdd(opts: AddOptions): string {
     return `Error: ${fileName} already exists.`;
   }
 
-  const validAppliesTo = ['pr', 'plan', 'both'];
+  const validAppliesTo = ['pr', 'plan', 'both', 'reflection'];
   if (!validAppliesTo.includes(opts.appliesTo)) {
     return `Error: --applies-to must be one of: ${validAppliesTo.join(', ')}`;
   }
@@ -181,7 +181,8 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
 }
 
 export function cmdBriefing(prLines: number, promptsDir?: string): string {
-  const metas = loadDimensionMetas(promptsDir);
+  const metas = loadDimensionMetas(promptsDir)
+    .filter(m => m.applies_to === 'pr' || m.applies_to === 'both');
   return reviewBriefing(metas, prLines);
 }
 
@@ -214,9 +215,9 @@ export function parseArgs(argv: string[]): void {
 Commands:
   list                                         Show all dimensions
   show <name> [name2 ...]                      Display dimension prompt(s)
-  add <name> --description "..." --applies-to pr|plan|both   Scaffold new dimension
+  add <name> --description "..." --applies-to pr|plan|both|reflection   Scaffold new dimension
   validate                                     Check all dimension files
-  briefing --lines <N>                         Show review briefing for a PR of N lines`);
+  briefing --lines <N>                         Show review briefing for a PR of N lines (pr/both dimensions only)`);
     process.exit(0);
   }
 
