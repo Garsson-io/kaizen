@@ -96,7 +96,8 @@ function main(): void {
       break;
     }
     case 'store-review-summary': {
-      const url = storeReviewSummary(prTarget(a.pr, repo), parseInt(a.round ?? '1', 10), content());
+      const text = a.file ? readFileSync(a.file, 'utf8') : a.text;
+      const url = storeReviewSummary(prTarget(a.pr, repo), parseInt(a.round ?? '1', 10), text || undefined);
       console.log(`Review summary stored: ${url}`);
       break;
     }
