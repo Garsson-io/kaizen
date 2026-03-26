@@ -1,6 +1,6 @@
 # Review Loop Spec — Multi-Dimensional Review for AI Coding Workflows
 
-Status: Draft, iterating
+Status: Partially implemented — see Implementation Status section
 Parent: #842, #843
 
 ## Problem
@@ -319,22 +319,54 @@ A PR is ready to merge when ALL of these are true:
 3. **The plan loop is the highest-ROI intervention.** Catching a bad plan costs $0.13. Implementing a bad plan and discovering it post-hoc costs $2-5. Implementing, closing, re-discovering, and re-implementing costs the full lifecycle twice.
 4. **Gates that can be cleared by the gated agent are theater.** The `gh pr diff` → auto-pass pattern proves this. Real enforcement requires an agent the implementer doesn't control.
 
+## Implementation Status (2026-03-26)
+
+### Built and working
+
+| Component | File(s) | What it does |
+|-----------|---------|-------------|
+| Review battery engine | `src/review-battery.ts` (787 lines) | Spawns `claude -p` subagent reviewers, structured findings, parallel execution |
+| Review-fix CLI | `scripts/review-fix.ts` (625 lines) | Review → fix → re-review loop with state persistence, budget cap, resume |
+| Dimension CLI | `src/cli-dimensions.ts` (296 lines) | List/show/add/validate/briefing for review dimensions |
+| 14 dimension prompts | `prompts/review-*.md` | Adversarial review prompts for plan-coverage, plan-fidelity, requirements, scope-fidelity, DRY, correctness, security, error-handling, logic-correctness, test-plan, test-quality, tooling-fitness, improvement-lifecycle, pr-description |
+| Auto-dent review + fix loop | `scripts/auto-dent-run.ts` | Post-run review battery; if fail, spawns fix loop via `runFixLoop()` (PR #891) |
+| Review events | `scripts/auto-dent-events.ts` | Structured events: `review.round_start`, `review.round_complete`, `review.fix_spawned`, `review.fix_complete` |
+| Plan as issue comment | `kaizen-implement` SKILL.md | Agent posts plan.md + test-plan.md before writing code |
+| Plan-vs-delivery in reflection | `kaizen-reflect` SKILL.md | Step 1.7 compares plan comment against PR delivery |
+| E2E test infrastructure | `scripts/review-battery.e2e.test.ts` | Tier 2-4 tests with checkpoints, resume, fast iteration |
+| Synthetic fixtures | `Garsson-io/kaizen-test-fixture` | PR #3 (truncate, no tests), PR #5 (two known bugs), issues |
+
+### Not yet built (deferred)
+
+| Feature | Why deferred | Prerequisite |
+|---------|-------------|-------------|
+| Separate `claude -p` sessions per step | Architectural change to auto-dent harness — plan/implement/review/reflect as independent sessions | Design how plan.md transfers context between sessions |
+| Harness-spawned independent review | Implementing agent currently spawns its own review in interactive mode | Session isolation architecture |
+| Interactive mode orchestrator | Pause-and-report at step transitions with configurable timeout | Unified skill orchestration |
+| Dimension dependency ordering | Partial ordering (dims 1-3 before 6-10) | Research whether flat ordering produces noise |
+| Portable zippable run artifacts | Self-contained run directory with git patches | Design run directory layout |
+| Plan→codebase feasibility dimension (#2) | No adversarial prompt for plan vs existing code | Write the prompt |
+| Re-run only failed dimensions | Currently all dimensions re-run each round | Track per-dimension state |
+| Review calibration | Feedback on which dimensions produce signal vs noise | Accumulate data across batches |
+
+### Answered open questions
+
+| Question | Answer |
+|----------|--------|
+| Plan format (was #6) | Markdown, not JSON. `plan.md` and `test-plan.md` as issue comments. See Plan Format section. |
+| Subagent prompt design (was #1) | 14 adversarial prompts in `prompts/review-*.md`, ~100-200 lines each. Proven effective at $0.05-0.20/dim. |
+| Incremental adoption (was #7) | All 14 dimensions run by default. Briefing CLI helps prioritize. |
+
 ## Open Questions
 
-1. **Subagent prompt design:** What's the minimal effective prompt for each review dimension? Too broad = noise, too narrow = misses things. The two proof-of-concept audits (PR #832, #810) used ~200-word prompts and produced useful results at $0.13 each.
+1. **Loop termination:** Max 3 iterations per loop. Is this the right number?
 
-2. **Loop termination:** Max 3 iterations per loop. 3 scope + 3 implement = max 6 sessions per issue. Is this the right number?
+2. **Cost threshold:** Small issues might not justify a full review battery. Should there be a lightweight path for trivial changes?
 
-3. **Cost threshold:** Small issues (2-line prompt changes) might not justify a full review battery. Should there be a lightweight path for trivial changes? Risk: "trivial" is subjective and agents will claim everything is trivial to avoid review.
+3. **Dimension dependencies:** Should the battery be partially ordered? Or just run everything flat?
 
-4. **Dimension dependencies:** If plan compliance fails, running quality review is premature. Should the battery be partially ordered? Or just run everything and let the implementer prioritize fixes?
+4. **Review quality:** How do we review the reviewers? Multiple independent reviewers per dimension help (voting), but add cost.
 
-5. **Review quality:** How do we review the reviewers? If a subagent says "all requirements met" but misses a gap, we're back to the same problem. Multiple independent reviewers per dimension help (voting), but add cost.
+5. **Interactive timeout:** How long to wait before proceeding autonomously at step transitions?
 
-6. **Plan format:** What structured format should the plan be in so that reviewers can mechanically compare it against requirements? JSON with explicit requirement mapping?
-
-7. **Incremental adoption:** Start with just dimensions 1+7 (plan→issue and implementation→issue) — the two we proved work with subagent audits. Add dimensions over time as we learn which ones produce signal vs noise.
-
-8. **Interactive timeout:** When the agent pauses at a transition in interactive mode, how long to wait before proceeding autonomously? Should it be configurable? Should it default to "wait forever" (pure gating) or "wait 10s then proceed" (autonomous with interrupt)?
-
-9. **Session boundary in auto-dent:** Each step as a separate `claude -p` session means losing implementation context between plan and implement. The plan.json must be detailed enough for a fresh session to implement without re-discovering context. Is this a problem or a feature (forces explicit plans)?
+6. **Session boundary in auto-dent:** Each step as a separate `claude -p` session means losing context. The plan.md must be detailed enough for a fresh session to implement without re-discovering. Problem or feature?

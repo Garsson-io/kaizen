@@ -35,6 +35,7 @@ import {
   renderTemplate,
 } from '../src/review-battery.js';
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
+import { runFixLoop, type CliArgs as ReviewFixArgs } from './review-fix.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -1530,16 +1531,31 @@ async function main(): Promise<void> {
     }
   }
 
-  // Post-run review battery (#ENG-6638) — advisory, not blocking
-  // Runs requirements review on each PR to detect gaps before merge.
+  // Post-run review battery with fix loop (#891, #ENG-6638)
+  // Runs review on each PR. If gaps found, spawns fix sessions (max 3 rounds).
   let reviewVerdict: 'pass' | 'fail' | 'skipped' = 'skipped';
   let reviewCostUsd = 0;
+  const reviewBudgetCap = Math.min(
+    parseFloat(state.budget || '2') * 0.4, // max 40% of remaining run budget for review+fix
+    2.0, // hard cap $2
+  );
   if (result.prs.length > 0 && pickedIssue) {
     const repo = state.kaizen_repo || state.host_repo || '';
     try {
       const dimensions = listPrDimensions();
       console.log(`  ${color.dim('[review-battery]')} running ${dimensions.join(', ')} review for ${result.prs.length} PR(s)...`);
       for (const prUrl of result.prs) {
+        // Emit review round start event
+        events.emit({
+          type: 'review.round_start',
+          run_id: runId,
+          batch_id: state.batch_id,
+          run_num: runNum,
+          pr_url: prUrl,
+          round: 1,
+          dimensions: dimensions.map(d => typeof d === 'string' ? d : d.name ?? d),
+        });
+
         const batteryResult = await reviewBattery({
           dimensions,
           prUrl,
@@ -1548,8 +1564,23 @@ async function main(): Promise<void> {
           timeoutMs: 120_000,
         });
         reviewCostUsd += batteryResult.costUsd;
+
+        // Emit review round complete event
+        events.emit({
+          type: 'review.round_complete',
+          run_id: runId,
+          batch_id: state.batch_id,
+          run_num: runNum,
+          pr_url: prUrl,
+          round: 1,
+          verdict: batteryResult.verdict,
+          missing_count: batteryResult.missingCount,
+          partial_count: batteryResult.partialCount,
+          cost_usd: batteryResult.costUsd,
+          duration_ms: batteryResult.durationMs,
+        });
+
         if (batteryResult.verdict === 'fail') {
-          reviewVerdict = 'fail';
           const report = formatBatteryReport(batteryResult);
           console.log(`  ${color.yellow('[review-battery]')} FAIL for ${prUrl}`);
           for (const dim of batteryResult.dimensions) {
@@ -1564,6 +1595,76 @@ async function main(): Promise<void> {
           try {
             ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(`## Review Battery: FAIL\n\n${report}`)}`);
           } catch { /* best effort */ }
+
+          // Spawn fix loop if we have budget remaining
+          const remainingBudget = reviewBudgetCap - reviewCostUsd;
+          if (remainingBudget > 0.10) {
+            const gapsCount = batteryResult.dimensions.reduce(
+              (acc, d) => acc + d.findings.filter(f => f.status !== 'DONE').length, 0,
+            );
+            events.emit({
+              type: 'review.fix_spawned',
+              run_id: runId,
+              batch_id: state.batch_id,
+              run_num: runNum,
+              pr_url: prUrl,
+              round: 1,
+              gaps_count: gapsCount,
+            });
+            console.log(`  ${color.dim('[review-fix]')} spawning fix loop (budget $${remainingBudget.toFixed(2)}, ${gapsCount} gaps)...`);
+
+            try {
+              const fixArgs: ReviewFixArgs = {
+                prUrl,
+                issueNum: pickedIssue,
+                repo,
+                dryRun: false,
+                maxRounds: 2, // 1 initial review already done, 2 more fix+re-review rounds
+                budgetCap: remainingBudget,
+                resume: false,
+              };
+              const fixState = await runFixLoop(fixArgs);
+              const fixCost = fixState.totalCostUsd ?? 0;
+              reviewCostUsd += fixCost;
+
+              events.emit({
+                type: 'review.fix_complete',
+                run_id: runId,
+                batch_id: state.batch_id,
+                run_num: runNum,
+                pr_url: prUrl,
+                round: fixState.currentRound,
+                success: fixState.outcome === 'pass',
+                cost_usd: fixCost,
+              });
+
+              if (fixState.outcome === 'pass') {
+                reviewVerdict = 'pass';
+                console.log(`  ${color.green('[review-fix]')} PASS after ${fixState.currentRound} round(s), $${fixCost.toFixed(2)}`);
+                appendFileSync(logFile, `\nreview_fix=pass rounds=${fixState.currentRound} cost=$${fixCost.toFixed(2)} pr=${prUrl}\n`);
+              } else {
+                reviewVerdict = 'fail';
+                console.log(`  ${color.yellow('[review-fix]')} still FAIL after ${fixState.currentRound} round(s), $${fixCost.toFixed(2)}`);
+                appendFileSync(logFile, `\nreview_fix=fail rounds=${fixState.currentRound} cost=$${fixCost.toFixed(2)} pr=${prUrl}\n`);
+                // Escalate to human
+                try {
+                  ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(
+                    `## Review Fix Loop: Exhausted\n\n` +
+                    `Ran ${fixState.currentRound} fix round(s) but gaps remain. ` +
+                    `Total review+fix cost: $${reviewCostUsd.toFixed(2)}.\n\n` +
+                    `@aviadr1 needs human review.`
+                  )}`);
+                } catch { /* best effort */ }
+              }
+            } catch (e: any) {
+              console.log(`  ${color.dim('[review-fix]')} error: ${e.message}`);
+              appendFileSync(logFile, `\nreview_fix_error=${e.message}\n`);
+              reviewVerdict = 'fail';
+            }
+          } else {
+            reviewVerdict = 'fail';
+            console.log(`  ${color.dim('[review-fix]')} skipped — budget exhausted ($${reviewCostUsd.toFixed(2)}/$${reviewBudgetCap.toFixed(2)})`);
+          }
         } else if (reviewVerdict !== 'fail') {
           reviewVerdict = 'pass';
           console.log(`  ${color.green('[review-battery]')} PASS for ${prUrl}`);
