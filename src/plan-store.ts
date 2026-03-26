@@ -9,11 +9,9 @@
  */
 
 import YAML from 'yaml';
-import { gh } from './lib/gh-exec.js';
 import {
   readAttachment,
   writeAttachment,
-  readSection as readBodySection,
   fetchBody,
   parseSections,
   type AttachmentTarget,
