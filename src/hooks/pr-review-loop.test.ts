@@ -38,6 +38,24 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { processHookInput, writeReviewSentinel } from './pr-review-loop.js';
 
+/** Run hook with raw string as stdin (for testing malformed input). */
+function runHookRaw(rawStdin: string, extraEnv: Record<string, string> = {}): string {
+  const escaped = rawStdin.replace(/'/g, "'\\''");
+  try {
+    return execSync(
+      `printf '%s' '${escaped}' | npx tsx "${HOOK_PATH}"`,
+      {
+        encoding: 'utf-8',
+        env: { ...process.env, STATE_DIR: testStateDir, ...extraEnv },
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 15000,
+      },
+    ).trim();
+  } catch (err: any) {
+    return err.stdout?.trim?.() ?? '';
+  }
+}
+
 let testStateDir: string;
 const HOOK_PATH = path.resolve(__dirname, 'pr-review-loop.ts');
 
@@ -495,4 +513,48 @@ describe('INVARIANT: gate transitions verify outcome, not just trigger command',
       expect(result.action).toBe(gate.expectPassedAction);
     });
   }
+});
+
+describe('pr-review-loop — null-input observability (kaizen #975)', () => {
+  let traceFile: string;
+
+  beforeEach(() => {
+    traceFile = path.join(os.tmpdir(), `pr-review-trace-${Date.now()}.jsonl`);
+  });
+
+  afterEach(() => {
+    fs.rmSync(traceFile, { force: true });
+  });
+
+  it('INVARIANT: empty stdin writes null_input trace entry (not silent exit)', () => {
+    // When stdin is empty, the hook must write a trace entry before exiting.
+    // Silent exit = invisible failure. Incident #975: gate not created because
+    // hook exited silently on null input from JSON.parse failure.
+    runHookRaw('', { KAIZEN_HOOK_TRACE: traceFile });
+    expect(fs.existsSync(traceFile)).toBe(true);
+    const lines = fs.readFileSync(traceFile, 'utf8').trim().split('\n').filter(Boolean);
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    const entry = JSON.parse(lines[0]);
+    expect(entry.action).toBe('ignore');
+    expect(entry.reason).toBe('null_input');
+    expect(entry.hook).toBe('pr-review-loop');
+  });
+
+  it('INVARIANT: malformed JSON writes null_input trace entry from pr-review-loop', () => {
+    // PR bodies with markdown (backticks, $vars, code blocks) can cause
+    // JSON.parse to fail in the hook stdin. hook-io.ts writes json_parse_failed,
+    // then readHookInput() returns null, and pr-review-loop.ts MUST write null_input.
+    const badJson = '{"tool_name":"Bash","cmd":"gh pr create --body \\"```\\n$var\\n```\\""}EXTRA';
+    runHookRaw(badJson, { KAIZEN_HOOK_TRACE: traceFile });
+    expect(fs.existsSync(traceFile)).toBe(true);
+    const lines = fs.readFileSync(traceFile, 'utf8').trim().split('\n').filter(Boolean);
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    // pr-review-loop.ts writes the null_input entry (after hook-io.ts writes json_parse_failed)
+    const prReviewEntry = lines.map(l => JSON.parse(l)).find(
+      e => e.action === 'ignore' && e.hook === 'pr-review-loop'
+    );
+    expect(prReviewEntry).toBeDefined();
+    expect(prReviewEntry.reason).toBe('null_input');
+    expect(prReviewEntry.hook).toBe('pr-review-loop');
+  });
 });

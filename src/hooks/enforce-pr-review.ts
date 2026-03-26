@@ -14,7 +14,7 @@
  * Part of kAIzen Agent Control Flow — kaizen #775, #789
  */
 
-import { getCurrentBranch, readHookInput } from './hook-io.js';
+import { getCurrentBranch, readHookInput, traceNullInput } from './hook-io.js';
 import { isReviewCommand } from './lib/allowlist.js';
 import { stripHeredocBody } from './parse-command.js';
 import { findStateWithStatus } from './state-utils.js';
@@ -100,13 +100,13 @@ export function processPreToolUse(
 
   return {
     allowed: false,
-    reason: buildDenyMessage('PR review required before proceeding', prUrl, round),
+    reason: buildDenyMessage('Bash', prUrl, round),
   };
 }
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("enforce-pr-review"); process.exit(0); }
 
   const command = input.tool_input?.command ?? '';
   const branch = getCurrentBranch();

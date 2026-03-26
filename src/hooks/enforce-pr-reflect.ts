@@ -9,7 +9,7 @@
  * Part of kAIzen Agent Control Flow — kaizen #775
  */
 
-import { getCurrentBranch, readHookInput } from './hook-io.js';
+import { getCurrentBranch, readHookInput, traceNullInput } from './hook-io.js';
 import { isKaizenCommand } from './lib/allowlist.js';
 import { stripHeredocBody } from './parse-command.js';
 import { findStateWithStatus } from './state-utils.js';
@@ -63,7 +63,7 @@ Allowed commands during reflection:
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("enforce-pr-reflect"); process.exit(0); }
 
   const command = input.tool_input?.command ?? '';
   const branch = getCurrentBranch();

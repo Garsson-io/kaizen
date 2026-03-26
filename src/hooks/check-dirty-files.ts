@@ -16,7 +16,7 @@
 import { execSync, type ExecSyncOptions } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { readHookInput } from './hook-io.js';
+import { readHookInput, traceNullInput } from './hook-io.js';
 import {
   extractGitCPath,
   isGhPrCommand,
@@ -172,7 +172,7 @@ FOR ARTIFACTS/DEBUG/LEFTOVER FILES (not part of this work):
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("check-dirty-files"); process.exit(0); }
 
   const command = input.tool_input?.command ?? '';
   const result = checkDirtyFiles(command);

@@ -40,15 +40,12 @@ Some instructions.
 \`\`\`
 `;
 
-import { readFileSync as readFS } from 'node:fs';
-import { resolve as resolvePath } from 'node:path';
-
 // Policy invariants
 
 describe('kaizen policy invariants', () => {
   it('policies.md contains Policy 10 — skill changes require behavioral proof', () => {
-    const policiesPath = resolvePath(import.meta.dirname, '../.claude/kaizen/policies.md');
-    const content = readFS(policiesPath, 'utf8');
+    const policiesPath = resolve(import.meta.dirname, '../.claude/kaizen/policies.md');
+    const content = readFileSync(policiesPath, 'utf8');
     expect(content).toContain('Skill changes require behavioral proof');
     expect(content).toContain('synthetic case');
     expect(content).toContain('smoke test');

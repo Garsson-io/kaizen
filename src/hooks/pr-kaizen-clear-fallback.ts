@@ -22,7 +22,7 @@
 import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readHookInput } from './hook-io.js';
+import { readHookInput, traceNullInput } from './hook-io.js';
 import {
   DEFAULT_AUDIT_DIR,
   DEFAULT_STATE_DIR,
@@ -44,7 +44,7 @@ function currentBranch(): string {
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("pr-kaizen-clear-fallback"); process.exit(0); }
 
   if (input.tool_name !== 'Bash') process.exit(0);
 
