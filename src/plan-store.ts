@@ -67,8 +67,8 @@ export interface StoredMetadata {
 export function storePlan(opts: PlanStoreOptions, planText: string): string {
   const body = `${PLAN_MARKER}\n${planText}`;
   const existing = findMarkerComment(opts, PLAN_MARKER);
-  if (existing) {
-    gh(['issue', 'comment', opts.issueNum, '--repo', opts.repo, '--edit-last', '--body', body]);
+  if (existing && existing.id) {
+    updateCommentById(opts.repo, existing.id, body);
     return existing.url;
   }
   const url = gh(['issue', 'comment', opts.issueNum, '--repo', opts.repo, '--body', body]);
@@ -81,8 +81,8 @@ export function storePlan(opts: PlanStoreOptions, planText: string): string {
 export function storeTestPlan(opts: PlanStoreOptions, testPlanText: string): string {
   const body = `${TESTPLAN_MARKER}\n${testPlanText}`;
   const existing = findMarkerComment(opts, TESTPLAN_MARKER);
-  if (existing) {
-    gh(['issue', 'comment', opts.issueNum, '--repo', opts.repo, '--edit-last', '--body', body]);
+  if (existing && existing.id) {
+    updateCommentById(opts.repo, existing.id, body);
     return existing.url;
   }
   const url = gh(['issue', 'comment', opts.issueNum, '--repo', opts.repo, '--body', body]);
@@ -96,8 +96,8 @@ export function storeMetadata(opts: PlanStoreOptions, data: Record<string, unkno
   const yamlStr = YAML.stringify(data);
   const body = `${METADATA_MARKER}\n\`\`\`yaml\n${yamlStr}\`\`\``;
   const existing = findMarkerComment(opts, METADATA_MARKER);
-  if (existing) {
-    gh(['issue', 'comment', opts.issueNum, '--repo', opts.repo, '--edit-last', '--body', body]);
+  if (existing && existing.id) {
+    updateCommentById(opts.repo, existing.id, body);
     return existing.url;
   }
   const url = gh(['issue', 'comment', opts.issueNum, '--repo', opts.repo, '--body', body]);
@@ -213,6 +213,19 @@ export function queryPrNumber(opts: PlanStoreOptions): number | null {
 interface MarkerComment {
   url: string;
   body: string;
+  /** Comment ID extracted from URL (for targeted editing via gh api) */
+  id: string;
+}
+
+/** Extract comment ID from GitHub comment URL (https://...#issuecomment-123 → 123) */
+function extractCommentId(url: string): string {
+  const match = url.match(/#issuecomment-(\d+)/);
+  return match?.[1] ?? '';
+}
+
+/** Update a specific comment by ID using gh api (not --edit-last which targets the wrong comment) */
+function updateCommentById(repo: string, commentId: string, body: string): void {
+  gh(['api', '--method', 'PATCH', `/repos/${repo}/issues/comments/${commentId}`, '-f', `body=${body}`]);
 }
 
 function findMarkerComment(opts: PlanStoreOptions, marker: string): MarkerComment | null {
@@ -220,17 +233,18 @@ function findMarkerComment(opts: PlanStoreOptions, marker: string): MarkerCommen
     const raw = gh([
       'issue', 'view', opts.issueNum, '--repo', opts.repo,
       '--json', 'comments',
-      '--jq', '.comments[] | {url: .url, body: .body}',
+      // Use @json to compact each record to one line — comment bodies with newlines
+      // would otherwise produce multi-line output that breaks per-line JSON.parse
+      '--jq', '.comments[] | {url: .url, body: .body} | @json',
     ]);
     if (!raw) return null;
 
-    // gh --jq outputs one JSON object per line
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
       try {
         const comment = JSON.parse(line) as { url: string; body: string };
         if (comment.body.includes(marker)) {
-          return comment;
+          return { ...comment, id: extractCommentId(comment.url) };
         }
       } catch { continue; }
     }

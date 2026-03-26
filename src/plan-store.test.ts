@@ -50,16 +50,19 @@ describe('storePlan', () => {
     expect(createCall[1]).toEqual(['issue', 'comment', '904', '--repo', 'Garsson-io/kaizen', '--body', expect.stringContaining(PLAN_MARKER)]);
   });
 
-  it('updates existing comment when plan marker found', () => {
-    // findMarkerComment: returns a comment with the marker
-    ghReturns(JSON.stringify({ url: 'https://...#issuecomment-456', body: `${PLAN_MARKER}\nold plan` }));
-    // storePlan: gh issue comment --edit-last
+  it('updates existing comment by ID via gh api PATCH (not --edit-last)', () => {
+    // findMarkerComment: returns a comment with the marker and ID
+    ghReturns(JSON.stringify({ url: 'https://github.com/Garsson-io/kaizen/issues/904#issuecomment-456', body: `${PLAN_MARKER}\nold plan` }));
+    // updateCommentById: gh api PATCH
     ghReturns('');
 
     const url = storePlan(opts, '## Plan\n\n1. New plan');
     expect(url).toContain('issuecomment-456');
     const updateCall = mockGh.mock.calls[1];
-    expect(updateCall[1]).toContain('--edit-last');
+    // Should use gh api PATCH with comment ID, not --edit-last
+    expect(updateCall[1]).toContain('api');
+    expect(updateCall[1]).toContain('PATCH');
+    expect(updateCall[1]).toContain('/repos/Garsson-io/kaizen/issues/comments/456');
   });
 });
 

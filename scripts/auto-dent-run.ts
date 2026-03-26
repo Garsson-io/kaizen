@@ -1542,18 +1542,8 @@ async function main(): Promise<void> {
     const repo = state.kaizen_repo || state.host_repo || '';
     try {
       const dimensions = listPrDimensions();
-      // Fetch plan text from issue body/comments so plan-requiring dims can run (kaizen #901)
-      let planText: string | undefined;
-      try {
-        const issueBody = ghExec(`gh issue view ${pickedIssue} --repo ${repo} --json body --jq .body`);
-        planText = extractPlanText(issueBody);
-        if (!planText) {
-          const comments = ghExec(`gh issue view ${pickedIssue} --repo ${repo} --json comments --jq '.comments[].body'`);
-          planText = extractPlanText(comments);
-        }
-        if (planText) console.log(`  ${color.dim('[review-battery]')} found plan text (${planText.length} chars)`);
-      } catch { /* best effort — plan dims will emit MISSING if not found */ }
-
+      // planText is auto-loaded by reviewBattery() via retrievePlan() from plan-store.ts (kaizen #901, #902)
+      // No need to fetch here — just pass issueNum and repo so the auto-load can find it.
       console.log(`  ${color.dim('[review-battery]')} running ${dimensions.join(', ')} review for ${result.prs.length} PR(s)...`);
       for (const prUrl of result.prs) {
         const batteryResult = await reviewBattery({
@@ -1561,7 +1551,6 @@ async function main(): Promise<void> {
           prUrl,
           issueNum: pickedIssue,
           repo,
-          planText,
           timeoutMs: 120_000,
         });
         reviewCostUsd += batteryResult.costUsd;
