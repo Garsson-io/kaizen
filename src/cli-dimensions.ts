@@ -161,7 +161,8 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
     // Check frontmatter exists and has required fields
     const fm = parseFrontmatter(content);
     if (!fm) {
-      errors.push('Missing YAML frontmatter');
+      const hasFrontmatterBlock = /^---\n[\s\S]*?\n---/.test(content);
+      errors.push(hasFrontmatterBlock ? 'Frontmatter YAML is invalid (cannot parse)' : 'Missing YAML frontmatter');
     } else {
       if (!fm.name) errors.push('Frontmatter missing "name" field');
       if (!fm.description) errors.push('Frontmatter missing "description" field');

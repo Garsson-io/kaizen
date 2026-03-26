@@ -63,16 +63,32 @@ npx tsx src/cli-dimensions.ts briefing --lines $LINES
 
 # Full diff (pass to all agents)
 gh pr diff <pr-url>
+# Diff URL (for humans): https://github.com/<owner>/<repo>/pull/<N>.diff
 
 # Linked issue(s) — scan PR body, branch name, recent commits for #N
 gh issue view <N> --repo <repo> --json title,body
 
-# PR body
-gh pr view <pr-url> --json title,body
-
-# Learned failure modes (supplement to dimensions)
-cat .claude/kaizen/review-criteria.md
+# PR body (includes test plan link if present)
+gh pr view <pr-url> --json title,body,url
 ```
+
+**After pre-fetch, display the review context before spawning agents:**
+
+```
+PR:    <pr-url>
+Diff:  https://github.com/<owner>/<repo>/pull/<N>.diff
+Issues: #N1 <title> <url>
+        #N2 <title> <url>
+Plan:  <plan url or "none">
+
+Agents:
+- Agent 1: <dimension list> (<needs>)
+- Agent 2: <dimension list> (<needs>)
+- Agent 3: <dimension list> (<needs>)
+- Agent 4: <dimension list> (<needs>)
+```
+
+This display makes the review plan visible before subagents launch — easier to spot missing coverage or wrong groupings.
 
 ---
 
@@ -89,10 +105,10 @@ Use the briefing's natural groupings (dimensions sharing the same data needs). S
 | ≤ 50 lines | 1–2 | One agent can handle all dimensions |
 | 50–300 lines | 3–4 | Group by shared data needs |
 | > 300 lines | 4–5 | 2–3 dimensions per agent |
-| Security-sensitive | +1 | Give `security` + `logic-correctness` to an additional independent agent |
+| Security-sensitive | +1 | Give `security` + `correctness` to an additional independent agent |
 
 Data needs determine grouping efficiency — dimensions with identical `needs` share one fetch:
-- `[diff]` only: dry, error-handling, logic-correctness, security, tooling-fitness
+- `[diff]` only: correctness, dry, security, tooling-fitness
 - `[diff, issue]`: requirements, scope-fidelity
 - `[diff, pr, issue]`: pr-description
 - `[diff, tests]` / `[diff, tests, issue]`: test-quality, test-plan
@@ -118,6 +134,14 @@ After all agents return: verify every dimension has a JSON findings block. Any d
 3. Classify remaining:
    - **MUST-FIX** (confidence ≥ 90): blocks merge — bugs, security issues, missing tests for new logic, DRY violations with 3+ copies
    - **SHOULD-FIX** (confidence 75–89): fix before merge — minor DRY, testability gaps, pattern inconsistencies
+
+**Present findings as a table before fixing:**
+
+| # | Finding | Status | Dimension |
+|---|---------|--------|-----------|
+| 1 | Short title of finding | MUST-FIX / SHOULD-FIX | dimension-name |
+
+Then provide detail for each finding below the table.
 
 If the list is empty after this: → **Phase 5 (Verdict)**.
 
@@ -178,7 +202,7 @@ npx tsx src/cli-dimensions.ts validate
 
 Write the adversarial prompt in `prompts/review-<name>.md`. The next review runs it automatically.
 
-Learned failure modes that aren't yet dimensions live in `.claude/kaizen/review-criteria.md`. Promote them to dimensions when they recur and are diff-detectable. Leave meta-patterns (process failures, multi-PR spirals, reflection gaming) in that file — they can't be caught by reading a single diff.
+All dimensions live in `prompts/review-*.md`. Diff-detectable patterns use `applies_to: pr`. Cross-PR/reflection patterns (multi-pr-spiral, reflection-quality) use `applies_to: reflection` and are auto-skipped in single-PR review. Use `npx tsx src/cli-dimensions.ts list` to see all active dimensions and their scope.
 
 ---
 

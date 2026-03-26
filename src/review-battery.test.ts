@@ -1186,3 +1186,24 @@ describe('parseReviewOutput — category prevention for edge cases', () => {
     expect(result!.findings[0].detail).toBe('alt detail');
   });
 });
+
+describe('parseFrontmatter — edge cases', () => {
+  it('returns null for content with no frontmatter block', () => {
+    expect(parseFrontmatter('No frontmatter here')).toBeNull();
+  });
+
+  it('returns null for malformed YAML without crashing', () => {
+    // Unquoted colon in value — invalid YAML but valid looking content
+    const content = '---\nname: foo: bar\ndescription: oops\n---\nBody';
+    expect(parseFrontmatter(content)).toBeNull();
+  });
+
+  it('parses valid YAML frontmatter correctly', () => {
+    const content = '---\nname: test\ndescription: A test dim\napplies_to: pr\nneeds: [diff, issue]\n---\nBody';
+    const result = parseFrontmatter(content);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('test');
+    expect(result!.applies_to).toBe('pr');
+    expect(Array.isArray(result!.needs)).toBe(true);
+  });
+});

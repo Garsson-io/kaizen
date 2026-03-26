@@ -231,6 +231,16 @@ describe('cli-dimensions with temp fixtures', () => {
     expect(v.results[0].errors).toContain('Missing ```json output format section');
   });
 
+  it('validate distinguishes malformed YAML from missing frontmatter', () => {
+    // Has --- markers but invalid YAML inside (unquoted colon in value)
+    writeFileSync(resolve(tmpDir, 'review-badyaml.md'), '---\nname: bad: yaml\ndescription: test\n---\nBody\n```json\n{}\n```\n');
+    const v = cmdValidate(tmpDir);
+    expect(v.ok).toBe(false);
+    const entry = v.results.find(r => r.file === 'review-badyaml.md');
+    expect(entry?.errors[0]).toContain('invalid');
+    expect(entry?.errors[0]).not.toContain('Missing YAML frontmatter');
+  });
+
   it('formatValidation shows FAIL for invalid dimensions', () => {
     writeFileSync(resolve(tmpDir, 'review-broken.md'), 'broken content');
     const v = cmdValidate(tmpDir);
@@ -344,5 +354,16 @@ describe('cmdBriefing', () => {
   it('includes natural groupings section', () => {
     const output = cmdBriefing(50, tmpDir);
     expect(output).toContain('Natural Groupings');
+  });
+
+  it('groups dimensions with identical data needs together in natural groupings', () => {
+    // Both prompts use default needs (review-*.md with no custom needs defaults to [diff])
+    // so they should appear in the same group
+    const output = cmdBriefing(100, tmpDir);
+    expect(output).toContain('requirements');
+    expect(output).toContain('security');
+    // Both have needs:[diff] — they should appear on the same grouping line
+    const groupingLine = output.split('\n').find(l => l.includes('requirements') && l.includes('security'));
+    expect(groupingLine, 'requirements and security should be in the same [diff] group').toBeDefined();
   });
 });
