@@ -11,10 +11,11 @@
  * Linear: ENG-6638
  */
 
-import { spawnSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import YAML from 'yaml';
+import { resolveProjectRoot } from './lib/resolve-project-root.js';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -378,16 +379,11 @@ export function renderTemplate(template: string, vars: Record<string, string>): 
  * then falls back to the directory relative to this file.
  */
 export function resolvePromptsDir(): string {
-  try {
-    const toplevel = spawnSync('git', ['rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-    }).stdout.trim();
-    const dir = resolve(toplevel, 'prompts');
-    if (existsSync(dir)) return dir;
-  } catch {
-    // Fall through
-  }
-  return resolve(dirname(new URL(import.meta.url).pathname), '..', 'prompts');
+  const thisDir = dirname(new URL(import.meta.url).pathname);
+  const root = resolveProjectRoot(thisDir);
+  const dir = resolve(root, 'prompts');
+  if (existsSync(dir)) return dir;
+  return resolve(thisDir, '..', 'prompts');
 }
 
 /**

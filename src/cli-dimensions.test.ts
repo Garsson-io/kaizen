@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { cmdList, cmdShow, cmdAdd, cmdValidate, formatValidation, parseArgs } from './cli-dimensions.js';
+import { cmdList, cmdShow, cmdAdd, cmdValidate, formatValidation, cmdBriefing, parseArgs } from './cli-dimensions.js';
 import { resolvePromptsDir } from './review-battery.js';
 
 // Fixture helpers
@@ -302,5 +302,36 @@ describe('parseArgs dispatch', () => {
     // validate against real prompts dir — all should pass
     // If this fails, a prompt file has broken frontmatter
     expect(() => parseArgs(['node', 'cli-dimensions.ts', 'validate'])).not.toThrow();
+  });
+
+  it('briefing with --lines prints output', () => {
+    parseArgs(['node', 'cli-dimensions.ts', 'briefing', '--lines', '200']);
+    expect(logs.join('\n')).toContain('Review Briefing');
+  });
+
+  it('briefing without --lines exits 1', () => {
+    expect(() => parseArgs(['node', 'cli-dimensions.ts', 'briefing'])).toThrow('exit:1');
+    expect(errors.join()).toContain('--lines');
+  });
+});
+
+// ── cmdBriefing ──────────────────────────────────────────────────────
+
+describe('cmdBriefing', () => {
+  it('returns a Review Briefing section with PR size and dimension count', () => {
+    const output = cmdBriefing(300);
+    expect(output).toContain('Review Briefing');
+    expect(output).toContain('300 lines');
+  });
+
+  it('lists dimension names from the real prompts dir', () => {
+    const output = cmdBriefing(100);
+    // At least one dimension must appear
+    expect(output).toMatch(/\*\*.+\*\*/);
+  });
+
+  it('includes natural groupings section', () => {
+    const output = cmdBriefing(50);
+    expect(output).toContain('Natural Groupings');
   });
 });

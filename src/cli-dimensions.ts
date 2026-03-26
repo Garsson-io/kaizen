@@ -6,6 +6,7 @@
  *   show <name> [name2 ...]       Display full content of dimension prompt(s)
  *   add <name> --description "..." --applies-to pr|plan|both   Scaffold new dimension
  *   validate                      Check all dimension files have valid frontmatter + JSON output section
+ *   briefing --lines <N>          Show review briefing for a PR of N lines
  *
  * Usage: npx tsx src/cli-dimensions.ts <command> [args]
  */
@@ -17,6 +18,7 @@ import {
   loadDimensionMetas,
   resolvePromptsDir,
   parseFrontmatter,
+  reviewBriefing,
 } from './review-battery.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -178,6 +180,11 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
   return { results, ok };
 }
 
+export function cmdBriefing(prLines: number, promptsDir?: string): string {
+  const metas = loadDimensionMetas(promptsDir);
+  return reviewBriefing(metas, prLines);
+}
+
 export function formatValidation(v: { results: ValidationResult[]; ok: boolean }): string {
   const lines: string[] = [];
   for (const r of v.results) {
@@ -208,7 +215,8 @@ Commands:
   list                                         Show all dimensions
   show <name> [name2 ...]                      Display dimension prompt(s)
   add <name> --description "..." --applies-to pr|plan|both   Scaffold new dimension
-  validate                                     Check all dimension files`);
+  validate                                     Check all dimension files
+  briefing --lines <N>                         Show review briefing for a PR of N lines`);
     process.exit(0);
   }
 
@@ -252,6 +260,20 @@ Commands:
       const v = cmdValidate();
       console.log(formatValidation(v));
       if (!v.ok) process.exit(1);
+      break;
+    }
+    case 'briefing': {
+      let prLines = 0;
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === '--lines' && args[i + 1]) {
+          prLines = parseInt(args[++i], 10);
+        }
+      }
+      if (!prLines) {
+        console.error('Error: --lines <N> is required');
+        process.exit(1);
+      }
+      console.log(cmdBriefing(prLines));
       break;
     }
     default: {
