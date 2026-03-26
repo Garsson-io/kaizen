@@ -127,10 +127,27 @@ Send **one message with all Agent tool calls** (parallel launch). For each group
 - Include the full text of each assigned `prompts/review-*.md` verbatim
 - Include pre-fetched diff, issue body, PR body directly in the prompt
 - Instruct the agent to output one JSON findings block per dimension
+- **Instruct each agent to store its own findings immediately** (see storage instruction below)
+
+**Storage instruction to include in every subagent prompt** (substitute actual PR number, repo, round):
+> After outputting your JSON findings blocks, immediately store each dimension you reviewed:
+> ```bash
+> npx tsx src/cli-structured-data.ts store-review-finding \
+>   --pr <PR_NUMBER> --repo <owner/repo> --round <ROUND> \
+>   --dimension <dimension_name> --text '<your findings JSON>'
+> ```
+> Call this once per dimension your group covers, before ending your response.
+
+**Why per-agent storage (not orchestrator batch):** If the orchestrating session is interrupted after some agents complete, already-stored findings survive on the PR. The orchestrator only stores the summary (Phase 5) — per-dimension storage is each agent's own responsibility.
 
 ### Step 2c: Coverage gate
 
-After all agents return: verify every dimension has a JSON findings block. Any dimension missing → spawn a replacement agent for it. **Do not proceed to Phase 3 until all dimensions have findings.**
+After all agents return: verify every dimension has a JSON findings block in the responses AND a marker comment on the PR (`list-review-dims`). Any dimension missing → spawn a replacement agent. **Do not proceed to Phase 3 until all dimensions have findings stored.**
+
+```bash
+npx tsx src/cli-structured-data.ts list-review-dims \
+  --pr <PR_NUMBER> --repo <owner/repo> --round <ROUND>
+```
 
 ---
 
@@ -175,6 +192,15 @@ REVIEW PASSED — N rounds, M findings fixed
 ```
 
 Before declaring: confirm every requirement from the linked issue is DONE or deferred with a filed follow-up issue.
+
+Store the round summary (required to advance to next round or close the gate):
+```bash
+npx tsx src/cli-structured-data.ts store-review-summary \
+  --pr <PR_NUMBER> --repo <owner/repo> --round <N> \
+  --text "REVIEW PASSED — <N> rounds, <M> findings fixed"
+```
+
+If findings needed fixing: return to Phase 1 with the updated diff for the next round.
 
 ---
 

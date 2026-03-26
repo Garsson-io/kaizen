@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, appendFileSync } from 'node:fs';
 import { handlers, parseArgs, resolveContent, resolveRound, type CliArgs } from './cli-structured-data.js';
 import {
   nextReviewRound,
@@ -149,5 +149,57 @@ describe('individual command handlers', () => {
     expect(vi.mocked(storeMetadata)).toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Metadata stored'));
     log.mockRestore();
+  });
+});
+
+// ── store-review-batch sentinel (category prevention: #966) ─────────────────
+
+describe('store-review-batch — review sentinel', () => {
+  const baseArgs: CliArgs = { command: 'store-review-batch', pr: '903', repo: 'org/repo', round: '1' };
+
+  it('writes review sentinel after storing batch findings', async () => {
+    // INVARIANT: store-review-batch must write the review sentinel so the
+    // pr-review-loop gate guard passes. Without the sentinel, the gate stays
+    // blocked even after findings are stored, forcing KAIZEN_UNFINISHED bypass.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['store-review-batch']({
+      ...baseArgs,
+      text: JSON.stringify([{
+        dimension: 'correctness',
+        verdict: 'pass',
+        summary: 'No issues',
+        findings: [],
+      }]),
+    });
+    log.mockRestore();
+
+    // appendFileSync must have been called with a path containing '.reviewed-r1'
+    const calls = vi.mocked(appendFileSync).mock.calls;
+    const sentinelCall = calls.find(
+      ([path]) => typeof path === 'string' && path.includes('.reviewed-r1'),
+    );
+    expect(sentinelCall).toBeDefined();
+    expect(String(sentinelCall![0])).toMatch(/\.reviewed-r1$/);
+    expect(String(sentinelCall![1])).toMatch(/reviewed_at=/);
+  });
+
+  it('sentinel path encodes PR number and repo', async () => {
+    // INVARIANT: the sentinel path must uniquely identify the PR so
+    // different PRs don't share sentinels.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['store-review-batch']({
+      ...baseArgs,
+      pr: '456',
+      repo: 'my/repo',
+      text: JSON.stringify([{ dimension: 'dry', verdict: 'pass', summary: '', findings: [] }]),
+    });
+    log.mockRestore();
+
+    const calls = vi.mocked(appendFileSync).mock.calls;
+    const sentinelCall = calls.find(
+      ([path]) => typeof path === 'string' && path.includes('.reviewed-r'),
+    );
+    expect(sentinelCall).toBeDefined();
+    expect(String(sentinelCall![0])).toContain('456');
   });
 });
