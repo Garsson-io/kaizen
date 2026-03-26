@@ -176,4 +176,12 @@ describe('enforce-pr-review PreToolUse — Agent tool (kaizen #895, #856)', () =
     const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
     expect(result.allowed).toBe(true);
   });
+
+  it('allows Agent while Edit is blocked in the same review gate state', () => {
+    createReviewGate('https://github.com/org/repo/pull/42');
+    const agentCtx: ToolContext = { toolName: 'Agent', toolInput: { prompt: 'review' } };
+    const editCtx: ToolContext = { toolName: 'Edit', toolInput: { file_path: '/src/foo.ts' } };
+    expect(processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, agentCtx).allowed).toBe(true);
+    expect(processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, editCtx).allowed).toBe(false);
+  });
 });

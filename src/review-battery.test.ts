@@ -937,13 +937,16 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     expect(result.skippedDimensions).toContain('improvement-lifecycle');
     expect(result.skippedDimensions).not.toContain('requirements');
 
-    // NEW: skipped dims produce MISSING findings in the results (kaizen #901)
-    const planCovDim = result.dimensions.find(d => d.dimension === 'plan-coverage');
-    expect(planCovDim).toBeDefined();
-    expect(planCovDim!.verdict).toBe('fail');
-    expect(planCovDim!.findings).toHaveLength(1);
-    expect(planCovDim!.findings[0].status).toBe('MISSING');
-    expect(planCovDim!.findings[0].detail).toContain('plan text');
+    // Skipped dims produce MISSING findings with [data-gap] tag (kaizen #901)
+    for (const dimName of ['plan-coverage', 'plan-fidelity', 'improvement-lifecycle']) {
+      const dim = result.dimensions.find(d => d.dimension === dimName);
+      expect(dim, `${dimName} should be in dimensions`).toBeDefined();
+      expect(dim!.verdict).toBe('fail');
+      expect(dim!.findings).toHaveLength(1);
+      expect(dim!.findings[0].status).toBe('MISSING');
+      expect(dim!.findings[0].requirement).toContain('[data-gap]');
+      expect(dim!.findings[0].detail).toContain('plan text');
+    }
 
     // Skipped dims contribute to missingCount
     expect(result.missingCount).toBeGreaterThanOrEqual(3);

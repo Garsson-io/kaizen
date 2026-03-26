@@ -59,6 +59,12 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `/kaizen-setup` | Install & configure plugin for a host project |
 | `/kaizen-update` | Pull updates from kaizen repo |
 
+## Mandatory Practices
+
+**PR bodies**: Always use `/kaizen-write-pr` when creating or editing PR descriptions. Never write a bare `gh pr create --body` with a few bullet points. The Story Spine narrative makes PRs reviewable without reading the diff.
+
+**PR review dimensions**: When running `/kaizen-review-pr`, bundle dimensions by shared data needs (use the briefing from `npx tsx src/cli-dimensions.ts briefing --lines N`). Don't spawn one agent per dimension — batch dims with identical `needs` into single agents.
+
 ## Configuration
 
 All skills and hooks read `kaizen.config.json` from the host project root:

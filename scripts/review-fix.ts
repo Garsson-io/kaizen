@@ -567,8 +567,14 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
     // ── NO ACTIONABLE GAPS? (kaizen #897) ──
     // Verdict can be 'fail' due to timed-out/failed dimensions even when
     // all returned findings are DONE. Don't launch a fix with nothing to fix.
-    if (gaps.length === 0) {
-      console.log(`\nVerdict is fail but no actionable gaps (${battery.failedDimensions.length} dim(s) failed to return results). Run with --resume to retry.`);
+    // Also: when ALL gaps are [data-gap] findings (missing plan text etc.),
+    // a fix agent can't resolve them — they need the caller to provide data.
+    const codeGaps = gaps.filter(f => !f.requirement.startsWith('[data-gap]'));
+    if (gaps.length === 0 || codeGaps.length === 0) {
+      const reason = gaps.length === 0
+        ? `${battery.failedDimensions.length} dim(s) failed to return results`
+        : `${gaps.length} gap(s) are all data-availability issues (e.g. missing plan text), not code gaps`;
+      console.log(`\nVerdict is fail but no actionable code gaps (${reason}). Run with --resume to retry.`);
       state.outcome = 'no_actionable_gaps';
       state.phase = 'done';
       saveState(state, doStateDir());

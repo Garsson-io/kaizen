@@ -108,10 +108,11 @@ Examples:
 ### Phase 5: Ship It
 
 1. Create branch and commit all changes
-2. Create PR with structured body (summary, test plan, verification)
-3. Complete the self-review cycle
-4. Queue auto-merge
-5. Run kaizen reflection
+2. Write PR body using `/kaizen-write-pr` (Story Spine narrative arc — the PR must be understandable without reading the diff)
+3. Create PR with `gh pr create` using the narrative body. Include `Fixes #N` for each connected issue.
+4. Complete the self-review cycle (`/kaizen-review-pr`)
+5. Queue auto-merge
+6. Run kaizen reflection
 
 ### Phase 6: Update Issue Metadata
 
@@ -145,7 +146,7 @@ Create these tasks at skill start using TaskCreate:
 | 3 | Find the category | Identify pattern, root cause, compound fix. Write as GitHub issue with problem/root-cause/solution. |
 | 4 | Fix concrete bugs | Fix all symptoms of root cause. Run existing tests — no regressions. |
 | 5 | Add prevention tests | Interaction tests at the boundary (not just unit tests per component). |
-| 6 | Ship PR | Branch, commit, self-review (`/kaizen-review-pr` — see its 4-task workflow), create PR, wait for CI, merge. |
+| 6 | Ship PR | Branch, commit, write PR body (`/kaizen-write-pr`), self-review (`/kaizen-review-pr`), create PR, wait for CI, merge. |
 | 7 | Update metadata + reflect | Close/comment related issues, update labels. Run `/kaizen-reflect` (5-task workflow). |
 
 **What comes next:** Domain addressed, issues closed. Feeds back into `/kaizen-pick` scoring (domain now has coverage). See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

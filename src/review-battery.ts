@@ -686,7 +686,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
         dimension: dim,
         verdict: 'fail',
         findings: [{
-          requirement: 'Plan text available for review',
+          requirement: '[data-gap] Plan text available for review',
           status: 'MISSING',
           detail: `Dimension "${dim}" requires plan text but none was provided. Create a plan before running this review.`,
         }],
