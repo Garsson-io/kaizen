@@ -160,7 +160,11 @@ Fix MUST-FIX first, then SHOULD-FIX:
 
 1. Edit code, add tests, extract helpers — address the root cause, not just the symptom
 2. Commit + push (one commit per logical fix, or batch tightly related fixes)
-3. Return to Phase 1 with the updated diff
+3. Update the PR body using `/kaizen-sections` — add or replace the "Validation" section with current test results, don't rewrite the entire body:
+   ```bash
+   npx tsx src/cli-section-editor.ts replace-section --pr <N> --repo <repo> --name "Validation" --text "- [x] 545 tests pass..."
+   ```
+4. Return to Phase 1 with the updated diff
 
 ---
 

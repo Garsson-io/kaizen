@@ -86,6 +86,14 @@ Write this as a GitHub issue with:
 - Root cause: why it keeps happening
 - Solution: the compound fix (concrete bugs + category prevention + skill)
 
+Store structured data on the overarching issue using `/kaizen-sections`:
+```bash
+# Store the plan as an attachment on the issue
+npx tsx src/cli-section-editor.ts write-attachment --issue {N} --repo "$ISSUES_REPO" --name plan --file plan.md
+# Store YAML metadata (connected issues, PR number)
+npx tsx src/cli-section-editor.ts write-attachment --issue {N} --repo "$ISSUES_REPO" --name metadata --file metadata.yaml
+```
+
 ### Phase 2b: Validate Plan Against User Request (MANDATORY)
 
 **Before writing any code**, cross-check the plan against what the user actually asked for. This catches the "filed issue instead of building it" failure mode.

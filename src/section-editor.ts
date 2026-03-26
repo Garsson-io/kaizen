@@ -180,11 +180,17 @@ export function removeSection(target: SectionTarget, sectionName: string): void 
   writeBody(target, newBody);
 }
 
-// ── Attachments (named marker comments on issues) ──────────────────
+// ── Attachments (named marker comments on issues and PRs) ──────────
 
+/**
+ * Attachment target — works for both issues and PRs.
+ * Issues use `gh issue view/comment`, PRs use `gh api` for review comments.
+ */
 export interface AttachmentTarget {
-  /** Issue number */
-  issueNum: string;
+  /** 'issue' or 'pr' */
+  kind: 'issue' | 'pr';
+  /** Issue or PR number */
+  number: string;
   /** GitHub repo (owner/repo) */
   repo: string;
 }
@@ -202,19 +208,34 @@ export interface Attachment {
 
 const MARKER_RE = /^<!-- kaizen:(\S+) -->/;
 
-/** Extract comment ID from GitHub URL (#issuecomment-123 → 123) */
+/** Extract comment ID from GitHub URL (#issuecomment-123 or #discussion_r123 → ID) */
 function extractCommentId(url: string): string {
-  return url.match(/#issuecomment-(\d+)/)?.[1] ?? '';
+  return url.match(/#issuecomment-(\d+)/)?.[1]
+    ?? url.match(/comments\/(\d+)/)?.[1]
+    ?? '';
 }
 
-/** Fetch all comments on an issue as compact JSON lines. */
+/**
+ * Fetch all comments on an issue or PR as {url, body} objects.
+ * Issues: uses `gh issue view --json comments`
+ * PRs: uses `gh api` to get issue-style comments (not review comments)
+ */
 function fetchComments(target: AttachmentTarget): Array<{ url: string; body: string }> {
   try {
-    const raw = gh([
-      'issue', 'view', target.issueNum, '--repo', target.repo,
-      '--json', 'comments',
-      '--jq', '.comments[] | {url: .url, body: .body} | @json',
-    ]);
+    let raw: string;
+    if (target.kind === 'issue') {
+      raw = gh([
+        'issue', 'view', target.number, '--repo', target.repo,
+        '--json', 'comments',
+        '--jq', '.comments[] | {url: .url, body: .body} | @json',
+      ]);
+    } else {
+      // PR comments via the issues API (PRs are issues in GitHub's model)
+      raw = gh([
+        'api', `repos/${target.repo}/issues/${target.number}/comments`,
+        '--jq', '.[] | {url: .html_url, body: .body} | @json',
+      ]);
+    }
     if (!raw) return [];
     const results: Array<{ url: string; body: string }> = [];
     for (const line of raw.split('\n')) {
@@ -225,8 +246,24 @@ function fetchComments(target: AttachmentTarget): Array<{ url: string; body: str
   } catch { return []; }
 }
 
+/** Create a new comment on an issue or PR. */
+function createComment(target: AttachmentTarget, body: string): string {
+  if (target.kind === 'issue') {
+    return gh(['issue', 'comment', target.number, '--repo', target.repo, '--body', body]);
+  }
+  // PR comments via the issues API
+  const result = gh([
+    'api', `repos/${target.repo}/issues/${target.number}/comments`,
+    '-f', `body=${body}`,
+  ]);
+  try {
+    const parsed = JSON.parse(result);
+    return parsed.html_url ?? '';
+  } catch { return result; }
+}
+
 /**
- * List all kaizen attachments on an issue.
+ * List all kaizen attachments on an issue or PR.
  * Returns attachment names (from <!-- kaizen:<name> --> markers).
  */
 export function listAttachments(target: AttachmentTarget): string[] {
@@ -239,7 +276,7 @@ export function listAttachments(target: AttachmentTarget): string[] {
 }
 
 /**
- * Read a named attachment from an issue.
+ * Read a named attachment from an issue or PR.
  * Returns the content after the marker line, or null if not found.
  */
 export function readAttachment(target: AttachmentTarget, name: string): Attachment | null {
@@ -259,7 +296,7 @@ export function readAttachment(target: AttachmentTarget, name: string): Attachme
 }
 
 /**
- * Write a named attachment on an issue.
+ * Write a named attachment on an issue or PR.
  * Creates a new comment if the attachment doesn't exist, or updates the existing one by ID.
  */
 export function writeAttachment(target: AttachmentTarget, name: string, content: string): string {
@@ -268,14 +305,15 @@ export function writeAttachment(target: AttachmentTarget, name: string, content:
   const existing = readAttachment(target, name);
 
   if (existing && existing.commentId) {
+    // Both issue and PR comments are updated via the same API endpoint
     gh(['api', '--method', 'PATCH', `/repos/${target.repo}/issues/comments/${existing.commentId}`, '-f', `body=${body}`]);
     return existing.url;
   }
-  return gh(['issue', 'comment', target.issueNum, '--repo', target.repo, '--body', body]);
+  return createComment(target, body);
 }
 
 /**
- * Remove a named attachment from an issue.
+ * Remove a named attachment from an issue or PR.
  * Deletes the comment entirely. No-op if not found.
  */
 export function removeAttachment(target: AttachmentTarget, name: string): void {
@@ -284,4 +322,16 @@ export function removeAttachment(target: AttachmentTarget, name: string): void {
   try {
     gh(['api', '--method', 'DELETE', `/repos/${target.repo}/issues/comments/${existing.commentId}`]);
   } catch { /* best effort */ }
+}
+
+/**
+ * Parse sections within an attachment's content.
+ * Useful for reading specific ## sections inside a marker comment.
+ */
+export function readAttachmentSection(target: AttachmentTarget, attachmentName: string, sectionName: string): string | null {
+  const attachment = readAttachment(target, attachmentName);
+  if (!attachment) return null;
+  const sections = parseSections(attachment.content);
+  const section = sections.find(s => s.name === sectionName);
+  return section?.content ?? null;
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { parseSections, listSections, readSection, addSection, replaceSection, removeSection } from './section-editor.js';
+import { parseSections, listSections, readSection, addSection, replaceSection, removeSection, listAttachments, readAttachment, writeAttachment, removeAttachment, readAttachmentSection, type AttachmentTarget } from './section-editor.js';
 
 vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
@@ -230,5 +230,129 @@ describe('removeSection — removes a named section', () => {
     ghReturns('## Plan\n\nContent.');
     removeSection(target, 'Missing');
     expect(mockGh).toHaveBeenCalledTimes(1); // only fetchBody, no writeBody
+  });
+});
+
+// ── Attachment tests ─────────────────────────────────────────────────
+
+const issueAttach: AttachmentTarget = { kind: 'issue', number: '904', repo: 'Garsson-io/kaizen' };
+const prAttach: AttachmentTarget = { kind: 'pr', number: '903', repo: 'Garsson-io/kaizen' };
+
+describe('listAttachments', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('lists attachment names from issue comments', () => {
+    ghReturns([
+      JSON.stringify({ url: 'https://...#issuecomment-1', body: '<!-- kaizen:plan -->\n## Plan\nStuff' }),
+      JSON.stringify({ url: 'https://...#issuecomment-2', body: 'Just a regular comment' }),
+      JSON.stringify({ url: 'https://...#issuecomment-3', body: '<!-- kaizen:metadata -->\n```yaml\nkey: val\n```' }),
+    ].join('\n'));
+    expect(listAttachments(issueAttach)).toEqual(['plan', 'metadata']);
+  });
+
+  it('lists attachments from PR comments via API', () => {
+    ghReturns([
+      JSON.stringify({ url: 'https://...comments/100', body: '<!-- kaizen:review-status -->\nPASSED' }),
+    ].join('\n'));
+    const names = listAttachments(prAttach);
+    expect(names).toEqual(['review-status']);
+    // Should use gh api for PRs, not gh issue view
+    expect(mockGh.mock.calls[0][1]).toContain('api');
+  });
+
+  it('returns empty for no attachments', () => {
+    ghReturns('');
+    expect(listAttachments(issueAttach)).toEqual([]);
+  });
+});
+
+describe('readAttachment', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('reads content after marker', () => {
+    ghReturns(JSON.stringify({ url: 'https://...#issuecomment-456', body: '<!-- kaizen:plan -->\n## Plan\n\n1. Do X' }));
+    const a = readAttachment(issueAttach, 'plan');
+    expect(a).not.toBeNull();
+    expect(a!.content).toContain('Do X');
+    expect(a!.commentId).toBe('456');
+  });
+
+  it('returns null when not found', () => {
+    ghReturns(JSON.stringify({ url: 'https://...#issuecomment-1', body: 'Regular comment' }));
+    expect(readAttachment(issueAttach, 'plan')).toBeNull();
+  });
+});
+
+describe('writeAttachment', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('creates new comment when attachment does not exist', () => {
+    ghReturns(''); // fetchComments: empty
+    ghReturns('https://...#issuecomment-789'); // createComment
+    const url = writeAttachment(issueAttach, 'plan', '## Plan\n1. Step');
+    expect(url).toContain('issuecomment');
+  });
+
+  it('updates existing comment by ID via gh api PATCH', () => {
+    ghReturns(JSON.stringify({ url: 'https://...#issuecomment-456', body: '<!-- kaizen:plan -->\nold' }));
+    ghReturns(''); // PATCH
+    writeAttachment(issueAttach, 'plan', 'new plan');
+    const patchArgs = mockGh.mock.calls[1][1] as string[];
+    expect(patchArgs).toContain('PATCH');
+    expect(patchArgs.some(a => a.includes('/issues/comments/456'))).toBe(true);
+  });
+
+  it('creates PR comment via issues API', () => {
+    ghReturns(''); // fetchComments: empty
+    ghReturns(JSON.stringify({ html_url: 'https://...#issuecomment-100' })); // createComment via API
+    writeAttachment(prAttach, 'status', 'PASSED');
+    const createCall = mockGh.mock.calls[1];
+    expect(createCall[1]).toContain(`repos/Garsson-io/kaizen/issues/903/comments`);
+  });
+});
+
+describe('removeAttachment', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('deletes comment via gh api DELETE', () => {
+    ghReturns(JSON.stringify({ url: 'https://...#issuecomment-456', body: '<!-- kaizen:plan -->\nstuff' }));
+    ghReturns(''); // DELETE
+    removeAttachment(issueAttach, 'plan');
+    const deleteArgs = mockGh.mock.calls[1][1] as string[];
+    expect(deleteArgs).toContain('DELETE');
+    expect(deleteArgs.some(a => a.includes('/issues/comments/456'))).toBe(true);
+  });
+
+  it('no-ops when attachment not found', () => {
+    ghReturns('');
+    removeAttachment(issueAttach, 'missing');
+    expect(mockGh).toHaveBeenCalledTimes(1); // only fetchComments
+  });
+});
+
+describe('readAttachmentSection — sections within an attachment', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('reads a ## section from inside an attachment', () => {
+    ghReturns(JSON.stringify({
+      url: 'https://...#issuecomment-456',
+      body: '<!-- kaizen:plan -->\n## Implementation Plan\n\n1. Do X\n\n## Risk Assessment\n\nLow risk.',
+    }));
+    const section = readAttachmentSection(issueAttach, 'plan', 'Risk Assessment');
+    expect(section).toContain('Low risk');
+    expect(section).not.toContain('Do X');
+  });
+
+  it('returns null when attachment not found', () => {
+    ghReturns('');
+    expect(readAttachmentSection(issueAttach, 'plan', 'Risk')).toBeNull();
+  });
+
+  it('returns null when section not in attachment', () => {
+    ghReturns(JSON.stringify({
+      url: 'https://...#issuecomment-456',
+      body: '<!-- kaizen:plan -->\n## Plan\n\nStuff.',
+    }));
+    expect(readAttachmentSection(issueAttach, 'plan', 'Missing Section')).toBeNull();
   });
 });

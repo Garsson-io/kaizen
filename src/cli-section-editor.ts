@@ -101,10 +101,10 @@ function main(): void {
     return { kind: (pr ? 'pr' : 'issue') as TargetKind, number: pr || issue, repo };
   };
 
-  // Attachment commands need an issue target
+  // Attachment commands work on both issues and PRs
   const attachmentTarget = (): AttachmentTarget => {
-    if (!issue) { console.error('Error: --issue required for attachments'); process.exit(1); }
-    return { issueNum: issue, repo };
+    if (!pr && !issue) { console.error('Error: --pr or --issue required'); process.exit(1); }
+    return { kind: (pr ? 'pr' : 'issue') as 'pr' | 'issue', number: pr || issue, repo };
   };
 
   const content = () => {

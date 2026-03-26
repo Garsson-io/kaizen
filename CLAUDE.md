@@ -55,6 +55,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `/kaizen-plan` | Break large work into sequenced PRs |
 | `/kaizen-review-pr` | Self-review checklist |
 | `/kaizen-write-pr` | Write a PR body using the Story Spine narrative arc |
+| `/kaizen-sections` | Structured PRs and issues — manage named sections in bodies and attachments on issues/PRs |
 | `/kaizen-dimensions` | List, inspect, and manage review battery dimensions |
 | `/kaizen-file-issue` | Fast incident-to-issue capture (2 min) |
 | `/kaizen-zen` | Print the Zen of Kaizen |
