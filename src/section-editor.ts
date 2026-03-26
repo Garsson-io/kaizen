@@ -265,12 +265,16 @@ function createComment(target: AttachmentTarget, body: string): string {
 /**
  * List all kaizen attachments on an issue or PR.
  * Returns attachment names (from <!-- kaizen:<name> --> markers).
+ * Optional prefix filter for namespace queries (e.g., 'review/' lists all review attachments).
  */
-export function listAttachments(target: AttachmentTarget): string[] {
+export function listAttachments(target: AttachmentTarget, prefix?: string): string[] {
   const names: string[] = [];
   for (const c of fetchComments(target)) {
     const match = c.body.match(MARKER_RE);
-    if (match) names.push(match[1]);
+    if (match) {
+      const name = match[1];
+      if (!prefix || name.startsWith(prefix)) names.push(name);
+    }
   }
   return names;
 }

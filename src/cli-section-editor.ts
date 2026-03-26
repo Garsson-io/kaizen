@@ -69,6 +69,7 @@ interface ParsedArgs {
   name?: string;
   text?: string;
   file?: string;
+  prefix?: string;
 }
 
 function parseArgs(): ParsedArgs {
@@ -77,23 +78,24 @@ function parseArgs(): ParsedArgs {
   if (!command) usage();
 
   let pr = '', issue = '', repo = '';
-  let name: string | undefined, text: string | undefined, file: string | undefined;
+  let name: string | undefined, text: string | undefined, file: string | undefined, prefix: string | undefined;
 
   for (let i = 1; i < args.length; i++) {
     if (args[i] === '--pr' && args[i + 1]) { pr = args[++i]; continue; }
     if (args[i] === '--issue' && args[i + 1]) { issue = args[++i]; continue; }
     if (args[i] === '--repo' && args[i + 1]) { repo = args[++i]; continue; }
     if ((args[i] === '--name' || args[i] === '--section') && args[i + 1]) { name = args[++i]; continue; }
+    if (args[i] === '--prefix' && args[i + 1]) { prefix = args[++i]; continue; }
     if (args[i] === '--text' && args[i + 1]) { text = args[++i]; continue; }
     if (args[i] === '--file' && args[i + 1]) { file = args[++i]; continue; }
   }
 
   if (!repo) usage();
-  return { command, pr, issue, repo, name, text, file };
+  return { command, pr, issue, repo, name, text, file, prefix };
 }
 
 function main(): void {
-  const { command, pr, issue, repo, name, text, file } = parseArgs();
+  const { command, pr, issue, repo, name, text, file, prefix } = parseArgs();
 
   // Section commands need a PR or issue target
   const sectionTarget = (): SectionTarget => {
@@ -146,7 +148,7 @@ function main(): void {
       break;
     }
     case 'list-attachments': {
-      const names = listAttachments(attachmentTarget());
+      const names = listAttachments(attachmentTarget(), prefix);
       if (names.length === 0) { console.log('No attachments found.'); break; }
       for (const n of names) console.log(n);
       break;
