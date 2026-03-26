@@ -209,15 +209,9 @@ export interface RunResult {
   reviewCostUsd?: number;
 }
 
-// Plan text extraction (kaizen #901)
-
-const PLAN_SECTION_RE = /## (?:Implementation )?Plan\b[\s\S]*?(?=\n## |\n```yaml|$)/i;
-
-/** Extract the first plan section from markdown text (issue body or comments). */
-export function extractPlanText(text: string): string | undefined {
-  const match = text.match(PLAN_SECTION_RE);
-  return match ? match[0] : undefined;
-}
+// Import from canonical location (plan-store.ts) and re-export for test consumers
+import { extractPlanText } from '../src/plan-store.js';
+export { extractPlanText };
 
 // State I/O
 

@@ -19,8 +19,17 @@
  * Part of kaizen issue #902, #905.
  */
 
-import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
+import { gh } from './lib/gh-exec.js';
+
+// Plan section regex — shared between plan-store and auto-dent-run
+const PLAN_SECTION_RE = /## (?:Implementation )?Plan\b[\s\S]*?(?=\n## |\n```yaml|$)/i;
+
+/** Extract the first plan section from markdown text. */
+export function extractPlanText(text: string): string | undefined {
+  const match = text.match(PLAN_SECTION_RE);
+  return match ? match[0] : undefined;
+}
 
 // Marker comments used to identify kaizen-managed content in issue comments
 export const PLAN_MARKER = '<!-- kaizen:plan -->';
@@ -48,18 +57,7 @@ export interface StoredMetadata {
   commentUrl?: string;
 }
 
-/** Run a gh CLI command and return stdout. Throws on failure. */
-function gh(args: string[]): string {
-  const result = spawnSync('gh', args, {
-    encoding: 'utf8',
-    timeout: 30_000,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  if (result.status !== 0) {
-    throw new Error(`gh ${args.slice(0, 3).join(' ')} failed: ${result.stderr?.trim()}`);
-  }
-  return result.stdout?.trim() ?? '';
-}
+
 
 /**
  * Store plan text as a comment on a GitHub issue.
@@ -121,9 +119,9 @@ export function retrievePlan(opts: PlanStoreOptions): StoredPlan | null {
 
   // Fall back to issue body (may have plan inline)
   const issueBody = gh(['issue', 'view', opts.issueNum, '--repo', opts.repo, '--json', 'body', '--jq', '.body']);
-  const planMatch = issueBody.match(/## (?:Implementation )?Plan\b[\s\S]*?(?=\n## |\n```yaml|$)/i);
-  if (planMatch) {
-    return { planText: planMatch[0] };
+  const plan = extractPlanText(issueBody);
+  if (plan) {
+    return { planText: plan };
   }
 
   return null;

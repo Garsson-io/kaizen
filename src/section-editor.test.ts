@@ -1,5 +1,20 @@
-import { describe, it, expect } from 'vitest';
-import { parseSections } from './section-editor.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { parseSections, listSections, readSection, addSection, replaceSection, removeSection } from './section-editor.js';
+
+vi.mock('node:child_process', () => ({
+  spawnSync: vi.fn(),
+}));
+
+const mockGh = vi.mocked(spawnSync);
+
+function ghReturns(stdout: string) {
+  mockGh.mockReturnValueOnce({ status: 0, stdout, stderr: '', signal: null, pid: 0, output: [null, stdout, ''] } as any);
+}
+
+function ghFails(stderr = 'error') {
+  mockGh.mockReturnValueOnce({ status: 1, stdout: '', stderr, signal: null, pid: 0, output: [null, '', stderr] } as any);
+}
 
 describe('parseSections — pure markdown section parsing', () => {
   it('parses multiple ## sections', () => {
@@ -113,5 +128,95 @@ describe('parseSections — pure markdown section parsing', () => {
       'Validation',
       'Known limitations',
     ]);
+  });
+});
+
+const target = { kind: 'pr' as const, number: '903', repo: 'Garsson-io/kaizen' };
+
+describe('listSections — fetches body and returns section names', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns section names from PR body', () => {
+    ghReturns('## Plan\n\nContent.\n\n## Test Plan\n\nTests.');
+    const names = listSections(target);
+    expect(names).toEqual(['Plan', 'Test Plan']);
+  });
+
+  it('returns empty array for body with no sections', () => {
+    ghReturns('Just text.');
+    expect(listSections(target)).toEqual([]);
+  });
+});
+
+describe('readSection — fetches body and returns one section', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns section content by name', () => {
+    ghReturns('## Plan\n\n1. Do X\n\n## Test Plan\n\nRun tests.');
+    const content = readSection(target, 'Plan');
+    expect(content).toContain('Do X');
+    expect(content).not.toContain('Run tests');
+  });
+
+  it('returns null for non-existent section', () => {
+    ghReturns('## Plan\n\nContent.');
+    expect(readSection(target, 'Missing')).toBeNull();
+  });
+});
+
+describe('addSection — upserts a named section', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('appends new section when it does not exist', () => {
+    ghReturns('## Plan\n\nOld plan.'); // fetchBody
+    ghReturns(''); // writeBody (gh pr edit)
+    addSection(target, 'Validation', 'Tests pass.');
+    const writeCall = mockGh.mock.calls[1];
+    const body = writeCall[1]![writeCall[1]!.indexOf('--body') + 1] as string;
+    expect(body).toContain('## Plan');
+    expect(body).toContain('## Validation');
+    expect(body).toContain('Tests pass.');
+  });
+
+  it('replaces existing section', () => {
+    ghReturns('## Plan\n\nOld plan.\n\n## Validation\n\nOld validation.\n\n## Notes\n\nStuff.'); // fetchBody
+    ghReturns(''); // writeBody
+    addSection(target, 'Validation', 'New validation.');
+    const writeCall = mockGh.mock.calls[1];
+    const body = writeCall[1]![writeCall[1]!.indexOf('--body') + 1] as string;
+    expect(body).toContain('Old plan');
+    expect(body).toContain('New validation');
+    expect(body).not.toContain('Old validation');
+    expect(body).toContain('Stuff');
+  });
+});
+
+describe('replaceSection — throws if section missing', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('throws when section does not exist', () => {
+    ghReturns('## Plan\n\nContent.');
+    expect(() => replaceSection(target, 'Missing', 'text')).toThrow('Section "Missing" not found');
+  });
+});
+
+describe('removeSection — removes a named section', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('removes existing section', () => {
+    ghReturns('## Plan\n\nKeep.\n\n## Draft\n\nRemove.\n\n## Notes\n\nAlso keep.'); // fetchBody
+    ghReturns(''); // writeBody
+    removeSection(target, 'Draft');
+    const writeCall = mockGh.mock.calls[1];
+    const body = writeCall[1]![writeCall[1]!.indexOf('--body') + 1] as string;
+    expect(body).toContain('Keep');
+    expect(body).toContain('Also keep');
+    expect(body).not.toContain('Remove');
+  });
+
+  it('no-ops when section does not exist', () => {
+    ghReturns('## Plan\n\nContent.');
+    removeSection(target, 'Missing');
+    expect(mockGh).toHaveBeenCalledTimes(1); // only fetchBody, no writeBody
   });
 });

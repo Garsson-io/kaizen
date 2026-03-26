@@ -9,6 +9,7 @@ import {
   retrieveMetadata,
   queryConnectedIssues,
   queryPrNumber,
+  extractPlanText,
   PLAN_MARKER,
   METADATA_MARKER,
   TESTPLAN_MARKER,
@@ -188,5 +189,42 @@ describe('storeTestPlan / retrieveTestPlan', () => {
     const result = retrieveTestPlan(opts);
     expect(result).not.toBeNull();
     expect(result!.planText).toContain('Run tests');
+  });
+});
+
+describe('error handling — gh CLI failures propagate', () => {
+  it('storePlan throws when gh fails on comment creation', () => {
+    ghReturns(''); // findMarkerComment: no existing
+    ghFails('permission denied');
+    expect(() => storePlan(opts, '## Plan')).toThrow('permission denied');
+  });
+
+  it('retrievePlan throws when gh fails on issue fetch', () => {
+    ghReturns(''); // findMarkerComment: no match
+    ghFails('not found');
+    expect(() => retrievePlan(opts)).toThrow('not found');
+  });
+
+  it('storeMetadata throws when gh fails', () => {
+    ghReturns(''); // findMarkerComment
+    ghFails('rate limited');
+    expect(() => storeMetadata(opts, { key: 'val' })).toThrow('rate limited');
+  });
+
+  it('queryConnectedIssues throws when gh fails on issue fetch', () => {
+    ghFails('timeout'); // findMarkerComment catches internally
+    ghFails('also timeout'); // issue body fetch throws
+    expect(() => queryConnectedIssues(opts)).toThrow('also timeout');
+  });
+});
+
+describe('extractPlanText — canonical regex (shared with auto-dent-run)', () => {
+  it('extracts ## Plan section', () => {
+    expect(extractPlanText('## Problem\n\nBug.\n\n## Plan\n\n1. Fix.\n\n## Test Plan\n\nTests.'))
+      .toContain('Fix');
+  });
+
+  it('returns undefined when no plan', () => {
+    expect(extractPlanText('## Problem\n\nJust a bug.')).toBeUndefined();
   });
 });

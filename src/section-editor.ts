@@ -11,7 +11,7 @@
  * Part of kaizen issue #902, #905.
  */
 
-import { spawnSync } from 'node:child_process';
+import { gh } from './lib/gh-exec.js';
 
 export type TargetKind = 'pr' | 'issue';
 
@@ -35,18 +35,7 @@ export interface Section {
   endOffset: number;
 }
 
-/** Run a gh CLI command. Throws on failure. */
-function gh(args: string[]): string {
-  const result = spawnSync('gh', args, {
-    encoding: 'utf8',
-    timeout: 30_000,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  if (result.status !== 0) {
-    throw new Error(`gh ${args.slice(0, 3).join(' ')} failed: ${result.stderr?.trim()}`);
-  }
-  return result.stdout ?? '';
-}
+
 
 /** Fetch the body of a PR or issue. */
 export function fetchBody(target: SectionTarget): string {
