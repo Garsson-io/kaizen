@@ -27,6 +27,13 @@ import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js';
+import {
+  reviewBattery,
+  formatBatteryReport,
+  listDimensions,
+  resolvePromptsDir,
+  renderTemplate,
+} from '../src/review-battery.js';
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
 
 // Re-export from extracted modules for backward compatibility
@@ -61,6 +68,9 @@ export {
   type BatchReflectEvent,
   type EventEnvelope,
 } from './auto-dent-events.js';
+
+// Re-export shared utilities from review-battery for backward compatibility
+export { resolvePromptsDir, renderTemplate } from '../src/review-battery.js';
 
 export {
   color,
@@ -166,6 +176,10 @@ export interface RunMetrics {
   failure_class?: string;
   /** Number of lifecycle ordering violations detected post-run */
   lifecycle_violations?: number;
+  /** Review battery verdict for PRs created in this run */
+  review_verdict?: 'pass' | 'fail' | 'skipped';
+  /** Review battery cost (USD) */
+  review_cost_usd?: number;
 }
 
 export interface RunResult {
@@ -189,6 +203,10 @@ export interface RunResult {
   contemplationRecs?: string[];
   /** Reflection insights extracted from reflect-mode run output (#699) */
   reflectionInsights?: string[];
+  /** Advisory requirements review verdict for the PR produced by this run */
+  reviewVerdict?: 'pass' | 'fail' | 'skipped';
+  /** Cost of the requirements review in USD */
+  reviewCostUsd?: number;
 }
 
 // State I/O
@@ -241,22 +259,6 @@ function getRepoRoot(): string {
  * Resolve the prompts directory. Checks repo-root/prompts first,
  * then falls back to the directory relative to this script.
  */
-export function resolvePromptsDir(): string {
-  // Use --show-toplevel (worktree-aware) not --git-common-dir (main repo root).
-  // Prompts are worktree-local files that may differ per branch.
-  try {
-    const toplevel = execSync(
-      'git rev-parse --show-toplevel',
-      { encoding: 'utf8' },
-    ).trim();
-    const dir = resolve(toplevel, 'prompts');
-    if (existsSync(dir)) return dir;
-  } catch {
-    // Fall through
-  }
-  return resolve(dirname(new URL(import.meta.url).pathname), '..', 'prompts');
-}
-
 /**
  * Load persisted reflection insights from the batch log directory.
  * Returns formatted markdown string for prompt injection, or empty string if none.
@@ -447,29 +449,6 @@ export function buildTemplateVars(
  *   {{variable}}          — simple substitution
  *   {{#variable}}...{{/variable}} — conditional section (rendered if variable is non-empty)
  */
-export function renderTemplate(
-  template: string,
-  vars: Record<string, string>,
-): string {
-  // Process conditional sections: {{#key}}...{{/key}}
-  let result = template.replace(
-    /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g,
-    (_match, key: string, body: string) => {
-      return vars[key] ? body : '';
-    },
-  );
-
-  // Substitute variables: {{key}}
-  result = result.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => {
-    return vars[key] ?? `{{${key}}}`;
-  });
-
-  // Clean up blank lines left by removed conditional sections
-  result = result.replace(/\n{3,}/g, '\n\n');
-
-  return result.trim();
-}
-
 /**
  * Load a prompt template from the prompts directory.
  * Returns null if the file doesn't exist (caller should fall back to inline).
@@ -1517,6 +1496,7 @@ async function main(): Promise<void> {
   printRunSummary(runNum, exitCode, duration, result);
 
   // Emit per-artifact events from stream results (#647)
+  let pickedIssue = '';
   {
     const runId = makeRunId(state.batch_id, runNum);
     // Extract picked issue from log phase markers
@@ -1525,6 +1505,7 @@ async function main(): Promise<void> {
       const repo = state.kaizen_repo || state.host_repo || '';
       for (const marker of parsePhaseMarkers(logContent)) {
         if (marker.phase === 'PICK' && marker.fields.issue) {
+          pickedIssue = marker.fields.issue;
           const labels = repo ? fetchIssueLabels(marker.fields.issue, repo) : [];
           events.emit({
             type: 'run.issue_picked',
@@ -1548,6 +1529,56 @@ async function main(): Promise<void> {
       });
     }
   }
+
+  // Post-run review battery (#ENG-6638) — advisory, not blocking
+  // Runs requirements review on each PR to detect gaps before merge.
+  let reviewVerdict: 'pass' | 'fail' | 'skipped' = 'skipped';
+  let reviewCostUsd = 0;
+  if (result.prs.length > 0 && pickedIssue) {
+    const repo = state.kaizen_repo || state.host_repo || '';
+    try {
+      const dimensions = listDimensions().filter(d => d !== 'plan-coverage'); // plan-coverage is for pre-implementation
+      console.log(`  ${color.dim('[review-battery]')} running ${dimensions.join(', ')} review for ${result.prs.length} PR(s)...`);
+      for (const prUrl of result.prs) {
+        const batteryResult = await reviewBattery({
+          dimensions,
+          prUrl,
+          issueNum: pickedIssue,
+          repo,
+          timeoutMs: 120_000,
+        });
+        reviewCostUsd += batteryResult.costUsd;
+        if (batteryResult.verdict === 'fail') {
+          reviewVerdict = 'fail';
+          const report = formatBatteryReport(batteryResult);
+          console.log(`  ${color.yellow('[review-battery]')} FAIL for ${prUrl}`);
+          for (const dim of batteryResult.dimensions) {
+            for (const f of dim.findings) {
+              if (f.status !== 'DONE') {
+                console.log(`    ${f.status}: ${f.requirement} — ${f.detail}`);
+              }
+            }
+          }
+          appendFileSync(logFile, `\n--- review-battery ---\n${report}\n`);
+          // Post review findings as PR comment (best effort)
+          try {
+            ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(`## Review Battery: FAIL\n\n${report}`)}`);
+          } catch { /* best effort */ }
+        } else if (reviewVerdict !== 'fail') {
+          reviewVerdict = 'pass';
+          console.log(`  ${color.green('[review-battery]')} PASS for ${prUrl}`);
+          appendFileSync(logFile, `\nreview_battery=pass pr=${prUrl} cost=$${batteryResult.costUsd.toFixed(2)}\n`);
+        }
+      }
+    } catch (e: any) {
+      console.log(`  ${color.dim('[review-battery]')} error: ${e.message}`);
+      appendFileSync(logFile, `\nreview_battery_error=${e.message}\n`);
+    }
+  }
+
+  // Store review verdict back onto result so scoreRunResult picks it up
+  result.reviewVerdict = reviewVerdict;
+  result.reviewCostUsd = reviewCostUsd;
 
   // Lifecycle validation (#639) — advisory, not blocking
   let lifecycleViolationCount = 0;
@@ -1627,6 +1658,8 @@ async function main(): Promise<void> {
       stop_requested: result.stopRequested,
       failure_class: result.failureClass,
       lifecycle_violations: lifecycleViolationCount,
+      review_verdict: reviewVerdict,
+      review_cost_usd: reviewCostUsd,
       outcome,
       mode: runMode,
     });
@@ -1746,6 +1779,8 @@ async function main(): Promise<void> {
     prompt_template: promptMeta.template,
     prompt_hash: promptMeta.hash,
     lifecycle_violations: lifecycleViolationCount,
+    review_verdict: reviewVerdict,
+    review_cost_usd: reviewCostUsd,
   };
   // Classify failure: wall-clock timeout is authoritative (#686), then heuristics
   runMetrics.failure_class = result.timedOut ? 'timeout' : classifyFailure(runMetrics);

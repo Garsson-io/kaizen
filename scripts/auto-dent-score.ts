@@ -136,6 +136,10 @@ export interface RunScore {
   cost_vs_avg: number | null;
   /** Structured failure classification for root-cause analysis */
   failure_class: FailureClass;
+  /** Advisory requirements review verdict for the PR from this run. undefined = no PR produced. */
+  review_verdict?: 'pass' | 'fail' | 'skipped';
+  /** Cost of the requirements review for this run in USD */
+  review_cost_usd?: number;
 }
 
 export interface BatchScore {
@@ -175,6 +179,12 @@ export interface BatchScore {
   post_hoc?: PostHocBatchResult;
   /** Batch trend analysis (null if fewer than 4 runs) */
   trend: BatchTrend | null;
+  /** Number of runs where requirements review verdict was 'fail'. Advisory signal only. */
+  review_fail_count: number;
+  /** Fraction of reviewed runs (runs with a PR) that failed requirements review. */
+  review_fail_rate: number;
+  /** Total cost of all requirements reviews across the batch */
+  review_total_cost_usd: number;
 }
 
 export interface ModeStats {
@@ -272,6 +282,8 @@ export function scoreRunMetrics(
     issues_pruned: metrics.issues_pruned ?? 0,
     cost_vs_avg: costVsAvg,
     failure_class: fc,
+    review_verdict: metrics.review_verdict,
+    review_cost_usd: metrics.review_cost_usd,
   };
 }
 
@@ -318,6 +330,8 @@ export function scoreRunResult(
     issues_pruned: result.issuesPruned,
     cost_vs_avg: costVsAvg,
     failure_class: fc,
+    review_verdict: result.reviewVerdict,
+    review_cost_usd: result.reviewCostUsd,
   };
 }
 
@@ -348,6 +362,12 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     (r) => r.cost_vs_avg !== null && r.cost_vs_avg >= 2,
   ).length;
 
+  // Review verdict aggregation — only count runs that had a PR (non-skipped verdicts)
+  const reviewedRuns = runs.filter(r => r.review_verdict && r.review_verdict !== 'skipped');
+  const reviewFailCount = reviewedRuns.filter(r => r.review_verdict === 'fail').length;
+  const reviewFailRate = reviewedRuns.length > 0 ? reviewFailCount / reviewedRuns.length : 0;
+  const reviewTotalCost = runs.reduce((s, r) => s + (r.review_cost_usd ?? 0), 0);
+
   return {
     total_runs: runs.length,
     successful_runs: successfulRuns.length,
@@ -370,6 +390,9 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     cost_anomaly_count: costAnomalyCount,
     mode_diversity: computeModeDiversity(runs),
     trend: computeBatchTrend(runs),
+    review_fail_count: reviewFailCount,
+    review_fail_rate: reviewFailRate,
+    review_total_cost_usd: reviewTotalCost,
   };
 }
 
@@ -438,6 +461,9 @@ export function formatRunScoreLine(score: RunScore): string {
   if (score.cost_vs_avg != null) {
     parts.push(`${score.cost_vs_avg.toFixed(1)}x avg`);
   }
+  if (score.review_verdict && score.review_verdict !== 'skipped') {
+    parts.push(`review:${score.review_verdict}`);
+  }
   return parts.join(' | ');
 }
 
@@ -477,6 +503,13 @@ export function formatBatchScoreTable(score: BatchScore): string {
   }
   if (score.cost_anomaly_count > 0) {
     lines.push(`| **Cost anomalies** | ${score.cost_anomaly_count} runs >= 2x avg |`);
+  }
+  if (score.review_total_cost_usd > 0) {
+    const reviewedCount = score.runs.filter(r => r.review_verdict && r.review_verdict !== 'skipped').length;
+    const failLabel = score.review_fail_count > 0
+      ? ` ⚠ ${score.review_fail_count} fail (${(score.review_fail_rate * 100).toFixed(0)}%)`
+      : ' ✓ all pass';
+    lines.push(`| **Requirements review** | ${reviewedCount} PRs reviewed, $${score.review_total_cost_usd.toFixed(2)} total${failLabel} |`);
   }
   if (score.post_hoc) {
     const ph = score.post_hoc;

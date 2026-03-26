@@ -69,6 +69,10 @@ export interface RunCompleteEvent {
   outcome: 'success' | 'empty_success' | 'failure' | 'stop';
   /** Cognitive mode used, for context in analysis */
   mode?: string;
+  /** Review battery verdict for PRs created in this run */
+  review_verdict?: 'pass' | 'fail' | 'skipped';
+  /** Review battery cost (USD) */
+  review_cost_usd?: number;
 }
 
 export interface BatchReflectEvent {
