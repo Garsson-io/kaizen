@@ -31,12 +31,17 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import YAML from 'yaml';
 import {
   prTarget,
   issueTarget,
   storeReviewFinding,
   storeReviewSummary,
+  storeReviewBatch,
+  storeQuickPass,
+  nextReviewRound,
+  latestReviewRound,
   listReviewRounds,
   listReviewDimensions,
   readReviewFinding,
@@ -74,31 +79,69 @@ function main(): void {
     console.error('Usage: npx tsx src/cli-structured-data.ts <command> --repo <owner/repo> [options]');
     process.exit(1);
   }
-  const content = () => a.file ? readFileSync(a.file, 'utf8') : a.text ?? '';
+  /** Read content from --file, --text, or stdin (--stdin flag). */
+  const content = (): string => {
+    if (a.file) return readFileSync(a.file, 'utf8');
+    if (a.text) return a.text;
+    if (a.stdin === 'true' || a.stdin === '') {
+      try { return execSync('cat', { encoding: 'utf8', timeout: 5000 }); } catch { return ''; }
+    }
+    return '';
+  };
+
+  /** Get round number: --round N, or auto via next-round. */
+  const round = (): number => {
+    if (a.round) return parseInt(a.round, 10);
+    if (a.pr) return nextReviewRound(prTarget(a.pr, repo));
+    return 1;
+  };
 
   switch (a.command) {
     // Reviews
+    case 'next-round': {
+      console.log(nextReviewRound(prTarget(a.pr, repo)));
+      break;
+    }
     case 'store-review-finding': {
       const pr = prTarget(a.pr, repo);
-      const round = parseInt(a.round ?? '1', 10);
+      const r = round();
       const dim = a.dimension ?? 'unknown';
       const text = content();
-      // If content is JSON, parse it; otherwise store as-is
       let finding: ReviewFindingData;
       try {
         finding = JSON.parse(text);
       } catch {
         finding = { dimension: dim, verdict: 'fail', summary: text.slice(0, 100), findings: [] };
       }
-      finding.dimension = dim;
-      const url = storeReviewFinding(pr, round, finding);
-      console.log(`Review finding stored: ${url}`);
+      if (!finding.dimension || finding.dimension === 'unknown') finding.dimension = dim;
+      const url = storeReviewFinding(pr, r, finding);
+      console.log(`Review finding stored (round ${r}): ${url}`);
+      break;
+    }
+    case 'store-review-batch': {
+      // Accepts JSON array of ReviewFindingData via --file or --stdin
+      const pr = prTarget(a.pr, repo);
+      const r = round();
+      const findings: ReviewFindingData[] = JSON.parse(content());
+      const result = storeReviewBatch(pr, r, findings);
+      console.log(`Batch stored: ${result.urls.length} findings + summary (round ${r})`);
+      console.log(`Summary: ${result.summaryUrl}`);
+      break;
+    }
+    case 'quick-pass': {
+      // Quick shorthand: --dimension correctness --summary "All good" --requirements "R1,R2,R3"
+      const pr = prTarget(a.pr, repo);
+      const r = round();
+      const reqs = (a.requirements ?? '').split(',').map(s => s.trim()).filter(Boolean);
+      const url = storeQuickPass(pr, r, a.dimension ?? 'unknown', a.summary ?? 'All requirements met', reqs);
+      console.log(`Quick pass stored (round ${r}): ${url}`);
       break;
     }
     case 'store-review-summary': {
       const text = a.file ? readFileSync(a.file, 'utf8') : a.text;
-      const url = storeReviewSummary(prTarget(a.pr, repo), parseInt(a.round ?? '1', 10), text || undefined);
-      console.log(`Review summary stored: ${url}`);
+      const r = round();
+      const url = storeReviewSummary(prTarget(a.pr, repo), r, text || undefined);
+      console.log(`Review summary stored (round ${r}): ${url}`);
       break;
     }
     case 'list-review-rounds': {

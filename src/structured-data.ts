@@ -36,6 +36,46 @@ export function issueTarget(issueNum: string, repo: string): AttachmentTarget & 
   return { kind: 'issue', number: issueNum, repo };
 }
 
+/**
+ * Get the next review round number (latest + 1, or 1 if no reviews exist).
+ */
+export function nextReviewRound(target: AttachmentTarget): number {
+  return latestReviewRound(target) + 1;
+}
+
+/**
+ * Store multiple dimension findings at once and auto-compose the summary.
+ * Saves N API calls vs individual storeReviewFinding + storeReviewSummary.
+ */
+export function storeReviewBatch(
+  target: AttachmentTarget,
+  round: number,
+  findings: ReviewFindingData[],
+): { urls: string[]; summaryUrl: string } {
+  const urls = findings.map(f => storeReviewFinding(target, round, f));
+  const summaryUrl = storeReviewSummary(target, round);
+  return { urls, summaryUrl };
+}
+
+/**
+ * Quick pass — store a dimension as PASS with a simple summary.
+ * Shorthand for when all findings are DONE.
+ */
+export function storeQuickPass(
+  target: AttachmentTarget,
+  round: number,
+  dimension: string,
+  summary: string,
+  requirements: string[],
+): string {
+  return storeReviewFinding(target, round, {
+    dimension,
+    verdict: 'pass',
+    summary,
+    findings: requirements.map(r => ({ requirement: r, status: 'DONE' as const, detail: 'Verified' })),
+  });
+}
+
 // ── Reviews ─────────────────────────────────────────────────────────
 
 export interface ReviewFinding {
