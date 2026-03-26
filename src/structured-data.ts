@@ -52,6 +52,12 @@ export interface ReviewFindingData {
   verdict: 'pass' | 'fail';
   summary: string;
   findings: ReviewFinding[];
+  /** Review round number (shown in header) */
+  round?: number;
+  /** Wall-clock duration in seconds */
+  durationSec?: number;
+  /** Cost in USD */
+  costUsd?: number;
 }
 
 const STATUS_ICON: Record<string, string> = { DONE: '✅', PARTIAL: '⚠️', MISSING: '❌' };
@@ -72,11 +78,22 @@ function formatFinding(round: number, finding: ReviewFindingData): string {
   const partial = finding.findings.filter(f => f.status === 'PARTIAL').length;
   const missing = finding.findings.filter(f => f.status === 'MISSING').length;
 
-  const meta = JSON.stringify({ round, dimension: finding.dimension, verdict: finding.verdict, done, partial, missing });
+  const meta = JSON.stringify({
+    round, dimension: finding.dimension, verdict: finding.verdict, done, partial, missing,
+    ...(finding.durationSec != null ? { duration_sec: finding.durationSec } : {}),
+    ...(finding.costUsd != null ? { cost_usd: finding.costUsd } : {}),
+  });
+
+  const statsLine = [
+    `Round ${round}`,
+    finding.durationSec != null ? `${finding.durationSec}s` : null,
+    finding.costUsd != null ? `$${finding.costUsd.toFixed(3)}` : null,
+  ].filter(Boolean).join(' | ');
 
   const lines: string[] = [
     `<!-- meta:${meta} -->`,
     `### ${finding.dimension} — ${finding.verdict.toUpperCase()}`,
+    `*${statsLine}*`,
     '',
     `> ${finding.summary}`,
     '',
