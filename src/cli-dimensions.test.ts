@@ -318,20 +318,28 @@ describe('parseArgs dispatch', () => {
 // ── cmdBriefing ──────────────────────────────────────────────────────
 
 describe('cmdBriefing', () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = createTmpPromptsDir();
+    writePrompt(tmpDir, 'requirements', VALID_PROMPT('requirements'));
+    writePrompt(tmpDir, 'security', VALID_PROMPT('security'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+
   it('returns a Review Briefing section with PR size and dimension count', () => {
-    const output = cmdBriefing(300);
+    const output = cmdBriefing(300, tmpDir);
     expect(output).toContain('Review Briefing');
     expect(output).toContain('300 lines');
   });
 
-  it('lists dimension names from the real prompts dir', () => {
-    const output = cmdBriefing(100);
-    // At least one dimension must appear
-    expect(output).toMatch(/\*\*.+\*\*/);
+  it('lists dimension names from the synthetic prompts dir', () => {
+    const output = cmdBriefing(100, tmpDir);
+    expect(output).toContain('requirements');
+    expect(output).toContain('security');
   });
 
   it('includes natural groupings section', () => {
-    const output = cmdBriefing(50);
+    const output = cmdBriefing(50, tmpDir);
     expect(output).toContain('Natural Groupings');
   });
 });

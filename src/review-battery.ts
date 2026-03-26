@@ -378,9 +378,9 @@ export function renderTemplate(template: string, vars: Record<string, string>): 
  * Resolve the prompts directory. Checks repo-root/prompts first,
  * then falls back to the directory relative to this file.
  */
-export function resolvePromptsDir(): string {
+export function resolvePromptsDir(exec?: (cmd: string) => string): string {
   const thisDir = dirname(new URL(import.meta.url).pathname);
-  const root = resolveProjectRoot(thisDir);
+  const root = resolveProjectRoot(thisDir, exec);
   const dir = resolve(root, 'prompts');
   if (existsSync(dir)) return dir;
   return resolve(thisDir, '..', 'prompts');

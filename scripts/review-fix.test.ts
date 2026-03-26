@@ -22,6 +22,7 @@ import {
   type FixRunningAction,
   type CliArgs,
   type PrefetchResult,
+  type ReviewFixState,
 } from './review-fix.js';
 import type { BatteryResult } from '../src/review-battery.js';
 
@@ -626,6 +627,64 @@ describe('runFixLoop', () => {
       const saved = loadState(baseOpts.prUrl, dir);
       expect(saved).not.toBeNull();
       expect(saved?.phase).toBe('fix_running');
+    } finally { teardown(); }
+  });
+
+  it('fix_running resume: returns early when fix session is still running', async () => {
+    const dir = setup();
+    try {
+      const fixRunningState: ReviewFixState = {
+        prUrl: baseOpts.prUrl,
+        issueNum: baseOpts.issueNum,
+        repo: baseOpts.repo,
+        maxRounds: baseOpts.maxRounds,
+        budgetCap: baseOpts.budgetCap,
+        currentRound: 2,
+        totalCostUsd: 0.15,
+        startedAt: new Date().toISOString(),
+        phase: 'fix_running',
+        rounds: [{ round: 1, phase: 'review', verdict: 'fail', gaps: 1, reviewCost: 0.15, fixCost: 0 }],
+        activeFix: { pid: 99999, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') },
+      };
+      saveState(fixRunningState, dir);
+      const runReviewMock = vi.fn();
+      const state = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: false, success: false, costUsd: 0, output: '' }),
+        runReview: runReviewMock,
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+      expect(state.phase).toBe('fix_running');
+      expect(runReviewMock).not.toHaveBeenCalled();
+    } finally { teardown(); }
+  });
+
+  it('fix_running resume: proceeds to review when fix session has completed', async () => {
+    const dir = setup();
+    try {
+      const fixRunningState: ReviewFixState = {
+        prUrl: baseOpts.prUrl,
+        issueNum: baseOpts.issueNum,
+        repo: baseOpts.repo,
+        maxRounds: baseOpts.maxRounds,
+        budgetCap: baseOpts.budgetCap,
+        currentRound: 2,
+        totalCostUsd: 0.15,
+        startedAt: new Date().toISOString(),
+        phase: 'fix_running',
+        rounds: [],
+        activeFix: { pid: 99999, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') },
+      };
+      saveState(fixRunningState, dir);
+      const state = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: true, costUsd: 0.20, output: 'done' }),
+        runReview: async () => makePassBattery(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('pass');
     } finally { teardown(); }
   });
 });
