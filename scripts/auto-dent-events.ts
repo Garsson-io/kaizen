@@ -20,11 +20,15 @@ import { resolve } from 'path';
 
 // Event type definitions
 
-export interface RunStartEvent {
-  type: 'run.start';
+/** #899: Base fields shared by all auto-dent events */
+export interface BaseEvent {
   run_id: string;
   batch_id: string;
   run_num: number;
+}
+
+export interface RunStartEvent extends BaseEvent {
+  type: 'run.start';
   mode: string;
   mode_reason: string;
   prompt_template: string;

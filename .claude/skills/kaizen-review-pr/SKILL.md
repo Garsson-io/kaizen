@@ -72,10 +72,10 @@ gh issue view <N> --repo "$ISSUES_REPO" --json title,body
 gh pr view <pr-url> --json title,body,url
 
 # Plan text (for plan-dependent dimensions: plan-fidelity, plan-coverage, improvement-lifecycle)
-npx tsx src/cli-plan-store.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"
+npx tsx src/cli-structured-data.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"
 
 # Connected issues (for requirements coverage — verify ALL connected issues are addressed)
-npx tsx src/cli-plan-store.ts query-connected --issue <N> --repo "$ISSUES_REPO"
+npx tsx src/cli-structured-data.ts query-connected --issue <N> --repo "$ISSUES_REPO"
 ```
 
 **After pre-fetch, display the review context before spawning agents:**
