@@ -7,10 +7,12 @@
  *   3. Idempotent: second run with existing symlinks is a no-op
  *   4. Real dirs (e.g. after npm install) are not replaced with symlinks
  *   5. Only missing artifacts are symlinked — existing real dirs left alone
+ *   6. git failure (not in a git repo): exits 0 without creating symlinks
+ *   7. main repo missing artifact: no symlink created, exits 0
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -21,6 +23,12 @@ const HOOK = resolve(__dirname, '../../.claude/hooks/kaizen-worktree-setup.sh');
 /** Write a git mock that returns the given path for --git-common-dir */
 function setGitCommonDir(mockDir: MockDir, commonDir: string): void {
   const script = `#!/bin/bash\ncase "$*" in\n  *"rev-parse --git-common-dir"*) echo "${commonDir}"; exit 0 ;;\n  *) /usr/bin/git "$@" ;;\nesac\n`;
+  writeFileSync(join(mockDir.path, 'git'), script, { mode: 0o755 });
+}
+
+/** Write a git mock that exits non-zero (simulates "not a git repo") */
+function setGitFails(mockDir: MockDir): void {
+  const script = `#!/bin/bash\nexit 128\n`;
   writeFileSync(join(mockDir.path, 'git'), script, { mode: 0o755 });
 }
 
@@ -50,7 +58,7 @@ describe('kaizen-worktree-setup.sh', () => {
   });
 
   describe('Invariant 1: creates symlinks in a fresh worktree', () => {
-    it('creates node_modules symlink pointing at main repo', () => {
+    it('creates both node_modules and dist symlinks pointing at main repo', () => {
       const wdir = mkdtempSync(join(tmpdir(), 'kaizen-wt-'));
       const mockDir = createMockDir();
       try {
@@ -58,19 +66,6 @@ describe('kaizen-worktree-setup.sh', () => {
         const { exitCode } = runSetupHook(wdir, mockDir);
         expect(exitCode).toBe(0);
         expect(readlinkSync(join(wdir, 'node_modules'))).toBe(join(mainRepo, 'node_modules'));
-      } finally {
-        rmSync(wdir, { recursive: true, force: true });
-        mockDir.cleanup();
-      }
-    });
-
-    it('creates dist symlink pointing at main repo', () => {
-      const wdir = mkdtempSync(join(tmpdir(), 'kaizen-wt-'));
-      const mockDir = createMockDir();
-      try {
-        setGitCommonDir(mockDir, mainGitDir);
-        const { exitCode } = runSetupHook(wdir, mockDir);
-        expect(exitCode).toBe(0);
         expect(readlinkSync(join(wdir, 'dist'))).toBe(join(mainRepo, 'dist'));
       } finally {
         rmSync(wdir, { recursive: true, force: true });
@@ -102,7 +97,8 @@ describe('kaizen-worktree-setup.sh', () => {
       const mockDir = createMockDir();
       try {
         setGitCommonDir(mockDir, mainGitDir);
-        runSetupHook(wdir, mockDir);
+        const firstRun = runSetupHook(wdir, mockDir);
+        expect(firstRun.exitCode).toBe(0);
         const firstTarget = readlinkSync(join(wdir, 'node_modules'));
         const { exitCode } = runSetupHook(wdir, mockDir);
         expect(exitCode).toBe(0);
@@ -122,6 +118,8 @@ describe('kaizen-worktree-setup.sh', () => {
         mkdirSync(join(wdir, 'node_modules', '.bin'), { recursive: true });
         setGitCommonDir(mockDir, mainGitDir);
         runSetupHook(wdir, mockDir);
+        // Must still be a real directory, not replaced with a symlink
+        expect(statSync(join(wdir, 'node_modules')).isDirectory()).toBe(true);
         expect(() => readlinkSync(join(wdir, 'node_modules'))).toThrow();
       } finally {
         rmSync(wdir, { recursive: true, force: true });
@@ -139,6 +137,44 @@ describe('kaizen-worktree-setup.sh', () => {
         setGitCommonDir(mockDir, mainGitDir);
         runSetupHook(wdir, mockDir);
         expect(readlinkSync(join(wdir, 'node_modules'))).toBe(join(mainRepo, 'node_modules'));
+        // dist must still be a real directory
+        expect(statSync(join(wdir, 'dist')).isDirectory()).toBe(true);
+        expect(() => readlinkSync(join(wdir, 'dist'))).toThrow();
+      } finally {
+        rmSync(wdir, { recursive: true, force: true });
+        mockDir.cleanup();
+      }
+    });
+  });
+
+  describe('Invariant 7: main repo missing artifact — no symlink created', () => {
+    it('exits 0 without creating symlink when main repo has no node_modules', () => {
+      const wdir = mkdtempSync(join(tmpdir(), 'kaizen-wt-'));
+      const mockDir = createMockDir();
+      // Main repo has dist but NOT node_modules
+      rmSync(join(mainRepo, 'node_modules'), { recursive: true, force: true });
+      try {
+        setGitCommonDir(mockDir, mainGitDir);
+        const { exitCode } = runSetupHook(wdir, mockDir);
+        expect(exitCode).toBe(0);
+        expect(() => readlinkSync(join(wdir, 'node_modules'))).toThrow();
+        expect(readlinkSync(join(wdir, 'dist'))).toBe(join(mainRepo, 'dist'));
+      } finally {
+        rmSync(wdir, { recursive: true, force: true });
+        mockDir.cleanup();
+      }
+    });
+  });
+
+  describe('Invariant 6: git failure — exits 0 without creating symlinks', () => {
+    it('exits 0 and creates no symlinks when git is not available or fails', () => {
+      const wdir = mkdtempSync(join(tmpdir(), 'kaizen-wt-'));
+      const mockDir = createMockDir();
+      try {
+        setGitFails(mockDir);
+        const { exitCode } = runSetupHook(wdir, mockDir);
+        expect(exitCode).toBe(0);
+        expect(() => readlinkSync(join(wdir, 'node_modules'))).toThrow();
         expect(() => readlinkSync(join(wdir, 'dist'))).toThrow();
       } finally {
         rmSync(wdir, { recursive: true, force: true });

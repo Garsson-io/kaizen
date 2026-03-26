@@ -75,8 +75,8 @@ This is the gate: **you cannot move to Phase 3 until all dimensions have finding
 Collect all findings from subagents. Filter:
 - **Drop** findings with confidence < 75
 - **Classify** remaining as:
-  - **MUST-FIX** (confidence ≥ 90): Blocks merge. Bugs, security issues, DRY violations with 3+ copies, missing tests for new execution paths.
-  - **SHOULD-FIX** (confidence 75-89): Fix before merge. Minor DRY, testability improvements, pattern inconsistencies.
+  - **MUST-FIX** (confidence ≥ 80): Blocks merge. Bugs, security issues, missing tests for new execution paths, DRY violations, broken error handling, undescribed bundled changes.
+  - **SHOULD-FIX** (confidence 75-79): Low-confidence signal — fix if easy (< 10 min), otherwise file a follow-up issue and note the deferral. Do NOT silently skip.
 
 ### Phase 4: Fix Loop
 
@@ -141,7 +141,7 @@ Create these tasks at skill start using TaskCreate:
 |---|------|-------------|
 | 1 | Gather context + briefing | Discover dimensions (`npx tsx src/cli-dimensions.ts list`), read full diff, read linked issues, read plan from issue comments, load learned failure modes from `review-criteria.md` |
 | 2 | Review (subagent dimensions) | Decide grouping using priority signals + data overlap + PR size. Spawn subagents for ALL dimensions. Validate coverage — all dimensions must have findings (`validateReviewCoverage()`). |
-| 3 | Filter and classify findings | Drop confidence < 75. MUST-FIX ≥ 90 (blocks merge). SHOULD-FIX 75-89 (fix before merge). |
+| 3 | Filter and classify findings | Drop confidence < 75. MUST-FIX ≥ 80 (blocks merge). SHOULD-FIX 75-79 (fix if easy or file follow-up — never silently skip). |
 | 4 | Fix loop (max 3 rounds) | Fix each finding, commit+push, re-review from task #1. Repeat until clean or 3 rounds. If still unclean at round 3: escalate to human. |
 
 **Hooks enforcing review:**

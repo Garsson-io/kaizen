@@ -14,6 +14,9 @@
 
 GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)
 
+# Skip if git failed (not in a git repo, or git not found)
+[ -z "$GIT_COMMON" ] && exit 0
+
 # Skip when running in the main checkout (git-common-dir points to .git directly)
 [ "$GIT_COMMON" = ".git" ] && exit 0
 
@@ -21,8 +24,10 @@ GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)
 MAIN_REPO=$(dirname "$GIT_COMMON")
 
 for artifact in node_modules dist; do
-  if [ ! -e "$artifact" ] && [ -e "$MAIN_REPO/$artifact" ]; then
-    ln -s "$MAIN_REPO/$artifact" "$artifact"
+  # Skip if the path exists OR is already a symlink (even a broken one)
+  if [ ! -e "$artifact" ] && [ ! -L "$artifact" ] && [ -e "$MAIN_REPO/$artifact" ]; then
+    ln -s "$MAIN_REPO/$artifact" "$artifact" \
+      || echo "kaizen-worktree-setup: warning: failed to symlink $artifact" >&2
   fi
 done
 
