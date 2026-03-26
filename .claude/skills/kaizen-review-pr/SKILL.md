@@ -70,6 +70,12 @@ gh issue view <N> --repo "$ISSUES_REPO" --json title,body
 
 # PR body (includes test plan link if present)
 gh pr view <pr-url> --json title,body,url
+
+# Plan text (for plan-dependent dimensions: plan-fidelity, plan-coverage, improvement-lifecycle)
+npx tsx src/cli-plan-store.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"
+
+# Connected issues (for requirements coverage — verify ALL connected issues are addressed)
+npx tsx src/cli-plan-store.ts query-connected --issue <N> --repo "$ISSUES_REPO"
 ```
 
 **After pre-fetch, display the review context before spawning agents:**
@@ -79,7 +85,8 @@ PR:    <pr-url>
 Diff:  https://github.com/<owner>/<repo>/pull/<N>.diff
 Issues: #N1 <title> <url>
         #N2 <title> <url>
-Plan:  <plan url or "none">
+Plan:  <plan text length or "none — plan dims will emit MISSING">
+Connected: #N1 [role] title, #N2 [role] title (from query-connected)
 
 Agents:
 - Agent 1: <dimension list> (<needs>)
