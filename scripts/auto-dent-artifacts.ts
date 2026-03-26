@@ -9,8 +9,8 @@
  */
 
 import { readdirSync, statSync, existsSync, writeFileSync } from 'node:fs';
-import { join, relative, basename } from 'node:path';
-import { execSync } from 'node:child_process';
+import { join, basename } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 export interface RunManifestEntry {
   path: string;
@@ -116,10 +116,11 @@ export function bundleArtifacts(logDir: string, manifest: RunManifest): string {
     : 'batch-manifest.json';
   filePaths.push(manifestFile);
 
-  execSync(
-    `tar -czf ${JSON.stringify(basename(archivePath))} ${filePaths.map(f => JSON.stringify(f)).join(' ')}`,
-    { cwd: logDir },
-  );
+  const result = spawnSync('tar', ['-czf', basename(archivePath), ...filePaths], { cwd: logDir });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`tar exited ${result.status}: ${result.stderr?.toString().trim()}`);
+  }
 
   return archivePath;
 }

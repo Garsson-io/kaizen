@@ -131,7 +131,7 @@ async function handleQuickPass(a: CliArgs): Promise<void> {
 }
 
 async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
-  const text = a.file ? readFileSync(a.file, 'utf8') : a.text;
+  const text = resolveContent(a);
   const r = resolveRound(a);
   const url = storeReviewSummary(prTarget(a.pr, a.repo), r, text || undefined);
   // #920: Write review sentinel so pr-review-loop.ts can verify outcome
