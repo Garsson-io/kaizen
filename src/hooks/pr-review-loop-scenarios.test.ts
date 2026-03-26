@@ -42,6 +42,7 @@ function opts(diffFn?: (sha: string) => number): ProcessOptions {
     repoFromGit: 'org/repo',
     computeDiffLines: diffFn ?? (() => 10),
     checkShaExists: () => true,
+    checkReviewSentinel: () => true, // Scenario tests assume sentinel exists
   };
 }
 

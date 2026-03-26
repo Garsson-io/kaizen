@@ -106,6 +106,31 @@ function isValidPrUrl(url: string): boolean {
   );
 }
 
+/**
+ * Check if a review sentinel exists for the given PR and round.
+ * The sentinel is written by store-review-summary in cli-structured-data.ts.
+ * Format: <stateDir>/<stateKey>.reviewed-r<round>
+ */
+function defaultCheckReviewSentinel(prUrl: string, round: string, stateDir: string): boolean {
+  const sentinel = join(stateDir, `${prUrlToStateKey(prUrl)}.reviewed-r${round}`);
+  try {
+    statSync(sentinel);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write a review sentinel for the given PR and round.
+ * Called by store-review-summary after findings are stored.
+ */
+export function writeReviewSentinel(prUrl: string, round: string | number, stateDir: string = DEFAULT_STATE_DIR): void {
+  ensureStateDir(stateDir);
+  const sentinel = join(stateDir, `${prUrlToStateKey(prUrl)}.reviewed-r${round}`);
+  appendFileSync(sentinel, `reviewed_at=${new Date().toISOString()}\n`);
+}
+
 function printChecklist(
   prUrl: string,
   round: string,
@@ -170,6 +195,8 @@ export interface ProcessOptions {
   computeDiffLines?: (fromSha: string) => number;
   /** Override SHA existence check for testing */
   checkShaExists?: (sha: string) => boolean;
+  /** Override review sentinel check for testing (#920) */
+  checkReviewSentinel?: (prUrl: string, round: string, stateDir: string) => boolean;
 }
 
 function decide(action: HookDecision['action'], reason: string, message: string | null, context?: Record<string, unknown>): HookDecision {
@@ -373,6 +400,15 @@ export function processHookInput(
     const found = findStateByStatuses(['needs_review'], branch, stateDir);
     if (!found || found.status === 'passed' || found.status === 'escalated') {
       return decide('ignore', 'no_pending_review', null, { branch, status: found?.status });
+    }
+
+    // #920: Verify review outcome exists before clearing gate.
+    // The sentinel is written by store-review-summary (cli-structured-data.ts).
+    // Without it, gh pr diff alone doesn't prove dimension agents were spawned.
+    const checkSentinel = options.checkReviewSentinel ?? defaultCheckReviewSentinel;
+    if (!checkSentinel(found.prUrl, found.round, stateDir)) {
+      const msg = `\n\ud83d\udccb REVIEW ROUND ${found.round}/${MAX_ROUNDS}\n${printChecklist(found.prUrl, found.round, MAX_ROUNDS)}\n\u26a0\ufe0f No review findings stored for round ${found.round}. Run \`/kaizen-review-pr ${found.prUrl}\` to spawn dimension agents.\n`;
+      return decide('needs_review', 'no_review_sentinel', msg, { prUrl: found.prUrl, round: found.round });
     }
 
     const fp = writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {

@@ -141,6 +141,13 @@ function main(): void {
       const text = a.file ? readFileSync(a.file, 'utf8') : a.text;
       const r = round();
       const url = storeReviewSummary(prTarget(a.pr, repo), r, text || undefined);
+      // #920: Write review sentinel so pr-review-loop.ts can verify outcome
+      try {
+        const prNum = a.pr ?? '';
+        const prUrl = `https://github.com/${repo}/pull/${prNum}`;
+        const { writeReviewSentinel } = require('./hooks/pr-review-loop.js') as { writeReviewSentinel: (prUrl: string, round: string | number, stateDir?: string) => void };
+        writeReviewSentinel(prUrl, r);
+      } catch { /* best effort — sentinel is advisory */ }
       console.log(`Review summary stored (round ${r}): ${url}`);
       break;
     }
