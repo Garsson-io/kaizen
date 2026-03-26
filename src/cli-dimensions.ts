@@ -6,6 +6,7 @@
  *   show <name> [name2 ...]       Display full content of dimension prompt(s)
  *   add <name> --description "..." --applies-to pr|plan|both   Scaffold new dimension
  *   validate                      Check all dimension files have valid frontmatter + JSON output section
+ *   briefing --lines <N>          Show review briefing for a PR of N lines
  *
  * Usage: npx tsx src/cli-dimensions.ts <command> [args]
  */
@@ -16,6 +17,8 @@ import {
   discoverDimensions,
   loadDimensionMetas,
   resolvePromptsDir,
+  parseFrontmatter,
+  reviewBriefing,
 } from './review-battery.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -79,7 +82,7 @@ export function cmdAdd(opts: AddOptions): string {
     return `Error: ${fileName} already exists.`;
   }
 
-  const validAppliesTo = ['pr', 'plan', 'both'];
+  const validAppliesTo = ['pr', 'plan', 'both', 'reflection'];
   if (!validAppliesTo.includes(opts.appliesTo)) {
     return `Error: --applies-to must be one of: ${validAppliesTo.join(', ')}`;
   }
@@ -155,15 +158,15 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
       continue;
     }
 
-    // Check frontmatter exists
-    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!fmMatch) {
-      errors.push('Missing YAML frontmatter');
+    // Check frontmatter exists and has required fields
+    const fm = parseFrontmatter(content);
+    if (!fm) {
+      const hasFrontmatterBlock = /^---\n[\s\S]*?\n---/.test(content);
+      errors.push(hasFrontmatterBlock ? 'Frontmatter YAML is invalid (cannot parse)' : 'Missing YAML frontmatter');
     } else {
-      const fm = fmMatch[1];
-      if (!/^name\s*:/m.test(fm)) errors.push('Frontmatter missing "name" field');
-      if (!/^description\s*:/m.test(fm)) errors.push('Frontmatter missing "description" field');
-      if (!/^applies_to\s*:/m.test(fm)) errors.push('Frontmatter missing "applies_to" field');
+      if (!fm.name) errors.push('Frontmatter missing "name" field');
+      if (!fm.description) errors.push('Frontmatter missing "description" field');
+      if (!fm.applies_to) errors.push('Frontmatter missing "applies_to" field');
     }
 
     // Check for ```json output format section
@@ -176,6 +179,12 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
   }
 
   return { results, ok };
+}
+
+export function cmdBriefing(prLines: number, promptsDir?: string): string {
+  const metas = loadDimensionMetas(promptsDir)
+    .filter(m => m.applies_to === 'pr' || m.applies_to === 'both');
+  return reviewBriefing(metas, prLines);
 }
 
 export function formatValidation(v: { results: ValidationResult[]; ok: boolean }): string {
@@ -207,8 +216,9 @@ export function parseArgs(argv: string[]): void {
 Commands:
   list                                         Show all dimensions
   show <name> [name2 ...]                      Display dimension prompt(s)
-  add <name> --description "..." --applies-to pr|plan|both   Scaffold new dimension
-  validate                                     Check all dimension files`);
+  add <name> --description "..." --applies-to pr|plan|both|reflection   Scaffold new dimension
+  validate                                     Check all dimension files
+  briefing --lines <N>                         Show review briefing for a PR of N lines (pr/both dimensions only)`);
     process.exit(0);
   }
 
@@ -252,6 +262,20 @@ Commands:
       const v = cmdValidate();
       console.log(formatValidation(v));
       if (!v.ok) process.exit(1);
+      break;
+    }
+    case 'briefing': {
+      let prLines = 0;
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === '--lines' && args[i + 1]) {
+          prLines = parseInt(args[++i], 10);
+        }
+      }
+      if (Number.isNaN(prLines) || prLines <= 0) {
+        console.error('Error: --lines <N> is required');
+        process.exit(1);
+      }
+      console.log(cmdBriefing(prLines));
       break;
     }
     default: {

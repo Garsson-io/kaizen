@@ -28,7 +28,7 @@ import { join } from 'node:path';
 import {
   reviewBattery,
   formatBatteryReport,
-  listDimensions,
+  listPrDimensions,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   type BatteryResult,
@@ -128,9 +128,27 @@ export function resolveMaxRounds(opts: { resume: boolean; maxRounds: number }, s
   return opts.resume ? state.maxRounds : opts.maxRounds;
 }
 
+// ── Deps injection ──────────────────────────────────────────────────
+
+export type PrefetchResult = {
+  issueBody: string;
+  prBody: string;
+  prDiff: string;
+  prBranch: string;
+  isMerged: boolean;
+};
+
+export interface RunFixLoopDeps {
+  prefetch?: (prUrl: string, issueNum: string, repo: string) => PrefetchResult;
+  launchFix?: (prompt: string, logDir: string, round: number) => { pid: number; logFile: string; promptFile: string };
+  checkFix?: (logFile: string, pid: number) => { done: boolean; success: boolean; costUsd: number; output: string };
+  runReview?: (params: { dimensions: string[]; prUrl: string; issueNum: string; repo: string; timeoutMs: number }) => Promise<BatteryResult>;
+  getStateDir?: () => string;
+}
+
 // ── State persistence ───────────────────────────────────────────────
 
-interface ReviewFixState {
+export interface ReviewFixState {
   prUrl: string;
   issueNum: string;
   repo: string;
@@ -188,7 +206,7 @@ export function saveState(state: ReviewFixState, dir?: string): void {
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
-interface CliArgs {
+export interface CliArgs {
   prUrl: string;
   issueNum: string;
   repo: string;
@@ -406,15 +424,18 @@ export function checkFixResult(logFile: string, pid: number): { done: boolean; s
   return { done: true, success: false, costUsd: 0, output: stdout.slice(0, 500) };
 }
 
-// ── Main ────────────────────────────────────────────────────────────
+// ── Main loop (injectable for testing) ──────────────────────────────
 
-async function main() {
-  const opts = parseArgs();
-  const startTime = Date.now();
+export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Promise<ReviewFixState> {
+  const doPrefetch = deps.prefetch ?? prefetch;
+  const doLaunchFix = deps.launchFix ?? launchFix;
+  const doCheckFix = deps.checkFix ?? checkFixResult;
+  const doRunReview = deps.runReview ?? reviewBattery;
+  const doStateDir = deps.getStateDir ?? stateDir;
 
   // Resume or start fresh
   let state: ReviewFixState;
-  const existing = loadState(opts.prUrl);
+  const existing = loadState(opts.prUrl, doStateDir());
   if (opts.resume && existing && !existing.outcome) {
     state = existing;
     console.log(`\n=== review-fix: RESUMING ===`);
@@ -437,11 +458,11 @@ async function main() {
 
   console.log(`\n=== review-fix: ${opts.prUrl} vs #${opts.issueNum} ===\n`);
 
-  const statePath = join(stateDir(), stateKey(opts.prUrl) + '.json');
-  const ctx = prefetch(opts.prUrl, opts.issueNum, opts.repo);
+  const statePath = join(doStateDir(), stateKey(opts.prUrl) + '.json');
+  const ctx = doPrefetch(opts.prUrl, opts.issueNum, opts.repo);
   state.prBranch = ctx.prBranch;
   state.isMerged = ctx.isMerged;
-  saveState(state);
+  saveState(state, doStateDir());
   console.log(`  State: ${statePath}`);
   console.log('');
 
@@ -451,22 +472,21 @@ async function main() {
     const logFile = state.activeFix?.logFile;
     console.log(`--- Checking fix session (PID ${pid ?? 'unknown'}) ---`);
 
-    const { action, state: nextState } = applyFixRunningPhase(state, checkFixResult);
+    const { action, state: nextState } = applyFixRunningPhase(state, doCheckFix);
     state = nextState;
 
     if (action === 'reset') {
       console.log('  Warning: fix_running phase but no activeFix record — resetting to review');
-      saveState(state);
+      saveState(state, doStateDir());
     } else if (action === 'wait') {
       console.log(`  Fix session still running (PID ${pid})`);
       console.log(`  Monitor: tail -f ${logFile}`);
       console.log(`  Re-run with --resume to check again.`);
-      finish(state, startTime);
-      return;
+      return state;
     } else {
       const lastFix = state.rounds[state.rounds.length - 1];
       console.log(`  Fix session completed | Cost: $${lastFix?.fixCost.toFixed(2)} | Success: ${lastFix?.verdict === 'fixed'}`);
-      saveState(state);
+      saveState(state, doStateDir());
     }
   }
 
@@ -476,13 +496,13 @@ async function main() {
   for (let round = state.currentRound; round <= maxRounds; round++) {
     state.currentRound = round;
     state.phase = 'needs_review';
-    saveState(state);
+    saveState(state, doStateDir());
 
     // ── REVIEW ──
     console.log(`--- Round ${round}/${maxRounds}: REVIEW ---`);
 
-    const dimensions = listDimensions().filter(d => d !== 'plan-coverage'); // plan-coverage is for pre-implementation
-    const battery = await reviewBattery({
+    const dimensions = listPrDimensions();
+    const battery = await doRunReview({
       dimensions,
       prUrl: opts.prUrl,
       issueNum: opts.issueNum,
@@ -504,7 +524,7 @@ async function main() {
     if (battery.dimensions.length === 0) {
       console.log('  Review failed (timeout or parse). Run with --resume to retry.');
       state.rounds.push({ round, phase: 'review', verdict: 'review_failed', gaps: -1, reviewCost: battery.costUsd, fixCost: 0 });
-      saveState(state);
+      saveState(state, doStateDir());
       continue;
     }
 
@@ -513,7 +533,7 @@ async function main() {
       gaps: gaps.length, reviewCost: battery.costUsd, fixCost: 0,
       findings: allFindings,
     });
-    saveState(state);
+    saveState(state, doStateDir());
 
     // ── PASS? ──
     if (battery.verdict === 'pass') {
@@ -521,9 +541,8 @@ async function main() {
       console.log(formatBatteryReport(battery));
       state.outcome = 'pass';
       state.phase = 'done';
-      saveState(state);
-      finish(state, startTime);
-      return;
+      saveState(state, doStateDir());
+      return state;
     }
 
     // ── BUDGET? ──
@@ -531,9 +550,8 @@ async function main() {
       console.log(`\nBudget exceeded ($${state.totalCostUsd.toFixed(2)} >= $${opts.budgetCap})`);
       state.outcome = 'budget_exceeded';
       state.phase = 'done';
-      saveState(state);
-      finish(state, startTime);
-      return;
+      saveState(state, doStateDir());
+      return state;
     }
 
     // ── DRY RUN? ──
@@ -542,9 +560,8 @@ async function main() {
       console.log(buildFixPrompt(opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged));
       state.outcome = 'dry_run';
       state.phase = 'done';
-      saveState(state);
-      finish(state, startTime);
-      return;
+      saveState(state, doStateDir());
+      return state;
     }
 
     // ── LAST ROUND? ──
@@ -553,9 +570,8 @@ async function main() {
       console.log(formatBatteryReport(battery));
       state.outcome = 'max_rounds';
       state.phase = 'done';
-      saveState(state);
-      finish(state, startTime);
-      return;
+      saveState(state, doStateDir());
+      return state;
     }
 
     // ── LAUNCH FIX (detached) ──
@@ -563,17 +579,27 @@ async function main() {
     const fixPrompt = buildFixPrompt(
       opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged,
     );
-    const fixInfo = launchFix(fixPrompt, stateDir(), round);
+    const fixInfo = doLaunchFix(fixPrompt, doStateDir(), round);
     state.phase = 'fix_running';
     state.activeFix = fixInfo;
-    saveState(state);
+    saveState(state, doStateDir());
 
     console.log(`\n  Fix session is running in the background.`);
     console.log(`  Run \`tail -f ${fixInfo.logFile}\` to observe.`);
     console.log(`  Run \`npx tsx scripts/review-fix.ts --pr ${opts.prUrl} --issue ${opts.issueNum} --repo ${opts.repo} --resume\` when done.`);
-    finish(state, startTime);
-    return;
+    return state;
   }
+
+  return state;
+}
+
+// ── Main ────────────────────────────────────────────────────────────
+
+async function main() {
+  const opts = parseArgs();
+  const startTime = Date.now();
+  const state = await runFixLoop(opts);
+  finish(state, startTime);
 }
 
 function finish(state: ReviewFixState, startTime: number) {

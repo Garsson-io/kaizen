@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { cmdList, cmdShow, cmdAdd, cmdValidate, formatValidation, parseArgs } from './cli-dimensions.js';
+import { cmdList, cmdShow, cmdAdd, cmdValidate, formatValidation, cmdBriefing, parseArgs } from './cli-dimensions.js';
 import { resolvePromptsDir } from './review-battery.js';
 
 // Fixture helpers
@@ -51,12 +51,15 @@ describe('cli-dimensions against real prompts', () => {
     expect(output).toContain('requirements');
     expect(output).toContain('pr-description');
     expect(output).toContain('scope-fidelity');
-    expect(output).toContain('logic-correctness');
-    expect(output).toContain('error-handling');
+    expect(output).toContain('correctness');
+    expect(output).toContain('security');
+    expect(output).toContain('tooling-fitness');
+    expect(output).toContain('multi-pr-spiral');
+    expect(output).toContain('reflection-quality');
     expect(output).toContain('test-quality');
     // header + separator + N data rows
     const lines = output.split('\n');
-    expect(lines.length).toBeGreaterThanOrEqual(9); // 2 header + 7 dimensions
+    expect(lines.length).toBeGreaterThanOrEqual(11); // 2 header + 9+ dimensions
   });
 
   it('show reads a dimension by name', () => {
@@ -228,6 +231,16 @@ describe('cli-dimensions with temp fixtures', () => {
     expect(v.results[0].errors).toContain('Missing ```json output format section');
   });
 
+  it('validate distinguishes malformed YAML from missing frontmatter', () => {
+    // Has --- markers but invalid YAML inside (unquoted colon in value)
+    writeFileSync(resolve(tmpDir, 'review-badyaml.md'), '---\nname: bad: yaml\ndescription: test\n---\nBody\n```json\n{}\n```\n');
+    const v = cmdValidate(tmpDir);
+    expect(v.ok).toBe(false);
+    const entry = v.results.find(r => r.file === 'review-badyaml.md');
+    expect(entry?.errors[0]).toContain('invalid');
+    expect(entry?.errors[0]).not.toContain('Missing YAML frontmatter');
+  });
+
   it('formatValidation shows FAIL for invalid dimensions', () => {
     writeFileSync(resolve(tmpDir, 'review-broken.md'), 'broken content');
     const v = cmdValidate(tmpDir);
@@ -302,5 +315,55 @@ describe('parseArgs dispatch', () => {
     // validate against real prompts dir — all should pass
     // If this fails, a prompt file has broken frontmatter
     expect(() => parseArgs(['node', 'cli-dimensions.ts', 'validate'])).not.toThrow();
+  });
+
+  it('briefing with --lines prints output', () => {
+    parseArgs(['node', 'cli-dimensions.ts', 'briefing', '--lines', '200']);
+    expect(logs.join('\n')).toContain('Review Briefing');
+  });
+
+  it('briefing without --lines exits 1', () => {
+    expect(() => parseArgs(['node', 'cli-dimensions.ts', 'briefing'])).toThrow('exit:1');
+    expect(errors.join()).toContain('--lines');
+  });
+});
+
+// ── cmdBriefing ──────────────────────────────────────────────────────
+
+describe('cmdBriefing', () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = createTmpPromptsDir();
+    writePrompt(tmpDir, 'requirements', VALID_PROMPT('requirements'));
+    writePrompt(tmpDir, 'security', VALID_PROMPT('security'));
+  });
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+  it('returns a Review Briefing section with PR size and dimension count', () => {
+    const output = cmdBriefing(300, tmpDir);
+    expect(output).toContain('Review Briefing');
+    expect(output).toContain('300 lines');
+  });
+
+  it('lists dimension names from the synthetic prompts dir', () => {
+    const output = cmdBriefing(100, tmpDir);
+    expect(output).toContain('requirements');
+    expect(output).toContain('security');
+  });
+
+  it('includes natural groupings section', () => {
+    const output = cmdBriefing(50, tmpDir);
+    expect(output).toContain('Natural Groupings');
+  });
+
+  it('groups dimensions with identical data needs together in natural groupings', () => {
+    // Both prompts use default needs (review-*.md with no custom needs defaults to [diff])
+    // so they should appear in the same group
+    const output = cmdBriefing(100, tmpDir);
+    expect(output).toContain('requirements');
+    expect(output).toContain('security');
+    // Both have needs:[diff] — they should appear on the same grouping line
+    const groupingLine = output.split('\n').find(l => l.includes('requirements') && l.includes('security'));
+    expect(groupingLine, 'requirements and security should be in the same [diff] group').toBeDefined();
   });
 });
