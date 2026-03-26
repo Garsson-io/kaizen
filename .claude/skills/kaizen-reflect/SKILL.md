@@ -33,6 +33,8 @@ Kaizen is not optional. It is a CORE part of every piece of work. Every case com
 
 **Recursive kaizen** means improving how we improve. When a process improvement doesn't work, escalate the enforcement mechanism — don't just write another instruction. *"It's kaizens all the way down."*
 
+**Persistent reflection data:** When reflection produces structured output (impediments, action items), store it as an attachment on the PR or issue using `/kaizen-sections`: `npx tsx src/cli-section-editor.ts write-attachment --pr {N} --repo "$ISSUES_REPO" --name reflection --file reflection.md`. This makes reflection data discoverable by future sessions and `/kaizen-gaps`.
+
 ## The Kaizen Cycle
 
 ```

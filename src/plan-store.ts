@@ -1,28 +1,26 @@
 /**
- * plan-store.ts — Mechanistic plan/metadata storage against GitHub issues.
+ * plan-store.ts — Plan/metadata storage on GitHub issues.
  *
- * Stores and retrieves plan text and YAML structured metadata as GitHub
- * issue comments. No local filesystem — issues are the canonical store.
- * Cross-session, cross-worktree, discoverable by any agent.
- *
- * Storage format: a comment with a marker header and fenced content:
- *   <!-- kaizen:plan -->
- *   ## Plan
- *   ...plan text...
- *
- *   <!-- kaizen:metadata -->
- *   ```yaml
- *   deep_dive:
- *     connected_issues: [...]
- *   ```
+ * Thin layer on top of section-editor.ts attachments. Provides domain-specific
+ * functions (storePlan, retrievePlan, queryConnectedIssues) that delegate to
+ * the general-purpose attachment system.
  *
  * Part of kaizen issue #902, #905.
  */
 
 import YAML from 'yaml';
 import { gh } from './lib/gh-exec.js';
+import {
+  readAttachment,
+  writeAttachment,
+  readSection as readBodySection,
+  fetchBody,
+  parseSections,
+  type AttachmentTarget,
+  type SectionTarget,
+} from './section-editor.js';
 
-// Plan section regex — shared between plan-store and auto-dent-run
+// Plan section regex — used as fallback when no attachment exists
 const PLAN_SECTION_RE = /## (?:Implementation )?Plan\b[\s\S]*?(?=\n## |\n```yaml|$)/i;
 
 /** Extract the first plan section from markdown text. */
@@ -31,98 +29,75 @@ export function extractPlanText(text: string): string | undefined {
   return match ? match[0] : undefined;
 }
 
-// Marker comments used to identify kaizen-managed content in issue comments
+// Re-export constants for backward compatibility
 export const PLAN_MARKER = '<!-- kaizen:plan -->';
 export const METADATA_MARKER = '<!-- kaizen:metadata -->';
 export const TESTPLAN_MARKER = '<!-- kaizen:testplan -->';
 
 export interface PlanStoreOptions {
-  /** GitHub issue number */
   issueNum: string;
-  /** GitHub repo (owner/repo) */
   repo: string;
 }
 
 export interface StoredPlan {
-  /** The plan text (markdown) */
   planText: string;
-  /** Which comment contains it (for updates) */
   commentUrl?: string;
 }
 
 export interface StoredMetadata {
-  /** Parsed YAML metadata */
   data: Record<string, unknown>;
-  /** Which comment contains it */
   commentUrl?: string;
 }
 
+/** Convert PlanStoreOptions to AttachmentTarget. */
+function toAttachmentTarget(opts: PlanStoreOptions): AttachmentTarget {
+  return { kind: 'issue', number: opts.issueNum, repo: opts.repo };
+}
 
+/** Convert PlanStoreOptions to SectionTarget (for reading issue body). */
+function toSectionTarget(opts: PlanStoreOptions): SectionTarget {
+  return { kind: 'issue', number: opts.issueNum, repo: opts.repo };
+}
 
 /**
- * Store plan text as a comment on a GitHub issue.
- * If a plan comment already exists (has PLAN_MARKER), updates it.
- * Otherwise creates a new comment.
+ * Store plan text as an attachment on a GitHub issue.
  */
 export function storePlan(opts: PlanStoreOptions, planText: string): string {
-  const body = `${PLAN_MARKER}\n${planText}`;
-  const existing = findMarkerComment(opts, PLAN_MARKER);
-  if (existing && existing.id) {
-    updateCommentById(opts.repo, existing.id, body);
-    return existing.url;
-  }
-  const url = gh(['issue', 'comment', opts.issueNum, '--repo', opts.repo, '--body', body]);
-  return url;
+  return writeAttachment(toAttachmentTarget(opts), 'plan', planText);
 }
 
 /**
- * Store test plan text as a comment on a GitHub issue.
+ * Store test plan text as an attachment on a GitHub issue.
  */
 export function storeTestPlan(opts: PlanStoreOptions, testPlanText: string): string {
-  const body = `${TESTPLAN_MARKER}\n${testPlanText}`;
-  const existing = findMarkerComment(opts, TESTPLAN_MARKER);
-  if (existing && existing.id) {
-    updateCommentById(opts.repo, existing.id, body);
-    return existing.url;
-  }
-  const url = gh(['issue', 'comment', opts.issueNum, '--repo', opts.repo, '--body', body]);
-  return url;
+  return writeAttachment(toAttachmentTarget(opts), 'testplan', testPlanText);
 }
 
 /**
- * Store YAML structured metadata as a comment on a GitHub issue.
+ * Store YAML structured metadata as an attachment on a GitHub issue.
  */
 export function storeMetadata(opts: PlanStoreOptions, data: Record<string, unknown>): string {
   const yamlStr = YAML.stringify(data);
-  const body = `${METADATA_MARKER}\n\`\`\`yaml\n${yamlStr}\`\`\``;
-  const existing = findMarkerComment(opts, METADATA_MARKER);
-  if (existing && existing.id) {
-    updateCommentById(opts.repo, existing.id, body);
-    return existing.url;
-  }
-  const url = gh(['issue', 'comment', opts.issueNum, '--repo', opts.repo, '--body', body]);
-  return url;
+  return writeAttachment(toAttachmentTarget(opts), 'metadata', `\`\`\`yaml\n${yamlStr}\`\`\``);
 }
 
 /**
- * Retrieve plan text from a GitHub issue (body or comments).
- * Checks: (1) issue body for ## Plan section, (2) comments with PLAN_MARKER.
- * Returns null if no plan found.
+ * Retrieve plan text from a GitHub issue.
+ * Checks: (1) attachment with marker, (2) issue body ## Plan section.
  */
 export function retrievePlan(opts: PlanStoreOptions): StoredPlan | null {
-  // Check comments first (structured storage takes priority)
-  const markerComment = findMarkerComment(opts, PLAN_MARKER);
-  if (markerComment) {
-    const text = markerComment.body.replace(PLAN_MARKER, '').trim();
-    return { planText: text, commentUrl: markerComment.url };
+  // Check attachment first (structured storage takes priority)
+  const attachment = readAttachment(toAttachmentTarget(opts), 'plan');
+  if (attachment) {
+    return { planText: attachment.content, commentUrl: attachment.url };
   }
 
-  // Fall back to issue body (may have plan inline)
-  const issueBody = gh(['issue', 'view', opts.issueNum, '--repo', opts.repo, '--json', 'body', '--jq', '.body']);
-  const plan = extractPlanText(issueBody);
-  if (plan) {
-    return { planText: plan };
-  }
+  // Fall back to issue body
+  try {
+    const body = fetchBody(toSectionTarget(opts));
+    const plan = extractPlanText(body);
+    if (plan) return { planText: plan };
+  } catch { /* best effort */ }
 
   return null;
 }
@@ -131,18 +106,18 @@ export function retrievePlan(opts: PlanStoreOptions): StoredPlan | null {
  * Retrieve test plan text from a GitHub issue.
  */
 export function retrieveTestPlan(opts: PlanStoreOptions): StoredPlan | null {
-  const markerComment = findMarkerComment(opts, TESTPLAN_MARKER);
-  if (markerComment) {
-    const text = markerComment.body.replace(TESTPLAN_MARKER, '').trim();
-    return { planText: text, commentUrl: markerComment.url };
+  const attachment = readAttachment(toAttachmentTarget(opts), 'testplan');
+  if (attachment) {
+    return { planText: attachment.content, commentUrl: attachment.url };
   }
 
-  // Fall back to issue body
-  const issueBody = gh(['issue', 'view', opts.issueNum, '--repo', opts.repo, '--json', 'body', '--jq', '.body']);
-  const testPlanMatch = issueBody.match(/## Test Plan\b[\s\S]*?(?=\n## |$)/i);
-  if (testPlanMatch) {
-    return { planText: testPlanMatch[0] };
-  }
+  // Fall back to issue body ## Test Plan section
+  try {
+    const body = fetchBody(toSectionTarget(opts));
+    const sections = parseSections(body);
+    const testPlan = sections.find(s => /^Test Plan/i.test(s.name));
+    if (testPlan) return { planText: testPlan.content };
+  } catch { /* best effort */ }
 
   return null;
 }
@@ -151,34 +126,32 @@ export function retrieveTestPlan(opts: PlanStoreOptions): StoredPlan | null {
  * Retrieve YAML structured metadata from a GitHub issue.
  */
 export function retrieveMetadata(opts: PlanStoreOptions): StoredMetadata | null {
-  // Check comments with marker
-  const markerComment = findMarkerComment(opts, METADATA_MARKER);
-  if (markerComment) {
-    const yamlMatch = markerComment.body.match(/```yaml\n([\s\S]*?)```/);
+  const attachment = readAttachment(toAttachmentTarget(opts), 'metadata');
+  if (attachment) {
+    const yamlMatch = attachment.content.match(/```yaml\n([\s\S]*?)```/);
     if (yamlMatch) {
       try {
-        const data = YAML.parse(yamlMatch[1]) as Record<string, unknown>;
-        return { data, commentUrl: markerComment.url };
+        return { data: YAML.parse(yamlMatch[1]) as Record<string, unknown>, commentUrl: attachment.url };
       } catch { /* fall through */ }
     }
   }
 
-  // Fall back to issue body (may have YAML metadata inline)
-  const issueBody = gh(['issue', 'view', opts.issueNum, '--repo', opts.repo, '--json', 'body', '--jq', '.body']);
-  const yamlMatch = issueBody.match(/```yaml\n([\s\S]*?)```/);
-  if (yamlMatch) {
-    try {
-      const data = YAML.parse(yamlMatch[1]) as Record<string, unknown>;
-      return { data };
-    } catch { /* fall through */ }
-  }
+  // Fall back to issue body
+  try {
+    const body = fetchBody(toSectionTarget(opts));
+    const yamlMatch = body.match(/```yaml\n([\s\S]*?)```/);
+    if (yamlMatch) {
+      try {
+        return { data: YAML.parse(yamlMatch[1]) as Record<string, unknown> };
+      } catch { /* fall through */ }
+    }
+  } catch { /* best effort */ }
 
   return null;
 }
 
 /**
  * Query connected issues from stored metadata.
- * Returns issue numbers with their roles from the deep_dive.connected_issues YAML.
  */
 export function queryConnectedIssues(
   opts: PlanStoreOptions,
@@ -207,47 +180,4 @@ export function queryPrNumber(opts: PlanStoreOptions): number | null {
   if (!meta) return null;
   const deepDive = meta.data.deep_dive as Record<string, unknown> | undefined;
   return deepDive?.pr ? Number(deepDive.pr) : null;
-}
-
-// Internal: find a comment containing a specific marker
-interface MarkerComment {
-  url: string;
-  body: string;
-  /** Comment ID extracted from URL (for targeted editing via gh api) */
-  id: string;
-}
-
-/** Extract comment ID from GitHub comment URL (https://...#issuecomment-123 → 123) */
-function extractCommentId(url: string): string {
-  const match = url.match(/#issuecomment-(\d+)/);
-  return match?.[1] ?? '';
-}
-
-/** Update a specific comment by ID using gh api (not --edit-last which targets the wrong comment) */
-function updateCommentById(repo: string, commentId: string, body: string): void {
-  gh(['api', '--method', 'PATCH', `/repos/${repo}/issues/comments/${commentId}`, '-f', `body=${body}`]);
-}
-
-function findMarkerComment(opts: PlanStoreOptions, marker: string): MarkerComment | null {
-  try {
-    const raw = gh([
-      'issue', 'view', opts.issueNum, '--repo', opts.repo,
-      '--json', 'comments',
-      // Use @json to compact each record to one line — comment bodies with newlines
-      // would otherwise produce multi-line output that breaks per-line JSON.parse
-      '--jq', '.comments[] | {url: .url, body: .body} | @json',
-    ]);
-    if (!raw) return null;
-
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const comment = JSON.parse(line) as { url: string; body: string };
-        if (comment.body.includes(marker)) {
-          return { ...comment, id: extractCommentId(comment.url) };
-        }
-      } catch { continue; }
-    }
-  } catch { /* gh command failed */ }
-  return null;
 }

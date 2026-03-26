@@ -36,33 +36,27 @@ beforeEach(() => {
 });
 
 describe('storePlan', () => {
-  it('creates a new comment when no existing plan comment', () => {
-    // findMarkerComment: gh issue view returns no matching comments
+  it('creates a new comment when no existing plan attachment', () => {
+    // writeAttachment → readAttachment → fetchComments: no matching comments
     ghReturns('');
-    // storePlan: gh issue comment creates new
+    // writeAttachment → createComment: gh issue comment
     ghReturns('https://github.com/Garsson-io/kaizen/issues/904#issuecomment-123');
 
     const url = storePlan(opts, '## Plan\n\n1. Fix bug');
     expect(url).toContain('issuecomment');
-    expect(mockGh).toHaveBeenCalledTimes(2);
-    const createCall = mockGh.mock.calls[1];
-    // spawnSync(command, args) — args is [1]
-    expect(createCall[1]).toEqual(['issue', 'comment', '904', '--repo', 'Garsson-io/kaizen', '--body', expect.stringContaining(PLAN_MARKER)]);
   });
 
-  it('updates existing comment by ID via gh api PATCH (not --edit-last)', () => {
-    // findMarkerComment: returns a comment with the marker and ID
-    ghReturns(JSON.stringify({ url: 'https://github.com/Garsson-io/kaizen/issues/904#issuecomment-456', body: `${PLAN_MARKER}\nold plan` }));
-    // updateCommentById: gh api PATCH
+  it('updates existing attachment by ID via gh api PATCH', () => {
+    // writeAttachment → readAttachment → fetchComments: finds marker comment
+    ghReturns(JSON.stringify({ url: 'https://github.com/Garsson-io/kaizen/issues/904#issuecomment-456', body: `<!-- kaizen:plan -->\nold plan` }));
+    // writeAttachment → gh api PATCH
     ghReturns('');
 
     const url = storePlan(opts, '## Plan\n\n1. New plan');
     expect(url).toContain('issuecomment-456');
-    const updateCall = mockGh.mock.calls[1];
-    // Should use gh api PATCH with comment ID, not --edit-last
-    expect(updateCall[1]).toContain('api');
-    expect(updateCall[1]).toContain('PATCH');
-    expect(updateCall[1]).toContain('/repos/Garsson-io/kaizen/issues/comments/456');
+    const patchArgs = mockGh.mock.calls[1][1] as string[];
+    expect(patchArgs).toContain('PATCH');
+    expect(patchArgs.some(a => a.includes('/issues/comments/456'))).toBe(true);
   });
 });
 
@@ -202,22 +196,22 @@ describe('error handling — gh CLI failures propagate', () => {
     expect(() => storePlan(opts, '## Plan')).toThrow('permission denied');
   });
 
-  it('retrievePlan throws when gh fails on issue fetch', () => {
-    ghReturns(''); // findMarkerComment: no match
-    ghFails('not found');
-    expect(() => retrievePlan(opts)).toThrow('not found');
+  it('retrievePlan returns null when gh fails on both attachment and body fetch', () => {
+    ghFails('not found'); // fetchComments fails (caught by section-editor)
+    ghFails('also not found'); // fetchBody fails (caught by plan-store try/catch)
+    expect(retrievePlan(opts)).toBeNull();
   });
 
-  it('storeMetadata throws when gh fails', () => {
-    ghReturns(''); // findMarkerComment
-    ghFails('rate limited');
+  it('storeMetadata throws when gh fails on write', () => {
+    ghFails('not found'); // readAttachment: fetchComments fails (returns null)
+    ghFails('rate limited'); // createComment fails (throws)
     expect(() => storeMetadata(opts, { key: 'val' })).toThrow('rate limited');
   });
 
-  it('queryConnectedIssues throws when gh fails on issue fetch', () => {
-    ghFails('timeout'); // findMarkerComment catches internally
-    ghFails('also timeout'); // issue body fetch throws
-    expect(() => queryConnectedIssues(opts)).toThrow('also timeout');
+  it('queryConnectedIssues returns empty when gh fails', () => {
+    ghFails('timeout'); // fetchComments fails (caught)
+    ghFails('also timeout'); // fetchBody fails (caught)
+    expect(queryConnectedIssues(opts)).toEqual([]);
   });
 });
 

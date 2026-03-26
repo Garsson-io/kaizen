@@ -27,6 +27,7 @@ import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js';
+import { writeAttachment, addSection } from '../src/section-editor.js';
 import {
   reviewBattery,
   formatBatteryReport,
@@ -1566,9 +1567,12 @@ async function main(): Promise<void> {
             }
           }
           appendFileSync(logFile, `\n--- review-battery ---\n${report}\n`);
-          // Post review findings as PR comment (best effort)
+          // Post review findings as structured PR attachment (best effort)
           try {
-            ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(`## Review Battery: FAIL\n\n${report}`)}`);
+            const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '';
+            if (prNum && repo) {
+              writeAttachment({ kind: 'pr', number: prNum, repo }, 'review-battery', `## Review Battery: FAIL\n\n${report}`);
+            }
           } catch { /* best effort */ }
         } else if (reviewVerdict !== 'fail') {
           reviewVerdict = 'pass';

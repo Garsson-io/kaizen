@@ -35,6 +35,7 @@ import {
   type BatteryResult,
   type ReviewFinding,
 } from '../src/review-battery.js';
+import { addSection, writeAttachment } from '../src/section-editor.js';
 import { ghExec } from './auto-dent-github.js';
 
 // ── Stream-JSON parsing ─────────────────────────────────────────────
@@ -543,6 +544,15 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       state.outcome = 'pass';
       state.phase = 'done';
       saveState(state, doStateDir());
+      // Update PR body Validation section and store review report as attachment (best effort)
+      try {
+        const prNum = opts.prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '';
+        if (prNum && opts.repo) {
+          const prTarget = { kind: 'pr' as const, number: prNum, repo: opts.repo };
+          addSection(prTarget, 'Validation', `REVIEW PASSED — ${round} round(s), $${state.totalCostUsd.toFixed(2)} total cost\n\n${formatBatteryReport(battery)}`);
+          writeAttachment(prTarget, 'review-battery', formatBatteryReport(battery));
+        }
+      } catch { /* best effort */ }
       return state;
     }
 
