@@ -677,12 +677,14 @@ export interface BatteryOptions {
 export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult> {
   const start = Date.now();
 
-  // Auto-load planText from GitHub issue when not provided (kaizen #902)
-  if (!opts.planText && opts.issueNum && opts.repo) {
+  // Auto-load planText from GitHub issue when not provided (kaizen #902).
+  // Use a local variable to avoid mutating the caller's opts object.
+  let planText = opts.planText;
+  if (!planText && opts.issueNum && opts.repo) {
     try {
       const stored = retrievePlan({ issueNum: opts.issueNum, repo: opts.repo });
       if (stored) {
-        opts.planText = stored.planText;
+        planText = stored.planText;
         console.log(`  [review] auto-loaded plan text from issue #${opts.issueNum} (${stored.planText.length} chars)`);
       }
     } catch { /* best effort — plan dims will emit MISSING if not found */ }
@@ -696,7 +698,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   const skippedResults: DimensionReview[] = [];
   const effective = opts.dimensions.filter(dim => {
     const meta = metas.find(m => m.name === dim);
-    if (meta?.needs.includes('plan') && !opts.planText) {
+    if (meta?.needs.includes('plan') && !planText) {
       skippedDimensions.push(dim);
       skippedResults.push({
         dimension: dim,
@@ -722,7 +724,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   const sharedOpts = {
     prUrl: opts.prUrl, issueNum: opts.issueNum, repo: opts.repo,
     issueBody: opts.issueBody, prBody: opts.prBody, prDiffStat: opts.prDiffStat,
-    planText: opts.planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
+    planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
   };
 
   const batchResultGroups = await Promise.all(

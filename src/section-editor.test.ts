@@ -189,6 +189,19 @@ describe('addSection — upserts a named section', () => {
     expect(body).not.toContain('Old validation');
     expect(body).toContain('Stuff');
   });
+
+  it('replaces the last section in the body (endOffset=body.length edge case)', () => {
+    // INVARIANT: when a section is the last in the body, addSection must replace it
+    // correctly even though body.slice(endOffset) is empty.
+    ghReturns('## Plan\n\nOld plan.\n\n## Validation\n\nOld validation.'); // fetchBody — Validation is last
+    ghReturns(''); // writeBody
+    addSection(target, 'Validation', 'New validation.');
+    const writeCall = mockGh.mock.calls[1];
+    const body = writeCall[1]![writeCall[1]!.indexOf('--body') + 1] as string;
+    expect(body).toContain('Old plan');
+    expect(body).toContain('New validation');
+    expect(body).not.toContain('Old validation');
+  });
 });
 
 describe('replaceSection — replaces existing section or throws if missing', () => {
@@ -378,20 +391,15 @@ describe('addAttachmentSection', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('appends new section to attachment', () => {
-    // readAttachment (for current content)
+    // readAttachment (fetches comment once — rewriteAttachmentContent reuses it)
     ghReturns(JSON.stringify({
       url: 'https://...#issuecomment-456',
       body: '<!-- kaizen:plan -->\n## Plan\n\n1. Do X',
     }));
-    // rewriteAttachmentContent: readAttachment again
-    ghReturns(JSON.stringify({
-      url: 'https://...#issuecomment-456',
-      body: '<!-- kaizen:plan -->\n## Plan\n\n1. Do X',
-    }));
-    // PATCH
+    // PATCH (rewriteAttachmentContent uses the already-fetched attachment)
     ghReturns('');
     addAttachmentSection(issueAttach, 'plan', 'Risk', 'Low risk.');
-    const patchArgs = mockGh.mock.calls[2][1] as string[];
+    const patchArgs = mockGh.mock.calls[1][1] as string[];
     const bodyArg = patchArgs.find(a => a.startsWith('body='))!;
     expect(bodyArg).toContain('## Plan');
     expect(bodyArg).toContain('## Risk');
@@ -399,17 +407,15 @@ describe('addAttachmentSection', () => {
   });
 
   it('replaces existing section in attachment', () => {
+    // readAttachment (fetches comment once — rewriteAttachmentContent reuses it)
     ghReturns(JSON.stringify({
       url: 'https://...#issuecomment-456',
       body: '<!-- kaizen:plan -->\n## Plan\n\nOld.\n\n## Risk\n\nOld risk.',
     }));
-    ghReturns(JSON.stringify({
-      url: 'https://...#issuecomment-456',
-      body: '<!-- kaizen:plan -->\n## Plan\n\nOld.\n\n## Risk\n\nOld risk.',
-    }));
+    // PATCH
     ghReturns('');
     addAttachmentSection(issueAttach, 'plan', 'Risk', 'New risk.');
-    const patchArgs = mockGh.mock.calls[2][1] as string[];
+    const patchArgs = mockGh.mock.calls[1][1] as string[];
     const bodyArg = patchArgs.find(a => a.startsWith('body='))!;
     expect(bodyArg).toContain('New risk');
     expect(bodyArg).not.toContain('Old risk');
@@ -421,17 +427,15 @@ describe('removeAttachmentSection', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('removes a section from an attachment', () => {
+    // readAttachment (fetches comment once — rewriteAttachmentContent reuses it)
     ghReturns(JSON.stringify({
       url: 'https://...#issuecomment-456',
       body: '<!-- kaizen:plan -->\n## Plan\n\nKeep.\n\n## Draft\n\nRemove.\n\n## Notes\n\nAlso keep.',
     }));
-    ghReturns(JSON.stringify({
-      url: 'https://...#issuecomment-456',
-      body: '<!-- kaizen:plan -->\n## Plan\n\nKeep.\n\n## Draft\n\nRemove.\n\n## Notes\n\nAlso keep.',
-    }));
+    // PATCH
     ghReturns('');
     removeAttachmentSection(issueAttach, 'plan', 'Draft');
-    const patchArgs = mockGh.mock.calls[2][1] as string[];
+    const patchArgs = mockGh.mock.calls[1][1] as string[];
     const bodyArg = patchArgs.find(a => a.startsWith('body='))!;
     expect(bodyArg).toContain('Keep');
     expect(bodyArg).toContain('Also keep');

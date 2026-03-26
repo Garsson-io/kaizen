@@ -331,15 +331,17 @@ export function removeAttachment(target: AttachmentTarget, name: string): void {
 // ── Sections within attachments ─────────────────────────────────────
 // Compose attachment CRUD with section parsing for full structured editing.
 
-/** Helper: rewrite an attachment's content and update the comment. */
-function rewriteAttachmentContent(target: AttachmentTarget, attachmentName: string, newContent: string): void {
-  const existing = readAttachment(target, attachmentName);
-  if (!existing || !existing.commentId) {
-    throw new Error(`Attachment "${attachmentName}" not found. Use writeAttachment to create it.`);
+/**
+ * Helper: rewrite an attachment's content and update the comment.
+ * Accepts the already-fetched attachment to avoid a redundant API call.
+ */
+function rewriteAttachmentContent(target: AttachmentTarget, attachment: Attachment, newContent: string): void {
+  if (!attachment.commentId) {
+    throw new Error(`Attachment "${attachment.name}" has no comment ID. Cannot update.`);
   }
-  const marker = `<!-- kaizen:${attachmentName} -->`;
+  const marker = `<!-- kaizen:${attachment.name} -->`;
   const body = `${marker}\n${newContent}`;
-  gh(['api', '--method', 'PATCH', `/repos/${target.repo}/issues/comments/${existing.commentId}`, '-f', `body=${body}`]);
+  gh(['api', '--method', 'PATCH', `/repos/${target.repo}/issues/comments/${attachment.commentId}`, '-f', `body=${body}`]);
 }
 
 /**
@@ -380,7 +382,8 @@ export function addAttachmentSection(target: AttachmentTarget, attachmentName: s
   } else {
     newContent = attachment.content.trimEnd() + '\n\n' + sectionText;
   }
-  rewriteAttachmentContent(target, attachmentName, newContent.replace(/\n{3,}/g, '\n\n').trimEnd());
+  // Pass the already-fetched attachment to avoid a second API call
+  rewriteAttachmentContent(target, attachment, newContent.replace(/\n{3,}/g, '\n\n').trimEnd());
 }
 
 /**
@@ -397,5 +400,6 @@ export function removeAttachmentSection(target: AttachmentTarget, attachmentName
   const newContent = (attachment.content.slice(0, existing.startOffset) + attachment.content.slice(existing.endOffset))
     .replace(/\n{3,}/g, '\n\n')
     .trimEnd();
-  rewriteAttachmentContent(target, attachmentName, newContent);
+  // Pass the already-fetched attachment to avoid a second API call
+  rewriteAttachmentContent(target, attachment, newContent);
 }
