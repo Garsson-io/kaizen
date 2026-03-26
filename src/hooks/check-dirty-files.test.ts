@@ -82,6 +82,21 @@ describe('parseDirtyFiles', () => {
     const report = parseDirtyFiles('');
     expect(report.total).toBe(0);
   });
+
+  it('classifies MM (staged+modified) as staged (kaizen #871)', () => {
+    const output = 'MM .claude-plugin/plugin.json';
+    const report = parseDirtyFiles(output);
+    expect(report.staged).toHaveLength(1);
+    expect(report.modified).toHaveLength(0);
+    expect(report.total).toBe(1);
+  });
+
+  it('classifies AM (added+modified) as staged', () => {
+    const output = 'AM new-file.ts';
+    const report = parseDirtyFiles(output);
+    expect(report.staged).toHaveLength(1);
+    expect(report.modified).toHaveLength(0);
+  });
 });
 
 describe('formatFileList', () => {
@@ -140,6 +155,27 @@ describe('checkDirtyFiles', () => {
     });
     expect(result.action).toBe('warn');
     expect(result.message).toContain('merging a PR');
+  });
+
+  it('calls update-index --refresh before status --porcelain (kaizen #871)', () => {
+    const calls: string[] = [];
+    const trackingGit = (args: string) => {
+      calls.push(args);
+      if (args.includes('rev-parse --git-dir')) return '/fake/.git';
+      if (args.includes('status --porcelain')) return ' M dirty.ts';
+      return '';
+    };
+    const mockedExistsSync = vi.mocked(existsSync);
+    mockedExistsSync.mockImplementation(() => false);
+
+    checkDirtyFiles('gh pr create --title "test"', { gitRunner: trackingGit });
+
+    const refreshIdx = calls.findIndex(c => c.includes('update-index'));
+    const statusIdx = calls.findIndex(c => c.includes('status --porcelain'));
+    expect(refreshIdx).toBeGreaterThanOrEqual(0);
+    expect(statusIdx).toBeGreaterThan(refreshIdx);
+
+    mockedExistsSync.mockRestore();
   });
 
   it('allows compound commit+push even when dirty (kaizen #721)', () => {
