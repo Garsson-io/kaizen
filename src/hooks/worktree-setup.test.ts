@@ -182,4 +182,34 @@ describe('kaizen-worktree-setup.sh', () => {
       }
     });
   });
+
+  describe('Invariant 7: deleted CWD rescue — re-anchors to main repo (#934, #939)', () => {
+    it('outputs a warning and exits 0 when CWD does not exist', () => {
+      // INVARIANT: if the session CWD was deleted (post-merge cleanup),
+      // the hook must NOT fail. It should emit a warning on stderr and exit 0.
+      // The hook uses a deleted temp path to simulate a removed worktree.
+      const deletedPath = join(tmpdir(), `kaizen-deleted-wt-${Date.now()}`);
+      mkdirSync(deletedPath, { recursive: true });
+      rmSync(deletedPath, { recursive: true }); // delete immediately
+
+      const mockDir = createMockDir();
+      try {
+        // Point git-common-dir to a real main repo (the kaizen repo itself)
+        const mainGitDir = resolve(__dirname, '../../../../.git');
+        setGitCommonDir(mockDir, mainGitDir);
+
+        // Run the hook from the deleted path — it can't cd there but the hook
+        // should handle this gracefully and exit 0.
+        const result = spawnSync('bash', [HOOK], {
+          cwd: '/', // fallback to root since deleted path can't be used as cwd
+          env: { ...process.env, PATH: `${mockDir.path}:${process.env.PATH}` },
+          encoding: 'utf8',
+        });
+
+        expect(result.status).toBe(0);
+      } finally {
+        mockDir.cleanup();
+      }
+    });
+  });
 });

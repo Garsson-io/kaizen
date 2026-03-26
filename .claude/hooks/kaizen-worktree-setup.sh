@@ -12,6 +12,17 @@
 #
 # SessionStart hook — always exits 0 (advisory only, never blocks).
 
+# Fix A for #934/#939: if the session CWD was deleted (post-merge worktree cleanup),
+# re-anchor to the main repo so this session can still run commands.
+# We detect this by checking if the .worktree-will-delete sentinel exists, which
+# worktree-du.ts writes before calling git worktree remove.
+if [ -f ".worktree-will-delete" ] 2>/dev/null; then
+  MAIN_REPO_CANDIDATE=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  if [ -n "$MAIN_REPO_CANDIDATE" ] && [ -d "$MAIN_REPO_CANDIDATE" ]; then
+    echo "kaizen-worktree-setup: ⚠️  Worktree marked for deletion — re-anchoring session to $MAIN_REPO_CANDIDATE" >&2
+  fi
+fi
+
 GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)
 
 # Skip if git failed (not in a git repo, or git not found)

@@ -7,7 +7,7 @@
  */
 
 import { execSync } from "child_process";
-import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { resolveProjectPaths, type ProjectPaths } from "./lib/resolve-project-root.js";
 
@@ -63,6 +63,7 @@ export interface Deps {
   isDir: (path: string) => boolean;
   dirSize: (path: string) => number;
   unlink: (path: string) => void;
+  writeFile: (path: string, content: string) => void;
 }
 
 export function defaultDeps(): Deps {
@@ -86,6 +87,7 @@ export function defaultDeps(): Deps {
       } catch { return 0; }
     },
     unlink: (p) => unlinkSync(p),
+    writeFile: (p, content) => writeFileSync(p, content),
   };
 }
 
@@ -411,6 +413,9 @@ export function cleanupWorktrees(
     }
 
     if (!dryRun) {
+      // Write deletion sentinel before removing — gives sessions inside this
+      // worktree a chance to detect imminent deletion (Fix B for #934, #939).
+      try { deps.writeFile(join(wtPath, ".worktree-will-delete"), new Date().toISOString()); } catch { /* ignore */ }
       try {
         deps.exec(`git -C "${paths.projectRoot}" worktree remove "${wtPath}" --force`);
         result.actions.push({ type: "remove", target: name, reason: ms });

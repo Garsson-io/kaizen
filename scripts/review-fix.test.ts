@@ -1028,3 +1028,93 @@ describe('resume state machine E2E (#917)', () => {
     } finally { teardown(); }
   });
 });
+
+// ── resolveStateDir (category prevention: #929, #934, #939) ──────────────────
+// These tests verify the invariant: review state must live in the MAIN repo,
+// never inside a worktree. Worktrees are ephemeral; state must survive deletion.
+
+import { resolveStateDir, validateTransition } from './review-fix.js';
+
+describe('resolveStateDir', () => {
+  it('returns main-repo-rooted path when git-common-dir is .git (main checkout)', () => {
+    // INVARIANT: from the main checkout, state dir uses process.cwd()
+    // git rev-parse --git-common-dir returns '.git' (relative) in the main checkout.
+    const cwd = '/home/user/project';
+    const result = resolveStateDir('.git', cwd);
+    expect(result).toBe('/home/user/project/.claude/review-fix');
+  });
+
+  it('returns main-repo-rooted path when called from inside a worktree', () => {
+    // INVARIANT: from a worktree, git rev-parse --git-common-dir returns
+    // the ABSOLUTE path to the main repo's .git directory (e.g. /project/.git).
+    // stateDir must derive the main repo root from that, not from CWD.
+    const gitCommonDir = '/home/user/project/.git';
+    const result = resolveStateDir(gitCommonDir, '/home/user/project/.claude/worktrees/wt-feature-x');
+    expect(result).toBe('/home/user/project/.claude/review-fix');
+  });
+
+  it('returns same path regardless of which worktree calls it', () => {
+    // INVARIANT: two different worktrees of the same project must produce the
+    // same state dir so review state is shared and discoverable across sessions.
+    const gitCommonDir = '/home/user/project/.git';
+    const dir1 = resolveStateDir(gitCommonDir, '/home/user/project/.claude/worktrees/wt-a');
+    const dir2 = resolveStateDir(gitCommonDir, '/home/user/project/.claude/worktrees/wt-b');
+    expect(dir1).toBe(dir2);
+  });
+
+  it('result never contains .claude/worktrees', () => {
+    // INVARIANT: state must never be stored inside a worktree directory —
+    // worktrees are deleted on merge and would take state with them.
+    const gitCommonDir = '/home/user/project/.git';
+    const result = resolveStateDir(gitCommonDir, '/home/user/project/.claude/worktrees/wt-feature');
+    expect(result).not.toContain('.claude/worktrees');
+  });
+});
+
+// ── validateTransition (category prevention: #929, #939) ─────────────────────
+// Guards the --transition subcommand against being used to bypass review.
+
+describe('validateTransition', () => {
+  const baseState: ReviewFixState = {
+    prUrl: 'https://github.com/org/repo/pull/1',
+    issueNum: '1',
+    repo: 'org/repo',
+    maxRounds: 3,
+    budgetCap: 5,
+    currentRound: 1,
+    totalCostUsd: 0,
+    startedAt: new Date().toISOString(),
+    phase: 'needs_fix',
+    rounds: [],
+  };
+
+  it('blocks transition when current round has MUST-FIX findings (confidence >= 80, non-DONE)', () => {
+    // INVARIANT: cannot advance state when open MUST-FIX items exist.
+    const findings = [{ status: 'MISSING' as const, requirement: 'req', detail: 'missing impl', confidence: 85 }];
+    const result = validateTransition('needs_review', baseState, findings);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/MUST.FIX/i);
+  });
+
+  it('blocks transition when no findings exist for current round', () => {
+    // INVARIANT: cannot advance without evidence that review was performed.
+    const result = validateTransition('needs_review', baseState, []);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/no findings/i);
+  });
+
+  it('allows transition when findings exist and none are MUST-FIX', () => {
+    // INVARIANT: transition is safe when review was done and nothing is blocking.
+    const findings = [{ status: 'DONE' as const, requirement: 'req', detail: 'implemented', confidence: 90 }];
+    const result = validateTransition('needs_review', baseState, findings);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('blocks transition to invalid target phase', () => {
+    // INVARIANT: only known phase transitions are allowed.
+    const findings = [{ status: 'DONE' as const, requirement: 'req', detail: 'ok', confidence: 90 }];
+    const result = validateTransition('bogus_phase', baseState, findings);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/invalid.*phase/i);
+  });
+});

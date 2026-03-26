@@ -75,6 +75,21 @@ describe('readAllPendingGates', () => {
     expect(report.gates[0].detail).toContain('git fetch origin main');
   });
 
+  it('post-merge gate detail mentions /kaizen reflection as first step (#936)', () => {
+    // INVARIANT: the post-merge stop gate must tell the agent to run /kaizen FIRST,
+    // before git sync. Without this, agents sync git and skip reflection entirely.
+    createState('post-merge-1', 'needs_post_merge', 'https://github.com/org/repo/pull/60');
+    const report = readAllPendingGates(TEST_BRANCH, TEST_STATE_DIR);
+    const detail = report.gates[0].detail;
+    // Must mention kaizen reflection
+    expect(detail.toLowerCase()).toMatch(/kaizen/);
+    // Kaizen must appear before git sync in the detail text
+    const kaizenPos = detail.toLowerCase().indexOf('kaizen');
+    const gitPos = detail.toLowerCase().indexOf('git fetch');
+    expect(kaizenPos).toBeGreaterThanOrEqual(0);
+    expect(kaizenPos).toBeLessThan(gitPos);
+  });
+
   it('reads multiple gates of different types', () => {
     createState('review-1', 'needs_review', 'https://github.com/org/repo/pull/42', { ROUND: '1' });
     createState('kaizen-1', 'needs_pr_kaizen', 'https://github.com/org/repo/pull/42');
