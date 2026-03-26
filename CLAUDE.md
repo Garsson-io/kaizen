@@ -122,4 +122,3 @@ Kaizen reflections produce three types of insights:
 1. **Meta-kaizen** — improving kaizen itself → file in kaizen repo
 2. **Host-kaizen** — improving the host project → file in host repo with `kaizen` label
 3. **Generalized pattern** — reusable lesson → file in kaizen repo with `type:pattern` label
-
