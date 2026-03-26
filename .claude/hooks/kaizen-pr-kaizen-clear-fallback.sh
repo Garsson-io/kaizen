@@ -23,6 +23,12 @@ fi
 
 # Bash fallback when dist isn't built (CI, fresh checkout, pre-build)
 INPUT=$(cat)
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
+[ "$TOOL_NAME" = "Bash" ] || exit 0
+
+EXIT_CODE=$(echo "$INPUT" | jq -r '.tool_response.exit_code // "0"' 2>/dev/null)
+[ "$EXIT_CODE" = "0" ] || exit 0
+
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 STDOUT=$(echo "$INPUT" | jq -r '.tool_response.stdout // empty' 2>/dev/null)
 
