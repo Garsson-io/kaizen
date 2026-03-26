@@ -808,3 +808,223 @@ describe('runFixLoop', () => {
     } finally { teardown(); }
   });
 });
+
+// ── Resume state machine E2E (#917) ──────────────────────────────────
+//
+// Tests the full crash → resume → recovery cycle by simulating each
+// phase transition. Unlike the unit tests above which test individual
+// resume paths, these verify the complete state machine integrity:
+// initial state → crash → persisted state → resume → correct recovery.
+
+describe('resume state machine E2E (#917)', () => {
+  let tmpDir: string;
+  const setup = () => { tmpDir = mkdtempSync(join(tmpdir(), 'rf-resume-e2e-')); return tmpDir; };
+  const teardown = () => rmSync(tmpDir, { recursive: true, force: true });
+
+  const baseOpts: CliArgs = {
+    prUrl: 'https://github.com/org/repo/pull/100',
+    issueNum: '50',
+    repo: 'org/repo',
+    dryRun: false,
+    resume: false,
+    maxRounds: 3,
+    budgetCap: 5.0,
+  };
+
+  const mockPrefetch = (): PrefetchResult => ({
+    issueBody: 'fix the bug',
+    prBody: 'PR body',
+    prDiff: '--- a\n+++ b',
+    prBranch: 'fix/branch',
+    isMerged: false,
+  });
+
+  function makeFailBatteryForE2E(): BatteryResult {
+    return {
+      verdict: 'fail',
+      costUsd: 0.10,
+      missingCount: 1,
+      partialCount: 0,
+      durationMs: 100,
+      failedDimensions: [],
+      skippedDimensions: [],
+      dimensions: [{ dimension: 'requirements', verdict: 'fail', summary: 'gap found', findings: [{ requirement: 'Must handle edge case', status: 'MISSING', detail: 'not handled' }] }],
+    };
+  }
+
+  function makePassBatteryForE2E(): BatteryResult {
+    return {
+      verdict: 'pass',
+      costUsd: 0.08,
+      missingCount: 0,
+      partialCount: 0,
+      durationMs: 100,
+      failedDimensions: [],
+      skippedDimensions: [],
+      dimensions: [{ dimension: 'requirements', verdict: 'pass', summary: 'all good', findings: [{ requirement: 'Must handle edge case', status: 'DONE', detail: 'handled' }] }],
+    };
+  }
+
+  it('INVARIANT: full crash-resume cycle — review fails, fix launched, "crash", resume with fix done → re-review passes', async () => {
+    const dir = setup();
+    try {
+      // Phase 1: Initial run — review fails, fix launched, returns with fix_running
+      const launchFixMock = vi.fn().mockReturnValue({ pid: 54321, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') });
+      const state1 = await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBatteryForE2E(),
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+
+      // Verify: fix was launched, state persisted as fix_running
+      expect(state1.phase).toBe('fix_running');
+      expect(state1.activeFix?.pid).toBe(54321);
+      expect(launchFixMock).toHaveBeenCalledTimes(1);
+
+      // Verify: state was persisted to disk
+      const persisted = loadState(baseOpts.prUrl, dir);
+      expect(persisted).not.toBeNull();
+      expect(persisted!.phase).toBe('fix_running');
+      expect(persisted!.currentRound).toBe(1);
+      expect(persisted!.rounds.length).toBe(1);
+      expect(persisted!.rounds[0].verdict).toBe('fail');
+
+      // Phase 2: "Crash" happened (we just stopped). Now resume with fix completed.
+      const state2 = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: true, costUsd: 0.25, output: 'fix applied' }),
+        runReview: async () => makePassBatteryForE2E(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+
+      // Verify: resume detected fix completed, ran re-review, passed
+      expect(state2.outcome).toBe('pass');
+      expect(state2.phase).toBe('done');
+      // Round was advanced: original round 1 (review) + round 1 (fix) + round 2 (review pass)
+      expect(state2.rounds.length).toBeGreaterThanOrEqual(2);
+      // Cost includes: review (0.10) + fix (0.25) + re-review (0.08)
+      expect(state2.totalCostUsd).toBeGreaterThan(0.3);
+    } finally { teardown(); }
+  });
+
+  it('INVARIANT: corrupt state (fix_running without activeFix) resets to needs_review', async () => {
+    const dir = setup();
+    try {
+      // Write a corrupt state: fix_running but no activeFix
+      const corruptState: ReviewFixState = {
+        prUrl: baseOpts.prUrl,
+        issueNum: baseOpts.issueNum,
+        repo: baseOpts.repo,
+        maxRounds: 3,
+        budgetCap: 5.0,
+        currentRound: 1,
+        totalCostUsd: 0.10,
+        startedAt: new Date().toISOString(),
+        phase: 'fix_running',
+        rounds: [{ round: 1, phase: 'review', verdict: 'fail', gaps: 1, reviewCost: 0.10, fixCost: 0 }],
+        // activeFix is undefined — corrupt!
+      };
+      saveState(corruptState, dir);
+
+      // Resume: should detect corruption, reset to needs_review, re-review, pass
+      const state = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        runReview: async () => makePassBatteryForE2E(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+
+      expect(state.outcome).toBe('pass');
+      expect(state.phase).toBe('done');
+    } finally { teardown(); }
+  });
+
+  it('INVARIANT: resume with no prior state starts fresh (ignores --resume flag)', async () => {
+    const dir = setup();
+    try {
+      // No prior state exists — resume should start fresh
+      const state = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        runReview: async () => makePassBatteryForE2E(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+
+      // Should have started fresh and passed on first review
+      expect(state.outcome).toBe('pass');
+      expect(state.currentRound).toBe(1);
+    } finally { teardown(); }
+  });
+
+  it('INVARIANT: resume preserves original maxRounds from first run', async () => {
+    const dir = setup();
+    try {
+      // First run with maxRounds=2
+      const launchFixMock = vi.fn().mockReturnValue({ pid: 1, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') });
+      await runFixLoop({ ...baseOpts, maxRounds: 2 }, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBatteryForE2E(),
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+
+      // Resume with maxRounds=10 — should use original 2
+      const state = await runFixLoop({ ...baseOpts, resume: true, maxRounds: 10 }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: true, costUsd: 0.10, output: '' }),
+        runReview: async () => makeFailBatteryForE2E(),
+        launchFix: vi.fn().mockReturnValue({ pid: 2, logFile: join(dir, 'fix2.log'), promptFile: join(dir, 'fix2.prompt') }),
+        getStateDir: () => dir,
+      });
+
+      // maxRounds=2, we're on round 2 after resume, so this should be the last round
+      expect(state.outcome).toBe('max_rounds');
+    } finally { teardown(); }
+  });
+
+  it('INVARIANT: state file integrity survives multiple resume cycles', async () => {
+    const dir = setup();
+    try {
+      // Run 1: review fails, fix launched
+      const launchFix1 = vi.fn().mockReturnValue({ pid: 111, logFile: join(dir, 'fix1.log'), promptFile: join(dir, 'fix1.prompt') });
+      await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBatteryForE2E(),
+        launchFix: launchFix1,
+        getStateDir: () => dir,
+      });
+
+      // Resume 1: fix done, re-review fails, new fix launched
+      const launchFix2 = vi.fn().mockReturnValue({ pid: 222, logFile: join(dir, 'fix2.log'), promptFile: join(dir, 'fix2.prompt') });
+      const state2 = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: true, costUsd: 0.15, output: '' }),
+        runReview: async () => makeFailBatteryForE2E(),
+        launchFix: launchFix2,
+        getStateDir: () => dir,
+      });
+
+      // Resume 2: fix done, re-review passes
+      const state3 = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: true, costUsd: 0.20, output: '' }),
+        runReview: async () => makePassBatteryForE2E(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+
+      expect(state3.outcome).toBe('pass');
+      // Cumulative cost: review(0.10) + fix1(0.15) + review(0.10) + fix2(0.20) + review(0.08)
+      expect(state3.totalCostUsd).toBeGreaterThan(0.5);
+      // Rounds should track all phases
+      expect(state3.rounds.length).toBeGreaterThanOrEqual(4);
+
+      // Verify final persisted state matches returned state
+      const finalPersisted = loadState(baseOpts.prUrl, dir);
+      expect(finalPersisted?.outcome).toBe('pass');
+      expect(finalPersisted?.phase).toBe('done');
+    } finally { teardown(); }
+  });
+});
