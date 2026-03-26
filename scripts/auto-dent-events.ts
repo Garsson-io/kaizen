@@ -37,29 +37,20 @@ export interface RunStartEvent extends BaseEvent {
   start_epoch?: number;
 }
 
-export interface RunIssuePickedEvent {
+export interface RunIssuePickedEvent extends BaseEvent {
   type: 'run.issue_picked';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   issue: string;
   title: string;
   labels?: string[];
 }
 
-export interface RunPrCreatedEvent {
+export interface RunPrCreatedEvent extends BaseEvent {
   type: 'run.pr_created';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   pr_url: string;
 }
 
-export interface RunCompleteEvent {
+export interface RunCompleteEvent extends BaseEvent {
   type: 'run.complete';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   duration_ms: number;
   exit_code: number;
   cost_usd: number;
@@ -79,29 +70,20 @@ export interface RunCompleteEvent {
   review_cost_usd?: number;
 }
 
-export interface BatchReflectEvent {
+export interface BatchReflectEvent extends BaseEvent {
   type: 'batch.reflect';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   recommendations_count: number;
 }
 
-export interface ReviewRoundStartEvent {
+export interface ReviewRoundStartEvent extends BaseEvent {
   type: 'review.round_start';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   pr_url: string;
   round: number;
   dimensions: string[];
 }
 
-export interface ReviewRoundCompleteEvent {
+export interface ReviewRoundCompleteEvent extends BaseEvent {
   type: 'review.round_complete';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   pr_url: string;
   round: number;
   verdict: 'pass' | 'fail';
@@ -111,21 +93,15 @@ export interface ReviewRoundCompleteEvent {
   duration_ms: number;
 }
 
-export interface ReviewFixSpawnedEvent {
+export interface ReviewFixSpawnedEvent extends BaseEvent {
   type: 'review.fix_spawned';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   pr_url: string;
   round: number;
   gaps_count: number;
 }
 
-export interface ReviewFixCompleteEvent {
+export interface ReviewFixCompleteEvent extends BaseEvent {
   type: 'review.fix_complete';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   pr_url: string;
   round: number;
   success: boolean;
