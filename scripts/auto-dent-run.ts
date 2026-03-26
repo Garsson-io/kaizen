@@ -37,6 +37,7 @@ import {
 } from '../src/review-battery.js';
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
 import { runFixLoop, type CliArgs as ReviewFixArgs } from './review-fix.js';
+import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -1805,6 +1806,20 @@ async function main(): Promise<void> {
       outcome,
       mode: runMode,
     });
+  }
+
+  // Write run artifact manifest and bundle (#916)
+  {
+    const manifest = buildRunManifest(logDir, state.batch_id, runNum);
+    const manifestPath = writeRunManifest(logDir, manifest);
+    console.log(`  [artifacts] ${formatManifestSummary(manifest)}`);
+    console.log(`  [artifacts] manifest: ${manifestPath}`);
+    try {
+      const archivePath = bundleArtifacts(logDir, manifest);
+      console.log(`  [artifacts] bundle: ${archivePath}`);
+    } catch (err) {
+      console.warn(`  [artifacts] bundle skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // Batch scoreboard (cumulative stats across all runs)
