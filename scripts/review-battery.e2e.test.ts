@@ -677,12 +677,13 @@ describe('Tier 4 — auto-dent E2E full fix loop (CLAUDE_E2E_AUTODENT=1 to enabl
           `state: ${stateFile}`,
         ).toBeGreaterThanOrEqual(1);
 
-        // Run outcome must be 'success' (set by the harness in run_history)
-        const runHistory: Array<{ outcome?: string }> = finalState.run_history ?? [];
+        // Run must have succeeded — harness stores failure_class='success' for successful runs
+        // (Note: 'outcome' appears in the event stream but is not persisted to state.json)
+        const runHistory: Array<{ failure_class?: string; exit_code?: number }> = finalState.run_history ?? [];
         expect(
-          runHistory.some(r => r.outcome === 'success'),
-          `Expected at least one run with outcome='success' in run_history\n` +
-          `Actual outcomes: ${JSON.stringify(runHistory.map(r => r.outcome))}\n` +
+          runHistory.some(r => r.failure_class === 'success' || r.exit_code === 0),
+          `Expected at least one successful run in run_history\n` +
+          `Actual failure_class values: ${JSON.stringify(runHistory.map(r => r.failure_class))}\n` +
           `state: ${stateFile}`,
         ).toBe(true);
 
@@ -725,9 +726,9 @@ describe('Tier 4 — auto-dent E2E full fix loop (CLAUDE_E2E_AUTODENT=1 to enabl
         ).not.toContain('items.length - 1');
         expect(
           utilsContent,
-          `NaN bug should be fixed (should guard against empty input)\n` +
+          `NaN bug should be fixed — average() must guard against empty input\n` +
           `utils.ts content:\n${utilsContent}`,
-        ).not.toMatch(/return sum \/ numbers\.length/);
+        ).toMatch(/numbers\.length === 0/);
 
         console.log(`  [pass] auto-dent fixed both bugs: PRs=${finalState.prs.join(', ')}`);
 
