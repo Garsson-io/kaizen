@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bumpPluginVersion } from './bump-plugin-version.js';
@@ -118,22 +118,17 @@ describe('INVARIANT: bump hook pushes after committing (#919)', () => {
 // #923: INVARIANT — no cross-module hook imports from non-hook files
 describe('INVARIANT: architectural boundary — no hook entry point imports (#923)', () => {
   it('non-hook files must not import from src/hooks/ entry points', () => {
-    const { readdirSync, readFileSync } = require('node:fs');
-    const path = require('node:path');
+    const srcDir = join(__dirname, '..');
 
-    // Walk up from this test file to find src/ — no shell needed
-    const srcDir = path.resolve(__dirname, '..');
-
-    // Collect all .ts files in src/ that are NOT under src/hooks/
     const violations: string[] = [];
-    const importPattern = /from\s+['"].*\/hooks\/[^l]/;
+    // Negative lookahead: allow hooks/lib/ but block hooks/<anything-else>
+    const importPattern = /from\s+['"].*\/hooks\/(?!lib\/)/;
 
     function scanDir(dir: string) {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const fullPath = path.join(dir, entry.name);
+        const fullPath = join(dir, entry.name);
         if (entry.isDirectory()) {
-          // Skip the hooks directory itself
-          if (fullPath === path.join(srcDir, 'hooks')) continue;
+          if (fullPath === join(srcDir, 'hooks')) continue;
           scanDir(fullPath);
         } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
           const content = readFileSync(fullPath, 'utf-8');
