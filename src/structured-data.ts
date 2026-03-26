@@ -76,6 +76,16 @@ export function storeQuickPass(
   });
 }
 
+// ── Plan text extraction ────────────────────────────────────────────
+
+const PLAN_SECTION_RE = /## (?:Implementation )?Plan\b[\s\S]*?(?=\n## |\n```yaml|$)/i;
+
+/** Extract the first plan section from markdown text. */
+export function extractPlanText(text: string): string | undefined {
+  const match = text.match(PLAN_SECTION_RE);
+  return match ? match[0] : undefined;
+}
+
 // ── Reviews ─────────────────────────────────────────────────────────
 
 export interface ReviewFinding {

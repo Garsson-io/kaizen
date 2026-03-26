@@ -210,8 +210,7 @@ export interface RunResult {
   reviewCostUsd?: number;
 }
 
-// Import from canonical location (plan-store.ts) and re-export for test consumers
-import { extractPlanText } from '../src/plan-store.js';
+import { extractPlanText } from '../src/structured-data.js';
 export { extractPlanText };
 
 // State I/O

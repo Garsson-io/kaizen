@@ -16,7 +16,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import YAML from 'yaml';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
-import { retrievePlan } from './plan-store.js';
+import { retrievePlan, issueTarget } from './structured-data.js';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -682,10 +682,10 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   let planText = opts.planText;
   if (!planText && opts.issueNum && opts.repo) {
     try {
-      const stored = retrievePlan({ issueNum: opts.issueNum, repo: opts.repo });
+      const stored = retrievePlan(issueTarget(opts.issueNum, opts.repo));
       if (stored) {
-        planText = stored.planText;
-        console.log(`  [review] auto-loaded plan text from issue #${opts.issueNum} (${stored.planText.length} chars)`);
+        planText = stored;
+        console.log(`  [review] auto-loaded plan text from issue #${opts.issueNum} (${stored.length} chars)`);
       }
     } catch { /* best effort — plan dims will emit MISSING if not found */ }
   }

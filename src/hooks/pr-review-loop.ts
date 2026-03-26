@@ -33,8 +33,8 @@ import {
 } from './state-utils.js';
 
 export const MAX_ROUNDS = 4;
-const SMALL_PUSH_THRESHOLD = 15;
-const CUMULATIVE_CAP = 100;
+export const SMALL_PUSH_THRESHOLD = 15;
+export const CUMULATIVE_CAP = 100;
 
 // ── Observability ───────────────────────────────────────────────────
 
