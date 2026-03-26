@@ -315,3 +315,42 @@ Review this diff for DRY violations. Output JSON only.`;
     },
   );
 });
+
+// ---------------------------------------------------------------------------
+// Behavioral: Phase 4.5 produces structured plan fields (Policy 10 proof)
+// ---------------------------------------------------------------------------
+
+describe("Behavioral: kaizen-evaluate Phase 4.5 produces structured plan (Policy 10)", () => {
+  it.skipIf(!isLive)(
+    "INVARIANT: agent using Phase 4.5 steps produces GOAL: and DONE WHEN fields",
+    () => {
+      // Policy 10 requires behavioral proof for SKILL.md changes.
+      // Before Phase 4.5: agents wrote plans as unstructured task lists with
+      // no GOAL/DONE WHEN fields — the plan was a list of actions, not a
+      // statement of what 'done' looks like from the outside.
+      // After Phase 4.5: an agent given the phase text produces a structured
+      // plan with GOAL: and DONE WHEN fields as the first output.
+      //
+      // This test extracts Phase 4.5 from the SKILL.md and asks haiku to
+      // follow it for a simple issue. The output must contain the fields
+      // the phase prescribes.
+      const skillText = loadSkill("kaizen-evaluate");
+      const phase45 = skillText.split("### Phase 4.5:")[1]?.split("### Phase 4:")[0] ?? "";
+      expect(phase45.length, "Phase 4.5 section must exist in SKILL.md").toBeGreaterThan(100);
+
+      const prompt = `${phase45}
+
+## Apply Phase 4.5 to this issue
+
+Issue: "When the CLI tool crashes, the error message shows 'undefined' instead of the actual error text. Users cannot diagnose failures."
+
+Complete Steps 1 and 2 (success criteria extraction and existing tools survey) and output the plan in the schema shown above.`;
+
+      const output = runSkill(prompt, { maxBudget: 0.20, timeout: 120_000 });
+
+      // Phase 4.5 Step 1 requires GOAL: and DONE WHEN: fields in the plan output
+      expect(output).toContain("GOAL:");
+      expect(output).toContain("DONE WHEN");
+    },
+  );
+});
