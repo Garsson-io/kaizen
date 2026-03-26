@@ -12,7 +12,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
+import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import {
   extractRepoFlag,
   isGhPrCommand,
@@ -409,7 +409,7 @@ export function processHookInput(
 /** Main entry point — read stdin, process, write stdout. */
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("kaizen-reflect"); process.exit(0); }
 
   const output = processHookInput(input);
   if (output) {

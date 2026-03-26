@@ -12,6 +12,7 @@ Write a PR description that a reviewer can understand **without reading the diff
 - Creating a PR (`gh pr create`) — write the body before creating
 - Improving an existing PR description (`gh pr edit`)
 - Called from `/kaizen-implement` task #7
+- After creating the PR, use `/kaizen-sections` (`add-section`, `replace-section`) to update individual sections without rewriting the entire body
 
 ## The Story Spine
 

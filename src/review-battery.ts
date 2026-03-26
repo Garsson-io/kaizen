@@ -11,9 +11,12 @@
  * Linear: ENG-6638
  */
 
-import { spawnSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
+import YAML from 'yaml';
+import { resolveProjectRoot } from './lib/resolve-project-root.js';
+import { retrievePlan, issueTarget } from './structured-data.js';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -28,6 +31,10 @@ import { resolve, dirname, basename } from 'node:path';
 
 /** Status of a single requirement or criterion */
 export type FindingStatus = 'DONE' | 'PARTIAL' | 'MISSING';
+
+/** Prefix for synthetic findings that represent missing input data, not code gaps.
+ * Used by review-fix.ts to distinguish fixable code gaps from unfixable data-availability gaps. */
+export const DATA_GAP_PREFIX = '[data-gap]';
 
 /** A single finding from a review dimension */
 export interface ReviewFinding {
@@ -97,7 +104,7 @@ export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
 export type ReviewDimension = string;
 
 /** Data categories a dimension can require */
-export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'session' | 'git-history';
+export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'session' | 'git-history' | 'multiple_prs' | 'reflection_history';
 
 /** Frontmatter metadata from a review dimension prompt */
 export interface DimensionMeta {
@@ -194,37 +201,16 @@ export function reviewBriefing(
 
 /**
  * Parse YAML frontmatter from a review prompt file.
- * Handles scalar values and list items (lines starting with "  - ").
- * Returns null if no frontmatter found.
+ * Returns null if no frontmatter found or YAML is invalid.
  */
-function parseFrontmatter(content: string): Record<string, string | string[]> | null {
+export function parseFrontmatter(content: string): Record<string, unknown> | null {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return null;
-  const result: Record<string, string | string[]> = {};
-  let currentKey = '';
-  for (const line of match[1].split('\n')) {
-    // List item: "  - value"
-    const listItem = line.match(/^\s+-\s+"?([^"]*)"?$/);
-    if (listItem && currentKey) {
-      if (!Array.isArray(result[currentKey])) result[currentKey] = [];
-      (result[currentKey] as string[]).push(listItem[1].trim());
-      continue;
-    }
-    // Scalar: "key: value"
-    const kv = line.match(/^(\w[\w_-]*)\s*:\s*(.+)$/);
-    if (kv) {
-      currentKey = kv[1];
-      result[currentKey] = kv[2].trim();
-      continue;
-    }
-    // Key with no inline value (list follows): "key:"
-    const listKey = line.match(/^(\w[\w_-]*)\s*:\s*$/);
-    if (listKey) {
-      currentKey = listKey[1];
-      result[currentKey] = [];
-    }
+  try {
+    return YAML.parse(match[1]) as Record<string, unknown>;
+  } catch {
+    return null;
   }
-  return result;
 }
 
 /**
@@ -255,6 +241,17 @@ export function listDimensions(promptsDir?: string): string[] {
 }
 
 /**
+ * List dimensions applicable to post-PR review.
+ * Includes only dimensions with applies_to === 'pr' or 'both'.
+ * Automatically excludes plan-only and reflection-only dimensions.
+ */
+export function listPrDimensions(promptsDir?: string): string[] {
+  return loadDimensionMetas(promptsDir)
+    .filter(m => m.applies_to === 'pr' || m.applies_to === 'both')
+    .map(m => m.name);
+}
+
+/**
  * Load metadata for all review dimensions.
  * Reads frontmatter from each prompts/review-*.md file.
  */
@@ -269,7 +266,7 @@ export function loadDimensionMetas(promptsDir?: string): DimensionMeta[] {
       const needsRaw = fm?.needs;
       const needs: DataNeed[] = Array.isArray(needsRaw)
         ? needsRaw as DataNeed[]
-        : (typeof needsRaw === 'string' ? needsRaw.replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean) as DataNeed[] : ['diff']);
+        : (typeof needsRaw === 'string' ? [needsRaw as DataNeed] : ['diff']);
       const highWhen = Array.isArray(fm?.high_when) ? fm.high_when as string[] : [];
       const lowWhen = Array.isArray(fm?.low_when) ? fm.low_when as string[] : [];
       metas.push({
@@ -386,17 +383,12 @@ export function renderTemplate(template: string, vars: Record<string, string>): 
  * Resolve the prompts directory. Checks repo-root/prompts first,
  * then falls back to the directory relative to this file.
  */
-export function resolvePromptsDir(): string {
-  try {
-    const toplevel = spawnSync('git', ['rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-    }).stdout.trim();
-    const dir = resolve(toplevel, 'prompts');
-    if (existsSync(dir)) return dir;
-  } catch {
-    // Fall through
-  }
-  return resolve(dirname(new URL(import.meta.url).pathname), '..', 'prompts');
+export function resolvePromptsDir(exec?: (cmd: string) => string): string {
+  const thisDir = dirname(new URL(import.meta.url).pathname);
+  const root = resolveProjectRoot(thisDir, exec);
+  const dir = resolve(root, 'prompts');
+  if (existsSync(dir)) return dir;
+  return resolve(thisDir, '..', 'prompts');
 }
 
 /**
@@ -685,20 +677,46 @@ export interface BatteryOptions {
 export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult> {
   const start = Date.now();
 
-  // Auto-skip dims that require data we don't have
+  // Auto-load planText from GitHub issue when not provided (kaizen #902).
+  // Use a local variable to avoid mutating the caller's opts object.
+  let planText = opts.planText;
+  if (!planText && opts.issueNum && opts.repo) {
+    try {
+      const stored = retrievePlan(issueTarget(opts.issueNum, opts.repo));
+      if (stored) {
+        planText = stored;
+        console.log(`  [review] auto-loaded plan text from issue #${opts.issueNum} (${stored.length} chars)`);
+      }
+    } catch { /* best effort — plan dims will emit MISSING if not found */ }
+  }
+
+  // Dimensions that need 'plan' data but don't have it get a synthetic MISSING
+  // finding instead of being silently skipped (kaizen #901). This ensures the
+  // battery report surfaces the gap and the fix loop knows about it.
   const metas = loadDimensionMetas();
   const skippedDimensions: string[] = [];
+  const skippedResults: DimensionReview[] = [];
   const effective = opts.dimensions.filter(dim => {
     const meta = metas.find(m => m.name === dim);
-    if (meta?.needs.includes('plan') && !opts.planText) {
+    if (meta?.needs.includes('plan') && !planText) {
       skippedDimensions.push(dim);
+      skippedResults.push({
+        dimension: dim,
+        verdict: 'fail',
+        findings: [{
+          requirement: `${DATA_GAP_PREFIX} Plan text available for review`,
+          status: 'MISSING',
+          detail: `Dimension "${dim}" requires plan text but none was provided. Create a plan before running this review.`,
+        }],
+        summary: `Skipped: no plan text provided (requires "plan" data)`,
+      });
       return false;
     }
     return true;
   });
 
   if (skippedDimensions.length > 0) {
-    console.log(`  [review] skipping ${skippedDimensions.length} dim(s) (no plan text): ${skippedDimensions.join(', ')}`);
+    console.log(`  [review] ${skippedDimensions.length} dim(s) missing plan text (MISSING finding): ${skippedDimensions.join(', ')}`);
   }
 
   // Group by shared data needs; batch same-needs dims into one call
@@ -706,7 +724,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   const sharedOpts = {
     prUrl: opts.prUrl, issueNum: opts.issueNum, repo: opts.repo,
     issueBody: opts.issueBody, prBody: opts.prBody, prDiffStat: opts.prDiffStat,
-    planText: opts.planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
+    planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
   };
 
   const batchResultGroups = await Promise.all(
@@ -738,9 +756,11 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
     }
   }
 
-  const dimensions = results
-    .map(r => r.review)
-    .filter((r): r is DimensionReview => r !== null);
+  // Merge real results with synthetic MISSING results for skipped dims (kaizen #901)
+  const dimensions = [
+    ...skippedResults,
+    ...results.map(r => r.review).filter((r): r is DimensionReview => r !== null),
+  ];
 
   const missingCount = dimensions.reduce(
     (sum, d) => sum + d.findings.filter(f => f.status === 'MISSING').length, 0,
@@ -753,7 +773,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
 
   return {
     dimensions,
-    verdict: missingCount === 0 && dimensions.length === effective.length ? 'pass' : 'fail',
+    verdict: missingCount === 0 && dimensions.length === (effective.length + skippedDimensions.length) ? 'pass' : 'fail',
     missingCount,
     partialCount,
     durationMs,

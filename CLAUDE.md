@@ -21,7 +21,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `src/hooks/` | TypeScript hooks |
 | `src/hooks/lib/gate-manager.ts` | Unified stop gate — read/format/clear all pending gates |
 | `src/hooks/stop-gate.ts` | Unified stop hook entry point (replaces 3 bash stop hooks) |
-| `.claude/hooks/kaizen-worktree-setup.sh` | SessionStart hook — symlinks node_modules/dist from main repo into fresh worktrees |
+| `.claude/hooks/kaizen-worktree-setup.sh` | SessionStart hook — symlinks node_modules/dist from main repo into fresh worktrees; warns if `.worktree-will-delete` sentinel is present (worktree marked for deletion, #934) |
 | `.claude-plugin/plugin.json` | Plugin manifest with hook registrations |
 | `docs/hooks-design.md` | Hooks patterns, anti-patterns, regex traps, gate design, testing conventions |
 | `docs/hook-test-dry-spec.md` | DRY refactoring spec for hook test infrastructure |
@@ -33,8 +33,13 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `docs/test-side-effects-and-kaizen-escalation-spec.md` | Test side-effects and L1→L2 escalation patterns |
 | `docs/auto-dent-operations.md` | Auto-dent operational guide — how to run, monitor, debug batch operations |
 | `docs/artifact-lifecycle.md` | Artifact chain — where outputs live, who consumes them, recursive loops |
-| `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume |
+| `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume. `resolveStateDir(gitCommonDir)` stores state in the **main repo** (never inside a worktree) — survives worktree deletion (#929, #934) |
+| `scripts/auto-dent-artifacts.ts` | Run artifact manifest + bundle — `buildRunManifest`, `writeRunManifest`, `bundleArtifacts` (auto-called at run completion) |
 | `src/cli-dimensions.ts` | Dimension CLI: list/show/add/validate `prompts/review-*.md` files |
+| `src/structured-data.ts` | **Structured data API**: reviews, plans, metadata, connected issues, PR sections, iteration state |
+| `src/cli-structured-data.ts` | CLI for structured data — the primary interface for skills |
+| `src/section-editor.ts` | Low-level: sections (## in bodies) + attachments (marker comments) — CRUD primitives |
+| `src/plan-store.ts` | Plan-specific helpers (extractPlanText, re-exports from structured-data) |
 
 ## Skills
 
@@ -51,6 +56,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `/kaizen-plan` | Break large work into sequenced PRs |
 | `/kaizen-review-pr` | Self-review checklist |
 | `/kaizen-write-pr` | Write a PR body using the Story Spine narrative arc |
+| `/kaizen-sections` | Structured PRs and issues — manage named sections in bodies and attachments on issues/PRs |
 | `/kaizen-dimensions` | List, inspect, and manage review battery dimensions |
 | `/kaizen-file-issue` | Fast incident-to-issue capture (2 min) |
 | `/kaizen-zen` | Print the Zen of Kaizen |
@@ -58,6 +64,21 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `/kaizen-cleanup` | Disk usage analysis and safe cleanup |
 | `/kaizen-setup` | Install & configure plugin for a host project |
 | `/kaizen-update` | Pull updates from kaizen repo |
+
+## Mandatory Practices
+
+**PR bodies**: Always use `/kaizen-write-pr` when creating or editing PR descriptions. Never write a bare `gh pr create --body` with a few bullet points. The Story Spine narrative makes PRs reviewable without reading the diff.
+
+**Structured data**: Use `npx tsx src/cli-structured-data.ts` as the primary interface for storing and retrieving structured data on PRs and issues. Key commands:
+- Reviews: `store-review-finding`, `store-review-summary`, `list-review-rounds`, `read-review-finding`
+- Plans: `store-plan`, `retrieve-plan`, `store-testplan`, `retrieve-testplan`
+- Metadata: `store-metadata`, `query-connected`, `query-pr`
+- PR sections: `update-pr-section --name "Validation" --text "..."`
+- Iteration: `store-iteration`, `retrieve-iteration`
+
+Store plans immediately after creating them. Review findings are stored per-round per-dimension (e.g., `review/r5/correctness`). Use `list-review-rounds` to count rounds mechanistically. For low-level section/attachment operations, use `cli-section-editor.ts`.
+
+**PR review dimensions**: When running `/kaizen-review-pr`, bundle dimensions by shared data needs (use the briefing from `npx tsx src/cli-dimensions.ts briefing --lines N`). Don't spawn one agent per dimension — batch dims with identical `needs` into single agents.
 
 ## Configuration
 

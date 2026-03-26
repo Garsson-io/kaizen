@@ -8,7 +8,7 @@
  * (logging warnings rather than throwing).
  */
 
-import { spawnSync } from 'child_process';
+import { gh } from '../src/lib/gh-exec.js';
 import type { RunResult } from './auto-dent-run.js';
 
 // GitHub CLI wrapper (tolerant of failures)
@@ -58,25 +58,14 @@ export function parseShellArgs(cmd: string): string[] {
 
 /**
  * Execute a gh CLI command without going through a shell.
- * Parses the command string into args, then uses spawnSync so that
- * user-controlled data (markdown backticks, dollar signs, etc.) in
- * --body/--title values is never interpreted as shell syntax.
+ * Parses the command string into args, then delegates to gh() from
+ * gh-exec.ts. Swallows errors (returns '') for backward compatibility.
  */
 export function ghExec(cmd: string): string {
   const args = parseShellArgs(cmd);
-  const [bin, ...rest] = args;
+  const [_bin, ...rest] = args;
   try {
-    const result = spawnSync(bin, rest, {
-      encoding: 'utf8',
-      timeout: 30_000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    if (result.error) throw result.error;
-    if (result.status !== 0) {
-      const detail = (result.stderr || '').split('\n')[0] || `exit ${result.status}`;
-      throw new Error(detail);
-    }
-    return (result.stdout || '').trim();
+    return gh(rest);
   } catch (e: any) {
     console.log(
       `  [hygiene] warning: ${cmd.slice(0, 80)}... -> ${e.message?.split('\n')[0] || 'failed'}`,

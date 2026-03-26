@@ -76,6 +76,16 @@ describe('enforce-pr-review PreToolUse — Bash commands', () => {
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('round 3');
   });
+
+  it('INVARIANT: Bash deny message identifies the blocked tool as "Bash" (kaizen #971)', () => {
+    // The gate message must identify WHICH matcher fired (Bash/Edit|Write/Agent).
+    // PR #964 debugging wasted significant time because the message said
+    // "PR review required before proceeding" — no indication it was a Bash command.
+    createReviewGate('https://github.com/org/repo/pull/42');
+    const result = processPreToolUse('git push origin feature', TEST_BRANCH, TEST_STATE_DIR);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/BLOCKED.*Bash/i);
+  });
 });
 
 describe('enforce-pr-review PreToolUse — Edit/Write tools (kaizen #789)', () => {
@@ -137,19 +147,18 @@ describe('enforce-pr-review PreToolUse — Edit/Write tools (kaizen #789)', () =
   });
 });
 
-describe('enforce-pr-review PreToolUse — Agent tool (kaizen #789)', () => {
-  it('blocks Agent during active review', () => {
+describe('enforce-pr-review PreToolUse — Agent tool (kaizen #895, #856)', () => {
+  it('allows Agent during active review — review uses Agent for dimension subagents', () => {
     createReviewGate('https://github.com/org/repo/pull/42');
     const ctx: ToolContext = {
       toolName: 'Agent',
       toolInput: { prompt: 'do something', subagent_type: 'general-purpose' },
     };
     const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('Agent');
+    expect(result.allowed).toBe(true);
   });
 
-  it('allows Agent(kaizen-bg) during active review (kaizen #151)', () => {
+  it('allows Agent(kaizen-bg) during active review', () => {
     createReviewGate('https://github.com/org/repo/pull/42');
     const ctx: ToolContext = {
       toolName: 'Agent',
@@ -159,14 +168,14 @@ describe('enforce-pr-review PreToolUse — Agent tool (kaizen #789)', () => {
     expect(result.allowed).toBe(true);
   });
 
-  it('blocks Agent without subagent_type during review', () => {
+  it('allows Agent without subagent_type during review', () => {
     createReviewGate('https://github.com/org/repo/pull/42');
     const ctx: ToolContext = {
       toolName: 'Agent',
       toolInput: { prompt: 'do something' },
     };
     const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
-    expect(result.allowed).toBe(false);
+    expect(result.allowed).toBe(true);
   });
 
   it('allows Agent when no review gate is active', () => {
@@ -176,5 +185,13 @@ describe('enforce-pr-review PreToolUse — Agent tool (kaizen #789)', () => {
     };
     const result = processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, ctx);
     expect(result.allowed).toBe(true);
+  });
+
+  it('allows Agent while Edit is blocked in the same review gate state', () => {
+    createReviewGate('https://github.com/org/repo/pull/42');
+    const agentCtx: ToolContext = { toolName: 'Agent', toolInput: { prompt: 'review' } };
+    const editCtx: ToolContext = { toolName: 'Edit', toolInput: { file_path: '/src/foo.ts' } };
+    expect(processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, agentCtx).allowed).toBe(true);
+    expect(processPreToolUse('', TEST_BRANCH, TEST_STATE_DIR, editCtx).allowed).toBe(false);
   });
 });

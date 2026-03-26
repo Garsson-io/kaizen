@@ -1,152 +1,250 @@
 ---
 name: kaizen-review-pr
-description: Review PR — Deep Code Review with Learnable Criteria
+description: Review PR — Adversarial dimension review with fix loop
 user_invocable: true
 ---
 
-# Review PR — Deep Code Review with Learnable Criteria
+# Review PR
 
-Structured review driven by data-driven dimensions (`prompts/review-*.md`). Each dimension is an adversarial check — run as a subagent, producing structured DONE/PARTIAL/MISSING findings. Learned failure modes in `.claude/kaizen/review-criteria.md` supplement the dimensions with FM-N patterns from past incidents.
+## Loop
 
-The `pr-review-loop.sh` hook enforces that this review happens. This skill defines **how** to review.
+| Phase | What you do | Done when |
+|-------|-------------|-----------|
+| **1. Pre-fetch** | Get diff, issue, PR body, briefing | All data in hand |
+| **2. Run dimensions** | Spawn subagents (parallel) for all dimensions | Every dimension has findings JSON |
+| **3. Classify** | Auto-classify showstoppers; score rest by confidence | MUST-FIX + SHOULD-FIX list assembled |
+| **4. Fix** | Fix every MUST-FIX and SHOULD-FIX, commit, push | All items addressed |
+| ↩ **Repeat from Phase 1** | Read updated diff, re-run all dimensions | — |
+| **DONE** | No MUST-FIX or SHOULD-FIX remain after Phase 3 | Declare: `REVIEW PASSED — N rounds, M findings fixed` |
+| **ESCALATE** | Round 3 ends with remaining MUST-FIX | Comment on PR, do not merge |
 
-**When to use:**
-- Automatically triggered by `pr-review-loop.sh` after `gh pr create`
-- Can also be invoked manually: `/kaizen-review-pr <pr-url>`
-- Wired into `/kaizen-implement` as a mandatory task before merge
+**Loop rule:** After Phase 4, return to Phase 1 with the updated diff. Max 3 full rounds.
 
-## The Review Process
+---
 
-### Phase 1: Gather Context
+## Artifacts
 
-1. **Discover dimensions:** `npx tsx src/cli-dimensions.ts list` — these are the review rubric. Also load `.claude/kaizen/review-criteria.md` for supplementary learned failure modes (FM-N patterns).
-2. **Read the diff:** `gh pr diff <pr-url>` — read every file, not just a summary.
-3. **Read linked issues:** Check PR body, branch name, commits for `#N` or `kaizen#N`. If found, `gh issue view --repo "$ISSUES_REPO"` to understand requirements.
-4. **Scan recent failure modes:** Check the "Learned Failure Modes" section of the criteria file. These are patterns from past incidents — watch for them specifically in this diff.
+| Artifact | Produced by | Consumed by | Lives where |
+|----------|-------------|-------------|-------------|
+| Briefing (dim list + groupings) | `briefing --lines N` | Phase 2 grouping decision | in-context |
+| Diff | `gh pr diff` | All review subagents | pass verbatim into agent prompts |
+| Issue body | `gh issue view --repo "$ISSUES_REPO"` | requirements, scope-fidelity, test-plan, plan-fidelity agents | pass into agent prompts |
+| PR body | `gh pr view` | pr-description, plan-fidelity agents | pass into agent prompts |
+| Dimension findings (JSON) | Each subagent | Phase 3 classifier | in-context |
+| Classified findings list | Phase 3 | Phase 4 fix work | in-context |
+| Review verdict | Clean Phase 3 | `pr-review-loop-ts.sh` state gate | hook state file |
 
-### Phase 2: Review Using Subagent Dimensions
+---
 
-**All review checks are dimensions.** Every dimension is a `prompts/review-*.md` file. All dimensions run — no skipping. Run `npx tsx src/cli-dimensions.ts list` to see what's available.
+## Showstoppers (Auto MUST-FIX, confidence 100)
 
-**Step 2a: Get the briefing.** Discover all applicable dimensions and their data needs:
+These bypass normal confidence scoring. If any subagent returns one, classify it immediately as MUST-FIX — no deliberation.
+
+| Showstopper | Dimension | Signal |
+|-------------|-----------|--------|
+| **No implementation plan** | `plan-fidelity` | `plan existence: MISSING` — agent went issue→code without planning |
+| **New behavior, no tests** | `test-plan` | `coverage completeness: MISSING` for a PR that adds logic |
+| **Security vulnerability** | `security` | Any `MISSING` finding (injection, secrets, eval) |
+
+Fix these before anything else. They are not judgment calls.
+
+---
+
+## Phase 1: Pre-fetch
+
+Run before spawning any agents. Pass collected data directly into agent prompts — agents should not re-fetch.
 
 ```bash
-npx tsx src/cli-dimensions.ts list
+# Diff line count (for briefing)
+LINES=$(gh pr diff <pr-url> | wc -l)
+
+# Dimension briefing — shows all dimensions, data needs, natural groupings
+npx tsx src/cli-dimensions.ts briefing --lines $LINES
+
+# Full diff (pass to all agents)
+gh pr diff <pr-url>
+# Diff URL (for humans): https://github.com/<owner>/<repo>/pull/<N>.diff
+
+# Linked issue(s) — scan PR body, branch name, recent commits for #N
+gh issue view <N> --repo "$ISSUES_REPO" --json title,body
+
+# PR body (includes test plan link if present)
+gh pr view <pr-url> --json title,body,url
+
+# Plan text (for plan-dependent dimensions: plan-fidelity, plan-coverage, improvement-lifecycle)
+npx tsx src/cli-structured-data.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"
+
+# Connected issues (for requirements coverage — verify ALL connected issues are addressed)
+npx tsx src/cli-structured-data.ts query-connected --issue <N> --repo "$ISSUES_REPO"
 ```
 
-This shows every dimension, what data it needs (`diff`, `issue`, `pr`, `codebase`, `tests`), and which dimensions share data needs (natural grouping signal).
+**After pre-fetch, display the review context before spawning agents:**
 
-**Step 2b: Decide grouping.** You decide how to distribute dimensions across subagents. Use these signals:
+```
+PR:    <pr-url>
+Diff:  https://github.com/<owner>/<repo>/pull/<N>.diff
+Issues: #N1 <title> <url>
+        #N2 <title> <url>
+Plan:  <plan text length or "none — plan dims will emit MISSING">
+Connected: #N1 [role] title, #N2 [role] title (from query-connected)
 
-- **Data overlap:** Dimensions needing the same data (`[diff, issue]`) are efficient to group — the subagent fetches once.
-- **PR size:** Small PR → fewer agents, bundle more. Large PR → more agents, less per agent.
-- **Issue risk:** Security-sensitive, auth changes, production-facing → more agents, consider redundancy (give a critical dimension to 2 agents independently).
+Agents:
+- Agent 1: <dimension list> (<needs>)
+- Agent 2: <dimension list> (<needs>)
+- Agent 3: <dimension list> (<needs>)
+- Agent 4: <dimension list> (<needs>)
+```
 
-Example groupings:
+This display makes the review plan visible before subagents launch — easier to spot missing coverage or wrong groupings.
 
-| PR context | Agents | Grouping |
-|-----------|--------|----------|
-| Tiny docs fix (10 lines) | 1 agent | All 7 dimensions in one pass |
-| Normal bug fix (80 lines) | 2-3 agents | Agent 1: requirements + scope-fidelity + pr-description (need issue). Agent 2: logic + error-handling + test-quality (need diff). |
-| Large feature (400 lines) | 4-5 agents | Smaller groups, 1-2 dimensions each |
-| Security-sensitive | 5+ agents | Security dimensions get 2 independent agents for redundancy |
+---
 
-**Step 2c: Spawn subagents.** For each group, launch an Agent tool subagent with:
-- The dimension prompt(s) from `prompts/review-*.md`
-- The data it needs (pre-fetch `gh pr diff`, `gh issue view`, etc. and pass in the prompt)
-- Instructions to output structured JSON findings per dimension
+## Phase 2: Run All Dimensions
 
-Launch independent subagents **in parallel** (multiple Agent tool calls in one message).
+Every `prompts/review-*.md` file is a dimension. All dimensions run every round. No skipping.
 
-**Step 2d: Validate coverage.** After ALL subagents return, verify every dimension was reviewed. Call `validateReviewCoverage()` from `src/review-battery.ts` or manually check: does every dimension from the briefing have findings in the results?
+### Step 2a: Decide grouping
 
-**If any dimensions are MISSING from results** (subagent failed, timed out, or was forgotten): spawn replacement subagents for the missing dimensions. Do NOT proceed with incomplete coverage.
+Use the briefing's natural groupings (dimensions sharing the same data needs). Scale agent count to PR size:
 
-This is the gate: **you cannot move to Phase 3 until all dimensions have findings.**
+| PR size | Agents | Rule |
+|---------|--------|------|
+| ≤ 50 lines | 1–2 | One agent can handle all dimensions |
+| 50–300 lines | 3–4 | Group by shared data needs |
+| > 300 lines | 4–5 | 2–3 dimensions per agent |
+| Security-sensitive | +1 | Give `security` + `correctness` to an additional independent agent |
 
-**Each subagent must:**
-- Read the full diff (not a summary)
-- Read the dimension prompt assigned to it
-- For each finding: cite the file, line, and which dimension it relates to
-- Output structured JSON per the dimension's output format
+Data needs determine grouping efficiency — dimensions with identical `needs` share one fetch:
+- `[diff]` only: correctness, dry, security, tooling-fitness
+- `[diff, issue]`: requirements, scope-fidelity
+- `[diff, pr, issue]`: pr-description
+- `[diff, tests]` / `[diff, tests, issue]`: test-quality, test-plan
+- `[diff, issue, plan, pr]`: improvement-lifecycle, plan-fidelity
 
-### Phase 3: Filter and Classify
+### Step 2b: Spawn agents (in parallel)
 
-Collect all findings from subagents. Filter:
-- **Drop** findings with confidence < 75
-- **Classify** remaining as:
-  - **MUST-FIX** (confidence ≥ 80): Blocks merge. Bugs, security issues, missing tests for new execution paths, DRY violations, broken error handling, undescribed bundled changes.
-  - **SHOULD-FIX** (confidence 75-79): Low-confidence signal — fix if easy (< 10 min), otherwise file a follow-up issue and note the deferral. Do NOT silently skip.
+Send **one message with all Agent tool calls** (parallel launch). For each group:
+- Include the full text of each assigned `prompts/review-*.md` verbatim
+- Include pre-fetched diff, issue body, PR body directly in the prompt
+- Instruct the agent to output one JSON findings block per dimension
+- **Instruct each agent to store its own findings immediately** (see storage instruction below)
 
-### Phase 4: Fix Loop
+**Storage instruction to include in every subagent prompt** (substitute actual PR number, repo, round):
+> After outputting your JSON findings blocks, immediately store each dimension you reviewed:
+> ```bash
+> npx tsx src/cli-structured-data.ts store-review-finding \
+>   --pr <PR_NUMBER> --repo <owner/repo> --round <ROUND> \
+>   --dimension <dimension_name> --text '<your findings JSON>'
+> ```
+> Call this once per dimension your group covers, before ending your response.
 
-If MUST-FIX or SHOULD-FIX items exist:
+**Why per-agent storage (not orchestrator batch):** If the orchestrating session is interrupted after some agents complete, already-stored findings survive on the PR. The orchestrator only stores the summary (Phase 5) — per-dimension storage is each agent's own responsibility.
 
-1. **Fix each finding** — edit the code, add tests, extract helpers
-2. **Commit and push** — one commit per logical fix, or batch related fixes
-3. **Re-review from Phase 1** — read the new diff, re-run the criteria
-4. **Repeat** until no findings remain or max rounds reached (3 rounds)
+### Step 2c: Coverage gate
 
-If issues remain after 3 rounds, escalate (see below).
+After all agents return: verify every dimension has a JSON findings block in the responses AND a marker comment on the PR (`list-review-dims`). Any dimension missing → spawn a replacement agent. **Do not proceed to Phase 3 until all dimensions have findings stored.**
 
-### Phase 5: Verdict
+```bash
+npx tsx src/cli-structured-data.ts list-review-dims \
+  --pr <PR_NUMBER> --repo <owner/repo> --round <ROUND>
+```
 
-When no MUST-FIX or SHOULD-FIX items remain:
+---
+
+## Phase 3: Classify
+
+1. **Auto-classify showstoppers first** (see above). These are MUST-FIX at confidence 100 regardless of anything else.
+2. Drop all other findings with confidence < 60.
+3. Classify remaining:
+   - **MUST-FIX** (confidence ≥ 90): blocks merge — bugs, security issues, missing tests for new logic, DRY violations with 3+ copies
+   - **SHOULD-FIX** (confidence 60–89): fix before merge — minor DRY, testability gaps, pattern inconsistencies
+
+**Present findings as a table before fixing:**
+
+| # | Finding | Status | Dimension |
+|---|---------|--------|-----------|
+| 1 | Short title of finding | MUST-FIX / SHOULD-FIX | dimension-name |
+
+Then provide detail for each finding below the table.
+
+If the list is empty after this: → **Phase 5 (Verdict)**.
+
+---
+
+## Phase 4: Fix
+
+Fix MUST-FIX first, then SHOULD-FIX:
+
+1. Edit code, add tests, extract helpers — address the root cause, not just the symptom
+2. Commit + push (one commit per logical fix, or batch tightly related fixes)
+3. Update the PR body using `/kaizen-sections` — add or replace the "Validation" section with current test results, don't rewrite the entire body:
+   ```bash
+   npx tsx src/cli-section-editor.ts replace-section --pr <N> --repo <repo> --name "Validation" --text "- [x] 545 tests pass..."
+   ```
+4. Return to Phase 1 with the updated diff
+
+---
+
+## Phase 5: Verdict
 
 ```
 REVIEW PASSED — N rounds, M findings fixed
 ```
 
-## Requirements Verification
+Before declaring: confirm every requirement from the linked issue is DONE or deferred with a filed follow-up issue.
 
-Before declaring the review passed, also check:
+Store the round summary (required to advance to next round or close the gate):
+```bash
+npx tsx src/cli-structured-data.ts store-review-summary \
+  --pr <PR_NUMBER> --repo <owner/repo> --round <N> \
+  --text "REVIEW PASSED — <N> rounds, <M> findings fixed"
+```
 
-- **Linked issue requirements:** List every requirement from the linked issue. Mark each as DONE, PARTIAL, or MISSING.
-- **If MISSING:** Implement now, or explicitly note "deferred to follow-up: [reason]"
-- **Documentation:** If hooks/CI/workflows/policies changed, update the relevant docs (CLAUDE.md, skills, README). See criteria §8.
+If findings needed fixing: return to Phase 1 with the updated diff for the next round.
 
-## What This Review Does NOT Check
-
-- Build/typecheck — CI handles this
-- Formatting/linting — CI handles this
-- Pre-existing issues on lines not modified in this PR
-- Stylistic preferences not in the criteria file
+---
 
 ## Escalation
 
-After 3 review rounds with remaining MUST-FIX issues:
+After round 3 with remaining MUST-FIX items:
 
-1. Comment on the PR:
-   ```
-   gh pr comment <url> --body "@aviadr1 Code review hit 3 rounds. Remaining MUST-FIX issues: [list]. Need human eyes."
-   ```
-2. Do NOT merge until escalation is resolved.
+```bash
+gh pr comment <url> --body "@aviadr1 Review hit 3 rounds. Remaining issues: [list]. Need human eyes."
+```
 
-## Updating the Criteria
+Do NOT merge.
 
-When this review (or a kaizen reflection) discovers a new failure pattern:
+---
 
-1. Add it to `.claude/kaizen/review-criteria.md` under "Learned Failure Modes"
-2. Use the format: `### FM-N: title` / `Pattern:` / `Source:` / `Check:`
-3. Commit the criteria update as part of the current PR or as a follow-up
-4. The next review automatically picks up the new pattern
+## What This Review Does NOT Check
 
-This is how the review system learns. Every incident that slips through becomes a check that prevents the next one.
+- Build / typecheck — CI handles this
+- Formatting / linting — CI handles this
+- Pre-existing issues on unmodified lines
+- Stylistic preferences not in any dimension
 
-## Workflow Tasks
+---
 
-Create these tasks at skill start using TaskCreate:
+## Adding or Promoting Dimensions
 
-| # | Task | Description |
-|---|------|-------------|
-| 1 | Gather context + briefing | Discover dimensions (`npx tsx src/cli-dimensions.ts list`), read full diff, read linked issues, read plan from issue comments, load learned failure modes from `review-criteria.md` |
-| 2 | Review (subagent dimensions) | Decide grouping using priority signals + data overlap + PR size. Spawn subagents for ALL dimensions. Validate coverage — all dimensions must have findings (`validateReviewCoverage()`). |
-| 3 | Filter and classify findings | Drop confidence < 75. MUST-FIX ≥ 80 (blocks merge). SHOULD-FIX 75-79 (fix if easy or file follow-up — never silently skip). |
-| 4 | Fix loop (max 3 rounds) | Fix each finding, commit+push, re-review from task #1. Repeat until clean or 3 rounds. If still unclean at round 3: escalate to human. |
+When a failure pattern recurs enough to need a permanent check:
 
-**Hooks enforcing review:**
-- `pr-review-loop-ts.sh` — state machine tracking review rounds
-- `enforce-pr-review-ts.sh` → `enforce-pr-review.ts` — blocks non-review commands, edits, and subagents during review
-- `kaizen-stop-gate.sh` → `stop-gate.ts` — unified stop gate (blocks stop with any pending gate)
+```bash
+# Scaffold the new dimension
+npx tsx src/cli-dimensions.ts add <name> --description "..." --applies-to pr|plan|both
 
-**What comes next:** After review is clean → merge (squash). After merge → `/kaizen-reflect` is mandatory (stop hook blocks without it). See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
+# Validate all dimensions still pass
+npx tsx src/cli-dimensions.ts validate
+```
+
+Write the adversarial prompt in `prompts/review-<name>.md`. The next review runs it automatically.
+
+All dimensions live in `prompts/review-*.md`. Diff-detectable patterns use `applies_to: pr`. Cross-PR/reflection patterns (multi-pr-spiral, reflection-quality) use `applies_to: reflection` and are auto-skipped in single-PR review. Use `npx tsx src/cli-dimensions.ts list` to see all active dimensions and their scope.
+
+---
+
+## Enforcement Hooks
+
+- `pr-review-loop-ts.sh` — tracks rounds, enforces max-3 rule
+- `enforce-pr-review.ts` — blocks non-review tool calls during active review
+- `stop-gate.ts` — blocks stopping until review verdict is recorded

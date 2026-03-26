@@ -14,7 +14,7 @@
 import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
+import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { stripHeredocBody } from './parse-command.js';
 import {
   buildReflectionRecord,
@@ -476,8 +476,14 @@ export function processHookInput(
   // ── Trigger 0: KAIZEN_UNFINISHED (kaizen #775) ────────────────
   // Check BEFORE the kaizen gate check — KAIZEN_UNFINISHED clears ALL gates
   // (review, reflection, post-merge), even if no kaizen reflection gate exists.
-  if (/KAIZEN_UNFINISHED:/.test(cmdLine) || /KAIZEN_UNFINISHED:/.test(stdout)) {
-    const reasonMatch = (stdout || cmdLine).match(/KAIZEN_UNFINISHED:\s*(.*)/);
+  //
+  // Only check stdout — not cmdLine — to prevent false positives when the agent
+  // runs `grep "KAIZEN_UNFINISHED:" logs.txt`. The search pattern itself would
+  // match the cmdLine regex but is not an agent declaration. Since any legitimate
+  // KAIZEN_UNFINISHED declaration (e.g., `echo "KAIZEN_UNFINISHED: reason"`)
+  // produces stdout, checking stdout is sufficient. (kaizen #928)
+  if (/KAIZEN_UNFINISHED:/.test(stdout)) {
+    const reasonMatch = stdout.match(/KAIZEN_UNFINISHED:\s*(.*)/);
     const reason = reasonMatch?.[1]?.trim().replace(/^['"]/, '').replace(/['"]$/, '').trim() || 'no reason given';
 
     const branch = currentBranch();
@@ -759,7 +765,7 @@ function autoCloseKaizenIssues(prUrl: string): void {
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("pr-kaizen-clear"); process.exit(0); }
 
   const output = processHookInput(input);
   if (output) writeHookOutput(output);

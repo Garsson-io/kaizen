@@ -33,6 +33,8 @@ Kaizen is not optional. It is a CORE part of every piece of work. Every case com
 
 **Recursive kaizen** means improving how we improve. When a process improvement doesn't work, escalate the enforcement mechanism — don't just write another instruction. *"It's kaizens all the way down."*
 
+**Persistent reflection data:** When reflection produces structured output (impediments, action items), store it as an attachment on the PR or issue using `/kaizen-sections`: `npx tsx src/cli-section-editor.ts write-attachment --pr {N} --repo "$ISSUES_REPO" --name reflection --file reflection.md`. This makes reflection data discoverable by future sessions and `/kaizen-gaps`.
+
 ## The Kaizen Cycle
 
 ```
@@ -92,6 +94,50 @@ fi
 **Surface data-driven observations** alongside conversation-based impressions. If the data contradicts your impression, trust the data.
 
 **If not in a batch context** (interactive session), skip this step — there is no structured telemetry yet (see #671).
+
+### 1.7. PLAN-VS-DELIVERY CHECK — did we build what we said we would? (kaizen #891)
+
+**If the linked issue has an implementation plan comment** (posted by kaizen-implement step 0b), compare what was planned against what was actually delivered in the PR.
+
+```bash
+# Find the plan comment on the issue
+gh issue view {N} --repo "$ISSUES_REPO" --json comments --jq '.comments[] | select(.body | contains("## Implementation Plan")) | .body' | head -80
+```
+
+**Check each planned item:**
+- **Scope**: Did the PR deliver everything in "In this PR"? Was anything silently dropped?
+- **Deferred items**: Were deferred items actually filed as follow-up issues?
+- **Requirement mapping**: Does each mapped criterion have corresponding code in the PR?
+- **Testing strategy**: Were the planned test pyramid levels and invariants actually implemented?
+
+**If scope changed during implementation**, document why — this is expected and valuable data. The question isn't "did we follow the plan exactly" but "did we consciously decide to deviate, or did scope silently shrink?"
+
+**If no plan exists**, note that as an impediment — plans are mandatory per kaizen-implement.
+
+### 1.8. HYPOTHESIS RETROSPECTIVE — was the root cause hypothesis correct? (kaizen #959)
+
+If `/kaizen-evaluate` Phase 3.5 or Phase 0.7 formed a root-cause hypothesis before implementation, close the loop here.
+
+```bash
+# Find the evaluation comment with the hypothesis
+gh issue view {N} --repo "$ISSUES_REPO" --json comments \
+  --jq '.comments[] | select(.body | test("hypothesis|HYPOTHESIS|Phase 3.5|Phase 0.7"; "i")) | .body' | head -40
+```
+
+**For each hypothesis found, answer:**
+1. **Was it confirmed, refuted, or untestable?**
+   - Confirmed: "Root cause was exactly as stated — evidence: [what the implementation revealed]"
+   - Refuted: "The actual root cause was [X] — the hypothesis assumed [Y] which turned out to be [wrong because Z]"
+   - Untestable: "Could not determine — [why]"
+
+2. **If refuted: what would have been different?**
+   - Would a different spec have been written?
+   - Would a different implementation path have been taken?
+   - What minimal test would have caught the wrong hypothesis earlier?
+
+3. **File an impediment if the hypothesis was wrong and caused significant rework.** Pattern: "hypothesis X was wrong, we implemented Y before discovering Z — how do we test this earlier next time?"
+
+**If no hypothesis was found:** note it as an impediment — `/kaizen-evaluate` Phase 3.5 is mandatory for non-trivial issues. The absence of a hypothesis means the implementation was speculation.
 
 ### 2. IDENTIFY impediments — patterns first, then details (kaizen #241, #351)
 

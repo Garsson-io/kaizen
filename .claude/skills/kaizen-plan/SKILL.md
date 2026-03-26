@@ -144,7 +144,7 @@ Three artifacts, three responsibilities — no duplication:
 | **Epic issue** | *How it's split* — dependency table, phases, per-PR scope, completion status | PRs merge (check boxes), plan changes (rows added/removed) |
 | **Sub-issues** | *Nothing original* — thin pointers to the epic row and spec sections | Rarely — they're just links |
 
-**The epic issue is the authoritative breakdown.** It has the dependency table with per-PR descriptions, dependencies, risk, and size. If the plan changes (PRs split, merge, or reorder), the epic is where that's tracked.
+**The epic issue is the authoritative breakdown.** It has the dependency table with per-PR descriptions, dependencies, risk, and size. If the plan changes (PRs split, merge, or reorder), the epic is where that's tracked. Use `/kaizen-sections` to manage individual sections of the epic body (`add-section`, `replace-section`) and store the dependency metadata as an attachment (`write-attachment --name plan-metadata`).
 
 **Sub-issues are minimal.** They exist so each PR has a trackable issue (one PR, one issue) and so the implementor can find the right context quickly. They do NOT duplicate content from the epic or spec — they link to it.
 

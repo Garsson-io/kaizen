@@ -9,16 +9,27 @@
  * Strip heredoc body from a command string.
  * Heredocs (<<'EOF' ... EOF) can contain arbitrary text that causes
  * false positives when grepping for command patterns.
- * Returns the command text before the first heredoc delimiter.
+ * Removes the heredoc body but preserves content AFTER the closing delimiter
+ * (e.g., `git commit -m "$(cat <<'EOF'\n...\nEOF\n)" && git push` keeps `&& git push`).
  */
 export function stripHeredocBody(command: string): string {
   const lines = command.split('\n');
-  // Match heredoc operators: <<EOF, <<'EOF', <<"EOF", <<-EOF, etc.
-  const heredocPattern = /<<\s*-?\s*['"]?[A-Za-z_][A-Za-z_0-9]*['"]?/;
+  const heredocPattern = /<<\s*-?\s*['"]?([A-Za-z_][A-Za-z_0-9]*)['"]?/;
   for (let i = 0; i < lines.length; i++) {
-    if (heredocPattern.test(lines[i])) {
-      // Return everything up to (and including) this line
-      return lines.slice(0, i + 1).join('\n');
+    const match = lines[i].match(heredocPattern);
+    if (match) {
+      const delimiter = match[1];
+      const before = lines.slice(0, i + 1);
+      // Find the closing delimiter and keep everything after it
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].trim() === delimiter || lines[j].trim() === `${delimiter})`
+            || lines[j].trim().startsWith(`${delimiter})"`)) {
+          const after = lines.slice(j + 1);
+          return [...before, ...after].join('\n');
+        }
+      }
+      // No closing delimiter found — return up to the heredoc line
+      return before.join('\n');
     }
   }
   return command;

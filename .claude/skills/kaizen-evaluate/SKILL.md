@@ -73,6 +73,8 @@ gh issue edit {N} --repo "$ISSUES_REPO" --add-label "status:backlog"
 gh issue comment {N} --repo "$ISSUES_REPO" --body "Claimed for evaluation by accept-case at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
+Store evaluation findings as a structured attachment: `npx tsx src/cli-section-editor.ts write-attachment --issue {N} --repo "$ISSUES_REPO" --name evaluation --file eval.md`
+
 This labeling is defense-in-depth on top of the L3 enforcement in `ipc-cases.ts` (which blocks duplicate case creation for the same kaizen issue). The label makes the claim visible to other agents checking `gh issue list` before they even reach the code-level check.
 
 ### Phase 0.5: Check for existing spec
@@ -94,6 +96,37 @@ gh issue view {N} --repo "$ISSUES_REPO" --json body --jq '.body' | wc -l
 This prevents redundant analysis when someone already invested in understanding the problem. The spec is your starting point — verify it's still accurate (Phase 4) rather than re-deriving it.
 
 **If this issue is part of an epic (has a `Parent: #N` reference):** Read the parent epic. Check whether it contains methodology or process patterns that should already be in skills/docs/hooks but aren't. Epics accumulate process insights ("always form hypotheses," "use progressive detail," "escalate on recurrence") that are more valuable than the feature work itself — but they only help future agents if they're in the repo. If you find unapplied methodology, include applying it in this case's scope. (kaizen #381)
+
+### Phase 0.7: Problem Validation (kaizen #949)
+
+**Before gathering incidents or scoping anything, verify the claimed problem actually exists right now.**
+
+Issues — especially those from gap analysis or auto-dent explore runs — may describe problems that have since been fixed, were misdiagnosed, or never existed as stated. Validating the problem first prevents implementing solutions to problems that don't exist.
+
+**Steps:**
+
+1. **Re-state the claim as a falsifiable hypothesis:**
+   > "We believe [issue title claim] is observable as [specific symptom] in the current codebase."
+
+2. **Design the minimal test** — the simplest thing that would confirm or deny the problem exists right now:
+   - Grep for the claimed pattern: `grep -rn "pattern" src/ .claude/`
+   - Read the relevant file at the claimed location
+   - Run a command and check the output
+   - Check if the reported behavior actually reproduces
+
+3. **Run the test. Report the result:**
+   - **"Problem confirmed — evidence: [X at file:line]"** → proceed to Phase 1
+   - **"Problem NOT confirmed — found: [Y instead]"** → do NOT proceed to scope; see below
+
+**If problem NOT confirmed:**
+- Comment on the issue: "Phase 0.7 check: claimed problem not confirmed in current codebase. Found: [Y]. Recommend: [close as already-fixed | update issue description | investigate further]."
+- Do not implement the solution.
+- Consider closing the issue as "cannot reproduce" or updating the issue body with what was actually found.
+- This is a success, not a failure — you saved a session of work on the wrong problem.
+
+**Dual failure mode check:**
+- If absent: agents implement solutions to problems that may not exist, especially when issues come from stale gap analyses
+- If present (over-correction): valid problems with non-obvious symptoms get dismissed — mitigated by "design a test that WOULD reproduce the problem" rather than "I grepped and didn't find it"
 
 ### Phase 1: Gather the incidents
 
@@ -216,6 +249,105 @@ You may only recommend reduced scope if you also provide **at least one** of:
 
 **Example — right:**
 > "Start with L1 prompt + L2-warn hook that counts mocks and emits warnings. The warnings create the signal — if we see repeated warnings over the next few cases, that's the trigger to upgrade to L2-block. Filed as kaizen #N with trigger criteria."
+
+### Phase 4.5: Plan Formation
+
+Before writing any plan, form it through five grounding steps. These steps exist because the first plan you write without grounding will address what the issue *says* to build, not what will make the problem *stop happening*. The grounding takes 10-20 minutes. It prevents the 30-minute implementation of the wrong thing.
+
+**Extract the success criteria first.** Read the issue body. Find the observable failure that motivated the issue — not the proposed fix, the original pain. Write it in two lines:
+
+```
+GOAL: [what the user/system can't do now]
+DONE WHEN: [the specific verifiable outcome that means it's fixed]
+```
+
+Verifiable means: an external observer can check it without reading the implementation. Write this before you look at any code. Every plan step you add must connect back to DONE WHEN. Steps that don't are building infrastructure, not solving the problem.
+
+**Survey what already exists.** Before designing a solution, read CLAUDE.md's Key Files table. Then grep for existing tools in your problem domain:
+
+```bash
+# Storage/attachment problems:
+grep -r "cli-section-editor\|write-attachment\|store-plan\|store-metadata" src/ --include="*.ts" -l
+
+# Hook problems:
+cat docs/hooks-design.md
+
+# Review/dimension problems:
+npx tsx src/cli-dimensions.ts list && ls prompts/
+```
+
+For each existing tool you find: does it solve the core problem, or an adjacent one? If it solves the core problem, use it. If it solves an adjacent problem, note the integration point. State what you found (or that nothing was found) in the plan's "Information Retrieved" section. Skipping this step is how plans design custom storage over `cli-section-editor.ts`, which already exists and is tested.
+
+**Generate and reject at least one alternative.** Identify the highest-risk design choice in your plan — the choice that determines where state lives or who owns an inter-component contract. Write two options and reject all but one:
+
+```
+OPTION A: [description] — SELECTED
+Failure mode if wrong: [one sentence]
+
+OPTION B: [description] — REJECTED
+Rejected because: [specific failure mode that disqualifies it]
+```
+
+The rejection rationale must name a failure mode, not a preference. "Cleaner" is not a failure mode. "Loses all state if the session dies before the batch write completes" is a failure mode. If there is no irreversible choice in your plan, two options with one-sentence rationale is sufficient. If the plan touches state ownership or interface contracts, three options with named failure modes.
+
+**Validate the proposed fix's assumption.** The issue body's "proposed fix" is the issue author's best guess. Before planning to implement it, state what it assumes and run the fastest test to confirm or falsify:
+
+```
+HYPOTHESIS: [what the proposed fix assumes about the root cause]
+VALIDATION: [what you will run or read to confirm — must take <15 min]
+IF WRONG: [what evidence would disqualify this hypothesis]
+```
+
+Run the validation before committing to the plan. For a code behavior issue: reproduce the failure and confirm it matches the description. For a configuration or regex issue: check the proposed value against a concrete case. For an architecture issue: read the affected file and confirm the structure matches what the issue describes. Do not skip this for "obvious" fixes — three of kaizen's most expensive multi-PR cycles came from planning implementations of plausible but wrong hypotheses.
+
+**Map the testability seams before placing any code.** For each significant behavior in the plan, state:
+
+```
+BEHAVIOR: [what it does]
+LIVES IN: [file.ts, functionName()]
+TESTED IN: [tests/test_file.ts or tests/test_file.sh]
+SEAM: [the injection point that isolates this for testing]
+```
+
+If you cannot name the seam, the behavior is not testable in isolation. Add an extraction task before the implementation task. Red flags requiring extraction: the target location has more than 5 imports, the location is a CLI entry point or script's global scope, or testing it would require mocking more than 3 modules. Extract first, implement second — this is never the optional step.
+
+**Write the plan.** With all five steps complete, write the plan using this structure:
+
+```markdown
+## Success Criteria
+GOAL: [from step 1]
+DONE WHEN: [from step 1]
+
+## Information Retrieved
+- [source]: [what you found] — [how it changes or confirms the plan]
+- (or: "No relevant existing tools found for [domain]")
+
+## Design Alternatives Considered
+### Option A: [description] — SELECTED
+Failure mode if wrong: ...
+
+### Option B: [description] — REJECTED
+Rejected because: ...
+
+## Tasks
+[Ordered, concrete, traceable to DONE WHEN]
+
+## Seam Map
+[Per-behavior: file, test file, seam]
+
+## Test Plan
+[Per-task: what invariant is tested, which test file, unit/integration/E2E]
+```
+
+Store the plan immediately after writing it:
+
+```bash
+npx tsx src/cli-structured-data.ts store-plan --issue {N} --repo "$ISSUES_REPO" --file plan.md
+```
+
+Then proceed to Phase 5 (Ask the Admin). The plan coverage review (Phase 5.5) runs after the admin approves direction. The plan formed here is the input to that review.
+
+**Time budget:** Simple issue (single file, no new abstractions): 10-12 minutes total. Complex issue (new module, state decision, multi-component wiring): 15-20 minutes. If this phase is taking longer than 20 minutes, you are either designing rather than surveying (go back to step 2 and find what already exists) or the issue requires `/kaizen-prd` before evaluation.
 
 ### Phase 4: Critique the spec (if one exists)
 

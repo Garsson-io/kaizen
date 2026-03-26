@@ -62,7 +62,17 @@ gh issue list --repo "$ISSUES_REPO" --state open --search "<keywords from the in
 gh issue list --repo "$ISSUES_REPO" --state closed --search "<keywords>" --json number,title,labels --limit 5
 ```
 
-**If a match exists:** Add an incident comment to the existing issue instead of filing a new one. Use this format:
+**If a match exists — explicit decision required (kaizen #959):**
+
+| Similarity | Action |
+|---|---|
+| Same root cause, same problem space | Add an incident comment to the existing issue. Do NOT file a new issue. |
+| Related but distinct failure mode | File new issue AND cross-reference: "Related: #N — same problem space, different failure mode" |
+| Superficially similar but different cause | File new issue with explicit note: "Differs from #N because [specific distinction]" |
+
+**Do not proceed to file without making this decision explicit.** The choice between "same issue" and "new issue" is the most important quality gate in the filing workflow.
+
+Add an incident comment to the existing issue using this format:
 
 ```markdown
 ## Incident — [date]
@@ -141,6 +151,10 @@ Print the issue URL and a one-line summary. If this was triggered from `/kaizen-
 - **Writing acceptance criteria** — the implementor defines what "done" looks like.
 - **Becoming a PRD** — if the problem needs mapping, use `/kaizen-prd` instead.
 - **Prescribing a mechanism** — name both failure modes the constraint should prevent, not just the one you observed (#722).
+
+## Structured Issue Bodies
+
+Use `##` section headers in the issue body (Problem, Evidence, Acceptance Criteria, etc.). These are readable by `/kaizen-sections` tools — agents can later read or update individual sections without rewriting the entire body: `npx tsx src/cli-section-editor.ts read-section --issue {N} --repo "$ISSUES_REPO" --name "Acceptance Criteria"`
 
 ## Issue Body Quality Checklist
 

@@ -182,4 +182,69 @@ describe('kaizen-worktree-setup.sh', () => {
       }
     });
   });
+
+  describe('Invariant 7: deletion sentinel detection (#934, #939)', () => {
+    it('emits warning to stderr and exits 0 when .worktree-will-delete sentinel exists', () => {
+      // INVARIANT: when the sentinel is present, the hook must warn (stderr) and exit 0.
+      // We run the hook from a temp dir with a .worktree-will-delete file present
+      // so the sentinel detection branch is actually triggered.
+      const wdir = mkdtempSync(join(tmpdir(), 'kaizen-sentinel-'));
+      const mainRepo = mkdtempSync(join(tmpdir(), 'kaizen-main-'));
+      const mockDir = createMockDir();
+      try {
+        // Write the sentinel file in the worktree dir
+        writeFileSync(join(wdir, '.worktree-will-delete'), new Date().toISOString());
+
+        // Create node_modules/dist in main so symlink logic doesn't fail
+        mkdirSync(join(mainRepo, 'node_modules'));
+        mkdirSync(join(mainRepo, 'dist'));
+
+        const mainGitDir = join(mainRepo, '.git');
+        mkdirSync(mainGitDir);
+        setGitCommonDir(mockDir, mainGitDir);
+
+        const result = spawnSync('bash', [HOOK], {
+          cwd: wdir,
+          env: { ...process.env, PATH: `${mockDir.path}:${process.env.PATH}` },
+          encoding: 'utf8',
+        });
+
+        // Hook must exit 0 (advisory only, never blocks)
+        expect(result.status).toBe(0);
+        // Warning must appear on stderr
+        expect(result.stderr).toMatch(/worktree.*marked.*deletion|deletion.*worktree/i);
+      } finally {
+        rmSync(wdir, { recursive: true, force: true });
+        rmSync(mainRepo, { recursive: true, force: true });
+        mockDir.cleanup();
+      }
+    });
+
+    it('does not emit deletion warning when sentinel is absent', () => {
+      // INVARIANT: normal operation produces no deletion warning.
+      const wdir = mkdtempSync(join(tmpdir(), 'kaizen-no-sentinel-'));
+      const mainRepo = mkdtempSync(join(tmpdir(), 'kaizen-main-'));
+      const mockDir = createMockDir();
+      try {
+        mkdirSync(join(mainRepo, 'node_modules'));
+        mkdirSync(join(mainRepo, 'dist'));
+        const mainGitDir = join(mainRepo, '.git');
+        mkdirSync(mainGitDir);
+        setGitCommonDir(mockDir, mainGitDir);
+
+        const result = spawnSync('bash', [HOOK], {
+          cwd: wdir,
+          env: { ...process.env, PATH: `${mockDir.path}:${process.env.PATH}` },
+          encoding: 'utf8',
+        });
+
+        expect(result.status).toBe(0);
+        expect(result.stderr).not.toMatch(/worktree.*marked.*deletion|deletion.*worktree/i);
+      } finally {
+        rmSync(wdir, { recursive: true, force: true });
+        rmSync(mainRepo, { recursive: true, force: true });
+        mockDir.cleanup();
+      }
+    });
+  });
 });

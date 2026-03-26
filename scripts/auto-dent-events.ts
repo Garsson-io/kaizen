@@ -20,11 +20,15 @@ import { resolve } from 'path';
 
 // Event type definitions
 
-export interface RunStartEvent {
-  type: 'run.start';
+/** #899: Base fields shared by all auto-dent events */
+export interface BaseEvent {
   run_id: string;
   batch_id: string;
   run_num: number;
+}
+
+export interface RunStartEvent extends BaseEvent {
+  type: 'run.start';
   mode: string;
   mode_reason: string;
   prompt_template: string;
@@ -33,29 +37,20 @@ export interface RunStartEvent {
   start_epoch?: number;
 }
 
-export interface RunIssuePickedEvent {
+export interface RunIssuePickedEvent extends BaseEvent {
   type: 'run.issue_picked';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   issue: string;
   title: string;
   labels?: string[];
 }
 
-export interface RunPrCreatedEvent {
+export interface RunPrCreatedEvent extends BaseEvent {
   type: 'run.pr_created';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   pr_url: string;
 }
 
-export interface RunCompleteEvent {
+export interface RunCompleteEvent extends BaseEvent {
   type: 'run.complete';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   duration_ms: number;
   exit_code: number;
   cost_usd: number;
@@ -75,12 +70,42 @@ export interface RunCompleteEvent {
   review_cost_usd?: number;
 }
 
-export interface BatchReflectEvent {
+export interface BatchReflectEvent extends BaseEvent {
   type: 'batch.reflect';
-  run_id: string;
-  batch_id: string;
-  run_num: number;
   recommendations_count: number;
+}
+
+export interface ReviewRoundStartEvent extends BaseEvent {
+  type: 'review.round_start';
+  pr_url: string;
+  round: number;
+  dimensions: string[];
+}
+
+export interface ReviewRoundCompleteEvent extends BaseEvent {
+  type: 'review.round_complete';
+  pr_url: string;
+  round: number;
+  verdict: 'pass' | 'fail';
+  missing_count: number;
+  partial_count: number;
+  cost_usd: number;
+  duration_ms: number;
+}
+
+export interface ReviewFixSpawnedEvent extends BaseEvent {
+  type: 'review.fix_spawned';
+  pr_url: string;
+  round: number;
+  gaps_count: number;
+}
+
+export interface ReviewFixCompleteEvent extends BaseEvent {
+  type: 'review.fix_complete';
+  pr_url: string;
+  round: number;
+  success: boolean;
+  cost_usd: number;
 }
 
 export type AutoDentEvent =
@@ -88,7 +113,11 @@ export type AutoDentEvent =
   | RunIssuePickedEvent
   | RunPrCreatedEvent
   | RunCompleteEvent
-  | BatchReflectEvent;
+  | BatchReflectEvent
+  | ReviewRoundStartEvent
+  | ReviewRoundCompleteEvent
+  | ReviewFixSpawnedEvent
+  | ReviewFixCompleteEvent;
 
 // Event envelope wraps every event with timestamp
 

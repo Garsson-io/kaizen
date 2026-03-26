@@ -91,7 +91,7 @@ export function readAllPendingGates(
       type: 'post_merge',
       prUrl: r.prUrl,
       label: `POST-MERGE SYNC (${r.prUrl})`,
-      detail: 'Run: git fetch origin main && git merge origin/main',
+      detail: '1. Run /kaizen to reflect on this PR\n   2. Then: git fetch origin main && git merge origin/main',
       action: 'git fetch origin main && git merge origin/main',
       filepath: r.filepath,
     });

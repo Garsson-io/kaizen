@@ -17,9 +17,14 @@ import {
   saveState,
   parseArgs,
   buildFixPrompt,
+  runFixLoop,
   type StreamJsonResult,
   type FixRunningAction,
+  type CliArgs,
+  type PrefetchResult,
+  type ReviewFixState,
 } from './review-fix.js';
+import { DATA_GAP_PREFIX, type BatteryResult } from '../src/review-battery.js';
 
 // ── parseStreamJsonResult ────────────────────────────────────────────
 
@@ -481,5 +486,650 @@ describe('buildFixPrompt', () => {
     // No numbered gap items
     expect(prompt).not.toContain('[DONE]');
     expect(prompt).not.toContain('Req A');
+  });
+});
+
+// ── runFixLoop (unit: injectable deps) ───────────────────────────────
+
+describe('runFixLoop', () => {
+  let tmpDir: string;
+  const setup = () => { tmpDir = mkdtempSync(join(tmpdir(), 'rf-loop-test-')); return tmpDir; };
+  const teardown = () => rmSync(tmpDir, { recursive: true, force: true });
+
+  const baseOpts: CliArgs = {
+    prUrl: 'https://github.com/org/repo/pull/42',
+    issueNum: '7',
+    repo: 'org/repo',
+    dryRun: false,
+    resume: false,
+    maxRounds: 3,
+    budgetCap: 10.0,
+  };
+
+  const mockPrefetch = (): PrefetchResult => ({
+    issueBody: 'fix the bug',
+    prBody: 'adds feature',
+    prDiff: '--- a\n+++ b',
+    prBranch: 'feat/branch',
+    isMerged: false,
+  });
+
+  function makePassBattery(): BatteryResult {
+    return {
+      verdict: 'pass',
+      costUsd: 0.10,
+      missingCount: 0,
+      partialCount: 0,
+      durationMs: 100,
+      failedDimensions: [],
+      skippedDimensions: [],
+      dimensions: [{ dimension: 'security', verdict: 'pass', summary: 'all good', findings: [{ requirement: 'No secrets', status: 'DONE', detail: 'checked' }] }],
+    };
+  }
+
+  function makeFailBattery(): BatteryResult {
+    return {
+      verdict: 'fail',
+      costUsd: 0.15,
+      missingCount: 1,
+      partialCount: 0,
+      durationMs: 100,
+      failedDimensions: [],
+      skippedDimensions: [],
+      dimensions: [{ dimension: 'security', verdict: 'fail', summary: 'issues found', findings: [{ requirement: 'No secrets', status: 'MISSING', detail: 'secrets in code' }] }],
+    };
+  }
+
+  it('pass path: outcome=pass and launchFix never called', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn().mockReturnValue({ pid: 0, logFile: '/tmp/fix.log', promptFile: '/tmp/fix.prompt' });
+      const state = await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => makePassBattery(),
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('pass');
+      expect(state.phase).toBe('done');
+      expect(launchFixMock).not.toHaveBeenCalled();
+    } finally { teardown(); }
+  });
+
+  it('budget path: outcome=budget_exceeded when review cost exceeds budgetCap', async () => {
+    const dir = setup();
+    try {
+      const state = await runFixLoop({ ...baseOpts, budgetCap: 0.05 }, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBattery(), // costs 0.15 > 0.05
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('budget_exceeded');
+      expect(state.phase).toBe('done');
+    } finally { teardown(); }
+  });
+
+  it('dry-run path: outcome=dry_run and launchFix never called', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn();
+      const state = await runFixLoop({ ...baseOpts, dryRun: true }, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBattery(),
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('dry_run');
+      expect(launchFixMock).not.toHaveBeenCalled();
+    } finally { teardown(); }
+  });
+
+  it('max-rounds path: outcome=max_rounds when maxRounds=1 and review fails', async () => {
+    const dir = setup();
+    try {
+      const state = await runFixLoop({ ...baseOpts, maxRounds: 1 }, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBattery(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('max_rounds');
+    } finally { teardown(); }
+  });
+
+  it('launch-fix path: calls launchFix and sets phase=fix_running when review fails with gaps', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn().mockReturnValue({ pid: 12345, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') });
+      const state = await runFixLoop({ ...baseOpts, maxRounds: 3 }, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBattery(),
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      expect(launchFixMock).toHaveBeenCalledTimes(1);
+      expect(state.phase).toBe('fix_running');
+      expect(state.activeFix?.pid).toBe(12345);
+    } finally { teardown(); }
+  });
+
+  it('no-actionable-gaps path: does not launch fix when verdict=fail but gaps=0 (kaizen #897)', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn();
+      // Simulate: some dims pass, others timed out → verdict=fail but gaps=0
+      // This is the #897 scenario: all returned findings are DONE, but
+      // failed dims make verdict=fail. No actionable gaps to fix.
+      const timeoutBattery: BatteryResult = {
+        verdict: 'fail',
+        costUsd: 0.10,
+        missingCount: 0,
+        partialCount: 0,
+        durationMs: 120_000,
+        failedDimensions: ['test-quality'],
+        skippedDimensions: [],
+        dimensions: [{ dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'all good' }] }],
+      };
+      const state = await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => timeoutBattery,
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('no_actionable_gaps');
+      expect(state.phase).toBe('done');
+      expect(launchFixMock).not.toHaveBeenCalled();
+    } finally { teardown(); }
+  });
+
+  it('plan-only gaps: does not launch fix when all gaps are [data-gap] findings', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn();
+      // All gaps are plan-availability MISSING findings, not code gaps
+      const planOnlyBattery: BatteryResult = {
+        verdict: 'fail',
+        costUsd: 0.10,
+        missingCount: 3,
+        partialCount: 0,
+        durationMs: 5_000,
+        failedDimensions: [],
+        skippedDimensions: ['plan-coverage', 'plan-fidelity', 'improvement-lifecycle'],
+        dimensions: [
+          { dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+          { dimension: 'plan-coverage', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+          { dimension: 'plan-fidelity', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+          { dimension: 'improvement-lifecycle', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+        ],
+      };
+      const state = await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => planOnlyBattery,
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('no_actionable_gaps');
+      expect(state.phase).toBe('done');
+      expect(launchFixMock).not.toHaveBeenCalled();
+    } finally { teardown(); }
+  });
+
+  it('mixed gaps: launches fix when code gaps exist alongside data-gap findings', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn().mockReturnValue({ pid: 555, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') });
+      const mixedBattery: BatteryResult = {
+        verdict: 'fail',
+        costUsd: 0.10,
+        missingCount: 3,
+        partialCount: 1,
+        durationMs: 5_000,
+        failedDimensions: [],
+        skippedDimensions: ['plan-coverage', 'plan-fidelity'],
+        dimensions: [
+          { dimension: 'security', verdict: 'fail', summary: 'issues', findings: [{ requirement: 'No secrets in code', status: 'MISSING', detail: 'API key in config' }] },
+          { dimension: 'plan-coverage', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+          { dimension: 'plan-fidelity', verdict: 'fail', summary: 'no plan', findings: [{ requirement: `${DATA_GAP_PREFIX} Plan text available for review`, status: 'MISSING', detail: 'no plan text' }] },
+        ],
+      };
+      const state = await runFixLoop({ ...baseOpts, maxRounds: 3 }, {
+        prefetch: mockPrefetch,
+        runReview: async () => mixedBattery,
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      // Code gap exists (security MISSING) so fix SHOULD launch despite data-gap findings
+      expect(launchFixMock).toHaveBeenCalledTimes(1);
+      expect(state.phase).toBe('fix_running');
+    } finally { teardown(); }
+  });
+
+  it('state is persisted to getStateDir after completion', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn().mockReturnValue({ pid: 99, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') });
+      await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBattery(),
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+      const saved = loadState(baseOpts.prUrl, dir);
+      expect(saved).not.toBeNull();
+      expect(saved?.phase).toBe('fix_running');
+    } finally { teardown(); }
+  });
+
+  it('fix_running resume: returns early when fix session is still running', async () => {
+    const dir = setup();
+    try {
+      const fixRunningState: ReviewFixState = {
+        prUrl: baseOpts.prUrl,
+        issueNum: baseOpts.issueNum,
+        repo: baseOpts.repo,
+        maxRounds: baseOpts.maxRounds,
+        budgetCap: baseOpts.budgetCap,
+        currentRound: 2,
+        totalCostUsd: 0.15,
+        startedAt: new Date().toISOString(),
+        phase: 'fix_running',
+        rounds: [{ round: 1, phase: 'review', verdict: 'fail', gaps: 1, reviewCost: 0.15, fixCost: 0 }],
+        activeFix: { pid: 99999, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') },
+      };
+      saveState(fixRunningState, dir);
+      const runReviewMock = vi.fn();
+      const state = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: false, success: false, costUsd: 0, output: '' }),
+        runReview: runReviewMock,
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+      expect(state.phase).toBe('fix_running');
+      expect(runReviewMock).not.toHaveBeenCalled();
+    } finally { teardown(); }
+  });
+
+  it('fix_running resume: proceeds to review when fix session has completed', async () => {
+    const dir = setup();
+    try {
+      const fixRunningState: ReviewFixState = {
+        prUrl: baseOpts.prUrl,
+        issueNum: baseOpts.issueNum,
+        repo: baseOpts.repo,
+        maxRounds: baseOpts.maxRounds,
+        budgetCap: baseOpts.budgetCap,
+        currentRound: 2,
+        totalCostUsd: 0.15,
+        startedAt: new Date().toISOString(),
+        phase: 'fix_running',
+        rounds: [],
+        activeFix: { pid: 99999, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') },
+      };
+      saveState(fixRunningState, dir);
+      const state = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: true, costUsd: 0.20, output: 'done' }),
+        runReview: async () => makePassBattery(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+      expect(state.outcome).toBe('pass');
+    } finally { teardown(); }
+  });
+
+  it('fix_running resume: proceeds to next round when fix session completed with failure', async () => {
+    const dir = setup();
+    try {
+      const fixRunningState: ReviewFixState = {
+        prUrl: baseOpts.prUrl,
+        issueNum: baseOpts.issueNum,
+        repo: baseOpts.repo,
+        maxRounds: baseOpts.maxRounds,
+        budgetCap: baseOpts.budgetCap,
+        currentRound: 2,
+        totalCostUsd: 0.15,
+        startedAt: new Date().toISOString(),
+        phase: 'fix_running',
+        rounds: [{ round: 1, phase: 'review', verdict: 'fail', gaps: 1, reviewCost: 0.15, fixCost: 0 }],
+        activeFix: { pid: 99999, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') },
+      };
+      saveState(fixRunningState, dir);
+      const runReviewMock = vi.fn().mockResolvedValue(makePassBattery());
+      await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: false, costUsd: 0.05, output: 'failed' }),
+        runReview: runReviewMock,
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+      expect(runReviewMock).toHaveBeenCalled();
+    } finally { teardown(); }
+  });
+});
+
+// ── Resume state machine E2E (#917) ──────────────────────────────────
+//
+// Tests the full crash → resume → recovery cycle by simulating each
+// phase transition. Unlike the unit tests above which test individual
+// resume paths, these verify the complete state machine integrity:
+// initial state → crash → persisted state → resume → correct recovery.
+
+describe('resume state machine E2E (#917)', () => {
+  let tmpDir: string;
+  const setup = () => { tmpDir = mkdtempSync(join(tmpdir(), 'rf-resume-e2e-')); return tmpDir; };
+  const teardown = () => rmSync(tmpDir, { recursive: true, force: true });
+
+  const baseOpts: CliArgs = {
+    prUrl: 'https://github.com/org/repo/pull/100',
+    issueNum: '50',
+    repo: 'org/repo',
+    dryRun: false,
+    resume: false,
+    maxRounds: 3,
+    budgetCap: 5.0,
+  };
+
+  const mockPrefetch = (): PrefetchResult => ({
+    issueBody: 'fix the bug',
+    prBody: 'PR body',
+    prDiff: '--- a\n+++ b',
+    prBranch: 'fix/branch',
+    isMerged: false,
+  });
+
+  function makeFailBatteryForE2E(): BatteryResult {
+    return {
+      verdict: 'fail',
+      costUsd: 0.10,
+      missingCount: 1,
+      partialCount: 0,
+      durationMs: 100,
+      failedDimensions: [],
+      skippedDimensions: [],
+      dimensions: [{ dimension: 'requirements', verdict: 'fail', summary: 'gap found', findings: [{ requirement: 'Must handle edge case', status: 'MISSING', detail: 'not handled' }] }],
+    };
+  }
+
+  function makePassBatteryForE2E(): BatteryResult {
+    return {
+      verdict: 'pass',
+      costUsd: 0.08,
+      missingCount: 0,
+      partialCount: 0,
+      durationMs: 100,
+      failedDimensions: [],
+      skippedDimensions: [],
+      dimensions: [{ dimension: 'requirements', verdict: 'pass', summary: 'all good', findings: [{ requirement: 'Must handle edge case', status: 'DONE', detail: 'handled' }] }],
+    };
+  }
+
+  it('INVARIANT: full crash-resume cycle — review fails, fix launched, "crash", resume with fix done → re-review passes', async () => {
+    const dir = setup();
+    try {
+      // Phase 1: Initial run — review fails, fix launched, returns with fix_running
+      const launchFixMock = vi.fn().mockReturnValue({ pid: 54321, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') });
+      const state1 = await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBatteryForE2E(),
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+
+      // Verify: fix was launched, state persisted as fix_running
+      expect(state1.phase).toBe('fix_running');
+      expect(state1.activeFix?.pid).toBe(54321);
+      expect(launchFixMock).toHaveBeenCalledTimes(1);
+
+      // Verify: state was persisted to disk
+      const persisted = loadState(baseOpts.prUrl, dir);
+      expect(persisted).not.toBeNull();
+      expect(persisted!.phase).toBe('fix_running');
+      expect(persisted!.currentRound).toBe(1);
+      expect(persisted!.rounds.length).toBe(1);
+      expect(persisted!.rounds[0].verdict).toBe('fail');
+
+      // Phase 2: "Crash" happened (we just stopped). Now resume with fix completed.
+      const state2 = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: true, costUsd: 0.25, output: 'fix applied' }),
+        runReview: async () => makePassBatteryForE2E(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+
+      // Verify: resume detected fix completed, ran re-review, passed
+      expect(state2.outcome).toBe('pass');
+      expect(state2.phase).toBe('done');
+      // Round was advanced: original round 1 (review) + round 1 (fix) + round 2 (review pass)
+      expect(state2.rounds.length).toBeGreaterThanOrEqual(2);
+      // Cost includes: review (0.10) + fix (0.25) + re-review (0.08)
+      expect(state2.totalCostUsd).toBeGreaterThan(0.3);
+    } finally { teardown(); }
+  });
+
+  it('INVARIANT: corrupt state (fix_running without activeFix) resets to needs_review', async () => {
+    const dir = setup();
+    try {
+      // Write a corrupt state: fix_running but no activeFix
+      const corruptState: ReviewFixState = {
+        prUrl: baseOpts.prUrl,
+        issueNum: baseOpts.issueNum,
+        repo: baseOpts.repo,
+        maxRounds: 3,
+        budgetCap: 5.0,
+        currentRound: 1,
+        totalCostUsd: 0.10,
+        startedAt: new Date().toISOString(),
+        phase: 'fix_running',
+        rounds: [{ round: 1, phase: 'review', verdict: 'fail', gaps: 1, reviewCost: 0.10, fixCost: 0 }],
+        // activeFix is undefined — corrupt!
+      };
+      saveState(corruptState, dir);
+
+      // Resume: should detect corruption, reset to needs_review, re-review, pass
+      const state = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        runReview: async () => makePassBatteryForE2E(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+
+      expect(state.outcome).toBe('pass');
+      expect(state.phase).toBe('done');
+    } finally { teardown(); }
+  });
+
+  it('INVARIANT: resume with no prior state starts fresh (ignores --resume flag)', async () => {
+    const dir = setup();
+    try {
+      // No prior state exists — resume should start fresh
+      const state = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        runReview: async () => makePassBatteryForE2E(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+
+      // Should have started fresh and passed on first review
+      expect(state.outcome).toBe('pass');
+      expect(state.currentRound).toBe(1);
+    } finally { teardown(); }
+  });
+
+  it('INVARIANT: resume preserves original maxRounds from first run', async () => {
+    const dir = setup();
+    try {
+      // First run with maxRounds=2
+      const launchFixMock = vi.fn().mockReturnValue({ pid: 1, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') });
+      await runFixLoop({ ...baseOpts, maxRounds: 2 }, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBatteryForE2E(),
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+
+      // Resume with maxRounds=10 — should use original 2
+      const state = await runFixLoop({ ...baseOpts, resume: true, maxRounds: 10 }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: true, costUsd: 0.10, output: '' }),
+        runReview: async () => makeFailBatteryForE2E(),
+        launchFix: vi.fn().mockReturnValue({ pid: 2, logFile: join(dir, 'fix2.log'), promptFile: join(dir, 'fix2.prompt') }),
+        getStateDir: () => dir,
+      });
+
+      // maxRounds=2, we're on round 2 after resume, so this should be the last round
+      expect(state.outcome).toBe('max_rounds');
+    } finally { teardown(); }
+  });
+
+  it('INVARIANT: state file integrity survives multiple resume cycles', async () => {
+    const dir = setup();
+    try {
+      // Run 1: review fails, fix launched
+      const launchFix1 = vi.fn().mockReturnValue({ pid: 111, logFile: join(dir, 'fix1.log'), promptFile: join(dir, 'fix1.prompt') });
+      await runFixLoop(baseOpts, {
+        prefetch: mockPrefetch,
+        runReview: async () => makeFailBatteryForE2E(),
+        launchFix: launchFix1,
+        getStateDir: () => dir,
+      });
+
+      // Resume 1: fix done, re-review fails, new fix launched
+      const launchFix2 = vi.fn().mockReturnValue({ pid: 222, logFile: join(dir, 'fix2.log'), promptFile: join(dir, 'fix2.prompt') });
+      const state2 = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: true, costUsd: 0.15, output: '' }),
+        runReview: async () => makeFailBatteryForE2E(),
+        launchFix: launchFix2,
+        getStateDir: () => dir,
+      });
+
+      // Resume 2: fix done, re-review passes
+      const state3 = await runFixLoop({ ...baseOpts, resume: true }, {
+        prefetch: mockPrefetch,
+        checkFix: () => ({ done: true, success: true, costUsd: 0.20, output: '' }),
+        runReview: async () => makePassBatteryForE2E(),
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+
+      expect(state3.outcome).toBe('pass');
+      // Cumulative cost: review(0.10) + fix1(0.15) + review(0.10) + fix2(0.20) + review(0.08)
+      expect(state3.totalCostUsd).toBeGreaterThan(0.5);
+      // Rounds should track all phases
+      expect(state3.rounds.length).toBeGreaterThanOrEqual(4);
+
+      // Verify final persisted state matches returned state
+      const finalPersisted = loadState(baseOpts.prUrl, dir);
+      expect(finalPersisted?.outcome).toBe('pass');
+      expect(finalPersisted?.phase).toBe('done');
+    } finally { teardown(); }
+  });
+});
+
+// ── resolveStateDir (category prevention: #929, #934, #939) ──────────────────
+// These tests verify the invariant: review state must live in the MAIN repo,
+// never inside a worktree. Worktrees are ephemeral; state must survive deletion.
+
+import { resolveStateDir, validateTransition } from './review-fix.js';
+
+describe('resolveStateDir', () => {
+  it('returns main-repo-rooted path when git-common-dir is .git (main checkout)', () => {
+    // INVARIANT: from the main checkout, state dir uses process.cwd()
+    // git rev-parse --git-common-dir returns '.git' (relative) in the main checkout.
+    const cwd = '/home/user/project';
+    const result = resolveStateDir('.git', cwd);
+    expect(result).toBe('/home/user/project/.claude/review-fix');
+  });
+
+  it('returns main-repo-rooted path when called from inside a worktree', () => {
+    // INVARIANT: from a worktree, git rev-parse --git-common-dir returns
+    // the ABSOLUTE path to the main repo's .git directory (e.g. /project/.git).
+    // stateDir must derive the main repo root from that, not from CWD.
+    const gitCommonDir = '/home/user/project/.git';
+    const result = resolveStateDir(gitCommonDir, '/home/user/project/.claude/worktrees/wt-feature-x');
+    expect(result).toBe('/home/user/project/.claude/review-fix');
+  });
+
+  it('returns same path regardless of which worktree calls it', () => {
+    // INVARIANT: two different worktrees of the same project must produce the
+    // same state dir so review state is shared and discoverable across sessions.
+    const gitCommonDir = '/home/user/project/.git';
+    const dir1 = resolveStateDir(gitCommonDir, '/home/user/project/.claude/worktrees/wt-a');
+    const dir2 = resolveStateDir(gitCommonDir, '/home/user/project/.claude/worktrees/wt-b');
+    expect(dir1).toBe(dir2);
+  });
+
+  it('result never contains .claude/worktrees', () => {
+    // INVARIANT: state must never be stored inside a worktree directory —
+    // worktrees are deleted on merge and would take state with them.
+    const gitCommonDir = '/home/user/project/.git';
+    const result = resolveStateDir(gitCommonDir, '/home/user/project/.claude/worktrees/wt-feature');
+    expect(result).not.toContain('.claude/worktrees');
+  });
+});
+
+// ── validateTransition (category prevention: #929, #939) ─────────────────────
+// Guards the --transition subcommand against being used to bypass review.
+
+describe('validateTransition', () => {
+  const baseState: ReviewFixState = {
+    prUrl: 'https://github.com/org/repo/pull/1',
+    issueNum: '1',
+    repo: 'org/repo',
+    maxRounds: 3,
+    budgetCap: 5,
+    currentRound: 1,
+    totalCostUsd: 0,
+    startedAt: new Date().toISOString(),
+    phase: 'needs_fix',
+    rounds: [],
+  };
+
+  it('blocks transition when current round has MUST-FIX findings (confidence >= 80, non-DONE)', () => {
+    // INVARIANT: cannot advance state when open MUST-FIX items exist.
+    const findings = [{ status: 'MISSING' as const, requirement: 'req', detail: 'missing impl', confidence: 85 }];
+    const result = validateTransition('needs_review', baseState, findings);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/MUST.FIX/i);
+  });
+
+  it('blocks transition when no findings exist for current round', () => {
+    // INVARIANT: cannot advance without evidence that review was performed.
+    const result = validateTransition('needs_review', baseState, []);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/no findings/i);
+  });
+
+  it('allows transition when findings exist and none are MUST-FIX', () => {
+    // INVARIANT: transition is safe when review was done and nothing is blocking.
+    const findings = [{ status: 'DONE' as const, requirement: 'req', detail: 'implemented', confidence: 90 }];
+    const result = validateTransition('needs_review', baseState, findings);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('blocks transition to invalid target phase', () => {
+    // INVARIANT: only known phase transitions are allowed.
+    const findings = [{ status: 'DONE' as const, requirement: 'req', detail: 'ok', confidence: 90 }];
+    const result = validateTransition('bogus_phase', baseState, findings);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/invalid.*phase/i);
+  });
+
+  it('blocks transition when non-DONE finding has confidence exactly 80 (on the boundary)', () => {
+    // INVARIANT: confidence >= 80 + non-DONE = MUST-FIX. Threshold is inclusive.
+    const findings = [{ status: 'PARTIAL' as const, requirement: 'req', detail: 'partial', confidence: 80 }];
+    const result = validateTransition('needs_review', baseState, findings);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/MUST.FIX/i);
+  });
+
+  it('allows transition when non-DONE finding has confidence 79 (just below threshold)', () => {
+    // INVARIANT: confidence < 80 is SHOULD-FIX, not MUST-FIX — transition is permitted.
+    const findings = [{ status: 'PARTIAL' as const, requirement: 'req', detail: 'minor gap', confidence: 79 }];
+    const result = validateTransition('needs_review', baseState, findings);
+    expect(result.allowed).toBe(true);
   });
 });

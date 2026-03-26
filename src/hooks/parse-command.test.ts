@@ -38,6 +38,22 @@ describe('stripHeredocBody', () => {
     const result = stripHeredocBody(cmd);
     expect(result).toContain('<<-EOF');
   });
+
+  it('preserves commands after heredoc closing delimiter (kaizen #909)', () => {
+    const cmd = `git commit -m "$(cat <<'EOF'\nfix: something\n\nCo-Authored-By: Claude\nEOF\n)" && git push`;
+    const result = stripHeredocBody(cmd);
+    expect(result).toContain('git commit');
+    expect(result).toContain('git push');
+    expect(result).not.toContain('Co-Authored-By');
+  });
+
+  it('preserves chained commands after heredoc in gh pr create', () => {
+    const cmd = `gh pr create --title "fix" --body "$(cat <<'EOF'\n## Summary\nFixed bug.\nEOF\n)" && git push -u origin branch`;
+    const result = stripHeredocBody(cmd);
+    expect(result).toContain('gh pr create');
+    expect(result).toContain('git push');
+    expect(result).not.toContain('Fixed bug');
+  });
 });
 
 describe('isGhPrCommand', () => {

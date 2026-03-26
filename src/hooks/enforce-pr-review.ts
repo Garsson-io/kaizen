@@ -4,7 +4,8 @@
  * Handles ALL tool types during review enforcement (kaizen #775, #789):
  *   - Bash: allowlist-based (review commands like gh pr diff, git diff pass through)
  *   - Edit/Write: always blocked during review (write tools, not useful for reviewing)
- *   - Agent: blocked except kaizen-bg subagent (background reflection, kaizen #151)
+ *   - Agent: always allowed — review itself uses Agent to spawn dimension subagents
+ *     (kaizen #895, #856). Blocking Agent blocked the review from running.
  *   - Read-only tools (Read, Glob, Grep): not registered — useful for reviewing code
  *
  * Fast path: allowed commands/tools exit immediately without checking state.
@@ -13,7 +14,7 @@
  * Part of kAIzen Agent Control Flow — kaizen #775, #789
  */
 
-import { getCurrentBranch, readHookInput } from './hook-io.js';
+import { getCurrentBranch, readHookInput, traceNullInput } from './hook-io.js';
 import { isReviewCommand } from './lib/allowlist.js';
 import { stripHeredocBody } from './parse-command.js';
 import { findStateWithStatus } from './state-utils.js';
@@ -50,13 +51,14 @@ export function processPreToolUse(
 ): { allowed: boolean; reason?: string } {
   const toolName = context?.toolName ?? '';
 
-  // For Edit/Write/Agent: no command allowlist — go straight to state check
-  if (BLOCKED_TOOLS.has(toolName) || toolName === 'Agent') {
-    // Agent(kaizen-bg) is always allowed (background reflection, kaizen #151)
-    if (toolName === 'Agent' && context?.toolInput?.subagent_type === 'kaizen-bg') {
-      return { allowed: true };
-    }
+  // Agent tool is always allowed — the review itself uses Agent to spawn
+  // dimension subagents. Blocking it prevented review from running (kaizen #895, #856).
+  if (toolName === 'Agent') {
+    return { allowed: true };
+  }
 
+  // For Edit/Write: no command allowlist — go straight to state check
+  if (BLOCKED_TOOLS.has(toolName)) {
     const reviewState = findStateWithStatus('needs_review', currentBranch, stateDir);
     if (!reviewState) return { allowed: true };
 
@@ -98,13 +100,13 @@ export function processPreToolUse(
 
   return {
     allowed: false,
-    reason: buildDenyMessage('PR review required before proceeding', prUrl, round),
+    reason: buildDenyMessage('Bash', prUrl, round),
   };
 }
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("enforce-pr-review"); process.exit(0); }
 
   const command = input.tool_input?.command ?? '';
   const branch = getCurrentBranch();

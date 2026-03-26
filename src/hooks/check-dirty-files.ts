@@ -16,7 +16,7 @@
 import { execSync, type ExecSyncOptions } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { readHookInput } from './hook-io.js';
+import { readHookInput, traceNullInput } from './hook-io.js';
 import {
   extractGitCPath,
   isGhPrCommand,
@@ -72,9 +72,12 @@ export function parseDirtyFiles(porcelainOutput: string): DirtyFileReport {
   for (const line of lines) {
     if (/^\?\?/.test(line)) {
       untracked.push(line);
+    } else if (/^[MARCD][MARCD]/.test(line)) {
+      // Both staged and modified (e.g. MM) — count as staged (the primary state)
+      staged.push(line);
     } else if (/^[MARCD] /.test(line)) {
       staged.push(line);
-    } else if (/^ ?M/.test(line)) {
+    } else if (/^ [M]/.test(line)) {
       modified.push(line);
     }
   }
@@ -125,6 +128,11 @@ export function checkDirtyFiles(
   const targetDir = extractGitCPath(cmdLine);
   const gitPrefix = targetDir ? `-C ${targetDir}` : '';
 
+  // Refresh the index to clear stale stat info — prevents false positives
+  // when a file was modified and restored (content matches HEAD but stat differs).
+  // Observed: MM status for .claude-plugin/plugin.json with no actual changes (kaizen #871).
+  git(`${gitPrefix} update-index -q --refresh`);
+
   const porcelain = git(`${gitPrefix} status --porcelain`);
   if (!porcelain) return { action: 'allow' };
 
@@ -164,7 +172,7 @@ FOR ARTIFACTS/DEBUG/LEFTOVER FILES (not part of this work):
 
 async function main(): Promise<void> {
   const input = await readHookInput();
-  if (!input) process.exit(0);
+  if (!input) { traceNullInput("check-dirty-files"); process.exit(0); }
 
   const command = input.tool_input?.command ?? '';
   const result = checkDirtyFiles(command);

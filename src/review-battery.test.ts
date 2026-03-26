@@ -10,7 +10,10 @@
  * They validate that review prompts produce correct findings on known PRs.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   parseReviewOutput,
   formatBatteryReport,
@@ -18,6 +21,7 @@ import {
   resolvePromptsDir,
   discoverDimensions,
   listDimensions,
+  listPrDimensions,
   loadDimensionMetas,
   reviewBriefing,
   validateReviewCoverage,
@@ -28,6 +32,7 @@ import {
   spawnBatchReview,
   parseAllReviewOutputs,
   groupByDataNeeds,
+  parseFrontmatter,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
@@ -47,6 +52,20 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, spawnSync: vi.fn(actual.spawnSync), spawn: vi.fn(actual.spawn) };
 });
+
+// Shared test helpers — module-level to avoid copy-paste across describe blocks
+
+/** Build a stream-json JSONL payload as claude emits with --output-format stream-json --verbose. */
+function streamJsonPayload(text: string, costUsd: number): string {
+  const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+  const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
+  return `${assistant}\n${result}\n`;
+}
+
+/** Build a minimal DimensionMeta for unit tests. */
+function makeMeta(name: string, needs: string[] = ['diff']): DimensionMeta {
+  return { name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md` };
+}
 
 // Tier 1: Schema and parser tests
 
@@ -221,6 +240,18 @@ describe('discoverDimensions', () => {
     expect(names).toContain('pr-description');
   });
 
+  it('listPrDimensions includes only pr and both dimensions', () => {
+    const metas = loadDimensionMetas();
+    const pr = listPrDimensions();
+    for (const meta of metas) {
+      if (meta.applies_to === 'pr' || meta.applies_to === 'both') {
+        expect(pr).toContain(meta.name);
+      } else {
+        expect(pr).not.toContain(meta.name);
+      }
+    }
+  });
+
   it('loadDimensionMetas reads frontmatter from each dimension', () => {
     const metas = loadDimensionMetas();
     expect(metas.length).toBeGreaterThanOrEqual(7);
@@ -251,13 +282,59 @@ describe('discoverDimensions', () => {
     expect(typeof briefing).toBe('string');
     expect(briefing).toContain('Review Briefing');
     expect(briefing).toContain('200 lines');
-    expect(briefing).toContain('logic-correctness');
+    expect(briefing).toContain('security');
     expect(briefing).toContain('High priority when');
     expect(briefing).toContain('Low priority when');
     expect(briefing).toContain('Natural Groupings');
     // diff-only dimensions grouped together
-    expect(briefing).toContain('logic-correctness');
-    expect(briefing).toContain('error-handling');
+    expect(briefing).toContain('security');
+    expect(briefing).toContain('correctness');
+  });
+});
+
+// Tier 1: Dimension discovery with isolated temp fixtures (issue #879)
+
+describe('discoverDimensions — isolated temp dir', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'kaizen-dims-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns empty object for empty directory', () => {
+    const dims = discoverDimensions(tmpDir);
+    expect(dims).toEqual({});
+  });
+
+  it('returns empty object for non-existent directory', () => {
+    const dims = discoverDimensions('/dev/null/impossible');
+    expect(dims).toEqual({});
+  });
+
+  it('discovers synthetic dimension files', () => {
+    writeFileSync(join(tmpDir, 'review-alpha.md'), '---\nname: alpha\ndescription: test\napplies_to: pr\n---\n```json\n{}\n```\n');
+    writeFileSync(join(tmpDir, 'review-beta.md'), '---\nname: beta\ndescription: test\napplies_to: both\n---\n```json\n{}\n```\n');
+    writeFileSync(join(tmpDir, 'not-a-dimension.md'), 'ignored');
+
+    const dims = discoverDimensions(tmpDir);
+    expect(Object.keys(dims)).toEqual(['alpha', 'beta']);
+    expect(dims['alpha']).toBe('review-alpha.md');
+    expect(dims['beta']).toBe('review-beta.md');
+  });
+
+  it('loadDimensionMetas reads frontmatter from synthetic files', () => {
+    writeFileSync(join(tmpDir, 'review-gamma.md'), '---\nname: gamma\ndescription: Gamma check\napplies_to: plan\nneeds: [diff, issue]\n---\n```json\n{}\n```\n');
+
+    const metas = loadDimensionMetas(tmpDir);
+    expect(metas).toHaveLength(1);
+    expect(metas[0].name).toBe('gamma');
+    expect(metas[0].description).toBe('Gamma check');
+    expect(metas[0].applies_to).toBe('plan');
+    expect(metas[0].needs).toEqual(['diff', 'issue']);
   });
 });
 
@@ -327,9 +404,6 @@ describe('loadReviewPrompt', () => {
 // Tier 1: Coverage validation gate
 
 describe('validateReviewCoverage', () => {
-  const makeMeta = (name: string): DimensionMeta => ({
-    name, description: '', applies_to: 'pr', needs: ['diff'], file: `review-${name}.md`,
-  });
   const makeReview = (dim: string): DimensionReview => ({
     dimension: dim, verdict: 'pass', findings: [], summary: 'ok',
   });
@@ -412,10 +486,6 @@ describe('renderTemplate', () => {
 // Tier 1: computeDataOverlap
 
 describe('computeDataOverlap', () => {
-  const makeMeta = (name: string, needs: string[]): DimensionMeta => ({
-    name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md`,
-  });
-
   it('returns empty array for no metas', () => {
     expect(computeDataOverlap([])).toEqual([]);
   });
@@ -486,14 +556,6 @@ describe('spawnReview', () => {
       });
       return proc;
     });
-  }
-
-  // Build stream-json JSONL output as claude now emits (--output-format stream-json --verbose).
-  // The result.result field is always empty; text lives in assistant content blocks.
-  function streamJsonPayload(text: string, costUsd: number): string {
-    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
-    return `${assistant}\n${result}\n`;
   }
 
   it('returns parsed review when claude exits 0 with valid JSON', async () => {
@@ -569,12 +631,6 @@ describe('reviewBattery', () => {
       });
       return proc;
     });
-  }
-
-  function streamJsonPayload(text: string, costUsd: number): string {
-    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
-    return `${assistant}\n${result}\n`;
   }
 
   const passingOutput = streamJsonPayload(
@@ -688,20 +744,16 @@ Second dimension:
 // Tier 1: groupByDataNeeds (pure)
 
 describe('groupByDataNeeds', () => {
-  const makeMeta = (name: string, needs: string[]): DimensionMeta => ({
-    name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md`,
-  });
-
   it('groups dims with identical data needs together', () => {
     const metas = [
-      makeMeta('error-handling', ['diff']),
-      makeMeta('logic-correctness', ['diff']),
+      makeMeta('correctness', ['diff']),
+      makeMeta('security', ['diff']),
       makeMeta('requirements', ['diff', 'issue']),
     ];
-    const groups = groupByDataNeeds(['error-handling', 'logic-correctness', 'requirements'], metas);
+    const groups = groupByDataNeeds(['correctness', 'security', 'requirements'], metas);
     expect(groups).toHaveLength(2);
-    const diffGroup = groups.find(g => g.includes('error-handling'));
-    expect(diffGroup).toContain('logic-correctness');
+    const diffGroup = groups.find(g => g.includes('correctness'));
+    expect(diffGroup).toContain('security');
     expect(diffGroup).not.toContain('requirements');
   });
 
@@ -767,55 +819,55 @@ describe('spawnBatchReview', () => {
 
   it('returns parsed reviews for each requested dimension', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
-      { dim: 'logic-correctness', verdict: 'pass', findings: [{ requirement: 'R2', status: 'DONE', detail: 'ok' }] },
+      { dim: 'correctness', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+      { dim: 'security', verdict: 'pass', findings: [{ requirement: 'R2', status: 'DONE', detail: 'ok' }] },
     ], 0.15);
     mockClaudeOnce(payload);
 
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results).toHaveLength(2);
-    expect(results[0].review?.dimension).toBe('error-handling');
-    expect(results[1].review?.dimension).toBe('logic-correctness');
+    expect(results[0].review?.dimension).toBe('correctness');
+    expect(results[1].review?.dimension).toBe('security');
   });
 
   it('returns null for dimensions missing from the batch response', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+      { dim: 'correctness', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
     ], 0.10); // only one dim returned
     mockClaudeOnce(payload);
 
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results[0].review).not.toBeNull();
     expect(results[1].review).toBeNull(); // logic-correctness missing from response
   });
 
   it('splits cost evenly across dimensions', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [] },
-      { dim: 'logic-correctness', verdict: 'pass', findings: [] },
+      { dim: 'correctness', verdict: 'pass', findings: [] },
+      { dim: 'security', verdict: 'pass', findings: [] },
     ], 0.20);
     mockClaudeOnce(payload);
 
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results[0].costUsd).toBeCloseTo(0.10);
     expect(results[1].costUsd).toBeCloseTo(0.10);
   });
 
   it('returns all nulls when claude fails', async () => {
     mockClaudeOnce('', 1);
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results[0].review).toBeNull();
     expect(results[1].review).toBeNull();
   });
 
   it('uses a single claude call regardless of dimension count', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [] },
-      { dim: 'logic-correctness', verdict: 'pass', findings: [] },
+      { dim: 'correctness', verdict: 'pass', findings: [] },
+      { dim: 'security', verdict: 'pass', findings: [] },
     ], 0.10);
     mockClaudeOnce(payload);
 
-    await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
   });
 });
@@ -827,12 +879,6 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     vi.mocked(spawnSync).mockRestore();
     vi.mocked(spawn).mockRestore();
   });
-
-  function streamJsonPayload(text: string, costUsd: number): string {
-    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
-    return `${assistant}\n${result}\n`;
-  }
 
   function mockClaudeSequential(responses: Array<{ stdout: string; exitCode?: number }>) {
     vi.mocked(spawnSync).mockImplementation((cmd: string) => {
@@ -876,7 +922,7 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     expect(result.failedDimensions).toHaveLength(0);
   });
 
-  it('auto-skips plan-requiring dims when no planText provided', async () => {
+  it('emits MISSING findings for plan-requiring dims when no planText provided (kaizen #901)', async () => {
     const passingOutput = streamJsonPayload(
       JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [] }),
       0.10,
@@ -885,10 +931,28 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     const result = await reviewBattery({
       dimensions: ['requirements', 'plan-coverage', 'plan-fidelity', 'improvement-lifecycle'],
     });
+    // Still tracked as skipped
     expect(result.skippedDimensions).toContain('plan-coverage');
     expect(result.skippedDimensions).toContain('plan-fidelity');
     expect(result.skippedDimensions).toContain('improvement-lifecycle');
     expect(result.skippedDimensions).not.toContain('requirements');
+
+    // Skipped dims produce MISSING findings with [data-gap] tag (kaizen #901)
+    for (const dimName of ['plan-coverage', 'plan-fidelity', 'improvement-lifecycle']) {
+      const dim = result.dimensions.find(d => d.dimension === dimName);
+      expect(dim, `${dimName} should be in dimensions`).toBeDefined();
+      expect(dim!.verdict).toBe('fail');
+      expect(dim!.findings).toHaveLength(1);
+      expect(dim!.findings[0].status).toBe('MISSING');
+      expect(dim!.findings[0].requirement).toContain('[data-gap]');
+      expect(dim!.findings[0].detail).toContain('plan text');
+    }
+
+    // Skipped dims contribute to missingCount
+    expect(result.missingCount).toBeGreaterThanOrEqual(3);
+
+    // Overall verdict is fail because of MISSING findings
+    expect(result.verdict).toBe('fail');
   });
 
   it('includes plan-requiring dims when planText is provided', async () => {
@@ -904,17 +968,84 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     expect(result.skippedDimensions).toHaveLength(0);
   });
 
+  it('auto-loads planText from GitHub issue when issueNum+repo provided but no planText (kaizen #902)', async () => {
+    // INVARIANT: when issueNum and repo are provided but no planText, reviewBattery
+    // must call retrievePlan() and use the result so plan-requiring dims can run.
+    // Without auto-load, plan-fidelity would be skipped and emit a [data-gap] MISSING finding.
+    // With auto-load, it should be included in the actual review.
+    const planBody = '## Plan\n\n1. Fix the bug\n2. Add tests';
+    // Two responses: one for requirements, one for plan-fidelity (same-needs dims may batch)
+    const reqOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] }),
+      0.05,
+    );
+    const planOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'plan-fidelity', summary: 'ok', findings: [{ requirement: 'Plan exists', status: 'DONE', detail: 'found' }] }),
+      0.05,
+    );
+
+    // spawnSync is called by gh-exec.ts (for retrievePlan) and possibly git.
+    // Mock: gh comments call returns empty (no marker), gh body call returns planBody.
+    vi.mocked(spawnSync).mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      if (cmd === 'gh') {
+        const argStr = (args as string[]).join(' ');
+        // findMarkerComment calls: --jq with comments filter → return empty (no marker)
+        if (argStr.includes('comments')) {
+          return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+        }
+        // fallback body fetch: --json body --jq .body → return plan body
+        if (argStr.includes('.body')) {
+          return { status: 0, stdout: planBody, stderr: '', signal: null, pid: 0, output: [] } as any;
+        }
+        return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      }
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+
+    const outputs = [reqOutput, planOutput];
+    let callCount = 0;
+    vi.mocked(spawn).mockImplementation(() => {
+      const out = outputs[callCount] ?? outputs[outputs.length - 1];
+      callCount++;
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => {
+        proc.stdout.emit('data', Buffer.from(out));
+        proc.emit('close', 0);
+      });
+      return proc;
+    });
+
+    const result = await reviewBattery({
+      dimensions: ['requirements', 'plan-fidelity'],
+      issueNum: '904',
+      repo: 'Garsson-io/kaizen',
+      // No planText — should be auto-loaded from issue body
+    });
+
+    // INVARIANT: plan-fidelity must NOT be in skippedDimensions when plan was auto-loaded
+    expect(result.skippedDimensions).not.toContain('plan-fidelity');
+    // INVARIANT: plan-fidelity dim must exist in results (was not silently dropped)
+    const planDim = result.dimensions.find(d => d.dimension === 'plan-fidelity');
+    expect(planDim, 'plan-fidelity should be in dimensions after auto-load').toBeDefined();
+    // INVARIANT: findings must not be the synthetic [data-gap] MISSING finding
+    expect(planDim!.findings[0].requirement).not.toContain('[data-gap]');
+  });
+
   it('batches same-needs dims into fewer claude calls', async () => {
     // error-handling and logic-correctness both need [diff] — should be one call
     const batchOutput = streamJsonPayload(
       [
-        '```json\n' + JSON.stringify({ dimension: 'error-handling', summary: 'ok', findings: [] }) + '\n```',
-        '```json\n' + JSON.stringify({ dimension: 'logic-correctness', summary: 'ok', findings: [] }) + '\n```',
+        '```json\n' + JSON.stringify({ dimension: 'correctness', summary: 'ok', findings: [] }) + '\n```',
+        '```json\n' + JSON.stringify({ dimension: 'security', summary: 'ok', findings: [] }) + '\n```',
       ].join('\n\n'),
       0.15,
     );
     mockClaudeSequential([{ stdout: batchOutput }]);
-    await reviewBattery({ dimensions: ['error-handling', 'logic-correctness'] });
+    await reviewBattery({ dimensions: ['correctness', 'security'] });
     // Both dims share [diff] needs → batched into 1 spawn call
     expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
   });
@@ -1078,24 +1209,13 @@ describe('replay tests', () => {
 
 describe('Tier 1 — prompt file structure (all dimensions)', () => {
   const promptsDir = resolvePromptsDir();
-  const validAppliesTo = new Set(['pr', 'plan', 'both']);
-
-  // Parse YAML frontmatter between --- delimiters
-  function parseFrontmatterFields(content: string): Record<string, string> | null {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!match) return null;
-    const fields: Record<string, string> = {};
-    for (const line of match[1].split('\n')) {
-      const kv = line.match(/^(\w+):\s*(.+)$/);
-      if (kv) fields[kv[1]] = kv[2].trim().replace(/^["']|["']$/g, '');
-    }
-    return fields;
-  }
+  const validAppliesTo = new Set(['pr', 'plan', 'both', 'reflection']);
 
   const dimensions = [
-    'dry', 'error-handling', 'improvement-lifecycle', 'logic-correctness',
-    'plan-coverage', 'plan-fidelity', 'pr-description', 'requirements',
-    'scope-fidelity', 'test-plan', 'test-quality',
+    'correctness', 'dry', 'improvement-lifecycle',
+    'multi-pr-spiral', 'plan-coverage', 'plan-fidelity', 'pr-description',
+    'reflection-quality', 'requirements', 'scope-fidelity',
+    'security', 'test-plan', 'test-quality', 'tooling-fitness',
   ];
 
   for (const dim of dimensions) {
@@ -1107,25 +1227,25 @@ describe('Tier 1 — prompt file structure (all dimensions)', () => {
 
     it(`review-${dim}.md has parseable frontmatter`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content);
+      const fm = parseFrontmatter(content) as Record<string, string> | null;
       expect(fm, `Could not parse frontmatter in review-${dim}.md`).not.toBeNull();
     });
 
     it(`review-${dim}.md frontmatter name matches filename`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content)!;
+      const fm = parseFrontmatter(content) as Record<string, string>;
       expect(fm.name, `name field in review-${dim}.md should be "${dim}"`).toBe(dim);
     });
 
     it(`review-${dim}.md has non-empty description`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content)!;
+      const fm = parseFrontmatter(content) as Record<string, string>;
       expect(fm.description, `description missing in review-${dim}.md`).toBeTruthy();
     });
 
     it(`review-${dim}.md applies_to is valid`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content)!;
+      const fm = parseFrontmatter(content) as Record<string, string>;
       expect(
         validAppliesTo.has(fm.applies_to),
         `applies_to in review-${dim}.md is "${fm.applies_to}", must be pr|plan|both`,
@@ -1198,5 +1318,26 @@ describe('parseReviewOutput — category prevention for edge cases', () => {
     });
     const result = parseReviewOutput(raw, 'test');
     expect(result!.findings[0].detail).toBe('alt detail');
+  });
+});
+
+describe('parseFrontmatter — edge cases', () => {
+  it('returns null for content with no frontmatter block', () => {
+    expect(parseFrontmatter('No frontmatter here')).toBeNull();
+  });
+
+  it('returns null for malformed YAML without crashing', () => {
+    // Unquoted colon in value — invalid YAML but valid looking content
+    const content = '---\nname: foo: bar\ndescription: oops\n---\nBody';
+    expect(parseFrontmatter(content)).toBeNull();
+  });
+
+  it('parses valid YAML frontmatter correctly', () => {
+    const content = '---\nname: test\ndescription: A test dim\napplies_to: pr\nneeds: [diff, issue]\n---\nBody';
+    const result = parseFrontmatter(content);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('test');
+    expect(result!.applies_to).toBe('pr');
+    expect(Array.isArray(result!.needs)).toBe(true);
   });
 });

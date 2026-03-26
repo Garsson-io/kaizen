@@ -63,6 +63,27 @@ GitHub issues are ephemeral — they get closed, buried, and forgotten. The spec
 
 Additionally, the issue body should note: "Implementation must produce `docs/{feature}.md` capturing what was built, operating policy, design decisions, and future vision."
 
+## Hypothesis Gate — BEFORE writing any spec section (kaizen #959)
+
+**Before describing any solution, make the root-cause hypothesis explicit.**
+
+PRDs are written when a problem feels real and urgent. That feeling is not proof. Specs written from untested intuitions encode the wrong problem taxonomy — and the taxonomy is the durable artifact, so getting it wrong compounds over every future implementation.
+
+**State these four things before Phase 1:**
+
+```
+Root-cause hypothesis: "The problem exists because [specific mechanism]."
+Evidence: "We observe [concrete signal] as the indicator."
+Counter-hypothesis: "It might instead be because [alternative cause] — we'd know this is true if [signal]."
+Minimum viable test: "[The fastest thing that would confirm or refute the root-cause hypothesis — grep, read a file, run a command, check an incident.]"
+```
+
+**Run the minimum viable test before proceeding.** If the test refutes the root-cause hypothesis, update the hypothesis (or stop) before writing a spec. A spec built on a false hypothesis produces wrong taxonomy that outlasts any code it describes.
+
+**Dual failure mode check:**
+- If absent: specs encode false root-cause assumptions; implementations fix the wrong problem
+- If present (over-correction): small/obvious initiatives over-indexed on hypothesis formality — mitigated by keeping the test minimal (one grep, one file read)
+
 ## Phase 1: Understand the Initiative
 
 Ask the user to describe what they want to build. Then ask yourself (and them) these questions to build context:
@@ -250,7 +271,7 @@ Every PRD produces an **epic issue** — the tracking anchor for the initiative.
 
 ### The Epic Issue
 
-**For issue-only PRDs (default):** The issue body IS the spec — use the full document structure from Phase 3. The issue is both the tracking anchor and the single source of truth.
+**For issue-only PRDs (default):** The issue body IS the spec — use the full document structure from Phase 3. The issue is both the tracking anchor and the single source of truth. Use `/kaizen-sections` (`add-section`, `replace-section`) to manage individual sections. Store related data (plans, metadata) as **attachments** (`write-attachment`) on the issue.
 
 **For file+PR PRDs (large initiatives):** The issue is the epic anchor. Keep it short — the spec document has the details.
 

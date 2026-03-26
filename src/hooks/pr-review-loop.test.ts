@@ -36,6 +36,25 @@ import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { processHookInput, writeReviewSentinel } from './pr-review-loop.js';
+
+/** Run hook with raw string as stdin (for testing malformed input). */
+function runHookRaw(rawStdin: string, extraEnv: Record<string, string> = {}): string {
+  const escaped = rawStdin.replace(/'/g, "'\\''");
+  try {
+    return execSync(
+      `printf '%s' '${escaped}' | npx tsx "${HOOK_PATH}"`,
+      {
+        encoding: 'utf-8',
+        env: { ...process.env, STATE_DIR: testStateDir, ...extraEnv },
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 15000,
+      },
+    ).trim();
+  } catch (err: any) {
+    return err.stdout?.trim?.() ?? '';
+  }
+}
 
 let testStateDir: string;
 const HOOK_PATH = path.resolve(__dirname, 'pr-review-loop.ts');
@@ -256,7 +275,12 @@ describe('pr-review-loop: cross-worktree isolation', () => {
 });
 
 describe('pr-review-loop: gh pr diff', () => {
-  it('outputs checklist and transitions to passed', () => {
+  /** Write a review sentinel to simulate store-review-summary having been called */
+  function writeSentinel(stateKey: string, round: string): void {
+    fs.writeFileSync(path.join(testStateDir, `${stateKey}.reviewed-r${round}`), `reviewed_at=${new Date().toISOString()}\n`);
+  }
+
+  it('outputs checklist and transitions to passed (with sentinel)', () => {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       encoding: 'utf-8',
     }).trim();
@@ -266,6 +290,7 @@ describe('pr-review-loop: gh pr diff', () => {
       STATUS: 'needs_review',
       BRANCH: branch,
     });
+    writeSentinel('Garsson-io_kaizen_55', '2');
 
     const output = runHook(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/55'),
@@ -289,6 +314,7 @@ describe('pr-review-loop: gh pr diff', () => {
       STATUS: 'needs_review',
       BRANCH: branch,
     });
+    writeSentinel('Garsson-io_kaizen_201', '1');
 
     runHook(prDiffInput('https://github.com/Garsson-io/kaizen/pull/201'));
 
@@ -424,5 +450,111 @@ describe('pr-review-loop: non-PR commands ignored', () => {
       tool_response: { stdout: 'done', stderr: '', exit_code: '0' },
     });
     expect(output).toBe('');
+  });
+});
+
+// ONE TEST TO RULE THEM ALL (#920, #921)
+// Gate transitions must verify structured outcomes, not just command detection.
+// Parameterized over all gate transitions in the system.
+describe('INVARIANT: gate transitions verify outcome, not just trigger command', () => {
+  const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
+  const PR_URL = 'https://github.com/Garsson-io/kaizen/pull/999';
+
+  const gates = [
+    {
+      name: 'review gate (gh pr diff)',
+      setupGate: () => {
+        createState('Garsson-io_kaizen_999', {
+          PR_URL,
+          ROUND: '1',
+          STATUS: 'needs_review',
+          BRANCH: branch,
+        });
+      },
+      triggerInput: {
+        tool_input: { command: `gh pr diff ${PR_URL}` },
+        tool_response: { stdout: 'diff --git a/foo b/foo', stderr: '', exit_code: '0' },
+      },
+      provideOutcome: () => {
+        writeReviewSentinel(PR_URL, '1', testStateDir);
+      },
+      expectBlockedAction: 'needs_review',
+      expectPassedAction: 'review_passed',
+    },
+  ];
+
+  for (const gate of gates) {
+    it(`${gate.name}: trigger WITHOUT outcome keeps gate BLOCKED`, () => {
+      gate.setupGate();
+      // Trigger the command but do NOT provide the outcome
+      const result = processHookInput(gate.triggerInput as any, {
+        stateDir: testStateDir,
+        branch,
+        checkReviewSentinel: (_url: string, _round: string, dir: string) => {
+          // Check for real sentinel file in test state dir
+          const sentinel = path.join(dir, `Garsson-io_kaizen_999.reviewed-r1`);
+          return fs.existsSync(sentinel);
+        },
+      });
+      expect(result.action).toBe(gate.expectBlockedAction);
+    });
+
+    it(`${gate.name}: trigger WITH outcome clears gate`, () => {
+      gate.setupGate();
+      gate.provideOutcome(); // Write the sentinel
+      const result = processHookInput(gate.triggerInput as any, {
+        stateDir: testStateDir,
+        branch,
+        checkReviewSentinel: (_url: string, _round: string, dir: string) => {
+          const sentinel = path.join(dir, `Garsson-io_kaizen_999.reviewed-r1`);
+          return fs.existsSync(sentinel);
+        },
+      });
+      expect(result.action).toBe(gate.expectPassedAction);
+    });
+  }
+});
+
+describe('pr-review-loop — null-input observability (kaizen #975)', () => {
+  let traceFile: string;
+
+  beforeEach(() => {
+    traceFile = path.join(os.tmpdir(), `pr-review-trace-${Date.now()}.jsonl`);
+  });
+
+  afterEach(() => {
+    fs.rmSync(traceFile, { force: true });
+  });
+
+  it('INVARIANT: empty stdin writes null_input trace entry (not silent exit)', () => {
+    // When stdin is empty, the hook must write a trace entry before exiting.
+    // Silent exit = invisible failure. Incident #975: gate not created because
+    // hook exited silently on null input from JSON.parse failure.
+    runHookRaw('', { KAIZEN_HOOK_TRACE: traceFile });
+    expect(fs.existsSync(traceFile)).toBe(true);
+    const lines = fs.readFileSync(traceFile, 'utf8').trim().split('\n').filter(Boolean);
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    const entry = JSON.parse(lines[0]);
+    expect(entry.action).toBe('ignore');
+    expect(entry.reason).toBe('null_input');
+    expect(entry.hook).toBe('pr-review-loop');
+  });
+
+  it('INVARIANT: malformed JSON writes null_input trace entry from pr-review-loop', () => {
+    // PR bodies with markdown (backticks, $vars, code blocks) can cause
+    // JSON.parse to fail in the hook stdin. hook-io.ts writes json_parse_failed,
+    // then readHookInput() returns null, and pr-review-loop.ts MUST write null_input.
+    const badJson = '{"tool_name":"Bash","cmd":"gh pr create --body \\"```\\n$var\\n```\\""}EXTRA';
+    runHookRaw(badJson, { KAIZEN_HOOK_TRACE: traceFile });
+    expect(fs.existsSync(traceFile)).toBe(true);
+    const lines = fs.readFileSync(traceFile, 'utf8').trim().split('\n').filter(Boolean);
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    // pr-review-loop.ts writes the null_input entry (after hook-io.ts writes json_parse_failed)
+    const prReviewEntry = lines.map(l => JSON.parse(l)).find(
+      e => e.action === 'ignore' && e.hook === 'pr-review-loop'
+    );
+    expect(prReviewEntry).toBeDefined();
+    expect(prReviewEntry.reason).toBe('null_input');
+    expect(prReviewEntry.hook).toBe('pr-review-loop');
   });
 });

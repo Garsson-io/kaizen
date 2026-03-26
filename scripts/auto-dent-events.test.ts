@@ -295,6 +295,90 @@ describe('EventEmitter', () => {
     });
   });
 
+  it('emits review.round_start with dimensions list', () => {
+    emitter.emit({
+      type: 'review.round_start',
+      run_id: 'batch-test/run-1',
+      batch_id: 'batch-test',
+      run_num: 1,
+      pr_url: 'https://github.com/Garsson-io/kaizen/pull/892',
+      round: 1,
+      dimensions: ['requirements', 'scope-fidelity', 'dry'],
+    });
+
+    const events = readEvents(emitter.getFilePath());
+    expect(events[0].event).toMatchObject({
+      type: 'review.round_start',
+      pr_url: 'https://github.com/Garsson-io/kaizen/pull/892',
+      round: 1,
+      dimensions: ['requirements', 'scope-fidelity', 'dry'],
+    });
+  });
+
+  it('emits review.round_complete with verdict and counts', () => {
+    emitter.emit({
+      type: 'review.round_complete',
+      run_id: 'batch-test/run-1',
+      batch_id: 'batch-test',
+      run_num: 1,
+      pr_url: 'https://github.com/Garsson-io/kaizen/pull/892',
+      round: 1,
+      verdict: 'fail',
+      missing_count: 2,
+      partial_count: 1,
+      cost_usd: 0.15,
+      duration_ms: 45000,
+    });
+
+    const events = readEvents(emitter.getFilePath());
+    expect(events[0].event).toMatchObject({
+      type: 'review.round_complete',
+      verdict: 'fail',
+      missing_count: 2,
+      partial_count: 1,
+      cost_usd: 0.15,
+    });
+  });
+
+  it('emits review.fix_spawned with gaps count', () => {
+    emitter.emit({
+      type: 'review.fix_spawned',
+      run_id: 'batch-test/run-1',
+      batch_id: 'batch-test',
+      run_num: 1,
+      pr_url: 'https://github.com/Garsson-io/kaizen/pull/892',
+      round: 1,
+      gaps_count: 3,
+    });
+
+    const events = readEvents(emitter.getFilePath());
+    expect(events[0].event).toMatchObject({
+      type: 'review.fix_spawned',
+      gaps_count: 3,
+    });
+  });
+
+  it('emits review.fix_complete with success and cost', () => {
+    emitter.emit({
+      type: 'review.fix_complete',
+      run_id: 'batch-test/run-1',
+      batch_id: 'batch-test',
+      run_num: 1,
+      pr_url: 'https://github.com/Garsson-io/kaizen/pull/892',
+      round: 2,
+      success: true,
+      cost_usd: 0.45,
+    });
+
+    const events = readEvents(emitter.getFilePath());
+    expect(events[0].event).toMatchObject({
+      type: 'review.fix_complete',
+      round: 2,
+      success: true,
+      cost_usd: 0.45,
+    });
+  });
+
   it('silently handles write errors without throwing', () => {
     // Point at a non-existent deep path — appendFileSync will fail
     const badEmitter = new EventEmitter('/nonexistent/deeply/nested/path');
