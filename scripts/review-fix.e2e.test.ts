@@ -40,7 +40,7 @@ import { describe, it, beforeAll } from 'vitest';
 import { expect } from 'vitest';
 import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { stateKey } from './review-fix.js';
 import { findLatestCheckpoint } from './e2e-test-utils.js';
 
@@ -78,7 +78,7 @@ interface RunResult {
   fromCheckpoint: boolean;
 }
 
-function runFullLoopDryRun(): RunResult {
+async function runFullLoopDryRun(): Promise<RunResult> {
   const timestamp = Date.now();
   const resultFile = join(RESULTS_DIR, `review-fix-smoke-${timestamp}.txt`);
 
@@ -94,26 +94,43 @@ function runFullLoopDryRun(): RunResult {
 
   const start = Date.now();
 
-  const result = spawnSync(
-    'npx', ['tsx', 'scripts/review-fix.ts',
-      '--pr', FIXTURE_PR,
-      '--issue', FIXTURE_ISSUE,
-      '--repo', FIXTURE_REPO,
-      '--dry-run',
-      '--max-rounds', '1',
-    ],
-    {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      timeout: 720_000, // 12 min — sequential: 10+ dims × ~30-60s each
-      env: { ...process.env, REVIEW_MODEL: process.env.REVIEW_MODEL ?? 'haiku' },
-    },
-  );
+  const { stdout, stderr, exitCode } = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve, reject) => {
+    const child = spawn(
+      'npx', ['tsx', 'scripts/review-fix.ts',
+        '--pr', FIXTURE_PR,
+        '--issue', FIXTURE_ISSUE,
+        '--repo', FIXTURE_REPO,
+        '--dry-run',
+        '--max-rounds', '1',
+      ],
+      {
+        cwd: process.cwd(),
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, REVIEW_MODEL: process.env.REVIEW_MODEL ?? 'haiku' },
+      },
+    );
+
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => { err += d.toString(); });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error('review-fix subprocess timed out after 720s'));
+    }, 720_000);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ stdout: out, stderr: err, exitCode: code ?? -1 });
+    });
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+  });
 
   const durationMs = Date.now() - start;
-  const stdout = result.stdout ?? '';
-  const stderr = result.stderr ?? '';
-  const exitCode = result.status ?? -1;
 
   // Write checkpoint immediately — all assertions below read from this
   const checkpoint = { stdout, stderr, exitCode, durationMs };
@@ -245,7 +262,7 @@ describe('Tier 2 — full loop smoke (CLAUDE_E2E=1 to enable)', () => {
   it(
     `review-fix --dry-run: full pipe for PR #836 (schema + state + findings)`,
     { timeout: 780_000 }, // 13 min — sequential: 10+ dims × ~30-60s each
-    () => {
+    async () => {
       if (!TIER2 && !DEV_MODE) {
         console.log('  [skip] set CLAUDE_E2E=1 to run full loop smoke (~$0.30-0.50, ~2-4min)');
         console.log('         or CLAUDE_E2E_DEV=1 to load latest checkpoint (free)');
@@ -256,7 +273,7 @@ describe('Tier 2 — full loop smoke (CLAUDE_E2E=1 to enable)', () => {
         return;
       }
 
-      const run = runFullLoopDryRun();
+      const run = await runFullLoopDryRun();
 
       // Assertions — each includes the result file path for self-diagnosis
       assertExitedCleanly(run);
