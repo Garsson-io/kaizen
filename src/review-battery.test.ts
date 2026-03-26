@@ -18,6 +18,7 @@ import {
   resolvePromptsDir,
   discoverDimensions,
   listDimensions,
+  listPrDimensions,
   loadDimensionMetas,
   reviewBriefing,
   validateReviewCoverage,
@@ -28,6 +29,7 @@ import {
   spawnBatchReview,
   parseAllReviewOutputs,
   groupByDataNeeds,
+  parseFrontmatter,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
@@ -47,6 +49,20 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, spawnSync: vi.fn(actual.spawnSync), spawn: vi.fn(actual.spawn) };
 });
+
+// Shared test helpers — module-level to avoid copy-paste across describe blocks
+
+/** Build a stream-json JSONL payload as claude emits with --output-format stream-json --verbose. */
+function streamJsonPayload(text: string, costUsd: number): string {
+  const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+  const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
+  return `${assistant}\n${result}\n`;
+}
+
+/** Build a minimal DimensionMeta for unit tests. */
+function makeMeta(name: string, needs: string[] = ['diff']): DimensionMeta {
+  return { name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md` };
+}
 
 // Tier 1: Schema and parser tests
 
@@ -221,6 +237,18 @@ describe('discoverDimensions', () => {
     expect(names).toContain('pr-description');
   });
 
+  it('listPrDimensions includes only pr and both dimensions', () => {
+    const metas = loadDimensionMetas();
+    const pr = listPrDimensions();
+    for (const meta of metas) {
+      if (meta.applies_to === 'pr' || meta.applies_to === 'both') {
+        expect(pr).toContain(meta.name);
+      } else {
+        expect(pr).not.toContain(meta.name);
+      }
+    }
+  });
+
   it('loadDimensionMetas reads frontmatter from each dimension', () => {
     const metas = loadDimensionMetas();
     expect(metas.length).toBeGreaterThanOrEqual(7);
@@ -251,13 +279,13 @@ describe('discoverDimensions', () => {
     expect(typeof briefing).toBe('string');
     expect(briefing).toContain('Review Briefing');
     expect(briefing).toContain('200 lines');
-    expect(briefing).toContain('logic-correctness');
+    expect(briefing).toContain('security');
     expect(briefing).toContain('High priority when');
     expect(briefing).toContain('Low priority when');
     expect(briefing).toContain('Natural Groupings');
     // diff-only dimensions grouped together
-    expect(briefing).toContain('logic-correctness');
-    expect(briefing).toContain('error-handling');
+    expect(briefing).toContain('security');
+    expect(briefing).toContain('correctness');
   });
 });
 
@@ -327,9 +355,6 @@ describe('loadReviewPrompt', () => {
 // Tier 1: Coverage validation gate
 
 describe('validateReviewCoverage', () => {
-  const makeMeta = (name: string): DimensionMeta => ({
-    name, description: '', applies_to: 'pr', needs: ['diff'], file: `review-${name}.md`,
-  });
   const makeReview = (dim: string): DimensionReview => ({
     dimension: dim, verdict: 'pass', findings: [], summary: 'ok',
   });
@@ -412,10 +437,6 @@ describe('renderTemplate', () => {
 // Tier 1: computeDataOverlap
 
 describe('computeDataOverlap', () => {
-  const makeMeta = (name: string, needs: string[]): DimensionMeta => ({
-    name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md`,
-  });
-
   it('returns empty array for no metas', () => {
     expect(computeDataOverlap([])).toEqual([]);
   });
@@ -486,14 +507,6 @@ describe('spawnReview', () => {
       });
       return proc;
     });
-  }
-
-  // Build stream-json JSONL output as claude now emits (--output-format stream-json --verbose).
-  // The result.result field is always empty; text lives in assistant content blocks.
-  function streamJsonPayload(text: string, costUsd: number): string {
-    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
-    return `${assistant}\n${result}\n`;
   }
 
   it('returns parsed review when claude exits 0 with valid JSON', async () => {
@@ -569,12 +582,6 @@ describe('reviewBattery', () => {
       });
       return proc;
     });
-  }
-
-  function streamJsonPayload(text: string, costUsd: number): string {
-    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
-    return `${assistant}\n${result}\n`;
   }
 
   const passingOutput = streamJsonPayload(
@@ -688,20 +695,16 @@ Second dimension:
 // Tier 1: groupByDataNeeds (pure)
 
 describe('groupByDataNeeds', () => {
-  const makeMeta = (name: string, needs: string[]): DimensionMeta => ({
-    name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md`,
-  });
-
   it('groups dims with identical data needs together', () => {
     const metas = [
-      makeMeta('error-handling', ['diff']),
-      makeMeta('logic-correctness', ['diff']),
+      makeMeta('correctness', ['diff']),
+      makeMeta('security', ['diff']),
       makeMeta('requirements', ['diff', 'issue']),
     ];
-    const groups = groupByDataNeeds(['error-handling', 'logic-correctness', 'requirements'], metas);
+    const groups = groupByDataNeeds(['correctness', 'security', 'requirements'], metas);
     expect(groups).toHaveLength(2);
-    const diffGroup = groups.find(g => g.includes('error-handling'));
-    expect(diffGroup).toContain('logic-correctness');
+    const diffGroup = groups.find(g => g.includes('correctness'));
+    expect(diffGroup).toContain('security');
     expect(diffGroup).not.toContain('requirements');
   });
 
@@ -767,55 +770,55 @@ describe('spawnBatchReview', () => {
 
   it('returns parsed reviews for each requested dimension', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
-      { dim: 'logic-correctness', verdict: 'pass', findings: [{ requirement: 'R2', status: 'DONE', detail: 'ok' }] },
+      { dim: 'correctness', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+      { dim: 'security', verdict: 'pass', findings: [{ requirement: 'R2', status: 'DONE', detail: 'ok' }] },
     ], 0.15);
     mockClaudeOnce(payload);
 
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results).toHaveLength(2);
-    expect(results[0].review?.dimension).toBe('error-handling');
-    expect(results[1].review?.dimension).toBe('logic-correctness');
+    expect(results[0].review?.dimension).toBe('correctness');
+    expect(results[1].review?.dimension).toBe('security');
   });
 
   it('returns null for dimensions missing from the batch response', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+      { dim: 'correctness', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
     ], 0.10); // only one dim returned
     mockClaudeOnce(payload);
 
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results[0].review).not.toBeNull();
     expect(results[1].review).toBeNull(); // logic-correctness missing from response
   });
 
   it('splits cost evenly across dimensions', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [] },
-      { dim: 'logic-correctness', verdict: 'pass', findings: [] },
+      { dim: 'correctness', verdict: 'pass', findings: [] },
+      { dim: 'security', verdict: 'pass', findings: [] },
     ], 0.20);
     mockClaudeOnce(payload);
 
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results[0].costUsd).toBeCloseTo(0.10);
     expect(results[1].costUsd).toBeCloseTo(0.10);
   });
 
   it('returns all nulls when claude fails', async () => {
     mockClaudeOnce('', 1);
-    const results = await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results[0].review).toBeNull();
     expect(results[1].review).toBeNull();
   });
 
   it('uses a single claude call regardless of dimension count', async () => {
     const payload = batchPayload([
-      { dim: 'error-handling', verdict: 'pass', findings: [] },
-      { dim: 'logic-correctness', verdict: 'pass', findings: [] },
+      { dim: 'correctness', verdict: 'pass', findings: [] },
+      { dim: 'security', verdict: 'pass', findings: [] },
     ], 0.10);
     mockClaudeOnce(payload);
 
-    await spawnBatchReview({ dimensions: ['error-handling', 'logic-correctness'], repo: 'test/test' });
+    await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
   });
 });
@@ -827,12 +830,6 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     vi.mocked(spawnSync).mockRestore();
     vi.mocked(spawn).mockRestore();
   });
-
-  function streamJsonPayload(text: string, costUsd: number): string {
-    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
-    return `${assistant}\n${result}\n`;
-  }
 
   function mockClaudeSequential(responses: Array<{ stdout: string; exitCode?: number }>) {
     vi.mocked(spawnSync).mockImplementation((cmd: string) => {
@@ -908,13 +905,13 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     // error-handling and logic-correctness both need [diff] — should be one call
     const batchOutput = streamJsonPayload(
       [
-        '```json\n' + JSON.stringify({ dimension: 'error-handling', summary: 'ok', findings: [] }) + '\n```',
-        '```json\n' + JSON.stringify({ dimension: 'logic-correctness', summary: 'ok', findings: [] }) + '\n```',
+        '```json\n' + JSON.stringify({ dimension: 'correctness', summary: 'ok', findings: [] }) + '\n```',
+        '```json\n' + JSON.stringify({ dimension: 'security', summary: 'ok', findings: [] }) + '\n```',
       ].join('\n\n'),
       0.15,
     );
     mockClaudeSequential([{ stdout: batchOutput }]);
-    await reviewBattery({ dimensions: ['error-handling', 'logic-correctness'] });
+    await reviewBattery({ dimensions: ['correctness', 'security'] });
     // Both dims share [diff] needs → batched into 1 spawn call
     expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
   });
@@ -1078,24 +1075,13 @@ describe('replay tests', () => {
 
 describe('Tier 1 — prompt file structure (all dimensions)', () => {
   const promptsDir = resolvePromptsDir();
-  const validAppliesTo = new Set(['pr', 'plan', 'both']);
-
-  // Parse YAML frontmatter between --- delimiters
-  function parseFrontmatterFields(content: string): Record<string, string> | null {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!match) return null;
-    const fields: Record<string, string> = {};
-    for (const line of match[1].split('\n')) {
-      const kv = line.match(/^(\w+):\s*(.+)$/);
-      if (kv) fields[kv[1]] = kv[2].trim().replace(/^["']|["']$/g, '');
-    }
-    return fields;
-  }
+  const validAppliesTo = new Set(['pr', 'plan', 'both', 'reflection']);
 
   const dimensions = [
-    'dry', 'error-handling', 'improvement-lifecycle', 'logic-correctness',
-    'plan-coverage', 'plan-fidelity', 'pr-description', 'requirements',
-    'scope-fidelity', 'test-plan', 'test-quality',
+    'correctness', 'dry', 'improvement-lifecycle',
+    'multi-pr-spiral', 'plan-coverage', 'plan-fidelity', 'pr-description',
+    'reflection-quality', 'requirements', 'scope-fidelity',
+    'security', 'test-plan', 'test-quality', 'tooling-fitness',
   ];
 
   for (const dim of dimensions) {
@@ -1107,25 +1093,25 @@ describe('Tier 1 — prompt file structure (all dimensions)', () => {
 
     it(`review-${dim}.md has parseable frontmatter`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content);
+      const fm = parseFrontmatter(content) as Record<string, string> | null;
       expect(fm, `Could not parse frontmatter in review-${dim}.md`).not.toBeNull();
     });
 
     it(`review-${dim}.md frontmatter name matches filename`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content)!;
+      const fm = parseFrontmatter(content) as Record<string, string>;
       expect(fm.name, `name field in review-${dim}.md should be "${dim}"`).toBe(dim);
     });
 
     it(`review-${dim}.md has non-empty description`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content)!;
+      const fm = parseFrontmatter(content) as Record<string, string>;
       expect(fm.description, `description missing in review-${dim}.md`).toBeTruthy();
     });
 
     it(`review-${dim}.md applies_to is valid`, () => {
       const content = readFileSync(filePath, 'utf8');
-      const fm = parseFrontmatterFields(content)!;
+      const fm = parseFrontmatter(content) as Record<string, string>;
       expect(
         validAppliesTo.has(fm.applies_to),
         `applies_to in review-${dim}.md is "${fm.applies_to}", must be pr|plan|both`,
@@ -1198,5 +1184,26 @@ describe('parseReviewOutput — category prevention for edge cases', () => {
     });
     const result = parseReviewOutput(raw, 'test');
     expect(result!.findings[0].detail).toBe('alt detail');
+  });
+});
+
+describe('parseFrontmatter — edge cases', () => {
+  it('returns null for content with no frontmatter block', () => {
+    expect(parseFrontmatter('No frontmatter here')).toBeNull();
+  });
+
+  it('returns null for malformed YAML without crashing', () => {
+    // Unquoted colon in value — invalid YAML but valid looking content
+    const content = '---\nname: foo: bar\ndescription: oops\n---\nBody';
+    expect(parseFrontmatter(content)).toBeNull();
+  });
+
+  it('parses valid YAML frontmatter correctly', () => {
+    const content = '---\nname: test\ndescription: A test dim\napplies_to: pr\nneeds: [diff, issue]\n---\nBody';
+    const result = parseFrontmatter(content);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('test');
+    expect(result!.applies_to).toBe('pr');
+    expect(Array.isArray(result!.needs)).toBe(true);
   });
 });
