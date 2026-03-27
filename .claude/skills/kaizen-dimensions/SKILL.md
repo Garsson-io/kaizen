@@ -60,7 +60,7 @@ Status values: `DONE` (addressed), `PARTIAL` (gaps remain), `MISSING` (not addre
 |----------|-----------------|------|
 | `auto-dent-run.ts` | All where `applies_to != plan` | After each run produces a PR (advisory) |
 | `review-fix.ts` | All where `applies_to != plan` | CLI review→fix cycle |
-| `kaizen-evaluate` Phase 5.5 | `plan-coverage` | After formulating a plan |
+| `kaizen-write-plan` Phase 6 | `plan-coverage` | After formulating a plan |
 | `kaizen-implement` Step 5b | `requirements` | Before merge |
 | `kaizen-review-pr` Phase 2 | All (data-driven table) | During self-review |
 

@@ -13,7 +13,7 @@ description: Periodic issue taxonomy audit — checks label coverage, epic healt
 
 **When to use:**
 - Periodic review (every 2-4 weeks or every 10 PRs)
-- When `/kaizen-gaps` or `/kaizen-pick` surface data quality issues
+- When `/kaizen-gaps` surfaces data quality issues
 - When `kaizen-bg` health summary shows `attention-needed` or `critical`
 - When the user asks about issue hygiene, label coverage, or backlog health
 
@@ -180,7 +180,7 @@ Ask the user which fixes to apply. Apply only what's confirmed.
 |----------|-----------------------|
 | `kaizen-bg` (step 6) | Health summary in every reflection — surfaces problems continuously |
 | `/kaizen-gaps` | Label distribution feeds concentration analysis |
-| `/kaizen-pick` | Warns about unlabeled issues excluded from scoring |
+| `/kaizen-write-plan` | Unlabeled issues may be missed during collision detection |
 | `/kaizen-reflect` | Triggers advisory after N cases without audit |
 
 ## Anti-patterns
@@ -201,4 +201,4 @@ Create these tasks at skill start using TaskCreate:
 | 4 | Audit horizons and staleness | Issues per horizon, concentration. Issues untouched 30+ days. |
 | 5 | Produce report and offer fixes | Structured report. Offer to apply labels, reopen epics, file meta-incidents. |
 
-**What comes next:** Findings feed into `/kaizen-gaps` for deeper analysis, or directly into `/kaizen-pick` for issue selection. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
+**What comes next:** Findings feed into `/kaizen-gaps` for deeper analysis, or directly into `/kaizen-write-plan` to plan work on high-priority issues. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

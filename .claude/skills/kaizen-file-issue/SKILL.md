@@ -110,7 +110,7 @@ Before filing, verify the issue will have **at minimum** these labels:
 - `kaizen` (always required)
 - One `area/*` label (e.g. `area/hooks`, `area/skills`, `area/testing`)
 
-If a level was determined, also include the `level-N` label. Issues filed without labels are invisible to `/kaizen-pick`, `/kaizen-audit-issues`, and filtered views — #757 sat unlabeled for 24+ hours as an installation blocker because it had no labels.
+If a level was determined, also include the `level-N` label. Issues filed without labels are invisible to `/kaizen-audit-issues` and filtered views — #757 sat unlabeled for 24+ hours as an installation blocker because it had no labels.
 
 **Hard rule:** Never pass an empty `--label` argument to `gh issue create`. If you cannot determine the area, default to the most likely area based on the incident description, or ask the user.
 
