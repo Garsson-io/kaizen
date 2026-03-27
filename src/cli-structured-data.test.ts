@@ -4,6 +4,7 @@ import { handlers, parseArgs, resolveContent, resolveRound, type CliArgs } from 
 import {
   nextReviewRound,
   storePlan,
+  storeGrounding,
   storeMetadata,
 } from './structured-data.js';
 
@@ -34,6 +35,9 @@ vi.mock('./structured-data.js', () => ({
   retrievePlan: vi.fn().mockReturnValue('plan text'),
   storeTestPlan: vi.fn().mockReturnValue('https://example.com/testplan'),
   retrieveTestPlan: vi.fn().mockReturnValue('testplan text'),
+  storeGrounding: vi.fn().mockReturnValue('https://example.com/grounding'),
+  retrieveGrounding: vi.fn().mockReturnValue('grounding text'),
+  retrieveDeepDive: vi.fn().mockReturnValue('deep-dive text'),
   storeMetadata: vi.fn().mockReturnValue('https://example.com/metadata'),
   retrieveMetadata: vi.fn().mockReturnValue({ type: 'meta-issue' }),
   queryConnectedIssues: vi.fn().mockReturnValue([{ number: 1, role: 'primary', title: 'Issue 1' }]),
@@ -66,6 +70,7 @@ describe('handler registry', () => {
       'store-review-summary', 'list-review-rounds', 'list-review-dims',
       'read-review-finding', 'read-review-summary',
       'store-plan', 'retrieve-plan', 'store-testplan', 'retrieve-testplan',
+      'store-grounding', 'retrieve-grounding', 'retrieve-deep-dive',
       'store-metadata', 'retrieve-metadata', 'query-connected', 'query-pr',
       'update-pr-section',
       'store-iteration', 'retrieve-iteration',
@@ -140,6 +145,28 @@ describe('individual command handlers', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await handlers['retrieve-plan']({ ...baseArgs, issue: '904' });
     expect(log).toHaveBeenCalledWith('plan text');
+    log.mockRestore();
+  });
+
+  it('store-grounding stores and prints URL', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['store-grounding']({ ...baseArgs, issue: '904', text: 'my grounding' });
+    expect(vi.mocked(storeGrounding)).toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Grounding stored'));
+    log.mockRestore();
+  });
+
+  it('retrieve-grounding prints grounding text', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['retrieve-grounding']({ ...baseArgs, issue: '904' });
+    expect(log).toHaveBeenCalledWith('grounding text');
+    log.mockRestore();
+  });
+
+  it('retrieve-deep-dive prints combined deep-dive text', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['retrieve-deep-dive']({ ...baseArgs, issue: '904' });
+    expect(log).toHaveBeenCalledWith('deep-dive text');
     log.mockRestore();
   });
 

@@ -16,7 +16,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import YAML from 'yaml';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
-import { retrievePlan, issueTarget } from './structured-data.js';
+import { retrievePlan, retrieveGrounding, issueTarget } from './structured-data.js';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -104,7 +104,7 @@ export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
 export type ReviewDimension = string;
 
 /** Data categories a dimension can require */
-export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'session' | 'git-history' | 'multiple_prs' | 'reflection_history';
+export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'grounding' | 'session' | 'git-history' | 'multiple_prs' | 'reflection_history';
 
 /** Frontmatter metadata from a review dimension prompt */
 export interface DimensionMeta {
@@ -432,6 +432,8 @@ export interface SpawnReviewOptions {
   repo?: string;
   /** Plan text (for plan reviews) */
   planText?: string;
+  /** Grounding text from kaizen-write-plan (canonical plan: tasks, test plan, seam map) */
+  groundingText?: string;
   /** Issue body text (pre-fetched to avoid subagent re-fetching) */
   issueBody?: string;
   /** PR body text (pre-fetched) */
@@ -518,6 +520,7 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: D
     issue_num: opts.issueNum ?? '',
     repo: opts.repo ?? '',
     plan_text: opts.planText ?? '',
+    grounding_text: opts.groundingText ?? '',
     issue_body: opts.issueBody ?? '',
     pr_body: opts.prBody ?? '',
     pr_diff_stat: opts.prDiffStat ?? '',
@@ -598,6 +601,7 @@ export async function spawnBatchReview(
     issue_num: opts.issueNum ?? '',
     repo: opts.repo ?? '',
     plan_text: opts.planText ?? '',
+    grounding_text: opts.groundingText ?? '',
     issue_body: opts.issueBody ?? '',
     pr_body: opts.prBody ?? '',
     pr_diff_stat: opts.prDiffStat ?? '',
@@ -662,6 +666,8 @@ export interface BatteryOptions {
   prDiffStat?: string;
   /** Plan text (for plan reviews) */
   planText?: string;
+  /** Grounding text from kaizen-write-plan (canonical plan: tasks, test plan, seam map) */
+  groundingText?: string;
   /** Working directory */
   cwd?: string;
   /** Timeout per review in ms */
@@ -690,7 +696,21 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
     } catch { /* best effort — plan dims will emit MISSING if not found */ }
   }
 
-  // Dimensions that need 'plan' data but don't have it get a synthetic MISSING
+  // Auto-load groundingText from GitHub issue when not provided.
+  // Grounding is the canonical plan from kaizen-write-plan (task list, test plan, seam map).
+  // plan-fidelity reads this slot to verify PR implements what write-plan designed.
+  let groundingText = opts.groundingText;
+  if (!groundingText && opts.issueNum && opts.repo) {
+    try {
+      const stored = retrieveGrounding(issueTarget(opts.issueNum, opts.repo));
+      if (stored) {
+        groundingText = stored;
+        console.log(`  [review] auto-loaded grounding text from issue #${opts.issueNum} (${stored.length} chars)`);
+      }
+    } catch { /* best effort — grounding dims will emit MISSING if not found */ }
+  }
+
+  // Dimensions that need 'plan' or 'grounding' data but don't have it get a synthetic MISSING
   // finding instead of being silently skipped (kaizen #901). This ensures the
   // battery report surfaces the gap and the fix loop knows about it.
   const metas = loadDimensionMetas();
@@ -712,6 +732,20 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
       });
       return false;
     }
+    if (meta?.needs.includes('grounding') && !groundingText) {
+      skippedDimensions.push(dim);
+      skippedResults.push({
+        dimension: dim,
+        verdict: 'fail',
+        findings: [{
+          requirement: `${DATA_GAP_PREFIX} Grounding text available for review`,
+          status: 'MISSING',
+          detail: `Dimension "${dim}" requires grounding text (kaizen-write-plan output) but none was found. Run /kaizen-write-plan before implementation.`,
+        }],
+        summary: `Skipped: no grounding text found (requires "grounding" data)`,
+      });
+      return false;
+    }
     return true;
   });
 
@@ -724,7 +758,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   const sharedOpts = {
     prUrl: opts.prUrl, issueNum: opts.issueNum, repo: opts.repo,
     issueBody: opts.issueBody, prBody: opts.prBody, prDiffStat: opts.prDiffStat,
-    planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
+    planText, groundingText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
   };
 
   const batchResultGroups = await Promise.all(

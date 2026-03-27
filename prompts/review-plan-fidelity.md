@@ -1,6 +1,6 @@
 ---
 name: plan-fidelity
-description: Does the PR implement what the plan said? A plan MUST exist — the agent creates it before writing code. No plan = showstopper.
+description: Does the PR implement what the grounding (write-plan output) said? A grounding or plan MUST exist — the agent creates it before writing code. No plan = showstopper.
 applies_to: pr
 needs: [diff, issue, plan, pr]
 high_when:
@@ -27,7 +27,9 @@ You are a plan fidelity reviewer. Your job is to check whether the PR implements
 
 ## Where the plan lives
 
-The plan is NOT in the issue (issues describe problems). Look for it in:
+**Primary source: grounding attachment** (`<!-- kaizen:grounding -->`). This is the canonical plan written by `/kaizen-write-plan` — task list, test plan, design alternatives, seam map. Check this first.
+
+**Secondary sources (when no grounding exists):**
 1. **PR description** — "Architecture", "Design decisions", "Approach" sections
 2. **Session tasks** — task list created at session start (visible in the PR or session log)
 3. **Linked spec documents** — `docs/*-spec.md` referenced from the issue
@@ -39,8 +41,17 @@ The plan is NOT in the issue (issues describe problems). Look for it in:
 1. Read the linked issue: `gh issue view {{issue_num}} --repo {{repo}} --json title,body`
    - Note: this is the PROBLEM, not the plan
 2. Read the PR description: `gh pr view {{pr_url}} --json title,body`
-3. Search for the plan in the locations listed above
-4. Read the PR diff: `gh pr diff {{pr_url}}`
+3. **Check for grounding (primary):** The grounding text is provided below if it exists. Use it as the authoritative plan.
+4. If no grounding: search for the plan in secondary locations listed above.
+5. Read the PR diff: `gh pr diff {{pr_url}}`
+
+{{#grounding_text}}
+## Grounding (canonical plan from kaizen-write-plan)
+
+```
+{{grounding_text}}
+```
+{{/grounding_text}}
 
 ### If NO plan is found:
 Return a MISSING finding: "No implementation plan found. The agent went from issue to code without creating a plan. This is a showstopper — kaizen-implement requires planning before implementation."

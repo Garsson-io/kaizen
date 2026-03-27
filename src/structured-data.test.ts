@@ -221,6 +221,18 @@ describe('storeGrounding + retrieveGrounding — round-trip', () => {
     expect(grounding).toContain('Fix the plan slot conflict');
   });
 
+  it('writes to the grounding slot (kaizen:grounding), not the plan slot', () => {
+    // Slot-isolation invariant: storeGrounding must NOT write <!-- kaizen:plan -->
+    ghReturns(''); ghReturns('https://...');
+    storeGrounding(issue, 'grounding content');
+    // Second gh call is the createComment with the body containing the marker
+    const args = mockGh.mock.calls[1][1] as string[];
+    const bodyIdx = args.indexOf('--body');
+    const bodyArg = bodyIdx >= 0 ? args[bodyIdx + 1] : '';
+    expect(bodyArg).toContain('<!-- kaizen:grounding -->');
+    expect(bodyArg).not.toContain('<!-- kaizen:plan -->');
+  });
+
   it('returns null when no grounding exists', () => {
     ghReturns(''); // readAttachment: no attachment found
     const grounding = retrieveGrounding(issue);
