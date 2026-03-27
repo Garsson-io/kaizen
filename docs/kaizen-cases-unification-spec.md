@@ -20,8 +20,8 @@ Kaizen issues are often created and managed via raw `gh` CLI calls, bypassing an
 | Operation | Current path | Problem |
 |-----------|-------------|---------|
 | Create kaizen issue | Raw `gh issue create` in skills | No validation, no abstraction |
-| Read backlog | Raw `gh issue list` in /kaizen-pick | GitHub-dependent, no cache |
-| Update labels | Raw `gh issue edit` in /kaizen-evaluate | Bypasses any sync layer |
+| Read backlog | Raw `gh issue list` in /kaizen-write-plan | GitHub-dependent, no cache |
+| Update labels | Raw `gh issue edit` in /kaizen-write-plan | Bypasses any sync layer |
 | Close issue | Auto-close via PR `Fixes` keyword | Works but fragile |
 
 ## 2. Desired End State
@@ -29,7 +29,7 @@ Kaizen issues are often created and managed via raw `gh` CLI calls, bypassing an
 All kaizen issue lifecycle operations go through a cases abstraction. No agent ever calls `gh issue create/edit/list` directly for kaizen issues.
 
 ```
-Skills (/kaizen-prd, /kaizen-pick, /kaizen-evaluate, /kaizen-reflect)
+Skills (/kaizen-prd, /kaizen-write-plan, /kaizen-write-plan, /kaizen-reflect)
         |
 Domain model (cases module)
         |
@@ -43,7 +43,7 @@ GitHub Issues API
 **What agents can do:**
 - Create kaizen issues through validated tools (with required fields)
 - Query active cases from local cache (fast, offline-capable)
-- Fetch full backlog from CRM on demand (for /kaizen-pick)
+- Fetch full backlog from CRM on demand (for /kaizen-write-plan)
 - Update issue state (labels, status) through the backend adapter
 
 **What agents cannot do:**
@@ -91,7 +91,7 @@ These operations route through the backend adapter, which handles:
 | Data | Source | Cache? | Rationale |
 |------|--------|--------|-----------|
 | Active/claimed kaizen issues | Local DB | Yes | Fast routing, offline-capable |
-| Full backlog (for /kaizen-pick) | GitHub API (on demand) | No | Changes frequently, needs freshness |
+| Full backlog (for /kaizen-write-plan) | GitHub API (on demand) | No | Changes frequently, needs freshness |
 | Specific issue details | GitHub API (on demand) | No | Infrequent, needs latest state |
 
 ### L2 enforcement hook
@@ -112,7 +112,7 @@ A PreToolUse(Bash) hook that blocks `gh issue create --repo <kaizen-repo>` and `
 5. Issue number returned to agent for reference
 6. Local cache updated (if issue is immediately claimed)
 
-### /kaizen-pick reading the backlog
+### /kaizen-write-plan reading the backlog
 
 1. Skill calls `kaizen_list_backlog` (or domain model function)
 2. Domain model fetches from GitHub API: open issues, no `status:active` label

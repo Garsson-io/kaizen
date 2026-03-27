@@ -17,14 +17,14 @@ Every step in the kaizen workflow produces artifacts. Every review dimension con
 
 | Artifact | Created by | Persisted at | Consumed by (immediate) | Re-reviewed by (periodic) | Resilience |
 |----------|-----------|-------------|------------------------|--------------------------|------------|
-| **Issue** | Human, auto-dent explore, kaizen-file-issue, kaizen-reflect | GitHub Issues | kaizen-evaluate, plan-coverage dimension | kaizen-audit-issues (label health, staleness), kaizen-gaps (pattern clusters), kaizen-pick (priority scoring) | Permanent. Survives everything. |
-| **Evaluation** | kaizen-evaluate | Issue comment | kaizen-implement (scope decisions) | kaizen-audit-issues (are evaluations leading to implementations?) | Survives session crash — posted to GitHub before implementation starts. |
-| **Plan** | kaizen-implement step 1 | Issue comment (primary), session context (transient), PR description (final) | plan-coverage dimension, plan-fidelity dimension, test-plan dimension | kaizen-audit-issues (do plans exist for active issues?), future sessions re-evaluating the issue | Survives crash — posted as issue comment before coding. If session dies mid-implementation, plan is still on the issue for the next session. |
+| **Issue** | Human, auto-dent explore, kaizen-file-issue, kaizen-reflect | GitHub Issues | kaizen-write-plan, plan-coverage dimension | kaizen-audit-issues (label health, staleness), kaizen-gaps (pattern clusters) | Permanent. Survives everything. |
+| **Grounding** (`<!-- kaizen:grounding -->`) | kaizen-write-plan Phase 5 | Issue comment (attachment marker) | kaizen-implement Step 0 (`retrieve-grounding`); review dims needing full plan | kaizen-audit-issues (do planned issues have grounding?) | Survives session crash — stored before implementation starts. Never overwritten — write-plan is sole writer. |
+| **Plan** (`<!-- kaizen:plan -->`) | kaizen-implement Step 0 | Issue comment (attachment marker) | review-battery.ts `retrievePlan()` — all review dimensions, plan-fidelity | (not re-reviewed) | Brief execution note: "confirmed grounding #N, high-priority dims: X, Y". Implement is sole writer. |
 | **Code + Tests** | kaizen-implement steps 2-4 | Git (branch, commits) | All code dimensions (logic, error-handling, dry, test-quality, scope-fidelity), CI | git log, git blame, future kaizen-deep-dive investigating patterns | Survives crash if committed. Uncommitted work lost with worktree — but plan on issue lets next session rebuild. |
 | **Review findings** | kaizen-review-pr subagents | PR comment (primary), session state `.claude/reviews/pr-N.json` (transient) | Fix loop, human reviewer, merge decision | kaizen-gaps (what do reviews keep catching? → improve skills/hooks), auto-dent batch analysis (review_verdict in run metrics) | PR comment survives everything. Session state lost on crash — but review is cheap to re-run ($0.13/dimension). |
 | **PR description** | kaizen-write-pr | GitHub PR body | pr-description dimension, human reviewer | kaizen-audit-issues (do PRs tell stories?), future agents reading PR for context | Permanent once posted. Updated via `gh pr edit`. |
 | **CI results** | GitHub Actions | GitHub Checks | Merge decision | CI history analysis | Permanent. |
-| **Reflection** | kaizen-reflect | New GitHub Issues + session log | kaizen-pick (next work selection), kaizen-gaps (pattern analysis) | kaizen-audit-issues (are reflections producing actionable issues?) | New issues are permanent. Session log available if session ID known. |
+| **Reflection** | kaizen-reflect | New GitHub Issues + session log | kaizen-deep-dive (next work selection), kaizen-gaps (pattern analysis) | kaizen-audit-issues (are reflections producing actionable issues?) | New issues are permanent. Session log available if session ID known. |
 
 ## The Recursive Loops
 
@@ -56,7 +56,7 @@ ISSUE ──→ PLAN ──→ CODE ──→ REVIEW ──→ PR ──→ MERG
 ```
 
 ### Loop 1: Reflection → New Issues → New Work
-kaizen-reflect produces impediments → filed as new issues → picked by kaizen-pick → worked on by kaizen-implement → reflected on again. This is the core improvement cycle.
+kaizen-reflect produces impediments → filed as new issues → surfaced by kaizen-deep-dive → planned by kaizen-write-plan → worked on by kaizen-implement → reflected on again. This is the core improvement cycle.
 
 ### Loop 2: Review Findings → Dimension Improvement
 Review findings reveal patterns: "the logic-correctness dimension keeps missing async errors" → update the dimension prompt → future reviews are better. The dimensions are living documents.
@@ -131,7 +131,8 @@ Each dimension declares `needs:` in frontmatter. How subagents access each:
 | `diff` | Code changes | `gh pr diff <url>` | Git (permanent) |
 | `issue` | Issue body | `gh issue view <N> --json body` | GitHub (permanent) |
 | `pr` | PR metadata + body | `gh pr view <url> --json body` | GitHub (permanent) |
-| `plan` | Plan (issue comment) | `npx tsx src/cli-structured-data.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"` (falls back to issue body regex if no plan-store marker) | GitHub (permanent) |
+| `grounding` | Grounding (canonical plan from write-plan) | `npx tsx src/cli-structured-data.ts retrieve-grounding --issue <N> --repo "$ISSUES_REPO"` | GitHub (permanent) |
+| `plan` | Plan (brief execution note from implement) | `npx tsx src/cli-structured-data.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"` | GitHub (permanent) |
 | `attachment` | Named machine-readable data on issue/PR (plans, metadata, review findings) | `npx tsx src/cli-section-editor.ts read-attachment --issue <N> --repo "$ISSUES_REPO" --name <name>` or `list-attachments` | GitHub (permanent — issue/PR comments with `<!-- kaizen:<name> -->` marker) |
 | `tests` | Test output | `npm test` or test files in diff | Ephemeral (re-runnable) |
 | `codebase` | Existing code | `grep`, `glob` on repo | Git (permanent) |
