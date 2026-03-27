@@ -172,16 +172,19 @@ describe('pr-review-loop: PR create', () => {
     expect(state.LAST_REVIEWED_SHA).toBeTruthy();
   });
 
-  it('exits silently when no PR URL in output', () => {
-    const output = runHook({
-      tool_input: { command: 'gh pr create --title test' },
-      tool_response: {
-        stdout: 'some error output',
-        stderr: '',
-        exit_code: '0',
+  it('exits silently when no PR URL in output and gh fallback finds nothing', () => {
+    // Use processHookInput directly to inject a no-op gh fallback.
+    // Without the override, defaultLookupPrUrlForBranch runs `gh pr list`
+    // which can find a real open PR on the current branch in test environments.
+    const decision = processHookInput(
+      {
+        tool_input: { command: 'gh pr create --title test' },
+        tool_response: { stdout: 'some error output', stderr: '', exit_code: '0' },
       },
-    });
-    expect(output).toBe('');
+      { stateDir: testStateDir, lookupPrUrlForBranch: () => undefined },
+    );
+    expect(decision.action).toBe('ignore');
+    expect(decision.reason).toBe('no_pr_url_from_create');
   });
 });
 
@@ -627,22 +630,50 @@ describe('INCIDENT REGRESSION #973: gh pr create with empty stdout never creates
   it('INVARIANT: no_pr_url_from_create is traced so the incident is diagnosable', () => {
     // After #978, every hook decision is traced. A no_pr_url_from_create event
     // in the trace log means: gate was NOT created — this was the silent failure mode.
+    // KAIZEN_PR_LOOKUP_DISABLED=1 prevents the gh fallback from finding our real
+    // open PR on the current branch in the test environment.
     const traceFile = path.join(testStateDir, 'trace.jsonl');
     runHookRaw(
       JSON.stringify({
         tool_input: { command: incident965Command },
         tool_response: { stdout: '', stderr: '', exit_code: '0' },
       }),
-      { KAIZEN_HOOK_TRACE: traceFile },
+      { KAIZEN_HOOK_TRACE: traceFile, KAIZEN_PR_LOOKUP_DISABLED: '1' },
     );
 
     expect(fs.existsSync(traceFile)).toBe(true);
     const entries = fs.readFileSync(traceFile, 'utf8')
       .trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
-    const gateEntry = entries.find(e => e.hook === 'pr-review-loop');
+    const gateEntry = entries.find((e: Record<string, string>) => e.hook === 'pr-review-loop');
     expect(gateEntry).toBeDefined();
     expect(gateEntry.reason).toBe('no_pr_url_from_create');
     // This trace entry is what would have let us diagnose incident #973 immediately
     // instead of reconstructing it from the absence of a state file.
+  });
+
+  // TDD RED — this test drives the fix.
+  // When stdout="" and stderr="" but gh pr create succeeded (exit_code=0),
+  // the hook should fall back to querying gh for the current branch's PR URL.
+  // ProcessOptions gets a new injectable `lookupPrUrlForBranch` so this is testable.
+  it('TDD RED: gate IS created when stdout/stderr empty but gh fallback finds URL', () => {
+    const decision = processHookInput(
+      {
+        tool_input: { command: incident965Command },
+        tool_response: { stdout: '', stderr: '', exit_code: '0' },
+      },
+      {
+        stateDir: testStateDir,
+        branch: 'fix/965-policy-10',
+        repoFromGit: 'Garsson-io/kaizen',
+        // Inject the fallback: simulates `gh pr list --head <branch>` finding the PR
+        lookupPrUrlForBranch: (_branch: string) =>
+          'https://github.com/Garsson-io/kaizen/pull/965',
+      },
+    );
+
+    expect(decision.action).toBe('create_gate');
+    expect(decision.reason).toBe('pr_created');
+    const stateFiles = fs.readdirSync(testStateDir);
+    expect(stateFiles.some(f => f.includes('965'))).toBe(true);
   });
 });
