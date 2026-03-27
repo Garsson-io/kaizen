@@ -246,6 +246,18 @@ describe('storeGrounding + retrieveGrounding — round-trip', () => {
     const grounding = retrieveGrounding(issue);
     expect(grounding).toBeNull();
   });
+
+  it('storeGrounding with empty string still writes the marker comment', () => {
+    // INVARIANT: storeGrounding('') must write the attachment (marker is present),
+    // even if retrieveGrounding will then return null for it.
+    // This ensures the slot is claimed/reserved even if content is absent.
+    ghReturns(''); ghReturns('https://...');
+    storeGrounding(issue, '');
+    const args = mockGh.mock.calls[1][1] as string[];
+    const bodyIdx = args.indexOf('--body');
+    const bodyArg = bodyIdx >= 0 ? args[bodyIdx + 1] : '';
+    expect(bodyArg).toContain('<!-- kaizen:grounding -->');
+  });
 });
 
 describe('retrieveDeepDive — combined body + metadata + connected', () => {

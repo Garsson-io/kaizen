@@ -5,6 +5,7 @@ import {
   nextReviewRound,
   storePlan,
   storeGrounding,
+  retrieveGrounding,
   storeMetadata,
 } from './structured-data.js';
 
@@ -161,6 +162,19 @@ describe('individual command handlers', () => {
     await handlers['retrieve-grounding']({ ...baseArgs, issue: '904' });
     expect(log).toHaveBeenCalledWith('grounding text');
     log.mockRestore();
+  });
+
+  it('retrieve-grounding exits non-zero when no grounding found', async () => {
+    // INVARIANT: retrieve-grounding must signal failure (process.exit(1)) when
+    // grounding is absent — callers (kaizen-implement Step 0) must not proceed
+    // with an empty grounding silently.
+    vi.mocked(retrieveGrounding).mockReturnValueOnce(null);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await handlers['retrieve-grounding']({ ...baseArgs, issue: '904' });
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
   });
 
   it('retrieve-deep-dive prints combined deep-dive text', async () => {

@@ -707,7 +707,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
         groundingText = stored;
         console.log(`  [review] auto-loaded grounding text from issue #${opts.issueNum} (${stored.length} chars)`);
       }
-    } catch { /* best effort — grounding dims will emit MISSING if not found */ }
+    } catch (e) { console.error(`  [review] grounding auto-load failed: ${e}`); }
   }
 
   // Dimensions that need 'plan' or 'grounding' data but don't have it get a synthetic MISSING
@@ -728,7 +728,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
           status: 'MISSING',
           detail: `Dimension "${dim}" requires plan text but none was provided. Create a plan before running this review.`,
         }],
-        summary: `Skipped: no plan text provided (requires "plan" data)`,
+        summary: `FAIL — plan required but not found. Run /kaizen-write-plan first.`,
       });
       return false;
     }
@@ -742,7 +742,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
           status: 'MISSING',
           detail: `Dimension "${dim}" requires grounding text (kaizen-write-plan output) but none was found. Run /kaizen-write-plan before implementation.`,
         }],
-        summary: `Skipped: no grounding text found (requires "grounding" data)`,
+        summary: `FAIL — grounding required but not found. Run /kaizen-write-plan first.`,
       });
       return false;
     }

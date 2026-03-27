@@ -167,6 +167,35 @@ describe("kaizen-write-plan — Phase 2: Problem Validation", () => {
 });
 
 // ---------------------------------------------------------------------------
+// kaizen-deep-dive — Phase 5: Hand Off to /kaizen-write-plan
+// ---------------------------------------------------------------------------
+// Problem: Phase 5 previously handed off to /kaizen-implement directly.
+// New behavior: Phase 5 invokes /kaizen-write-plan (Path A), which handles
+//   planning and admin approval before implementation.
+// If an agent running deep-dive still invokes implement directly, the grounding
+//   step is skipped entirely — retrieve-grounding at Step 0 would find nothing.
+// ---------------------------------------------------------------------------
+
+describe("kaizen-deep-dive — Phase 5: Hand Off to kaizen-write-plan", () => {
+  it("INVARIANT: SKILL.md Phase 5 invokes /kaizen-write-plan as the handoff target", () => {
+    // The handoff is deep-dive → write-plan (not directly → implement).
+    // write-plan then handles implement handoff. This test ensures the direct
+    // handoff in Phase 5 names write-plan, not implement.
+    const skill = loadSkill("kaizen-deep-dive");
+    const phase5 = skill.split("## Phase 5")[1] ?? "";
+    expect(phase5).toContain("kaizen-write-plan");
+    // The first action in Phase 5 must invoke write-plan
+    const firstInvoke = phase5.match(/Invoke\s+`?\/kaizen-(\w[\w-]*)`?/)?.[1] ?? "";
+    expect(firstInvoke).toBe("write-plan");
+  });
+
+  it("INVARIANT: SKILL.md description mentions kaizen-write-plan handoff", () => {
+    const skill = loadSkill("kaizen-deep-dive");
+    expect(skill).toContain("kaizen-write-plan");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // kaizen-implement — Task 7a: Related Issues Sweep
 // ---------------------------------------------------------------------------
 
