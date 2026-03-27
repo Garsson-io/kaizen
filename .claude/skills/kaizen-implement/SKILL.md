@@ -124,7 +124,7 @@ The `plan` slot is kept populated (review-battery reads it via `retrievePlan()`)
 | 1 | Read grounding + enter worktree | retrieve-grounding → check review dims → EnterWorktree → store-plan (brief note) |
 | 2 | Write failing tests (TDD RED) | Express invariants from grounding's test plan. Must fail before implementing. |
 | 3 | Implement (TDD GREEN) | Make tests pass with simplest correct change. Full suite green. |
-| 4 | Push + create PR | Stage, commit, push, gh pr create with `Fixes $ISSUES_REPO#N`. |
+| 4 | Push + create PR | Stage, commit, push. Run `/kaizen-write-pr` to draft PR body (Story Spine), then `gh pr create`. Add `status:has-pr` label. |
 | 5 | Review battery (round 1) | `/kaizen-review-pr` — spawn subagents via Agent tool for all dimensions. Store findings via `store-review-finding`. |
 | 6 | Review fix loop | Fix MUST-FIX + SHOULD-FIX. Commit + push. Re-run review. Max 3 rounds total. |
 | 7 | Requirements coverage review | Agent tool with `prompts/review-requirements.md`. Fix MISSING/PARTIAL. Max 3 rounds. |
@@ -225,6 +225,8 @@ The L3 enforcement in `ipc-cases.ts` will:
 - Block creation if another active case already references this issue (collision detection)
 
 ### On PR creation
+
+Use `/kaizen-write-pr` to draft the PR body using the Story Spine narrative — a reviewer should understand the PR's value, impact, and technical choices **without reading the diff**. The diff is proof; the description is the argument.
 
 After creating a PR, link it to the kaizen issue and ensure auto-closure on merge:
 ```bash
