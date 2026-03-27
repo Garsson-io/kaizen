@@ -558,3 +558,91 @@ describe('pr-review-loop — null-input observability (kaizen #975)', () => {
     expect(prReviewEntry.hook).toBe('pr-review-loop');
   });
 });
+
+// INCIDENT REGRESSION: #973 — PR #965 merged without review gate
+//
+// Root cause: gh pr create with a large heredoc body produced tool_response.stdout=""
+// (empty). reconstructPrUrl() found no URL in stdout, stderr, or command args,
+// returned undefined, and the hook returned ignore/no_pr_url_from_create.
+// No state file was written. No review gate was created. PR merged unreviewed.
+//
+// The exact command used for PR #965:
+//   gh pr create --title "feat: Policy 10 ..." \
+//     --body "$(cat <<'EOF'
+//   ## Once upon a time…
+//   [500+ lines of Story Spine markdown with backticks, $variables, code blocks]
+//   EOF
+//   )"
+//
+// Claude Code serialized this as valid JSON. But tool_response.stdout was ""
+// because gh pr create output the URL in a way that wasn't captured in stdout.
+describe('INCIDENT REGRESSION #973: gh pr create with empty stdout never creates gate', () => {
+  // The PR #965 command — a heredoc body passed via command substitution.
+  // This is a real command that Claude Code would produce; the body is truncated
+  // but representative of the markdown content that triggered the incident.
+  const incident965Command = `gh pr create --title "feat: Policy 10 — skill changes require behavioral proof" --body "$(cat <<'EOF'\n## Once upon a time…\n\nThe kaizen review battery enforced code quality. Every PR went through review dimensions.\n\n## Every day…\n\nSkill files (.claude/skills/*/SKILL.md) changed regularly. No enforcement existed for skill behavior.\n\n## One day…\n\nA PR modified review-skill-changes.md — a review battery dimension — with only descriptive text. No behavioral proof. No synthetic case. No smoke test. The dimension said "requires behavioral proof" but the PR that added it didn't provide any.\n\n## Because of that…\n\nPolicy 10: all PRs modifying skill files MUST include behavioral proof via synthetic case.\n\n\`\`\`typescript\n// Before: dimension fired on policy docs\nconst high_when = ['policies.md', 'SKILL.md']\n\n// After: only fires on actual skill/prompt files\nconst high_when = ['SKILL.md', 'prompts/review-*.md']\n\`\`\`\n\n## Until finally…\n\nThe review battery catches every skill change without manual inspection.\nEOF\n)"`;
+
+  it('INVARIANT: gate NOT created when stdout is empty (reproduces incident)', () => {
+    // This is the bug: valid JSON, gh pr create command, but stdout="" — URL lost.
+    // processHookInput must return no_pr_url_from_create (not create a gate).
+    const decision = processHookInput(
+      {
+        tool_input: { command: incident965Command },
+        tool_response: { stdout: '', stderr: '', exit_code: '0' },
+      },
+      { stateDir: testStateDir, branch: 'main', repoFromGit: 'Garsson-io/kaizen' },
+    );
+
+    expect(decision.action).toBe('ignore');
+    expect(decision.reason).toBe('no_pr_url_from_create');
+
+    // State file must NOT exist — no gate means PR can merge without review
+    const stateFiles = fs.readdirSync(testStateDir);
+    expect(stateFiles.filter(f => f.includes('kaizen'))).toHaveLength(0);
+  });
+
+  it('INVARIANT: gate IS created when URL is in stderr (mitigation path)', () => {
+    // gh pr create outputs the URL to stderr on some gh versions / CI environments.
+    // If reconstructPrUrl finds the URL in stderr, the gate must still be created.
+    const decision = processHookInput(
+      {
+        tool_input: { command: incident965Command },
+        tool_response: {
+          stdout: '',
+          stderr: 'https://github.com/Garsson-io/kaizen/pull/965\n',
+          exit_code: '0',
+        },
+      },
+      { stateDir: testStateDir, branch: 'main', repoFromGit: 'Garsson-io/kaizen' },
+    );
+
+    expect(decision.action).toBe('create_gate');
+    expect(decision.reason).toBe('pr_created');
+
+    // State file MUST exist
+    const stateFiles = fs.readdirSync(testStateDir);
+    expect(stateFiles.some(f => f.includes('kaizen') && f.includes('965'))).toBe(true);
+  });
+
+  it('INVARIANT: no_pr_url_from_create is traced so the incident is diagnosable', () => {
+    // After #978, every hook decision is traced. A no_pr_url_from_create event
+    // in the trace log means: gate was NOT created — this was the silent failure mode.
+    const traceFile = path.join(testStateDir, 'trace.jsonl');
+    runHookRaw(
+      JSON.stringify({
+        tool_input: { command: incident965Command },
+        tool_response: { stdout: '', stderr: '', exit_code: '0' },
+      }),
+      { KAIZEN_HOOK_TRACE: traceFile },
+    );
+
+    expect(fs.existsSync(traceFile)).toBe(true);
+    const entries = fs.readFileSync(traceFile, 'utf8')
+      .trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+    const gateEntry = entries.find(e => e.hook === 'pr-review-loop');
+    expect(gateEntry).toBeDefined();
+    expect(gateEntry.reason).toBe('no_pr_url_from_create');
+    // This trace entry is what would have let us diagnose incident #973 immediately
+    // instead of reconstructing it from the absence of a state file.
+  });
+});
