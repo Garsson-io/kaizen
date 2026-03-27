@@ -18,7 +18,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { ProbeOutput, GroundTruth, Level } from "../src/eval-probe-schema.js";
+import { ProbeOutput, GroundTruth } from "../src/eval-probe-schema.js";
 
 function parseFile(path: string): unknown {
   const raw = readFileSync(path, "utf-8");
@@ -57,7 +57,7 @@ function precisionScore(pred: string, gt: string): number {
   return 0.0;
 }
 
-function consistencyScore(planConsistent: boolean, note?: string): number {
+function consistencyScore(planConsistent: boolean): number {
   return planConsistent ? 1.0 : 0.0;
 }
 
@@ -101,7 +101,7 @@ function scoreOutput(output: z.infer<typeof ProbeOutput>, gt: z.infer<typeof Gro
     const weight = ROW_WEIGHT[gtLevel];
     const suff = sufficiencyScore(b.minimum_level, gtLevel);
     const prec = precisionScore(b.minimum_level, gtLevel);
-    const cons = consistencyScore(b.plan_consistent, b.plan_consistent_note);
+    const cons = consistencyScore(b.plan_consistent);
 
     totalWeight += weight;
     weightedSuff += suff * weight;
@@ -170,10 +170,11 @@ function main() {
     const gt = loadAndValidate(gtFile, GroundTruth) as z.infer<typeof GroundTruth>;
     results.push(scoreOutput(output, gt));
   } else if (outputDir && gtDir) {
-    const files = readdirSync(outputDir).filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
+    const files = readdirSync(outputDir).filter((f) => f.endsWith(".json") || f.endsWith(".yaml") || f.endsWith(".yml"));
     for (const file of files.sort()) {
-      const taskId = file.replace(/^out-[a-z]+-/, "").replace(/\.(yaml|yml)$/, "").toUpperCase();
-      const gtFile = `${gtDir}/${taskId.toLowerCase().replace("_", "-")}.yaml`;
+      const ext = file.endsWith(".json") ? "json" : "yaml";
+      const taskId = file.replace(/^out-[a-z]+-/, "").replace(/\.(json|yaml|yml)$/, "").toUpperCase();
+      const gtFile = `${gtDir}/${taskId.toLowerCase().replace("_", "-")}.${ext}`;
       try {
         const output = loadAndValidate(`${outputDir}/${file}`, ProbeOutput) as z.infer<typeof ProbeOutput>;
         const gt = loadAndValidate(gtFile, GroundTruth) as z.infer<typeof GroundTruth>;
