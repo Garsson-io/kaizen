@@ -121,28 +121,27 @@ describe("kaizen-gaps — Phase 1.7: Hypothesis Validation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// kaizen-evaluate — Phase 0.7: Problem Validation
+// kaizen-write-plan — Phase 2: Problem Validation (PATH B)
 // ---------------------------------------------------------------------------
 // Problem: skill accepted issues at face value without checking if the
 //   problem actually exists in the current codebase.
-// New behavior: Phase 0.7 runs a problem-existence check before scoping.
-//   If problem NOT confirmed, outputs "Problem NOT confirmed" and stops.
+// New behavior: Phase 2 (Path B only) runs a problem-existence check
+//   before scoping. If problem NOT confirmed, outputs "Problem NOT confirmed".
 // Behavioral test scenario: an issue claiming kaizen-reflect is missing a
-//   plan-vs-delivery check — but that check EXISTS (line 98: "PLAN-VS-DELIVERY CHECK").
-//   The correct answer is "Problem NOT confirmed". The assertion enforces this
-//   direction explicitly — NOT just any confirmation language.
+//   plan-vs-delivery check — but that check EXISTS.
+//   The correct answer is "Problem NOT confirmed".
 // ---------------------------------------------------------------------------
 
-describe("kaizen-evaluate — Phase 0.7: Problem Validation", () => {
+describe("kaizen-write-plan — Phase 2: Problem Validation", () => {
   it.skipIf(!isLive)(
     "reports 'Problem NOT confirmed' when the claimed problem is already fixed",
     async () => {
       const prompt = [
-        "You are running /kaizen-evaluate on this issue:",
+        "You are running /kaizen-write-plan on this issue (Path B):",
         "",
         "Issue: 'kaizen-reflect skill is missing a plan-vs-delivery check'",
         "",
-        "Apply Phase 0.7 (Problem Validation):",
+        "Apply Phase 2 (Problem Validation):",
         "1. Re-state the claim as a falsifiable hypothesis",
         "2. Design the minimal test: grep .claude/skills/kaizen-reflect/SKILL.md for 'plan-vs-delivery' or 'PLAN-VS-DELIVERY'",
         "3. Run the test",
@@ -152,18 +151,16 @@ describe("kaizen-evaluate — Phase 0.7: Problem Validation", () => {
       ].join("\n");
 
       const output = runSkill(prompt, { maxBudget: 0.10 });
-      // The plan-vs-delivery check EXISTS in kaizen-reflect at line 98.
-      // Phase 0.7 MUST detect this and output "Problem NOT confirmed".
-      // This assertion intentionally requires the NOT form — accepting
-      // "Problem confirmed" here would mean the test passes on failure.
+      // The plan-vs-delivery check EXISTS in kaizen-reflect.
+      // Phase 2 MUST detect this and output "Problem NOT confirmed".
       expect(output).toMatch(/Problem NOT confirmed/i);
     },
     90_000,
   );
 
-  it("SKILL.md contains Phase 0.7 section", () => {
-    const skill = loadSkill("kaizen-evaluate");
-    expect(skill).toContain("Phase 0.7");
+  it("SKILL.md contains Phase 2 Problem Validation section", () => {
+    const skill = loadSkill("kaizen-write-plan");
+    expect(skill).toContain("Phase 2");
     expect(skill).toContain("Problem Validation");
     expect(skill).toContain("Problem NOT confirmed");
   });
@@ -219,16 +216,18 @@ describe("kaizen-file-issue — Duplicate Decision Table", () => {
 });
 
 // ---------------------------------------------------------------------------
-// kaizen-evaluate — Phase 4.5: Plan Formation (kaizen #981)
+// kaizen-write-plan — Phase 5: Form Grounded Plan (kaizen #981, #1009)
 // ---------------------------------------------------------------------------
 
-describe("kaizen-evaluate — Phase 4.5: Plan Formation", () => {
-  it("INVARIANT: SKILL.md contains Phase 4.5 with structured plan formation", () => {
-    // DONE WHEN: kaizen-evaluate/SKILL.md has Phase 4.5 requiring agents to answer
-    // GOAL/DONE WHEN/hypothesis/alternatives/seam before writing any plan.
+describe("kaizen-write-plan — Phase 5: Form Grounded Plan", () => {
+  it("INVARIANT: SKILL.md contains Phase 5 with 5-step grounding process", () => {
+    // DONE WHEN: kaizen-write-plan/SKILL.md has Phase 5 requiring agents to run
+    // all 5 steps (success criteria, tooling survey, alternatives, hypothesis,
+    // seam map) before writing the grounding document.
     // Root of #981: agents wrote plans without grounding (no DONE WHEN, no hypothesis).
-    const skill = loadSkill("kaizen-evaluate");
-    expect(skill).toContain("Phase 4.5");
+    // Fixed in #1009: grounding now lives in kaizen-write-plan, not kaizen-evaluate.
+    const skill = loadSkill("kaizen-write-plan");
+    expect(skill).toContain("Phase 5");
     expect(skill).toContain("DONE WHEN");
     expect(skill).toContain("GOAL:");
     expect(skill).toContain("Information Retrieved");
@@ -320,35 +319,33 @@ Review this diff for DRY violations. Output JSON only.`;
 // Behavioral: Phase 4.5 produces structured plan fields (Policy 10 proof)
 // ---------------------------------------------------------------------------
 
-describe("Behavioral: kaizen-evaluate Phase 4.5 produces structured plan (Policy 10)", () => {
+describe("Behavioral: kaizen-write-plan Phase 5 produces structured plan (Policy 10)", () => {
   it.skipIf(!isLive)(
-    "INVARIANT: agent using Phase 4.5 steps produces GOAL: and DONE WHEN fields",
+    "INVARIANT: agent using Phase 5 steps produces GOAL: and DONE WHEN fields",
     () => {
       // Policy 10 requires behavioral proof for SKILL.md changes.
-      // Before Phase 4.5: agents wrote plans as unstructured task lists with
-      // no GOAL/DONE WHEN fields — the plan was a list of actions, not a
-      // statement of what 'done' looks like from the outside.
-      // After Phase 4.5: an agent given the phase text produces a structured
-      // plan with GOAL: and DONE WHEN fields as the first output.
+      // Before Phase 5 (kaizen-evaluate Phase 4.5): agents wrote plans as
+      // unstructured task lists with no GOAL/DONE WHEN fields.
+      // After Phase 5 (kaizen-write-plan): an agent given the phase text
+      // produces a structured plan with GOAL: and DONE WHEN fields.
       //
-      // This test extracts Phase 4.5 from the SKILL.md and asks haiku to
-      // follow it for a simple issue. The output must contain the fields
-      // the phase prescribes.
-      const skillText = loadSkill("kaizen-evaluate");
-      const phase45 = skillText.split("### Phase 4.5:")[1]?.split("### Phase 4:")[0] ?? "";
-      expect(phase45.length, "Phase 4.5 section must exist in SKILL.md").toBeGreaterThan(100);
+      // This test extracts Phase 5 from kaizen-write-plan SKILL.md and asks
+      // haiku to follow it for a simple issue.
+      const skillText = loadSkill("kaizen-write-plan");
+      const phase5 = skillText.split("## Phase 5:")[1]?.split("## Phase 6:")[0] ?? "";
+      expect(phase5.length, "Phase 5 section must exist in SKILL.md").toBeGreaterThan(100);
 
-      const prompt = `${phase45}
+      const prompt = `${phase5}
 
-## Apply Phase 4.5 to this issue
+## Apply Phase 5 to this issue
 
 Issue: "When the CLI tool crashes, the error message shows 'undefined' instead of the actual error text. Users cannot diagnose failures."
 
-Complete Steps 1 and 2 (success criteria extraction and existing tools survey) and output the plan in the schema shown above.`;
+Complete Steps 5.1 and 5.2 (success criteria extraction and tooling survey) and output the plan in the schema shown above.`;
 
       const output = runSkill(prompt, { maxBudget: 0.20, timeout: 120_000 });
 
-      // Phase 4.5 Step 1 requires GOAL: and DONE WHEN: fields in the plan output
+      // Phase 5 Step 5.1 requires GOAL: and DONE WHEN: fields in the plan output
       expect(output).toContain("GOAL:");
       expect(output).toContain("DONE WHEN");
     },
