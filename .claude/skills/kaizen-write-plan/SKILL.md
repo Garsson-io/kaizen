@@ -254,16 +254,41 @@ Run the validation before committing to the plan.
 
 ### Step 5.5: Map Testability Seams
 
-For each significant behavior:
+For each significant behavior, fill in this row:
 
 ```
 BEHAVIOR: [what it does]
 LIVES IN: [file.ts, functionName()]
 TESTED IN: [tests/test_file.ts or tests/test_file.sh]
 SEAM: [the injection point that isolates this for testing]
+LADDER RUNG: [the lowest rung from docs/test-ladder-spec.md that actually exercises this boundary]
 ```
 
-If you cannot name the seam, the behavior is not testable in isolation.
+**Choose the rung that matches the boundary, not the cheapest rung available.** See `docs/test-ladder-spec.md` for the full ladder. Key guidance:
+
+- If the seam involves a real subprocess, OS interaction, hook chain, or agent-tool boundary — that's L5+ territory. Unit tests (L1-L2) run inside the same process and cannot observe cross-process behavior.
+- `SessionSimulator` costs **$0 and runs in <1s**. It is NOT a behavioral LLM test. It simulates hook chains and tool use without calling the API. Never defer a `SessionSimulator`-testable behavior to a "future E2E issue."
+- **Circular deferral anti-pattern**: "We'll add E2E tests in the issue that tracks E2E gaps" is circular when the symptom under fix IS the E2E gap. If this issue is partly about insufficient test coverage at level L, the fix must include tests at level L, not defer them to the gap issue.
+
+If you cannot name the seam, the behavior is not testable in isolation — design the seam before writing the implementation.
+
+### Cross-Check Gate (MANDATORY before writing the test plan)
+
+**Scan every seam map row. For each row where `LADDER RUNG ≥ L5`:**
+
+1. The test plan MUST include a test at that rung or higher for that behavior.
+2. A test plan rung that is lower than the seam's `LADDER RUNG` is a contradiction — fix the test plan, not the seam map.
+3. If you find yourself writing "deferred to #N" for an L5+ seam: check whether #N is the same issue (or a symptom of the same issue) you are currently solving. If yes, the deferral is circular — the test belongs here.
+
+Write the cross-check result explicitly before starting the test plan section:
+
+```
+CROSS-CHECK:
+- [behavior]: seam at [rung], test plan at [rung] — OK / CONTRADICTION
+- [behavior]: seam at [rung], test plan at [rung] — OK / CONTRADICTION
+```
+
+If any row shows CONTRADICTION, fix the test plan rung before proceeding.
 
 ### Write and Store the Plan
 
@@ -288,10 +313,10 @@ Rejected because: ...
 [Ordered, concrete, traceable to DONE WHEN]
 
 ## Test Plan
-[Per-task: what invariant is tested, which test file, unit/integration/E2E]
+[Per-task: what invariant is tested, which test file, rung from test-ladder-spec.md]
 
 ## Seam Map
-[Per-behavior: file, test file, seam]
+[Per-behavior: file, test file, seam, LADDER RUNG]
 ```
 
 Store immediately:
