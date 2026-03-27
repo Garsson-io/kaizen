@@ -67,6 +67,7 @@ import {
   storeIterationState,
   retrieveIterationState,
   type ReviewFindingData,
+  ReviewFindingDataSchema,
 } from './structured-data.js';
 
 export type CliArgs = Record<string, string> & { command: string };
@@ -116,9 +117,9 @@ async function handleStoreReviewFinding(a: CliArgs): Promise<void> {
   const text = raw.replace(/^```(?:yaml|json)?\s*/im, '').replace(/```\s*$/m, '').trim();
   let finding: ReviewFindingData;
   try {
-    finding = YAML.parse(text);
+    finding = ReviewFindingDataSchema.parse(YAML.parse(text));
   } catch (e) {
-    console.error(`store-review-finding: YAML parse failed for dimension '${dim}'.`);
+    console.error(`store-review-finding: schema validation failed for dimension '${dim}'.`);
     console.error(`  Input (first 200 chars): ${raw.slice(0, 200)}`);
     console.error(`  Error: ${e}`);
     process.exit(1);

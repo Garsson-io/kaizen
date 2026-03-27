@@ -19,7 +19,10 @@ vi.mock('node:child_process', () => ({
   execSync: vi.fn().mockReturnValue('stdin-content'),
 }));
 
-vi.mock('./structured-data.js', () => ({
+vi.mock('./structured-data.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./structured-data.js')>();
+  return {
+  ...actual,
   prTarget: vi.fn((pr: string, repo: string) => ({ kind: 'pr', number: Number(pr), repo })),
   issueTarget: vi.fn((issue: string, repo: string) => ({ kind: 'issue', number: Number(issue), repo })),
   storeReviewFinding: vi.fn().mockReturnValue('https://example.com/finding'),
@@ -46,7 +49,8 @@ vi.mock('./structured-data.js', () => ({
   updatePrSection: vi.fn(),
   storeIterationState: vi.fn().mockReturnValue('https://example.com/iteration'),
   retrieveIterationState: vi.fn().mockReturnValue({ round: 1 }),
-}));
+  };
+});
 
 beforeEach(() => vi.clearAllMocks());
 

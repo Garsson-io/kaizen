@@ -14,6 +14,7 @@
  */
 
 import YAML from 'yaml';
+import { z } from 'zod';
 import {
   listAttachments,
   readAttachment,
@@ -88,27 +89,25 @@ export function extractPlanText(text: string): string | undefined {
 
 // ── Reviews ─────────────────────────────────────────────────────────
 
-export interface ReviewFinding {
-  requirement: string;
-  status: 'DONE' | 'PARTIAL' | 'MISSING';
-  /** Short label for the table row */
-  detail: string;
-  /** Full analysis text — file references, code snippets, fix suggestions. Shown below the table for non-DONE findings. */
-  analysis?: string;
-}
+export const ReviewFindingSchema = z.object({
+  requirement: z.string(),
+  status: z.enum(['DONE', 'PARTIAL', 'MISSING']),
+  detail: z.string(),
+  analysis: z.string().optional(),
+});
 
-export interface ReviewFindingData {
-  dimension: string;
-  verdict: 'pass' | 'fail';
-  summary: string;
-  findings: ReviewFinding[];
-  /** Review round number (shown in header) */
-  round?: number;
-  /** Wall-clock duration in seconds */
-  durationSec?: number;
-  /** Cost in USD */
-  costUsd?: number;
-}
+export const ReviewFindingDataSchema = z.object({
+  dimension: z.string(),
+  verdict: z.enum(['pass', 'fail']),
+  summary: z.string(),
+  findings: z.array(ReviewFindingSchema),
+  round: z.number().optional(),
+  durationSec: z.number().optional(),
+  costUsd: z.number().optional(),
+});
+
+export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
+export type ReviewFindingData = z.infer<typeof ReviewFindingDataSchema>;
 
 const STATUS_ICON: Record<string, string> = { DONE: '✅', PARTIAL: '⚠️', MISSING: '❌' };
 
