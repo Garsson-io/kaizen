@@ -505,16 +505,19 @@ async function runClaude(
       const durationMs = Date.now() - start;
 
       // Parse text and cost from stream-json JSONL output.
-      // The `result` field in the final "result" message is now always empty;
-      // actual text lives in assistant message content blocks.
+      // When --json-schema is used, the model calls a StructuredOutput tool and the
+      // structured data is in result.structured_output (not in text blocks).
+      // Without --json-schema, actual text lives in assistant message content blocks.
       let costUsd = 0;
       let text = '';
+      let structuredOutput: unknown = undefined;
       for (const line of stdout.split('\n')) {
         if (!line.trim()) continue;
         try {
           const msg = JSON.parse(line);
           if (msg.type === 'result') {
             costUsd = msg.total_cost_usd ?? 0;
+            if (msg.structured_output != null) structuredOutput = msg.structured_output;
           } else if (msg.type === 'assistant') {
             const content = msg.message?.content ?? [];
             for (const block of content) {
@@ -522,6 +525,12 @@ async function runClaude(
             }
           }
         } catch { continue; }
+      }
+
+      // When structured_output is present (--json-schema mode), serialize it back to
+      // JSON string so callers can use a single code path (JSON.parse → zod.parse).
+      if (structuredOutput !== undefined) {
+        text = JSON.stringify(structuredOutput);
       }
 
       resolve({ text, costUsd, durationMs, exitCode: code ?? -1 });
