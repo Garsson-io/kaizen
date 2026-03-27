@@ -36,7 +36,7 @@ Issue (gh issue view) + PR diff (gh pr diff)
 
 **Two review dimensions:**
 
-1. `plan-coverage` (`prompts/review-plan-coverage.md`) -- compares a proposed plan against issue requirements before implementation starts. Used by `kaizen-evaluate` Phase 5.5.
+1. `plan-coverage` (`prompts/review-plan-coverage.md`) -- compares a proposed plan against issue requirements before implementation starts. Used by `kaizen-write-plan` Phase 6.
 2. `requirements` (`prompts/review-requirements.md`) -- compares a merged/open PR against issue acceptance criteria. Used by `kaizen-implement` Step 5b and the auto-dent post-run harness.
 
 **Key types:**
@@ -77,7 +77,7 @@ Features:
 
 The review is **advisory, not blocking**. A failing review does not prevent merge. This is a v1 design decision -- the signal needs more validation before it should block.
 
-**kaizen-evaluate** (Phase 5.5): After plan formulation, agents run the plan-coverage review battery via the Agent tool. MISSING findings must be fixed before presenting the plan to the admin; PARTIAL findings are reviewed for intentional scope reductions.
+**kaizen-write-plan** (Phase 6): After plan formulation, agents run the plan-coverage review battery via the Agent tool. MISSING findings must be fixed before presenting the plan to the admin; PARTIAL findings are reviewed for intentional scope reductions.
 
 **kaizen-implement** (Step 5b): After self-review passes, agents run the requirements review battery. MISSING/PARTIAL items are fixed before merging, up to 3 rounds. Budget cap: $2 per battery run.
 
@@ -183,7 +183,7 @@ This means batch operators can now see, at a glance, which auto-dent PRs actuall
 
 ### For interactive skills
 
-Agents using `kaizen-evaluate` now have a plan-coverage gate (Phase 5.5) that catches plan gaps before implementation starts. Agents using `kaizen-implement` have a requirements-coverage gate (Step 5b) that catches implementation gaps before merge. Both have clear stop conditions: fix up to 3 rounds, then escalate to human.
+Agents using `kaizen-write-plan` now have a plan-coverage gate (Phase 6) that catches plan gaps before implementation starts. Agents using `kaizen-implement` have a requirements-coverage gate (Step 5b) that catches implementation gaps before merge. Both have clear stop conditions: fix up to 3 rounds, then escalate to human.
 
 ### For the kaizen project
 
@@ -199,7 +199,7 @@ At $0.10-0.17 per review using `--model sonnet`, the review battery is cheap eno
 
 ### Fix sessions need standalone execution
 
-The ETIMEDOUT issue with nested `claude -p` calls means `review-fix.ts` cannot be called from within an agent session via the Agent tool. For now, the fix loop is only available as a standalone CLI. The interactive skills (kaizen-evaluate, kaizen-implement) use the agent itself as the loop -- the review findings are presented to the agent, which then decides how to fix them.
+The ETIMEDOUT issue with nested `claude -p` calls means `review-fix.ts` cannot be called from within an agent session via the Agent tool. For now, the fix loop is only available as a standalone CLI. The interactive skills (kaizen-write-plan, kaizen-implement) use the agent itself as the loop -- the review findings are presented to the agent, which then decides how to fix them.
 
 A possible future path: the Agent tool could support "background" subagent execution that doesn't compete with the parent session for API resources.
 
@@ -238,7 +238,7 @@ Only `requirements` is wired into auto-dent and implement. `plan-coverage` is wi
 | `/scripts/review-fix.ts` | Standalone CLI for review-fix cycle with state persistence |
 | `/scripts/auto-dent-run.ts` | Auto-dent integration (lines 1563-1606) |
 | `/scripts/auto-dent-events.ts` | RunCompleteEvent type with review_verdict and review_cost_usd |
-| `/.claude/skills/kaizen-evaluate/SKILL.md` | Phase 5.5: plan-coverage review |
+| `/.claude/skills/kaizen-write-plan/SKILL.md` | Phase 6: plan-coverage review |
 | `/.claude/skills/kaizen-implement/SKILL.md` | Step 5b: requirements-coverage review |
 | `/.claude/review-fix/pr-812.json` | Sample state file from validation campaign |
 
@@ -300,7 +300,7 @@ Recommended presets:
 | `standard` | `requirements` + `pr-description` | ~$0.26 | Normal PRs, interactive kaizen-implement |
 | `thorough` | `requirements` + `pr-description` + `plan-coverage` + future dimensions | ~$0.40-0.65 | Large PRs (>300 lines), security-sensitive, multi-issue PRs |
 
-The `plan-coverage` dimension applies at evaluate time (before implementation), not at PR review time. It should not be in the PR review presets but rather triggered by `kaizen-evaluate` Phase 5.5.
+The `plan-coverage` dimension applies at evaluate time (before implementation), not at PR review time. It should not be in the PR review presets but rather triggered by `kaizen-write-plan` Phase 6.
 
 Upper bound: **5 dimensions at $0.17 = $0.85**. Beyond 5 dimensions, diminishing returns set in -- the incremental value of a 6th adversarial reviewer is low compared to improving the first 3 prompts.
 

@@ -33,6 +33,7 @@ import {
   parseAllReviewOutputs,
   groupByDataNeeds,
   parseFrontmatter,
+  REVIEW_FINDING_JSON_SCHEMA,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
@@ -42,6 +43,7 @@ import {
   type ReviewDimension,
 } from './review-battery.js';
 import { spawnSync, spawn } from 'node:child_process';
+import { storeReviewFinding } from './structured-data.js';
 import { EventEmitter } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -51,6 +53,14 @@ import { resolve } from 'node:path';
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, spawnSync: vi.fn(actual.spawnSync), spawn: vi.fn(actual.spawn) };
+});
+
+vi.mock('./structured-data.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./structured-data.js')>();
+  return {
+    ...actual,
+    storeReviewFinding: vi.fn().mockReturnValue('https://example.com/finding'),
+  };
 });
 
 // Shared test helpers — module-level to avoid copy-paste across describe blocks
@@ -603,6 +613,94 @@ describe('spawnReview', () => {
   });
 });
 
+// Tier 1: spawnReview — structured output enforcement
+
+describe('spawnReview — structured output enforcement', () => {
+  afterEach(() => {
+    vi.mocked(spawnSync).mockRestore();
+    vi.mocked(spawn).mockRestore();
+    vi.mocked(storeReviewFinding).mockClear();
+  });
+
+  function mockClaudeArgs(capturedArgs: string[][], stdout: string) {
+    vi.mocked(spawnSync).mockImplementation((cmd: string) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+    vi.mocked(spawn).mockImplementation((_cmd: string, args: string[]) => {
+      capturedArgs.push(args as string[]);
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => {
+        proc.stdout.emit('data', Buffer.from(stdout));
+        proc.emit('close', 0);
+      });
+      return proc;
+    });
+  }
+
+  it('INVARIANT: passes --json-schema to claude so structured output is enforced at the API level', async () => {
+    // INVARIANT: every review spawn must include --json-schema so the model cannot
+    // output prose instead of structured findings (Policy #12/#13).
+    const capturedArgs: string[][] = [];
+    const text = JSON.stringify({ dimension: 'correctness', verdict: 'pass', summary: 'ok', findings: [] });
+    mockClaudeArgs(capturedArgs, streamJsonPayload(text, 0.01));
+
+    await spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    expect(capturedArgs[0]).toContain('--json-schema');
+    const schemaIdx = capturedArgs[0].indexOf('--json-schema');
+    const schema = JSON.parse(capturedArgs[0][schemaIdx + 1]);
+    expect(schema).toMatchObject({ type: 'object', required: expect.arrayContaining(['dimension', 'verdict', 'findings']) });
+  });
+
+  it('INVARIANT: REVIEW_FINDING_JSON_SCHEMA covers all required fields', () => {
+    // INVARIANT: the JSON schema must require dimension, verdict, summary, and findings
+    // so the model cannot omit them and produce a 0/0/0 silent garbage finding.
+    expect(REVIEW_FINDING_JSON_SCHEMA.required).toContain('dimension');
+    expect(REVIEW_FINDING_JSON_SCHEMA.required).toContain('verdict');
+    expect(REVIEW_FINDING_JSON_SCHEMA.required).toContain('summary');
+    expect(REVIEW_FINDING_JSON_SCHEMA.required).toContain('findings');
+  });
+
+  it('INVARIANT: stores finding automatically when prNum and round are provided', async () => {
+    // INVARIANT: spawnReview must call storeReviewFinding when pr+round context is given
+    // so orchestrators don't need to manually store per-dimension findings.
+    const capturedArgs: string[][] = [];
+    const text = JSON.stringify({ dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] });
+    mockClaudeArgs(capturedArgs, streamJsonPayload(text, 0.05));
+
+    await spawnReview({ dimension: 'requirements', repo: 'test/test', prNum: '42', round: 3 });
+    expect(vi.mocked(storeReviewFinding)).toHaveBeenCalledOnce();
+    const [target, round] = vi.mocked(storeReviewFinding).mock.calls[0];
+    expect((target as any).number).toBe('42');
+    expect(round).toBe(3);
+  });
+
+  it('INVARIANT: does not store when prNum or round is absent', async () => {
+    // INVARIANT: no-op store when caller omits PR context (plan reviews, local runs).
+    const capturedArgs: string[][] = [];
+    const text = JSON.stringify({ dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [] });
+    mockClaudeArgs(capturedArgs, streamJsonPayload(text, 0.02));
+
+    await spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    expect(vi.mocked(storeReviewFinding)).not.toHaveBeenCalled();
+  });
+
+  it('falls back to text scraping when --json-schema output has prose (model non-compliance)', async () => {
+    // INVARIANT: even if the model violates the schema constraint and outputs prose,
+    // the fallback parser must recover the embedded JSON so the review is not lost.
+    const capturedArgs: string[][] = [];
+    const prose = `Here is my review:\n{"dimension":"requirements","summary":"gap","verdict":"fail","findings":[{"requirement":"R1","status":"MISSING","detail":"not done"}]}\nDone.`;
+    mockClaudeArgs(capturedArgs, streamJsonPayload(prose, 0.04));
+
+    const { review } = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    expect(review).not.toBeNull();
+    expect(review!.verdict).toBe('fail');
+  });
+});
+
 // Tier 1: reviewBattery (mocked spawnReview)
 
 describe('reviewBattery', () => {
@@ -808,13 +906,21 @@ describe('spawnBatchReview', () => {
     });
   }
 
+  // Legacy text-block payload (tests fallback path when structured_output absent)
   function batchPayload(reviews: Array<{ dim: string; verdict: string; findings: any[] }>, costUsd: number): string {
     const blocks = reviews.map(r =>
-      `\`\`\`json\n${JSON.stringify({ dimension: r.dim, summary: 'ok', findings: r.findings })}\n\`\`\``,
+      `\`\`\`json\n${JSON.stringify({ dimension: r.dim, summary: 'ok', verdict: r.verdict, findings: r.findings })}\n\`\`\``,
     ).join('\n\n');
     const assistantLine = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: blocks }] } });
     const resultLine = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
     return `${assistantLine}\n${resultLine}\n`;
+  }
+
+  // Structured output payload (--json-schema path via StructuredOutput tool)
+  function batchStructuredPayload(reviews: Array<{ dim: string; verdict: 'pass' | 'fail'; findings: any[] }>, costUsd: number): string {
+    const structuredOutput = reviews.map(r => ({ dimension: r.dim, verdict: r.verdict, summary: 'ok', findings: r.findings }));
+    const resultLine = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd, structured_output: structuredOutput });
+    return `${resultLine}\n`;
   }
 
   it('returns parsed reviews for each requested dimension', async () => {
@@ -869,6 +975,48 @@ describe('spawnBatchReview', () => {
 
     await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
+  });
+
+  it('INVARIANT: passes --json-schema to batch claude call (Policy #12/#14)', async () => {
+    // INVARIANT: spawnBatchReview must pass --json-schema so the model cannot
+    // output prose instead of a JSON array of findings.
+    const capturedArgs: string[][] = [];
+    vi.mocked(spawnSync).mockImplementation((cmd: string) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+    vi.mocked(spawn).mockImplementation((_cmd: string, args: string[]) => {
+      capturedArgs.push(args as string[]);
+      const payload = batchPayload([{ dim: 'correctness', verdict: 'pass', findings: [] }], 0.01);
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => { proc.stdout.emit('data', Buffer.from(payload)); proc.emit('close', 0); });
+      return proc;
+    });
+
+    await spawnBatchReview({ dimensions: ['correctness'], repo: 'test/test' });
+    expect(capturedArgs[0]).toContain('--json-schema');
+    const schemaIdx = capturedArgs[0].indexOf('--json-schema');
+    const schema = JSON.parse(capturedArgs[0][schemaIdx + 1]);
+    // Must be an array schema (wraps ReviewFindingDataSchema)
+    expect(schema.type).toBe('array');
+  });
+
+  it('INVARIANT: structured_output array path parsed correctly', async () => {
+    // INVARIANT: when claude returns structured_output (--json-schema path),
+    // the array is parsed directly without text scraping.
+    const payload = batchStructuredPayload([
+      { dim: 'correctness', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+      { dim: 'security', verdict: 'fail', findings: [{ requirement: 'R2', status: 'MISSING', detail: 'vuln' }] },
+    ], 0.12);
+    mockClaudeOnce(payload);
+
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
+    expect(results[0].review?.verdict).toBe('pass');
+    expect(results[1].review?.verdict).toBe('fail');
+    expect(results[1].review?.findings[0].status).toBe('MISSING');
   });
 });
 
@@ -945,8 +1093,11 @@ describe('reviewBattery — failure surfacing and skipping', () => {
       expect(dim!.findings).toHaveLength(1);
       expect(dim!.findings[0].status).toBe('MISSING');
       expect(dim!.findings[0].requirement).toContain('[data-gap]');
-      expect(dim!.findings[0].detail).toContain('plan text');
     }
+    // plan-coverage and improvement-lifecycle need plan text; plan-fidelity needs grounding text
+    expect(result.dimensions.find(d => d.dimension === 'plan-coverage')!.findings[0].detail).toContain('plan text');
+    expect(result.dimensions.find(d => d.dimension === 'improvement-lifecycle')!.findings[0].detail).toContain('plan text');
+    expect(result.dimensions.find(d => d.dimension === 'plan-fidelity')!.findings[0].detail).toContain('grounding text');
 
     // Skipped dims contribute to missingCount
     expect(result.missingCount).toBeGreaterThanOrEqual(3);
@@ -956,45 +1107,73 @@ describe('reviewBattery — failure surfacing and skipping', () => {
   });
 
   it('includes plan-requiring dims when planText is provided', async () => {
+    // improvement-lifecycle needs [plan] — so it is the plan-requiring dim under test here.
+    // (plan-fidelity was moved to need [grounding] not [plan].)
     const passingOutput = streamJsonPayload(
       JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [] }),
       0.10,
     );
     mockClaudeSequential([{ stdout: passingOutput }, { stdout: passingOutput }]);
     const result = await reviewBattery({
-      dimensions: ['requirements', 'plan-fidelity'],
+      dimensions: ['requirements', 'improvement-lifecycle'],
       planText: 'my plan',
     });
     expect(result.skippedDimensions).toHaveLength(0);
   });
 
+  it('plan-fidelity produces [data-gap] MISSING finding when grounding is absent', async () => {
+    // INVARIANT: plan-fidelity requires a grounding attachment (write-plan's canonical plan).
+    // When grounding is absent, it must emit a [data-gap] MISSING finding — not run silently
+    // without grounding context or pass based on secondary sources alone.
+    // This prevents the false-positive where plan-fidelity passes with no plan to check against.
+
+    // spawnSync: no grounding attachment, no grounding auto-load
+    vi.mocked(spawnSync).mockImplementation((cmd: string, _args: string[]) => {
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+
+    const result = await reviewBattery({
+      dimensions: ['plan-fidelity'],
+      planText: 'brief plan note',  // plan need not applicable (plan-fidelity needs grounding)
+      issueNum: '904',
+      repo: 'Garsson-io/kaizen',
+      // No groundingText — and grounding attachment absent from issue
+    });
+
+    // INVARIANT: plan-fidelity must appear in dimensions (not silently dropped)
+    const planDim = result.dimensions.find(d => d.dimension === 'plan-fidelity');
+    expect(planDim, 'plan-fidelity must be in dimensions, not silently absent').toBeDefined();
+    // INVARIANT: it must FAIL with a [data-gap] MISSING finding
+    expect(planDim!.verdict).toBe('fail');
+    expect(planDim!.findings[0].requirement).toContain('[data-gap]');
+    // INVARIANT: overall battery verdict must be fail
+    expect(result.verdict).toBe('fail');
+    // For clarity: it's tracked as skipped-from-running (but still contributes a MISS finding)
+    expect(result.skippedDimensions).toContain('plan-fidelity');
+  });
+
   it('auto-loads planText from GitHub issue when issueNum+repo provided but no planText (kaizen #902)', async () => {
     // INVARIANT: when issueNum and repo are provided but no planText, reviewBattery
     // must call retrievePlan() and use the result so plan-requiring dims can run.
-    // Without auto-load, plan-fidelity would be skipped and emit a [data-gap] MISSING finding.
-    // With auto-load, it should be included in the actual review.
+    // Uses improvement-lifecycle (needs [plan]) as the plan-requiring dim under test.
     const planBody = '## Plan\n\n1. Fix the bug\n2. Add tests';
-    // Two responses: one for requirements, one for plan-fidelity (same-needs dims may batch)
     const reqOutput = streamJsonPayload(
       JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] }),
       0.05,
     );
-    const planOutput = streamJsonPayload(
-      JSON.stringify({ dimension: 'plan-fidelity', summary: 'ok', findings: [{ requirement: 'Plan exists', status: 'DONE', detail: 'found' }] }),
+    const lifecycleOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'improvement-lifecycle', summary: 'ok', findings: [{ requirement: 'Plan exists', status: 'DONE', detail: 'found' }] }),
       0.05,
     );
 
-    // spawnSync is called by gh-exec.ts (for retrievePlan) and possibly git.
-    // Mock: gh comments call returns empty (no marker), gh body call returns planBody.
+    // spawnSync: gh comments → empty (no marker), gh .body → planBody (fallback fetch)
     vi.mocked(spawnSync).mockImplementation((cmd: string, args: string[]) => {
       if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
       if (cmd === 'gh') {
         const argStr = (args as string[]).join(' ');
-        // findMarkerComment calls: --jq with comments filter → return empty (no marker)
         if (argStr.includes('comments')) {
           return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
         }
-        // fallback body fetch: --json body --jq .body → return plan body
         if (argStr.includes('.body')) {
           return { status: 0, stdout: planBody, stderr: '', signal: null, pid: 0, output: [] } as any;
         }
@@ -1003,7 +1182,7 @@ describe('reviewBattery — failure surfacing and skipping', () => {
       return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
     });
 
-    const outputs = [reqOutput, planOutput];
+    const outputs = [reqOutput, lifecycleOutput];
     let callCount = 0;
     vi.mocked(spawn).mockImplementation(() => {
       const out = outputs[callCount] ?? outputs[outputs.length - 1];
@@ -1020,19 +1199,83 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     });
 
     const result = await reviewBattery({
-      dimensions: ['requirements', 'plan-fidelity'],
+      dimensions: ['requirements', 'improvement-lifecycle'],
       issueNum: '904',
       repo: 'Garsson-io/kaizen',
       // No planText — should be auto-loaded from issue body
     });
 
-    // INVARIANT: plan-fidelity must NOT be in skippedDimensions when plan was auto-loaded
+    // INVARIANT: improvement-lifecycle must NOT be skipped when plan was auto-loaded
+    expect(result.skippedDimensions).not.toContain('improvement-lifecycle');
+    const lifecycleDim = result.dimensions.find(d => d.dimension === 'improvement-lifecycle');
+    expect(lifecycleDim, 'improvement-lifecycle should be in dimensions after auto-load').toBeDefined();
+    expect(lifecycleDim!.findings[0].requirement).not.toContain('[data-gap]');
+  });
+
+  it('auto-loads groundingText from GitHub issue when issueNum+repo provided but no groundingText', async () => {
+    // INVARIANT: when issueNum and repo are provided but no groundingText, reviewBattery
+    // must call retrieveGrounding() and use the result so grounding-aware dims receive it.
+    // plan-fidelity is given explicit planText so it isn't skipped for missing plan —
+    // this isolates the grounding auto-load as the single variable under test.
+    const groundingContent = 'GOAL: Fix the plan slot conflict.\nDONE WHEN: each slot has exactly one writer.';
+
+    const reqOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] }),
+      0.05,
+    );
+    const planOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'plan-fidelity', summary: 'ok', findings: [{ requirement: 'Plan exists', status: 'DONE', detail: 'found' }] }),
+      0.05,
+    );
+
+    // spawnSync: mock gh calls for retrieveGrounding (reads grounding attachment via findMarkerComment)
+    vi.mocked(spawnSync).mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      if (cmd === 'gh') {
+        const argStr = (args as string[]).join(' ');
+        // findMarkerComment for grounding slot → return JSON with grounding content
+        if (argStr.includes('comments')) {
+          const markerBody = `<!-- kaizen:grounding -->\n${groundingContent}`;
+          return { status: 0, stdout: JSON.stringify({ url: 'u', body: markerBody }), stderr: '', signal: null, pid: 0, output: [] } as any;
+        }
+        return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      }
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+
+    // Capture the prompt text passed to claude to verify grounding was injected
+    let capturedPrompt = '';
+    const outputs = [reqOutput, planOutput];
+    let callCount = 0;
+    vi.mocked(spawn).mockImplementation((_cmd: string, _args: string[]) => {
+      const out = outputs[callCount] ?? outputs[outputs.length - 1];
+      callCount++;
+      const proc = new EventEmitter() as any;
+      proc.stdin = {
+        write: (data: string) => { capturedPrompt += data; },
+        end: () => {},
+      };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => {
+        proc.stdout.emit('data', Buffer.from(out));
+        proc.emit('close', 0);
+      });
+      return proc;
+    });
+
+    const result = await reviewBattery({
+      dimensions: ['requirements', 'plan-fidelity'],
+      planText: 'existing plan',  // explicit — not what's under test; isolates grounding auto-load
+      issueNum: '904',
+      repo: 'Garsson-io/kaizen',
+      // No groundingText — should be auto-loaded from issue grounding attachment
+    });
+
+    // INVARIANT: plan-fidelity must NOT be skipped (planText provided, grounding auto-loaded)
     expect(result.skippedDimensions).not.toContain('plan-fidelity');
-    // INVARIANT: plan-fidelity dim must exist in results (was not silently dropped)
-    const planDim = result.dimensions.find(d => d.dimension === 'plan-fidelity');
-    expect(planDim, 'plan-fidelity should be in dimensions after auto-load').toBeDefined();
-    // INVARIANT: findings must not be the synthetic [data-gap] MISSING finding
-    expect(planDim!.findings[0].requirement).not.toContain('[data-gap]');
+    // INVARIANT: the grounding text must appear in the prompt sent to the review agent
+    expect(capturedPrompt).toContain('Fix the plan slot conflict');
   });
 
   it('batches same-needs dims into fewer claude calls', async () => {

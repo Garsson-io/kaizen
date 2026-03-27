@@ -14,6 +14,7 @@
  */
 
 import YAML from 'yaml';
+import { z } from 'zod';
 import {
   listAttachments,
   readAttachment,
@@ -88,27 +89,25 @@ export function extractPlanText(text: string): string | undefined {
 
 // ── Reviews ─────────────────────────────────────────────────────────
 
-export interface ReviewFinding {
-  requirement: string;
-  status: 'DONE' | 'PARTIAL' | 'MISSING';
-  /** Short label for the table row */
-  detail: string;
-  /** Full analysis text — file references, code snippets, fix suggestions. Shown below the table for non-DONE findings. */
-  analysis?: string;
-}
+export const ReviewFindingSchema = z.object({
+  requirement: z.string(),
+  status: z.enum(['DONE', 'PARTIAL', 'MISSING']),
+  detail: z.string(),
+  analysis: z.string().optional(),
+});
 
-export interface ReviewFindingData {
-  dimension: string;
-  verdict: 'pass' | 'fail';
-  summary: string;
-  findings: ReviewFinding[];
-  /** Review round number (shown in header) */
-  round?: number;
-  /** Wall-clock duration in seconds */
-  durationSec?: number;
-  /** Cost in USD */
-  costUsd?: number;
-}
+export const ReviewFindingDataSchema = z.object({
+  dimension: z.string(),
+  verdict: z.enum(['pass', 'fail']),
+  summary: z.string(),
+  findings: z.array(ReviewFindingSchema),
+  round: z.number().optional(),
+  durationSec: z.number().optional(),
+  costUsd: z.number().optional(),
+});
+
+export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
+export type ReviewFindingData = z.infer<typeof ReviewFindingDataSchema>;
 
 const STATUS_ICON: Record<string, string> = { DONE: '✅', PARTIAL: '⚠️', MISSING: '❌' };
 
@@ -344,6 +343,62 @@ export function retrieveTestPlan(target: AttachmentTarget & SectionTarget): stri
     const testPlan = sections.find(s => /^Test Plan/i.test(s.name));
     return testPlan?.content ?? null;
   } catch { return null; }
+}
+
+/**
+ * Store a write-plan grounding document on an issue.
+ * This is the canonical plan artifact — owned exclusively by kaizen-write-plan.
+ * kaizen-implement reads this via retrieveGrounding at startup.
+ * Fixes issue #1003: separate slot so implement's store-plan never overwrites it.
+ */
+export function storeGrounding(target: AttachmentTarget, groundingText: string): string {
+  return writeAttachment(target, 'grounding', groundingText);
+}
+
+/**
+ * Retrieve the grounding document stored by kaizen-write-plan.
+ */
+export function retrieveGrounding(target: AttachmentTarget & SectionTarget): string | null {
+  const attachment = readAttachment(target, 'grounding');
+  if (attachment?.content) return attachment.content;
+  return null;
+}
+
+/**
+ * Retrieve all deep-dive artifacts from a meta-issue in one call.
+ * Combines: issue body, metadata attachment, connected issues.
+ * Used by kaizen-write-plan Path A to read deep-dive output.
+ */
+export function retrieveDeepDive(target: AttachmentTarget & SectionTarget): string {
+  const body = (() => {
+    try { return fetchBody(target); } catch { return '(no body)'; }
+  })();
+
+  const metadata = (() => {
+    try {
+      const att = readAttachment(target, 'metadata');
+      return att ? att.content : '(no metadata attachment)';
+    } catch { return '(no metadata attachment)'; }
+  })();
+
+  const connected = (() => {
+    try {
+      const issues = queryConnectedIssues(target);
+      if (issues.length === 0) return '(no connected issues)';
+      return issues.map(i => `#${i.number} [${i.role}] ${i.title}`).join('\n');
+    } catch { return '(no connected issues)'; }
+  })();
+
+  return [
+    '## Issue Body',
+    body,
+    '',
+    '## Metadata Attachment',
+    metadata,
+    '',
+    '## Connected Issues',
+    connected,
+  ].join('\n');
 }
 
 // ── Metadata (connected issues, PR number) ──────────────────────────

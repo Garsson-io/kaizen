@@ -16,6 +16,13 @@
  *   npx tsx src/cli-structured-data.ts store-testplan --issue 904 --repo R --file testplan.md
  *   npx tsx src/cli-structured-data.ts retrieve-testplan --issue 904 --repo R
  *
+ * Grounding (canonical plan from kaizen-write-plan, read by kaizen-implement):
+ *   npx tsx src/cli-structured-data.ts store-grounding --issue 904 --repo R --file grounding.md
+ *   npx tsx src/cli-structured-data.ts retrieve-grounding --issue 904 --repo R
+ *
+ * Deep-dive artifacts (combines body + metadata + connected issues in one call):
+ *   npx tsx src/cli-structured-data.ts retrieve-deep-dive --issue 904 --repo R
+ *
  * Metadata:
  *   npx tsx src/cli-structured-data.ts store-metadata --issue 904 --repo R --file metadata.yaml
  *   npx tsx src/cli-structured-data.ts retrieve-metadata --issue 904 --repo R
@@ -49,6 +56,9 @@ import {
   retrievePlan,
   storeTestPlan,
   retrieveTestPlan,
+  storeGrounding,
+  retrieveGrounding,
+  retrieveDeepDive,
   storeMetadata,
   retrieveMetadata,
   queryConnectedIssues,
@@ -57,6 +67,7 @@ import {
   storeIterationState,
   retrieveIterationState,
   type ReviewFindingData,
+  ReviewFindingDataSchema,
 } from './structured-data.js';
 
 export type CliArgs = Record<string, string> & { command: string };
@@ -101,12 +112,18 @@ async function handleStoreReviewFinding(a: CliArgs): Promise<void> {
   const pr = prTarget(a.pr, a.repo);
   const r = resolveRound(a);
   const dim = a.dimension ?? 'unknown';
-  const text = resolveContent(a);
+  const raw = resolveContent(a);
+  // Strip code fences (```yaml or ```json) — defensive, policy requires bare YAML
+  const text = raw.replace(/^```(?:yaml|json)?\s*/im, '').replace(/```\s*$/m, '').trim();
   let finding: ReviewFindingData;
   try {
-    finding = JSON.parse(text);
-  } catch {
-    finding = { dimension: dim, verdict: 'fail', summary: text.slice(0, 100), findings: [] };
+    finding = ReviewFindingDataSchema.parse(YAML.parse(text));
+  } catch (e) {
+    console.error(`store-review-finding: schema validation failed for dimension '${dim}'.`);
+    console.error(`  Input (first 200 chars): ${raw.slice(0, 200)}`);
+    console.error(`  Error: ${e}`);
+    process.exit(1);
+    return;
   }
   if (!finding.dimension || finding.dimension === 'unknown') finding.dimension = dim;
   const url = storeReviewFinding(pr, r, finding);
@@ -200,6 +217,24 @@ async function handleRetrieveTestplan(a: CliArgs): Promise<void> {
   console.log(text);
 }
 
+// Grounding handlers (kaizen-write-plan → kaizen-implement artifact)
+
+async function handleStoreGrounding(a: CliArgs): Promise<void> {
+  const url = storeGrounding(issueTarget(a.issue, a.repo), resolveContent(a));
+  console.log(`Grounding stored: ${url}`);
+}
+
+async function handleRetrieveGrounding(a: CliArgs): Promise<void> {
+  const text = retrieveGrounding(issueTarget(a.issue, a.repo));
+  if (!text) { console.error('No grounding found.'); process.exit(1); }
+  console.log(text);
+}
+
+async function handleRetrieveDeepDive(a: CliArgs): Promise<void> {
+  const text = retrieveDeepDive(issueTarget(a.issue, a.repo));
+  console.log(text);
+}
+
 // Metadata handlers
 
 async function handleStoreMetadata(a: CliArgs): Promise<void> {
@@ -268,6 +303,9 @@ export const handlers: Record<string, Handler> = {
   'retrieve-plan': handleRetrievePlan,
   'store-testplan': handleStoreTestplan,
   'retrieve-testplan': handleRetrieveTestplan,
+  'store-grounding': handleStoreGrounding,
+  'retrieve-grounding': handleRetrieveGrounding,
+  'retrieve-deep-dive': handleRetrieveDeepDive,
   'store-metadata': handleStoreMetadata,
   'retrieve-metadata': handleRetrieveMetadata,
   'query-connected': handleQueryConnected,

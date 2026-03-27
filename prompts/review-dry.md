@@ -64,4 +64,4 @@ Rules for status:
 
 If no duplication is found, return a single DONE finding: "No significant duplication detected."
 
-After the JSON block, you may add prose commentary.
+Output JSON only — no prose before or after the block.

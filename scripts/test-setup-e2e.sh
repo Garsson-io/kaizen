@@ -81,7 +81,7 @@ else
 fi
 
 # Check specific critical skills
-for skill in kaizen-setup kaizen-reflect kaizen-review-pr kaizen-evaluate kaizen-implement; do
+for skill in kaizen-setup kaizen-reflect kaizen-review-pr kaizen-write-plan kaizen-implement; do
   if echo "$RESULT" | python3 -c "import json,sys; r=json.load(sys.stdin).get('result',''); sys.exit(0 if '$skill' in r else 1)"; then
     pass "Skill $skill is available"
   else

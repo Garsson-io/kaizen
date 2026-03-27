@@ -88,23 +88,24 @@ describe("Issue Routing E2E — skill queries host repo in synthetic project", (
   });
 
   it(
-    "kaizen-pick step 1 queries the host repo, not the kaizen repo",
+    "kaizen-write-plan collision detection queries the host repo, not the kaizen repo",
     { timeout: 180000 },
     () => {
       // This is the real test: invoke the actual skill and check which
-      // repo the agent queries. We tell it to run /kaizen-pick step 1
-      // which reads kaizen.config.json and lists open issues.
+      // repo the agent queries. We tell it to run /kaizen-write-plan Phase 0
+      // (collision detection) which reads kaizen.config.json and checks issues.
       const result = claude(
         [
-          "Run /kaizen-pick. Only do step 1 (gather the landscape).",
-          "After listing issues, STOP. Do not continue to step 2.",
+          "Run /kaizen-write-plan on issue #1 (Path B).",
+          "Only do Phase 0 (collision detection): check GitHub labels, open PRs, git log.",
+          "After checking, STOP. Do not continue to Phase 1.",
           "Show which repo you queried for issues.",
         ].join(" "),
         { cwd: project.projectRoot, maxTurns: 15, maxBudget: 1.00, timeout: 180000 },
       );
 
       const text = result.result ?? "";
-      console.log("--- kaizen-pick output ---");
+      console.log("--- kaizen-write-plan output ---");
       console.log(text.slice(0, 1200));
       console.log("--- end ---");
 

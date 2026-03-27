@@ -144,4 +144,4 @@ Be concrete. Quote the exact hand-rolled code and name the library that should r
 
 If no tooling issues are found, return a single DONE finding: "No tooling fitness issues detected."
 
-After the JSON block, you may add prose commentary.
+Output JSON only — no prose before or after the block.

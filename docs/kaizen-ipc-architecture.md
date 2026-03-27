@@ -36,7 +36,7 @@ Domain Model (cases module)
 Host-side skills access the domain model via CLI wrapper:
 
 ```
-Host-side skills (/kaizen-pick, /kaizen-evaluate, /kaizen-implement, /kaizen-reflect)
+Host-side skills (/kaizen-deep-dive, /kaizen-write-plan, /kaizen-implement, /kaizen-reflect)
   |
 CLI wrapper  -->  GitHub API  -->  GitHub REST API
 (backlog queries)
@@ -57,11 +57,11 @@ CLI wrapper  -->  GitHub API  -->  GitHub REST API
 ## Dev Workflow
 
 ```
-/kaizen-pick      Select next kaizen issue from backlog
+/kaizen-deep-dive   Find root cause, create meta-issue
      |
-/kaizen-evaluate  Evaluate: gather incidents, find low-hanging fruit, get admin input
+/kaizen-write-plan  Validate, plan, get admin approval
      |
-/kaizen-implement Create case + worktree, apply five-step algorithm, execute
+/kaizen-implement   Create case + worktree, TDD, PR, review loop, merge
      |
 case_mark_done    Agent reflects → kaizen suggestions → new dev cases
      |

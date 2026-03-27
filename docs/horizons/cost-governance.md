@@ -51,7 +51,7 @@ Gaps: No per-case budgets or hard caps. No cost-aware mode selection (expensive 
 
 ## L3–L4: Visible but not designed
 
-**L3 (proportional gating):** Problem: a docs-only fix gets the same $5 budget as a complex refactor. Need: task classification that maps to budget tiers. Kaizen issues labeled `level-1` get $2, `level-3` get $10. Open question: who classifies — `/kaizen-evaluate`, the agent itself, or automatic from labels?
+**L3 (proportional gating):** Problem: a docs-only fix gets the same $5 budget as a complex refactor. Need: task classification that maps to budget tiers. Kaizen issues labeled `level-1` get $2, `level-3` get $10. Open question: who classifies — `/kaizen-write-plan`, the agent itself, or automatic from labels?
 
 **L4 (optimization):** Problem: agent re-reads the same 500-line file 6 times in a session, burning tokens. Need: analytics that identify wasteful patterns and suggest caching or context management strategies.
 

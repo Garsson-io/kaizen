@@ -112,7 +112,7 @@ describe('processPostMergeClear — Skill trigger', () => {
 
     const output = processPostMergeClear(
       'Skill',
-      { skill: 'kaizen-pick' },
+      { skill: 'kaizen-write-plan' },
       {},
       TEST_BRANCH,
       TEST_STATE_DIR,

@@ -141,4 +141,4 @@ Be specific. Quote the exact vulnerable line from the diff. "This looks safe" is
 
 If no security issues are found, return a single DONE finding: "No security vulnerabilities detected in this diff."
 
-After the JSON block, you may add prose commentary explaining the threat model.
+Output JSON only — no prose before or after the block.

@@ -15,7 +15,7 @@ This creates a bottleneck: the system can only self-improve along dimensions a h
 | **L0** | Human-discovered | Aviad notices patterns and prompts agents to think about them. | Manual |
 | **L1** | Enumerated | Known horizons listed in `docs/horizons/README.md`. Agents reflect against the list. | Reflection prompt references horizon index |
 | **L2** | Per-reflection discovery | Every reflection asks "does this friction reveal an untracked dimension?" | Level B question in `kaizen-reflect.sh` |
-| **L3** | Periodic review | Every ~10 cases, review whether the horizon set is complete. | Level C review in `/kaizen-pick` or dedicated trigger |
+| **L3** | Periodic review | Every ~10 cases, review whether the horizon set is complete. | Level C review in `/kaizen-prd` (horizon mode) or dedicated trigger |
 | **L4** | Evidence-driven | Horizon gaps detected from clustering "unclassified" friction across reflections. | Analytics on reflection data |
 | **L5** | Self-evolving | The horizon set, the discovery process, and this meta-taxonomy all evolve based on accumulated data. | Full recursive closure |
 
@@ -41,7 +41,7 @@ Three levels of reflection about horizons. Self-referential at the top — there
 
 **What:** "Does this friction reveal a quality dimension not covered by our existing horizons? (See `docs/horizons/README.md`.)"
 
-**Produces:** Horizon-discovery kaizen issues with proposed taxonomy sketches. The issue goes through `/kaizen-evaluate` before becoming a real horizon.
+**Produces:** Horizon-discovery kaizen issues with proposed taxonomy sketches. The issue goes through `/kaizen-prd` (iterative discovery → horizon spec doc) before becoming a real horizon.
 
 **This replaces the human as the horizon-discovery mechanism.**
 
@@ -71,7 +71,7 @@ Level C reviews Level B's output. Level B reviews Level A's coverage. Level C is
 
 **L2 (Phase 2):** Add Level B question to `kaizen-reflect.sh`. One question, both prompts.
 
-**L3 (Phase 3):** Add Level C trigger to `/kaizen-pick` or create `/review-horizons` skill.
+**L3 (Phase 3):** Add Level C trigger to `/kaizen-prd` (horizon mode) or create `/review-horizons` skill.
 
 **Signal to escalate L2→L3:** Agents file horizon-discovery issues but nobody reviews them, or clusters of unclassified friction accumulate without being grouped into horizons.
 

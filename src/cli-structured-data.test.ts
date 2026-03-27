@@ -4,6 +4,8 @@ import { handlers, parseArgs, resolveContent, resolveRound, type CliArgs } from 
 import {
   nextReviewRound,
   storePlan,
+  storeGrounding,
+  retrieveGrounding,
   storeMetadata,
 } from './structured-data.js';
 
@@ -17,7 +19,10 @@ vi.mock('node:child_process', () => ({
   execSync: vi.fn().mockReturnValue('stdin-content'),
 }));
 
-vi.mock('./structured-data.js', () => ({
+vi.mock('./structured-data.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./structured-data.js')>();
+  return {
+  ...actual,
   prTarget: vi.fn((pr: string, repo: string) => ({ kind: 'pr', number: Number(pr), repo })),
   issueTarget: vi.fn((issue: string, repo: string) => ({ kind: 'issue', number: Number(issue), repo })),
   storeReviewFinding: vi.fn().mockReturnValue('https://example.com/finding'),
@@ -34,6 +39,9 @@ vi.mock('./structured-data.js', () => ({
   retrievePlan: vi.fn().mockReturnValue('plan text'),
   storeTestPlan: vi.fn().mockReturnValue('https://example.com/testplan'),
   retrieveTestPlan: vi.fn().mockReturnValue('testplan text'),
+  storeGrounding: vi.fn().mockReturnValue('https://example.com/grounding'),
+  retrieveGrounding: vi.fn().mockReturnValue('grounding text'),
+  retrieveDeepDive: vi.fn().mockReturnValue('deep-dive text'),
   storeMetadata: vi.fn().mockReturnValue('https://example.com/metadata'),
   retrieveMetadata: vi.fn().mockReturnValue({ type: 'meta-issue' }),
   queryConnectedIssues: vi.fn().mockReturnValue([{ number: 1, role: 'primary', title: 'Issue 1' }]),
@@ -41,7 +49,8 @@ vi.mock('./structured-data.js', () => ({
   updatePrSection: vi.fn(),
   storeIterationState: vi.fn().mockReturnValue('https://example.com/iteration'),
   retrieveIterationState: vi.fn().mockReturnValue({ round: 1 }),
-}));
+  };
+});
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -66,6 +75,7 @@ describe('handler registry', () => {
       'store-review-summary', 'list-review-rounds', 'list-review-dims',
       'read-review-finding', 'read-review-summary',
       'store-plan', 'retrieve-plan', 'store-testplan', 'retrieve-testplan',
+      'store-grounding', 'retrieve-grounding', 'retrieve-deep-dive',
       'store-metadata', 'retrieve-metadata', 'query-connected', 'query-pr',
       'update-pr-section',
       'store-iteration', 'retrieve-iteration',
@@ -81,8 +91,8 @@ describe('handler registry', () => {
     }
   });
 
-  it('has exactly 20 handlers (no stale entries)', () => {
-    expect(Object.keys(handlers).length).toBe(20);
+  it('has exactly 23 handlers (no stale entries)', () => {
+    expect(Object.keys(handlers).length).toBe(23);
   });
 });
 
@@ -128,6 +138,34 @@ describe('individual command handlers', () => {
     log.mockRestore();
   });
 
+  it('store-review-finding parses YAML finding output', async () => {
+    // INVARIANT: dimension prompts now require YAML output. The handler must parse YAML.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const yaml = 'dimension: correctness\nverdict: pass\nsummary: ok\nfindings: []';
+    await handlers['store-review-finding']({ ...baseArgs, pr: '903', round: '5', text: yaml });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Review finding stored'));
+    log.mockRestore();
+  });
+
+  it('store-review-finding strips yaml code fences before parsing', async () => {
+    // INVARIANT: defensive strip of ```yaml fences in case agents wrap output in fences.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fenced = '```yaml\ndimension: correctness\nverdict: pass\nsummary: ok\nfindings: []\n```';
+    await handlers['store-review-finding']({ ...baseArgs, pr: '903', round: '5', text: fenced });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Review finding stored'));
+    log.mockRestore();
+  });
+
+  it('store-review-finding exits non-zero on unparseable input', async () => {
+    // INVARIANT: garbled input must cause exit(1), not a silent 0/0/0 finding.
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await handlers['store-review-finding']({ ...baseArgs, pr: '903', round: '5', text: ': invalid: yaml: {{{' });
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
   it('store-plan stores and prints URL', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await handlers['store-plan']({ ...baseArgs, issue: '904', text: 'my plan' });
@@ -140,6 +178,46 @@ describe('individual command handlers', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await handlers['retrieve-plan']({ ...baseArgs, issue: '904' });
     expect(log).toHaveBeenCalledWith('plan text');
+    log.mockRestore();
+  });
+
+  it('store-grounding stores and prints URL', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['store-grounding']({ ...baseArgs, issue: '904', text: 'my grounding' });
+    expect(vi.mocked(storeGrounding)).toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Grounding stored'));
+    log.mockRestore();
+  });
+
+  it('retrieve-grounding calls retrieveGrounding with correct issue target', async () => {
+    // INVARIANT: retrieve-grounding must wire CLI args to retrieveGrounding(issueTarget(issue, repo)).
+    // Asserting the mock return value was passed to console.log is tautological — instead
+    // verify the argument wiring so a wrong issue number or repo would cause this test to fail.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['retrieve-grounding']({ ...baseArgs, issue: '904' });
+    expect(vi.mocked(retrieveGrounding)).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'issue', number: 904, repo: 'Garsson-io/kaizen' }),
+    );
+    log.mockRestore();
+  });
+
+  it('retrieve-grounding exits non-zero when no grounding found', async () => {
+    // INVARIANT: retrieve-grounding must signal failure (process.exit(1)) when
+    // grounding is absent — callers (kaizen-implement Step 0) must not proceed
+    // with an empty grounding silently.
+    vi.mocked(retrieveGrounding).mockReturnValueOnce(null);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await handlers['retrieve-grounding']({ ...baseArgs, issue: '904' });
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it('retrieve-deep-dive prints combined deep-dive text', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['retrieve-deep-dive']({ ...baseArgs, issue: '904' });
+    expect(log).toHaveBeenCalledWith('deep-dive text');
     log.mockRestore();
   });
 

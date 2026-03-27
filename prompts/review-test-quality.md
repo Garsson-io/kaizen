@@ -139,4 +139,4 @@ Rules for status:
 
 Be specific. Quote file names, line numbers, and the actual weak assertions. "Tests look reasonable" is not a finding. Every claim must cite evidence from the diff.
 
-After the JSON block, you may add prose commentary, but the JSON block MUST come first.
+Output JSON only — no prose before or after the block.

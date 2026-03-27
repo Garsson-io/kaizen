@@ -227,4 +227,4 @@ Rules for status:
 
 Be calibrated: a 10-line config change doesn't need E2E tests. But a system with external process calls (LLM, API, subprocess) that has no E2E smoke test is a real gap — and a smoke test without observability is a PARTIAL, not a DONE.
 
-After the JSON block, you may add prose commentary.
+Output JSON only — no prose before or after the block.

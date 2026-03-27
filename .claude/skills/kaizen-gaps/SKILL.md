@@ -7,7 +7,7 @@ description: Systematic analysis of kaizen issues and incidents to find tooling 
 
 # Gap Analysis — Strategic Kaizen Intelligence
 
-**Role:** The strategist. Looks across the entire kaizen backlog and incident history to find patterns, gaps, and unnamed dimensions that individual issue triage misses. Produces actionable output that feeds into `/kaizen-pick`, `/kaizen-prd`, and `/kaizen-reflect`.
+**Role:** The strategist. Looks across the entire kaizen backlog and incident history to find patterns, gaps, and unnamed dimensions that individual issue triage misses. Produces actionable output that feeds into `/kaizen-write-plan`, `/kaizen-prd`, and `/kaizen-reflect`.
 
 **Philosophy:** See the [Zen of Kaizen](../../kaizen/zen.md) — especially *"A good taxonomy of the problem outlasts any solution"* and *"The horizon you can't name climbs you."*
 
@@ -344,7 +344,7 @@ Ask the admin:
 ## After the Analysis
 
 The output of this skill feeds into:
-- **Low-hanging fruit** — file as kaizen issues, then `/kaizen-pick` to start executing
+- **Low-hanging fruit** — file as kaizen issues, then `/kaizen-write-plan` to plan and execute
 - **Feature PRDs** — `/kaizen-prd` for each, producing specs and tracking issues
 - **Meta/Horizon PRDs** — `/kaizen-prd` (horizon mode) for taxonomy updates
 
@@ -355,14 +355,14 @@ This skill should be run periodically (every 2-4 weeks or after a burst of incid
 ```
 /kaizen-gaps  (strategic: where should we invest?)
     ↓
-  Low-hanging fruit → file kaizen issues → /kaizen-pick → /kaizen-evaluate → /kaizen-implement
-  Feature PRDs → /kaizen-prd → /kaizen-plan → /kaizen-implement
-  Meta PRDs → /kaizen-prd (horizon mode) → /kaizen-plan → /kaizen-implement
+  Low-hanging fruit → file kaizen issues → /kaizen-write-plan → /kaizen-implement
+  Feature PRDs → /kaizen-prd → /kaizen-write-plan → /kaizen-plan → /kaizen-implement
+  Meta PRDs → /kaizen-prd (horizon mode) → /kaizen-write-plan → /kaizen-implement
     ↓
-/kaizen  (reflect on the work, close the loop)
+/kaizen-reflect  (reflect on the work, close the loop)
 ```
 
-`/kaizen-gaps` sits ABOVE `/kaizen-pick` in the skill chain — it's the strategic layer that decides WHERE to invest before `/kaizen-pick` decides WHICH specific issue to tackle.
+`/kaizen-gaps` is the strategic layer that decides WHERE to invest, feeding into `/kaizen-write-plan` for specific issue planning.
 
 ## Anti-patterns
 
@@ -385,4 +385,4 @@ Create these tasks at skill start using TaskCreate:
 | 5 | Identify unnamed dimensions | Incident clusters not in existing horizons. Missing axes. Evaluate: new horizon vs axis vs feature. |
 | 6 | Present actionable output | 3 lists: low-hanging fruit, feature PRD candidates, meta/horizon PRD candidates. Present to admin. |
 
-**What comes next:** Low-hanging fruit → file issues → `/kaizen-pick`. Feature PRDs → `/kaizen-prd`. Meta/horizon PRDs → `/kaizen-prd` in horizon mode. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
+**What comes next:** Low-hanging fruit → file issues → `/kaizen-write-plan`. Feature PRDs → `/kaizen-prd`. Meta/horizon PRDs → `/kaizen-prd` in horizon mode. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

@@ -90,4 +90,4 @@ Output a JSON block fenced with ```json ... ``` containing this exact structure:
 
 A MISSING finding on a skill/prompt file change is a **showstopper** — it means the change cannot be validated and should not merge. Name exactly what is missing so the author can fix it.
 
-After the JSON block, you may add commentary on the specific behavioral proof gaps found.
+Output JSON only — no prose before or after the block.

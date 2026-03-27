@@ -60,4 +60,4 @@ Rules for status:
 
 Be specific. Quote file names and line numbers. "Looks good" is not a finding. Every requirement gets a finding entry.
 
-After the JSON block, you may add prose commentary, but the JSON block MUST come first.
+Output JSON only — no prose before or after the block.

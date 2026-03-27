@@ -16,6 +16,9 @@ import {
   readReviewFinding,
   storePlan,
   retrievePlan,
+  storeGrounding,
+  retrieveGrounding,
+  retrieveDeepDive,
   storeMetadata,
   retrieveMetadata,
   queryConnectedIssues,
@@ -205,6 +208,106 @@ describe('storePlan + retrievePlan — round-trip', () => {
     const plan = retrievePlan(issue);
     expect(plan).toContain('Fix it');
     expect(plan).not.toContain('Test Plan');
+  });
+});
+
+describe('storeGrounding + retrieveGrounding — round-trip', () => {
+  it('stores and retrieves grounding via attachment', () => {
+    ghReturns(''); ghReturns('https://...');
+    storeGrounding(issue, '## Success Criteria\n\nGOAL: Fix the plan slot conflict.');
+
+    ghReturns(JSON.stringify({ url: 'https://...', body: '<!-- kaizen:grounding -->\n## Success Criteria\n\nGOAL: Fix the plan slot conflict.' }));
+    const grounding = retrieveGrounding(issue);
+    expect(grounding).toContain('Fix the plan slot conflict');
+  });
+
+  it('writes to the grounding slot (kaizen:grounding), not the plan slot', () => {
+    // Slot-isolation invariant: storeGrounding must NOT write <!-- kaizen:plan -->
+    ghReturns(''); ghReturns('https://...');
+    storeGrounding(issue, 'grounding content');
+    // Second gh call is the createComment with the body containing the marker
+    const args = mockGh.mock.calls[1][1] as string[];
+    const bodyIdx = args.indexOf('--body');
+    const bodyArg = bodyIdx >= 0 ? args[bodyIdx + 1] : '';
+    expect(bodyArg).toContain('<!-- kaizen:grounding -->');
+    expect(bodyArg).not.toContain('<!-- kaizen:plan -->');
+  });
+
+  it('returns null when no grounding exists', () => {
+    ghReturns(''); // readAttachment: no attachment found
+    const grounding = retrieveGrounding(issue);
+    expect(grounding).toBeNull();
+  });
+
+  it('returns null when attachment exists but content is empty', () => {
+    // INVARIANT: retrieveGrounding returns null (not '') when attachment has empty content.
+    // Latent landmine: '' is falsy in JS, so callers using !== null would not catch it.
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:grounding -->' }));
+    const grounding = retrieveGrounding(issue);
+    expect(grounding).toBeNull();
+  });
+
+  it('storeGrounding with empty string still writes the marker comment', () => {
+    // INVARIANT: storeGrounding('') must write the attachment (marker is present),
+    // even if retrieveGrounding will then return null for it.
+    // This ensures the slot is claimed/reserved even if content is absent.
+    ghReturns(''); ghReturns('https://...');
+    storeGrounding(issue, '');
+    const args = mockGh.mock.calls[1][1] as string[];
+    const bodyIdx = args.indexOf('--body');
+    const bodyArg = bodyIdx >= 0 ? args[bodyIdx + 1] : '';
+    expect(bodyArg).toContain('<!-- kaizen:grounding -->');
+  });
+});
+
+describe('retrieveDeepDive — combined body + metadata + connected', () => {
+  it('combines issue body, metadata attachment, and connected issues sections', () => {
+    // fetchBody (called first)
+    ghReturns('## Problem — The Pattern\n\nRepeated plan slot conflict.');
+    // readAttachment for metadata (called by retrieveDeepDive)
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\narea: skills\n```' }));
+    // retrieveMetadata call inside queryConnectedIssues
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\nconnected_issues: []\n```' }));
+
+    const result = retrieveDeepDive(issue);
+    expect(result).toContain('## Issue Body');
+    expect(result).toContain('Repeated plan slot conflict');
+    expect(result).toContain('## Metadata Attachment');
+    expect(result).toContain('## Connected Issues');
+  });
+
+  it('falls back to placeholder text when fetchBody fails', () => {
+    // INVARIANT: a gh failure on fetchBody must not throw — body section shows placeholder
+    ghFails('not found'); // fetchBody fails
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\narea: skills\n```' }));
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\nconnected_issues: []\n```' }));
+
+    const result = retrieveDeepDive(issue);
+    expect(result).toContain('## Issue Body');
+    expect(result).toContain('(no body)');
+    expect(result).toContain('## Metadata Attachment');
+  });
+
+  it('shows placeholder when metadata attachment is absent', () => {
+    // INVARIANT: missing metadata attachment must not throw — shows placeholder
+    ghReturns('## Problem\n\nSome problem.');
+    ghReturns(''); // no metadata attachment found
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\nconnected_issues: []\n```' }));
+
+    const result = retrieveDeepDive(issue);
+    expect(result).toContain('## Metadata Attachment');
+    expect(result).toContain('(no metadata attachment)');
+  });
+
+  it('shows placeholder when connected issues list is empty', () => {
+    // INVARIANT: zero connected issues must produce the placeholder, not an empty section
+    ghReturns('## Problem\n\nSome problem.');
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\narea: skills\n```' }));
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\nconnected_issues: []\n```' }));
+
+    const result = retrieveDeepDive(issue);
+    expect(result).toContain('## Connected Issues');
+    expect(result).toContain('(no connected issues)');
   });
 });
 

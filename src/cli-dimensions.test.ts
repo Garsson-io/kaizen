@@ -33,11 +33,7 @@ applies_to: ${appliesTo}
 Some instructions.
 
 \`\`\`json
-{
-  "dimension": "${name}",
-  "summary": "",
-  "findings": []
-}
+{"dimension": "${name}", "verdict": "pass", "summary": "", "findings": []}
 \`\`\`
 `;
 
@@ -239,7 +235,7 @@ describe('cli-dimensions with temp fixtures', () => {
     expect(errors).toContain('Frontmatter missing "applies_to" field');
   });
 
-  it('validate catches missing json output section', () => {
+  it('validate catches missing yaml output section', () => {
     writeFileSync(resolve(tmpDir, 'review-nojson.md'), '---\nname: nojson\ndescription: test\napplies_to: pr\n---\nNo json block.\n');
     const v = cmdValidate(tmpDir);
     expect(v.ok).toBe(false);

@@ -485,7 +485,7 @@ Create these tasks at skill start using TaskCreate:
 ## What Comes Next
 
 After the spec is merged and reviewed:
-- Use **`/kaizen-evaluate`** to evaluate whether to proceed, gather incidents, and find low-hanging fruit.
+- Use **`/kaizen-write-plan`** to validate the problem, gather incidents, form a grounded plan, and get admin approval.
 - Use **`/kaizen-implement`** to bridge spec to code — re-examine against current reality, apply the five-step algorithm, and execute incrementally.
 - Use **`/kaizen-plan`** when implementation is too big for one PR — break into independent, sequenced PRs with dependency graph and sub-issues.
 
@@ -503,7 +503,7 @@ A PRD that doesn't flow into the repo is decoration. Before marking the PRD comp
    - [ ] Policies (`policies.md`, `review-criteria.md`)
    - [ ] Philosophy (`zen.md`, `horizon.md`)
 
-2. **For each checked item:** Either apply the change in this PR, or file a sub-issue with the specific change described (not "update skills" but "add hypothesis-formation step to `/kaizen-evaluate` Phase 3.5").
+2. **For each checked item:** Either apply the change in this PR, or file a sub-issue with the specific change described (not "update skills" but "add hypothesis-formation step to `/kaizen-write-plan` Phase 4").
 
 3. **Process insights test:** Does this PRD contain methodology or process insights (not just feature specs)? Examples: "always form hypotheses before fixing," "use progressive detail," "escalate L1->L2 on recurrence." If yes, these insights must land in the skill/doc/hook that future agents will read — not just in the issue body. File sub-issues or apply directly.
 

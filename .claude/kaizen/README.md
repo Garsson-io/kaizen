@@ -56,7 +56,7 @@ Key architectural points:
 |------|---------|
 | `policies.md` | Kaizen enforcement policies (#11-17) — recursive kaizen, hooks, MCP, security, isolation, testing, language boundaries |
 | `verification.md` | Verification discipline — path tracing, invariant statements, runtime artifact verification, smoke tests |
-| `workflow.md` | Dev work skill chain — trigger→skill routing for `/kaizen-pick` → `/kaizen-evaluate` → `/kaizen-implement` → `/kaizen` |
+| `workflow.md` | Dev work skill chain — trigger→skill routing for `/kaizen-deep-dive` → `/kaizen-write-plan` → `/kaizen-implement` → `/kaizen-reflect` |
 | `practices.md` | Engineering practices checklist — consulted before shipping (advisory) |
 | `zen.md` | The Zen of Kaizen — philosophical principles |
 | `horizon.md` | Horizon tracking dimensions |

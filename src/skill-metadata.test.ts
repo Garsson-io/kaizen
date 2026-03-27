@@ -36,7 +36,7 @@ description: Print the Zen of Kaizen
 name: kaizen-implement
 description: Take a spec to working code
 triggers: ["implement spec", "go ahead", "build it"]
-depends_on: [kaizen-evaluate]
+depends_on: [kaizen-write-plan]
 type: kaizen-internal
 min_version: "1.0.40"
 user_invocable: true
@@ -49,7 +49,7 @@ user_invocable: true
       name: "kaizen-implement",
       description: "Take a spec to working code",
       triggers: ["implement spec", "go ahead", "build it"],
-      depends_on: ["kaizen-evaluate"],
+      depends_on: ["kaizen-write-plan"],
       type: "kaizen-internal",
       min_version: "1.0.40",
       user_invocable: true,
@@ -107,11 +107,11 @@ depends_on: []
     const content = `---
 name: test-skill
 description: test
-depends_on: [kaizen-evaluate]
+depends_on: [kaizen-write-plan]
 ---`;
 
     const meta = parseSkillFrontmatter(content);
-    expect(meta?.depends_on).toEqual(["kaizen-evaluate"]);
+    expect(meta?.depends_on).toEqual(["kaizen-write-plan"]);
   });
 
   it("strips quotes from array values", () => {

@@ -100,4 +100,4 @@ Rules for `findings[].status`:
 
 Be specific. Quote file names and line numbers. "Looks good" is not a finding. Every requirement and every discrete change must appear as a `findings` entry. Omit nothing.
 
-After the JSON block, you may add prose commentary, but the JSON block MUST come first.
+Output JSON only — no prose before or after the block.

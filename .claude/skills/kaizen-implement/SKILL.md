@@ -1,21 +1,56 @@
 ---
 name: kaizen-implement
-description: Take a spec from PRD to working code. Re-examines the spec against current reality, finds concrete next steps, and executes. Guided by the Zen of Kaizen (see .claude/kaizen/zen.md). Triggers on "implement spec", "implement prd", "start implementation", "pick up spec", "execute spec". ALSO triggers on greenlight phrases after discussing concrete work — "lets do it", "go ahead", "build it", "start on this", "do it", "make it happen", "go for it", "ship it", "yes do it". If a specific piece of work (issue, PR, case, spec) was just discussed and the user gives a go-ahead, this skill drives the implementation. Always create a case first (all dev work must be in a case with its own worktree per CLAUDE.md).
+description: Execution engine — takes scope set by /kaizen-write-plan and turns it into working code. Triggers on "implement spec", "implement prd", "start implementation", "pick up spec", "execute spec". ALSO triggers on greenlight phrases after discussing concrete work — "lets do it", "go ahead", "build it", "start on this", "do it", "make it happen", "go for it", "ship it", "yes do it". Always uses EnterWorktree for isolation. Always calls ExitWorktree on completion.
 ---
 
 <!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
 
-# Implement Spec — From PRD to Working Code
+# Implement Spec — Execution Engine
 
-**Role:** The execution engine. Takes scope decided by `/kaizen-evaluate` and turns it into working code. Does NOT decide scope — if re-examination reveals the scope should change, escalate to the admin or loop back to `/kaizen-evaluate`.
+## Quick Reference
+
+**Input artifact:** grounding attachment from `/kaizen-write-plan`
+```bash
+npx tsx src/cli-structured-data.ts retrieve-grounding --issue {N} --repo "$ISSUES_REPO"
+```
+
+**Output artifacts:**
+- Plan attachment (brief execution note): `store-plan --issue {N}`
+- PR with `Fixes $ISSUES_REPO#N` in body
+- Merged code
+
+**Tasks:** Create at start via **TaskCreate** — 11 tasks (see Workflow Task Plan below)
+
+**Tools used in this skill:**
+- **TaskCreate** / **TaskUpdate** — progress tracking at every step
+- **EnterWorktree** — create isolated worktree (NOT claude-wt)
+- **ExitWorktree** — ALWAYS called at end, even on failure
+- **Agent tool with `subagent_type=general-purpose`** — review battery subagents in parallel
+- Review-PR loop: max 3 rounds. Each round: fix findings → commit → push → re-run review
+
+**Disciplines — non-negotiable:**
+- **ONE PR at a time.** Called with a single issue/sub-issue number.
+- **No dirty files.** Every changed file must be committed before ExitWorktree.
+- **No abandoned worktrees or branches.** ExitWorktree is always called.
+- **EnterWorktree only** (not claude-wt — that's an interactive shell alias).
+
+**Flow:**
+```
+retrieve-grounding → EnterWorktree → store-plan (brief note) → TDD RED → TDD GREEN
+→ [push → review-pr → fix loop (max 3 rounds)] → CI → merge → ExitWorktree → reflect
+```
+
+---
+
+**Role:** The execution engine. Takes scope set by `/kaizen-write-plan` and turns it into working code. Does NOT decide scope — if re-examination reveals the scope should change, escalate to the admin or loop back to `/kaizen-write-plan`.
 
 **Philosophy:** See the [Zen of Kaizen](../../kaizen/zen.md) — especially *"Specs are hypotheses. Incidents are data."* and *"The most dangerous requirement is the one nobody re-examined."*
 
 **When to use:**
-- An `/kaizen-evaluate` evaluation said "proceed with implementation"
+- `/kaizen-write-plan` produced a grounding and admin approved
 - A spec exists (from `/kaizen-prd`) and implementation is starting
 - You're picking up a spec that was written days/weeks ago
-- You've finished one phase of implementation and need to plan the next
+- You've finished one sub-issue and are moving to the next
 
 **The key insight:** Specs rot. The codebase has changed. Understanding has deepened. Things that seemed important when the spec was written may be irrelevant now. Things the spec didn't anticipate may be obvious now. The spec's value is the *problem taxonomy and direction*, not the specific solutions it proposed.
 
@@ -53,92 +88,61 @@ For kaizen issues, always pass `--github-issue` to link the case to the existing
 
 ## Workflow Task Plan — Create at Session Start (MANDATORY)
 
-**Immediately after the case gate passes**, discover the review dimensions your PR will be measured on and create the workflow task list.
+**Step 0:** Read the grounding from `/kaizen-write-plan` — this is the canonical plan:
+```bash
+npx tsx src/cli-structured-data.ts retrieve-grounding --issue {N} --repo "$ISSUES_REPO"
+```
 
-**Step 0: Discover review dimensions and create the plan.**
-
-First, discover the dimensions your PR will be measured on:
+Then discover review dimensions:
 ```bash
 npx tsx src/cli-dimensions.ts list
 ```
-These are not aspirational — they are the adversarial rubric. Read the `high_when` signals for each dimension against your issue to understand which dimensions matter most.
+Read the `high_when` signals for each dimension against your issue to identify which matter most.
 
-**Step 0b: Create the plan.** Post it as an **issue comment** on the linked issue:
-
-```bash
-gh issue comment N --repo "$ISSUES_REPO" --body "$(cat <<'PLAN'
-## Implementation Plan
-
-**Approach**: What to build and how. Key architectural decisions. Why this approach over alternatives.
-
-**Testing Strategy**:
-- Pyramid levels: [unit | integration | E2E] — which and why
-- SUT: what component is the focus of testing
-- Invariants: what must ALWAYS be true (not just "this bug is fixed")
-- For bug fixes: what category of bug does this prevent?
-
-**Scope**:
-- In this PR: [concrete list]
-- Deferred: [with mechanism — follow-up issue #N]
-
-**Risk Assessment**:
-- High-priority review dimensions for this PR (from high_when signals)
-- Suggested subagent grouping for review
-PLAN
-)"
-```
-
-**The plan is mandatory.** It must be posted before you write any code. Use `npx tsx src/cli-structured-data.ts store-plan` to persist it on the issue:
+Then use **EnterWorktree** to enter an isolated worktree. Then post a brief execution note and store it:
 
 ```bash
 npx tsx src/cli-structured-data.ts store-plan --issue {N} --repo "$ISSUES_REPO" --file plan.md
-npx tsx src/cli-structured-data.ts store-testplan --issue {N} --repo "$ISSUES_REPO" --file testplan.md
 ```
 
-The plan lives in three places:
-1. **Issue comment via plan-store** (primary — persistent, discoverable, cross-session, auto-loaded by `reviewBattery()`)
-2. **Session context** (you just wrote it — dimension subagents read it during review)
-3. **PR description** (absorbed into Story Spine narrative via `/kaizen-write-pr` after PR creation)
+The plan note content:
+```
+## Execution Note
 
-The plan is consumed by: `plan-coverage` (plan vs issue), `plan-fidelity` (PR vs plan), `test-plan` (testing strategy). `reviewBattery()` auto-loads plan text from the issue when `planText` is not explicitly provided — so storing it with `cli-structured-data.ts` makes it available to all downstream review dimensions automatically. See `docs/artifact-lifecycle.md` for the full artifact chain.
+Grounding confirmed from issue #{N} (retrieved via retrieve-grounding).
+Starting execution per grounding task list and test plan.
 
-**Why an issue comment, not a repo file?** Plans are per-issue artifacts, not tooling. They don't belong in the codebase. In plugin mode, kaizen must never commit per-issue files to the host repo. Issue comments are persistent, attached to the issue, and discoverable by future sessions.
-
-**Create ALL of these tasks:**
-
-1. **Create plan** — Post implementation plan as an issue comment (per Step 0b above). Run plan-coverage review against the issue. Iterate until the plan addresses all requirements.
-1b. **Assess architecture/tooling fitness** — Right language? Right runtime? Libraries to reuse? E2E harness exists? (From `/kaizen-evaluate` Phase 3.7 assessment — verify it's still valid)
-2. **Write failing tests (TDD RED)** — Express target invariants from the plan's Testing Strategy. They must fail before implementation.
-3. **Implement (TDD GREEN)** — Make the failing tests pass with the simplest correct change.
-4. **Review battery: invoke `/kaizen-review-pr`** — Discover all review dimensions via `npx tsx src/cli-dimensions.ts list`. Get the review briefing (dimensions, data needs, priority signals). Decide subagent grouping based on PR size and dimension priority signals. Spawn subagents for ALL dimensions. Validate coverage — all dimensions must have findings before proceeding. Filter: drop confidence < 75, classify MUST-FIX (≥80, blocks merge) and SHOULD-FIX (75-79, fix if easy or file follow-up — never silently skip). Also scan learned failure modes from `.claude/kaizen/review-criteria.md` (FM-N patterns). See `/kaizen-review-pr` for the full workflow. **After classifying, call `store-review-batch` to persist findings before Phase 4** — see the mandatory storage step in `/kaizen-review-pr` Phase 3.
-5. **Review fix loop** — Fix all MUST-FIX and SHOULD-FIX findings from the review. Commit + push fixes. Re-run `/kaizen-review-pr` from step (1). Repeat until clean or max 3 rounds. If still unclean at round 3: escalate to human with `gh pr comment`. Hooks `pr-review-loop.ts` and `stop-gate.ts` enforce this — you cannot stop with pending review.
-5b. **Requirements coverage review** — After the PR passes the review battery, run the **requirements review battery** to verify the PR addresses every requirement in the linked issue. Use the Agent tool with the `review-requirements` prompt from `prompts/review-requirements.md`, passing the PR URL and issue number. If findings include MISSING or PARTIAL items, fix them before merging. Maximum 3 fix rounds (per `MAX_FIX_ROUNDS` in `src/review-battery.ts`). Budget cap: $2 per battery run. This catches "correct code that doesn't solve the stated problem" — a failure mode that code review alone cannot detect.
-6. **Commit + push** — Stage changes, commit with descriptive message, push to remote branch.
-7a. **Related Issues Sweep** — Before creating the PR, search for open issues that this work may fully or partially fix. A PR that broadly addresses a category of bugs often resolves related issues that weren't in the original scope.
-
-```bash
-# Search for related open issues by key terms from your changes
-gh issue list --repo "$ISSUES_REPO" --state open --search "[key terms]" --json number,title,body --limit 15
+High-priority review dimensions: [list from cli-dimensions.ts list based on high_when signals]
 ```
 
-For each result: "Does this PR fully or partially address it?" If yes:
-- **Fully resolves**: add `Fixes $ISSUES_REPO#N` to PR body (auto-close on merge)
-- **Partially resolves**: add `Related: $ISSUES_REPO#N` and leave a comment on the issue explaining what was addressed and what remains
-- **Not related**: skip
+The `plan` slot is kept populated (review-battery reads it via `retrievePlan()`). The canonical plan lives in the `grounding` slot. See `docs/artifact-lifecycle.md`.
 
-**This step prevents the issue tracker from drifting.** PRs that fix categories of problems should close the issues they fix — not just the one primary issue they were written for.
+**Create ALL of these tasks using TaskCreate:**
 
-7. **Create PR** — Use `/kaizen-write-pr` to craft the PR description, then `gh pr create` with the result. The description must include `Fixes $ISSUES_REPO#N` (cross-repo prefix required for auto-close). Add `status:has-pr` label to kaizen issue. Add PR link as comment. The `/kaizen-write-pr` skill uses the **Story Spine narrative arc** — a reviewer should understand the PR's value, impact, and technical choices **without reading the diff**. The diff is proof; the description is the argument.
-8. **Wait for CI** — Run `gh pr checks` to watch for CI failures. If checks fail, read the failure, fix, commit, push, and re-check. Do not merge with failing checks.
-9. **Merge (squash)** — Verify no merge conflicts. Squash merge. Verify merge completed cleanly (check PR state is "merged"). If conflicts: merge main into branch, resolve, push, re-check CI, then merge.
-10. **Kaizen reflection (subagent)** — The kaizen-bg subagent handles reflection in the background. It reads the full session transcript (uncompressed — it sees what you may have forgotten), scans for signals (user corrections, failed tool calls, hook denials, retries), and files incidents/issues independently. You launch it via the Agent tool when the hook fires, then wait for its results to clear the gate. Note any impediments you noticed during the session to pass along.
-11. **Cleanup** — Remove worktree (`ExitWorktree remove`). Verify branch deleted on remote. Verify issue closed (auto-closed by `Fixes` keyword, or close manually). If sub-issues remain from `/kaizen-plan`, loop back to task #1 for next sub-issue.
+| # | Task | Description |
+|---|------|-------------|
+| 1 | Read grounding + enter worktree | retrieve-grounding → check review dims → EnterWorktree → store-plan (brief note) |
+| 2 | Write failing tests (TDD RED) | Express invariants from grounding's test plan. Must fail before implementing. |
+| 3 | Implement (TDD GREEN) | Make tests pass with simplest correct change. Full suite green. |
+| 4 | Push + create PR | Stage, commit, push. Run `/kaizen-write-pr` to draft PR body (Story Spine), then `gh pr create`. Add `status:has-pr` label. |
+| 5 | Review battery (round 1) | `/kaizen-review-pr` — spawn subagents via Agent tool for all dimensions. Store findings via `store-review-finding`. |
+| 6 | Review fix loop | Fix MUST-FIX + SHOULD-FIX. Commit + push. Re-run review. Max 3 rounds total. |
+| 7 | Requirements coverage review | Agent tool with `prompts/review-requirements.md`. Fix MISSING/PARTIAL. Max 3 rounds. |
+| 8 | Related Issues Sweep | Search for open issues this work fully/partially fixes. Update PR body. |
+| 9 | Wait for CI + merge (squash) | `gh pr checks`. Fix failures. Squash merge. Verify merged. |
+| 10 | Kaizen reflection | Launch kaizen-bg subagent via Agent tool. Wait for KAIZEN_IMPEDIMENTS to clear gate. |
+| 11 | Cleanup | ExitWorktree (remove). Verify branch deleted. Verify issue closed. |
 
-**Why this exists:** Agents discover tasks reactively — they forget review, skip reflection, leave worktrees behind. Making the full workflow visible from session start (as tasks you own) prevents this. The self-review task (#4) is particularly critical — it's where the review criteria file gets applied to your own code.
+Mark each task **in_progress** via **TaskUpdate** before starting. Mark **completed** when done.
 
-**Adapt the list to the work:** Not every task applies to every case. Docs-only PRs skip TDD (#2-3). Bug fixes might skip architecture assessment (#1). But the default is ALL tasks — delete explicitly with a reason, don't silently skip.
+**Review fix loop (task 6):** Max 3 rounds. Each round:
+1. Fix all MUST-FIX (≥80 confidence) and SHOULD-FIX (75-79) findings
+2. Commit + push
+3. Re-run `/kaizen-review-pr`
+4. If still findings and rounds < 3: repeat
+5. If round 3 and still unclean: escalate via `gh pr comment` — do not merge
 
-**When completing the reflection task (#10):** The kaizen-bg subagent does the heavy lifting — reading the transcript, searching for duplicates, filing incidents. Your job is to (1) launch it with context when the hook fires, (2) note any impediments you noticed during the session, and (3) wait for its results to clear the gate with a KAIZEN_IMPEDIMENTS declaration. The subagent is an independent auditor — it may find impediments you didn't report.
+**Adapt the list:** Docs-only PRs skip TDD (#2-3). Delete tasks explicitly with a reason — never silently skip.
 
 **Hooks that fire during implementation:** See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for the full hook map.
 
@@ -167,11 +171,11 @@ Every requirement in the spec was added by someone smart at some point. That doe
 
 ### Check freshness, not scope
 
-This step is about **accuracy** — is the spec still true? — not about **scope** — can we do less? Scope was decided in `/kaizen-evaluate`.
+This step is about **accuracy** — is the spec still true? — not about **scope** — can we do less? Scope was decided in `/kaizen-write-plan`.
 
-If re-examination reveals something significant has changed (e.g., half the spec was already built by another PR, or a key assumption is wrong), **don't unilaterally skip it**. Flag it to the admin: "The spec assumed X but Y is now true — should we adjust scope?" That's an accept-case decision, not an implementation decision.
+If re-examination reveals something significant has changed (e.g., half the spec was already built by another PR, or a key assumption is wrong), **don't unilaterally skip it**. Flag it to the admin: "The spec assumed X but Y is now true — should we adjust scope?" That's a write-plan decision, not an implementation decision.
 
-**Solution fitness check (kaizen #714):** If during re-examination you realize the spec's proposed solution may address the wrong failure mode or use an unnecessarily complex mechanism, halt and surface the concern before implementing. A correct implementation of the wrong spec wastes more time than pausing to validate. See `/kaizen-evaluate` Phase 4 "Solution evaluation" for the 5-question check.
+**Solution fitness check (kaizen #714):** If during re-examination you realize the spec's proposed solution may address the wrong failure mode or use an unnecessarily complex mechanism, halt and surface the concern before implementing. A correct implementation of the wrong spec wastes more time than pausing to validate. See `/kaizen-write-plan` Phase 4 "Scope + Architecture" for the 5-question check.
 
 **The spec was written to be complete. Implementation should match the problem.** Not everything in the spec needs to be built right now — but what you do build should be built well. *"Avoiding overengineering is not a license to underengineer."*
 
@@ -222,6 +226,8 @@ The L3 enforcement in `ipc-cases.ts` will:
 
 ### On PR creation
 
+Use `/kaizen-write-pr` to draft the PR body using the Story Spine narrative — a reviewer should understand the PR's value, impact, and technical choices **without reading the diff**. The diff is proof; the description is the argument.
+
 After creating a PR, link it to the kaizen issue and ensure auto-closure on merge:
 ```bash
 # Add has-pr label
@@ -258,7 +264,7 @@ BODY
 )"
 ```
 
-This keeps the epic as a living dashboard. `/kaizen-pick` reads the epic's "Next Step" to boost scoring for the recommended follow-up work.
+This keeps the epic as a living dashboard for any agent or admin picking up the next sub-issue.
 
 ## Reuse Check — BEFORE writing utility code
 
@@ -355,7 +361,7 @@ One paragraph. What's the concrete deliverable? Not "implement the test ladder s
 
 The spec should have detailed solutions for the current level and rough outlines for the next level. If you're about to implement something the spec left as a rough outline, that's a signal: you need to refine the spec for this level before coding. Add detail to the spec (as a new commit in the implementation PR or a separate docs PR) and then implement against the refined spec.
 
-If you're about to implement something the spec left as an open question, **stop**. That's a signal the spec needs another round of `/kaizen-prd` or `/kaizen-evaluate` for this specific area. Don't design and implement in the same breath — that's how you get solutions that weren't examined.
+If you're about to implement something the spec left as an open question, **stop**. That's a signal the spec needs another round of `/kaizen-prd` or `/kaizen-write-plan` for this specific area. Don't design and implement in the same breath — that's how you get solutions that weren't examined.
 
 ### 3. Find the low-hanging fruit
 
@@ -421,7 +427,7 @@ After completing documentation deliverables, check whether the parent PRD or epi
 - Small gaps (< 10 lines of prompt changes): apply them in this PR alongside the code
 - Large gaps (new skills, major doc rewrites): file a sub-issue with the specific change
 
-**Example:** Epic #334 proposed "hypothesis-driven experimentation" as methodology. Sub-issues #348, #376, #377, #380 designed specific skill prompt changes. But after implementing the code, none of the skill prompts were updated. This cross-check would have caught that: "Epic #334 proposes adding hypothesis formation to /kaizen-evaluate Phase 3.5 — is it there? No. Apply it now."
+**Example:** Epic #334 proposed "hypothesis-driven experimentation" as methodology. Sub-issues #348, #376, #377, #380 designed specific skill prompt changes. But after implementing the code, none of the skill prompts were updated. This cross-check would have caught that: "Epic #334 proposes adding hypothesis formation to /kaizen-write-plan Phase 4 — is it there? No. Apply it now."
 
 ### 4c. Adjacent discovery check — what did this work reveal?
 
@@ -461,25 +467,22 @@ After implementation, **reproduce the original problem and verify it's actually 
 /kaizen-prd          → Defines the problem space and taxonomy. Progressive detail.
                        Output: spec document, kaizen issue.
 
-/kaizen-evaluate        → Evaluates whether to proceed. Gathers incidents,
-                       finds low-hanging fruit, gets admin input.
-                       Output: go/no-go, concrete direction.
+/kaizen-write-plan   → Planning gate. Reads grounding from write-plan, gets admin approval.
+                       Output: grounding attachment (canonical plan).
 
-/kaizen-implement     → THIS SKILL. Bridges spec to code.
-  (this skill)         Re-examines spec, execute loop.
-                       Output: working code, PRs, updated spec.
+/kaizen-implement     → THIS SKILL. Reads grounding, executes TDD loop, ships PR.
+  (this skill)         Does not decide scope — escalate changes to /kaizen-write-plan.
+                       Output: working code, merged PR, closed issues.
 
 /kaizen-plan          → Breaks a large implementation into sequenced PRs.
-                       Use WITHIN this skill when the work is too big
-                       for one PR but the direction is clear.
+                       Use BEFORE this skill when the work needs multiple PRs.
                        Output: dependency graph, sub-issues.
 
-/kaizen             → Reflection after implementation. What impediments
-                       did we encounter? What should the system learn?
+/kaizen-reflect      → Reflection after implementation. Impediments, incidents, improvements.
                        Output: structured KAIZEN_IMPEDIMENTS, new issues.
 ```
 
-The flow is usually: `write-prd → accept-case → implement-spec → kaizen`. But it's not always linear — `implement-spec` may loop back to `write-prd` when it discovers the spec needs more detail for the current level, or to `accept-case` when implementation reveals the problem is different than expected.
+The flow is: `kaizen-deep-dive → kaizen-write-plan → kaizen-implement → kaizen-review-pr → kaizen-reflect`. `kaizen-implement` may loop back to `kaizen-write-plan` when re-examination reveals the scope should change — but never changes scope unilaterally.
 
 ## Dual Failure Mode Check — MANDATORY for behavioral constraints (kaizen #722)
 
@@ -513,7 +516,7 @@ This check applies to: SKILL.md prompt additions, hook rules, scope constraints,
 
 *"It's kaizens all the way down."* — Zen of Kaizen
 
-This skill is part of the improvement system: `write-prd → accept-case → implement-spec → kaizen`. That system itself should improve over time. See the [Zen of Kaizen](../../kaizen/zen.md) for the full philosophy.
+This skill is part of the improvement system: `kaizen-deep-dive → kaizen-write-plan → kaizen-implement → kaizen-reflect`. That system itself should improve over time. See the [Zen of Kaizen](../../kaizen/zen.md) for the full philosophy.
 
 The kaizen reflection that fires on `case_mark_done` already captures impediments. If those reflections include "the spec was over-specified for this problem" or "I implemented unnecessary code because I didn't re-examine the spec," that's process feedback, not just work feedback. These reflections, accumulated over many cases, are the raw material for improving the skills themselves.
 

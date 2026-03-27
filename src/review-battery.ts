@@ -14,9 +14,10 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
+import { z } from 'zod';
 import YAML from 'yaml';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
-import { retrievePlan, issueTarget } from './structured-data.js';
+import { retrievePlan, retrieveGrounding, issueTarget, prTarget, storeReviewFinding, ReviewFindingDataSchema, type ReviewFindingData } from './structured-data.js';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -78,6 +79,15 @@ export interface BatteryResult {
   skippedDimensions: string[];
 }
 
+// ── Structured Output Schema ─────────────────────────────────────────
+//
+// Passed to `claude -p --json-schema` so the model is forced to output
+// a JSON object matching this shape. No YAML/text parsing needed.
+// Derived from ReviewFindingDataSchema (zod) via z.toJSONSchema() so
+// the zod schema and the JSON Schema stay automatically in sync.
+
+export const REVIEW_FINDING_JSON_SCHEMA: object = z.toJSONSchema(ReviewFindingDataSchema);
+
 // ── Review Policy Constants ─────────────────────────────────────────
 //
 // These constants guide the agent's review-fix iteration in skills.
@@ -104,7 +114,7 @@ export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
 export type ReviewDimension = string;
 
 /** Data categories a dimension can require */
-export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'session' | 'git-history' | 'multiple_prs' | 'reflection_history';
+export type DataNeed = 'diff' | 'issue' | 'pr' | 'codebase' | 'tests' | 'plan' | 'grounding' | 'session' | 'git-history' | 'multiple_prs' | 'reflection_history';
 
 /** Frontmatter metadata from a review dimension prompt */
 export interface DimensionMeta {
@@ -426,12 +436,18 @@ export interface SpawnReviewOptions {
   dimension: ReviewDimension;
   /** PR URL (for implementation reviews) */
   prUrl?: string;
+  /** PR number as a string (for store-review-finding CLI) */
+  prNum?: string;
+  /** Review round number (for store-review-finding CLI) */
+  round?: number;
   /** Issue number (for requirement comparison) */
   issueNum?: string;
   /** GitHub repo (owner/name) */
   repo?: string;
   /** Plan text (for plan reviews) */
   planText?: string;
+  /** Grounding text from kaizen-write-plan (canonical plan: tasks, test plan, seam map) */
+  groundingText?: string;
   /** Issue body text (pre-fetched to avoid subagent re-fetching) */
   issueBody?: string;
   /** PR body text (pre-fetched) */
@@ -453,19 +469,24 @@ export interface SpawnReviewOptions {
  */
 async function runClaude(
   prompt: string,
-  opts: { cwd?: string; timeoutMs?: number },
+  opts: { cwd?: string; timeoutMs?: number; jsonSchema?: object },
 ): Promise<{ text: string; costUsd: number; durationMs: number; exitCode: number }> {
   const model = process.env.REVIEW_MODEL ?? 'sonnet';
   const start = Date.now();
 
+  const args = [
+    '-p',
+    '--output-format', 'stream-json',
+    '--verbose',
+    '--dangerously-skip-permissions',
+    '--model', model,
+  ];
+  if (opts.jsonSchema) {
+    args.push('--json-schema', JSON.stringify(opts.jsonSchema));
+  }
+
   return new Promise((resolve) => {
-    const child = spawn('claude', [
-      '-p',
-      '--output-format', 'stream-json',
-      '--verbose',
-      '--dangerously-skip-permissions',
-      '--model', model,
-    ], {
+    const child = spawn('claude', args, {
       cwd: opts.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -484,16 +505,19 @@ async function runClaude(
       const durationMs = Date.now() - start;
 
       // Parse text and cost from stream-json JSONL output.
-      // The `result` field in the final "result" message is now always empty;
-      // actual text lives in assistant message content blocks.
+      // When --json-schema is used, the model calls a StructuredOutput tool and the
+      // structured data is in result.structured_output (not in text blocks).
+      // Without --json-schema, actual text lives in assistant message content blocks.
       let costUsd = 0;
       let text = '';
+      let structuredOutput: unknown = undefined;
       for (const line of stdout.split('\n')) {
         if (!line.trim()) continue;
         try {
           const msg = JSON.parse(line);
           if (msg.type === 'result') {
             costUsd = msg.total_cost_usd ?? 0;
+            if (msg.structured_output != null) structuredOutput = msg.structured_output;
           } else if (msg.type === 'assistant') {
             const content = msg.message?.content ?? [];
             for (const block of content) {
@@ -501,6 +525,12 @@ async function runClaude(
             }
           }
         } catch { continue; }
+      }
+
+      // When structured_output is present (--json-schema mode), serialize it back to
+      // JSON string so callers can use a single code path (JSON.parse → zod.parse).
+      if (structuredOutput !== undefined) {
+        text = JSON.stringify(structuredOutput);
       }
 
       resolve({ text, costUsd, durationMs, exitCode: code ?? -1 });
@@ -515,9 +545,12 @@ async function runClaude(
 export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: DimensionReview | null; costUsd: number; durationMs: number }> {
   const vars: Record<string, string> = {
     pr_url: opts.prUrl ?? '',
+    pr_num: opts.prNum ?? '',
+    round: opts.round != null ? String(opts.round) : '',
     issue_num: opts.issueNum ?? '',
     repo: opts.repo ?? '',
     plan_text: opts.planText ?? '',
+    grounding_text: opts.groundingText ?? '',
     issue_body: opts.issueBody ?? '',
     pr_body: opts.prBody ?? '',
     pr_diff_stat: opts.prDiffStat ?? '',
@@ -534,6 +567,7 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: D
   const { text, costUsd, durationMs, exitCode } = await runClaude(prompt, {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
+    jsonSchema: REVIEW_FINDING_JSON_SCHEMA,
   });
 
   if (exitCode !== 0) {
@@ -541,7 +575,39 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: D
     return { review: null, costUsd: 0, durationMs };
   }
 
-  const review = parseReviewOutput(text, opts.dimension);
+  // Try JSON.parse first (enforced by --json-schema flag), fall back to text scraping
+  let review: DimensionReview | null = null;
+  try {
+    const parsed = ReviewFindingDataSchema.parse(JSON.parse(text.trim()));
+    review = {
+      dimension: parsed.dimension || opts.dimension,
+      verdict: parsed.verdict,
+      summary: parsed.summary,
+      findings: parsed.findings,
+    };
+  } catch {
+    // --json-schema enforcement may not be perfect in all models; fall back gracefully
+    review = parseReviewOutput(text, opts.dimension);
+  }
+
+  // Auto-store finding on the PR when caller provides PR context
+  if (review && opts.prNum && opts.repo && opts.round != null) {
+    try {
+      const findingData: ReviewFindingData = {
+        dimension: review.dimension,
+        verdict: review.verdict,
+        summary: review.summary,
+        findings: review.findings,
+        round: opts.round,
+        durationSec: Math.round(durationMs / 1000),
+        costUsd,
+      };
+      storeReviewFinding(prTarget(opts.prNum, opts.repo), opts.round, findingData);
+    } catch (e) {
+      console.error(`  [review] failed to store finding for ${opts.dimension}: ${e}`);
+    }
+  }
+
   return { review, costUsd, durationMs };
 }
 
@@ -595,9 +661,12 @@ export async function spawnBatchReview(
 ): Promise<Array<{ review: DimensionReview | null; costUsd: number; durationMs: number }>> {
   const vars: Record<string, string> = {
     pr_url: opts.prUrl ?? '',
+    pr_num: opts.prNum ?? '',
+    round: opts.round != null ? String(opts.round) : '',
     issue_num: opts.issueNum ?? '',
     repo: opts.repo ?? '',
     plan_text: opts.planText ?? '',
+    grounding_text: opts.groundingText ?? '',
     issue_body: opts.issueBody ?? '',
     pr_body: opts.prBody ?? '',
     pr_diff_stat: opts.prDiffStat ?? '',
@@ -618,14 +687,19 @@ export async function spawnBatchReview(
     return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs: 0 }));
   }
 
+  // Batch schema: array of ReviewFindingData — one entry per dimension.
+  // Derived from zod (Policy #14) so the schema stays in sync with validation.
+  const batchSchema = z.toJSONSchema(z.array(ReviewFindingDataSchema));
+
   const batchPrompt =
     `Review this PR across ${prompts.length} dimension(s). ` +
-    `For each dimension, output a separate \`\`\`json block with the "dimension" field set to the dimension name.\n\n` +
+    `Return a JSON array with one findings object per dimension (set the "dimension" field to the dimension name).\n\n` +
     prompts.join('\n\n---\n\n');
 
   const { text, costUsd, durationMs, exitCode } = await runClaude(batchPrompt, {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
+    jsonSchema: batchSchema,
   });
 
   if (exitCode !== 0) {
@@ -633,7 +707,20 @@ export async function spawnBatchReview(
     return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs }));
   }
 
-  const reviews = parseAllReviewOutputs(text, loadedDims);
+  // Try JSON array parse first (enforced by --json-schema), fall back to text scraping
+  let reviews: DimensionReview[];
+  try {
+    const parsed = z.array(ReviewFindingDataSchema).parse(JSON.parse(text.trim()));
+    reviews = parsed.map(f => ({
+      dimension: f.dimension,
+      verdict: f.verdict,
+      summary: f.summary,
+      findings: f.findings,
+    }));
+  } catch {
+    reviews = parseAllReviewOutputs(text, loadedDims);
+  }
+
   const costPerDim = costUsd / Math.max(loadedDims.length, 1);
 
   return opts.dimensions.map(dim => ({
@@ -662,6 +749,8 @@ export interface BatteryOptions {
   prDiffStat?: string;
   /** Plan text (for plan reviews) */
   planText?: string;
+  /** Grounding text from kaizen-write-plan (canonical plan: tasks, test plan, seam map) */
+  groundingText?: string;
   /** Working directory */
   cwd?: string;
   /** Timeout per review in ms */
@@ -690,7 +779,21 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
     } catch { /* best effort — plan dims will emit MISSING if not found */ }
   }
 
-  // Dimensions that need 'plan' data but don't have it get a synthetic MISSING
+  // Auto-load groundingText from GitHub issue when not provided.
+  // Grounding is the canonical plan from kaizen-write-plan (task list, test plan, seam map).
+  // plan-fidelity reads this slot to verify PR implements what write-plan designed.
+  let groundingText = opts.groundingText;
+  if (!groundingText && opts.issueNum && opts.repo) {
+    try {
+      const stored = retrieveGrounding(issueTarget(opts.issueNum, opts.repo));
+      if (stored) {
+        groundingText = stored;
+        console.log(`  [review] auto-loaded grounding text from issue #${opts.issueNum} (${stored.length} chars)`);
+      }
+    } catch (e) { console.error(`  [review] grounding auto-load failed: ${e}`); }
+  }
+
+  // Dimensions that need 'plan' or 'grounding' data but don't have it get a synthetic MISSING
   // finding instead of being silently skipped (kaizen #901). This ensures the
   // battery report surfaces the gap and the fix loop knows about it.
   const metas = loadDimensionMetas();
@@ -708,7 +811,21 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
           status: 'MISSING',
           detail: `Dimension "${dim}" requires plan text but none was provided. Create a plan before running this review.`,
         }],
-        summary: `Skipped: no plan text provided (requires "plan" data)`,
+        summary: `FAIL — plan required but not found. Run /kaizen-write-plan first.`,
+      });
+      return false;
+    }
+    if (meta?.needs.includes('grounding') && !groundingText) {
+      skippedDimensions.push(dim);
+      skippedResults.push({
+        dimension: dim,
+        verdict: 'fail',
+        findings: [{
+          requirement: `${DATA_GAP_PREFIX} Grounding text available for review`,
+          status: 'MISSING',
+          detail: `Dimension "${dim}" requires grounding text (kaizen-write-plan output) but none was found. Run /kaizen-write-plan before implementation.`,
+        }],
+        summary: `FAIL — grounding required but not found. Run /kaizen-write-plan first.`,
       });
       return false;
     }
@@ -716,7 +833,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   });
 
   if (skippedDimensions.length > 0) {
-    console.log(`  [review] ${skippedDimensions.length} dim(s) missing plan text (MISSING finding): ${skippedDimensions.join(', ')}`);
+    console.log(`  [review] ${skippedDimensions.length} dim(s) missing required data (plan/grounding) — MISSING finding: ${skippedDimensions.join(', ')}`);
   }
 
   // Group by shared data needs; batch same-needs dims into one call
@@ -724,7 +841,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   const sharedOpts = {
     prUrl: opts.prUrl, issueNum: opts.issueNum, repo: opts.repo,
     issueBody: opts.issueBody, prBody: opts.prBody, prDiffStat: opts.prDiffStat,
-    planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
+    planText, groundingText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
   };
 
   const batchResultGroups = await Promise.all(

@@ -71,8 +71,11 @@ gh issue view <N> --repo "$ISSUES_REPO" --json title,body
 # PR body (includes test plan link if present)
 gh pr view <pr-url> --json title,body,url
 
-# Plan text (for plan-dependent dimensions: plan-fidelity, plan-coverage, improvement-lifecycle)
+# Plan text (for plan-coverage, improvement-lifecycle)
 npx tsx src/cli-structured-data.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"
+
+# Grounding text (for plan-fidelity — write-plan's canonical task list/test plan/seam map)
+npx tsx src/cli-structured-data.ts retrieve-grounding --issue <N> --repo "$ISSUES_REPO"
 
 # Connected issues (for requirements coverage — verify ALL connected issues are addressed)
 npx tsx src/cli-structured-data.ts query-connected --issue <N> --repo "$ISSUES_REPO"
@@ -85,7 +88,8 @@ PR:    <pr-url>
 Diff:  https://github.com/<owner>/<repo>/pull/<N>.diff
 Issues: #N1 <title> <url>
         #N2 <title> <url>
-Plan:  <plan text length or "none — plan dims will emit MISSING">
+Plan:  <plan text length or "none — plan-coverage/improvement-lifecycle will emit MISSING">
+Grounding: <grounding text length or "none — plan-fidelity will emit MISSING">
 Connected: #N1 [role] title, #N2 [role] title (from query-connected)
 
 Agents:

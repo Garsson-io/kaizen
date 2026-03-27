@@ -65,21 +65,21 @@ const BAD_DRY_CROSS_FILE: DiffScenario = {
 const BAD_STALE_REF: DiffScenario = {
   kind: 'diff',
   name: 'Stale reference after rename (PR #416 pattern)',
-  description: 'Hook renamed from accept-case to kaizen-evaluate but old name in added code',
+  description: 'Skill renamed from kaizen-evaluate to kaizen-write-plan but old name in added code',
   targetMode: FailureMode.STALE_REFERENCE,
   expectDetection: true,
   files: [
     {
       path: '.claude/hooks/test-evaluate.sh',
       additions: [
-        'echo "Testing accept-case hook"',
-        'run_hook accept-case "$INPUT"',
+        'echo "Testing kaizen-evaluate hook"',
+        'run_hook kaizen-evaluate "$INPUT"',
       ],
       deletions: [],
 
     },
   ],
-  renamedSymbols: [{ old: 'accept-case', new: 'kaizen-evaluate' }],
+  renamedSymbols: [{ old: 'kaizen-evaluate', new: 'kaizen-write-plan' }],
 };
 
 const BAD_ENV_GIT_STATUS: DiffScenario = {

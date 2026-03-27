@@ -17,15 +17,15 @@ Each skill has a distinct responsibility. They complement, not overlap.
 
 | Skill | Role | Owns | Feeds into |
 |-------|------|------|------------|
-| `/kaizen-pick` | **Selector** — chooses WHICH issue | Issue selection, collision avoidance | `/kaizen-evaluate` |
-| `/kaizen-evaluate` | **Scope gate** — decides WHAT to build | Scope decisions, evidence gathering, admin approval | `/kaizen-implement` |
-| `/kaizen-prd` | **Cartographer** — maps the problem space | Problem taxonomy, requirements | `/kaizen-evaluate` |
-| `/kaizen-implement` | **Execution engine** — turns scope into code | Freshness checks, code, tests, PRs | `/kaizen-reflect` |
+| `/kaizen-deep-dive` | **Explorer** — finds root cause category, creates meta-issue | Problem-space exploration, meta-issue body, metadata | `/kaizen-write-plan` (Path A) |
+| `/kaizen-write-plan` | **Planner** — decides WHAT to build and how | Grounding attachment, admin approval | `/kaizen-implement` |
+| `/kaizen-prd` | **Cartographer** — maps the problem space | Problem taxonomy, requirements | `/kaizen-write-plan` |
+| `/kaizen-implement` | **Execution engine** — turns grounding into code | Worktree, TDD, PR, review loop | `/kaizen-reflect` |
 | `/kaizen-plan` | **Sequencer** — breaks large work into PRs | Dependency graph, sub-issues | `/kaizen-implement` |
-| `/kaizen-reflect` | **Reflection engine** — learns from the work | Level classification, improvement filing, meta-reflection | `/kaizen-pick` (loop) |
+| `/kaizen-reflect` | **Reflection engine** — learns from the work | Level classification, improvement filing, meta-reflection | new issues → `/kaizen-write-plan` (loop) |
 
 **Key boundaries:**
-- `/kaizen-evaluate` decides scope. `/kaizen-implement` must not change scope unilaterally — if reality changed, escalate back.
+- `/kaizen-write-plan` decides scope. `/kaizen-implement` must not change scope unilaterally — if reality changed, escalate back.
 - `/kaizen-prd` maps the problem space with taxonomies. The taxonomy is the durable artifact — solution details rot.
 - `/kaizen-reflect` reflects on both the work AND the kaizen system itself. The system must improve itself.
 
@@ -116,7 +116,7 @@ gh issue view {N} --repo "$ISSUES_REPO" --json comments --jq '.comments[] | sele
 
 ### 1.8. HYPOTHESIS RETROSPECTIVE — was the root cause hypothesis correct? (kaizen #959)
 
-If `/kaizen-evaluate` Phase 3.5 or Phase 0.7 formed a root-cause hypothesis before implementation, close the loop here.
+If `/kaizen-write-plan` Phase 4 or Phase 0.7 formed a root-cause hypothesis before implementation, close the loop here.
 
 ```bash
 # Find the evaluation comment with the hypothesis
@@ -137,7 +137,7 @@ gh issue view {N} --repo "$ISSUES_REPO" --json comments \
 
 3. **File an impediment if the hypothesis was wrong and caused significant rework.** Pattern: "hypothesis X was wrong, we implemented Y before discovering Z — how do we test this earlier next time?"
 
-**If no hypothesis was found:** note it as an impediment — `/kaizen-evaluate` Phase 3.5 is mandatory for non-trivial issues. The absence of a hypothesis means the implementation was speculation.
+**If no hypothesis was found:** note it as an impediment — `/kaizen-write-plan` Phase 4 is mandatory for non-trivial issues. The absence of a hypothesis means the implementation was speculation.
 
 ### 2. IDENTIFY impediments — patterns first, then details (kaizen #241, #351)
 
@@ -360,7 +360,7 @@ Every kaizen reflection must include meta-reflection on the kaizen system itself
 Starting concrete and zooming out produces actionable output. Starting abstract produces abstract output. If any step surfaces an improvement, **file a kaizen issue about the skill or process itself.** The kaizen system is just code and prompts — it should improve as aggressively as the codebase does.
 
 **Additional cross-checks (after the ladder):**
-- **Were all accept-case preventions dispositioned?** If `/kaizen-evaluate` identified preventions or root causes, list each one and its status: implemented in this PR, filed as issue #N, or not addressed. If any are "not addressed," file them now — a prevention identified but not tracked is a prevention lost.
+- **Were all preventions dispositioned?** If `/kaizen-write-plan` Phase 4 identified preventions or root causes, list each one and its status: implemented in this PR, filed as issue #N, or not addressed. If any are "not addressed," file them now — a prevention identified but not tracked is a prevention lost.
 - **What prompt change would have made this session better?** Look at your mistakes, wrong turns, and suboptimal outputs. For each one, name the specific skill, the current wording gap, and the proposed improvement. The goal is self-improving prompts — every session should make the next one better.
 - **Were positive findings amplified?** Review any `type: "positive"` findings from step 2.5. For each non-obvious success, verify it was documented (`disposition: "amplified"` with a `target`). A validated practice that isn't written down will be independently rediscovered — or lost.
 - **PRD knowledge flow check (kaizen #381):** Is the parent PRD/epic's methodology reflected in the repo? Specifically: (1) Does the parent epic propose skill/hook/doc changes that haven't been applied? (2) Does it contain process insights that only exist in the GitHub issue body? (3) If gaps exist, file sub-issues with the specific changes needed — not "update skills" but the exact prompt text or doc section. Knowledge in issues is ephemeral; knowledge in skills/docs/hooks is durable. This check catches knowledge gaps that the PRD Knowledge Flow Checklist and the implement-spec methodology cross-check both missed.

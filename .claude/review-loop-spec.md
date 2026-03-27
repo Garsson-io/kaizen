@@ -201,7 +201,7 @@ The loops run autonomously. The human can interrupt at any point.
 - **Approve early:** "looks good, ship it" → skip remaining review iterations
 
 **How it maps to skills:**
-- Step 1 (Plan Loop) = `/kaizen-evaluate` rewritten to include requirement mapping + subagent reviews
+- Step 1 (Plan Loop) = `/kaizen-write-plan` rewritten to include requirement mapping + subagent reviews
 - Step 2 (Implement Loop) = `/kaizen-implement` rewritten to include TDD + review battery
 - Step 3 (Merge Loop) = end of `/kaizen-implement` (already exists, just needs audit trail)
 - Step 4 (Reflection) = `/kaizen-reflect` (already exists, just needs plan-vs-delivery comparison)

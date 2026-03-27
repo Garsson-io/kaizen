@@ -94,4 +94,4 @@ Create these tasks at skill start using TaskCreate:
 | 2 | Scan branches and cases | Unmerged branches, merged-not-deleted, active cases with issue links |
 | 3 | Present summary | Concise table with recommendations (commit dirty, delete merged, pick up existing work) |
 
-**What comes next:** Pick up existing work, or `/kaizen-pick` for new work. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.
+**What comes next:** Pick up existing work via `/kaizen-implement`, or `/kaizen-write-plan` to plan new work. See [workflow-tasks.md](../../kaizen/workflow-tasks.md) for full workflow.

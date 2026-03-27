@@ -20,16 +20,14 @@ User asks "where are the gaps", "analyze gaps", "what should we invest in"
     -> produces: low-hanging fruit, feature PRD candidates, meta/horizon PRD candidates
 
 User asks "make a dent", "hero mode", "fix the category", "deep dive", "autonomous fix"
-  -> /kaizen-deep-dive  (autonomous: find root cause category, fix bugs, add interaction tests, ship PR)
-
-User asks "what's next", "pick work", "pick a kaizen", "what should we work on"
-  -> /kaizen-pick  (filter claimed issues, score by momentum/diversity, present options)
+  -> /kaizen-deep-dive  (autonomous: find root cause category, create meta-issue)
+    -> hands off to /kaizen-write-plan #N
 
 User discusses a specific issue, PR, case, or spec
-  -> /kaizen-evaluate  (collision check, evaluate, find low-hanging fruit, get admin input)
+  -> /kaizen-write-plan #N  (validate problem, gather incidents if needed, form grounded plan, admin approval)
 
 User greenlights: "lets do it", "go ahead", "build it", "do it", "yes", etc.
-  -> /kaizen-implement  (five-step algorithm, create worktree, then execute)
+  -> /kaizen-implement #N  (read grounding, enter worktree, TDD, PR, review loop, merge, cleanup)
 
 Work is large enough to need multiple PRs
   -> /kaizen-plan  (break into sequenced PRs with dependency graph)
@@ -45,24 +43,22 @@ Every skill creates tasks at start using TaskCreate. This gives the user progres
 ## Entry Point Decision Tree
 
 ```
-Starting fresh, no specific work?           → /kaizen-pick
-Have a specific issue number?               → /kaizen-evaluate #N
-Issue evaluated, admin approved?            → /kaizen-implement
-Large work planned with sub-issues?         → /kaizen-implement for sub-issue #1 (skip evaluate)
-Need to define the problem first?           → /kaizen-prd
+Want autonomous category fix?               → /kaizen-deep-dive → /kaizen-write-plan #N
+Have a specific issue number?               → /kaizen-write-plan #N
+Plan approved by admin?                     → /kaizen-implement #N
+Large work planned with sub-issues?         → /kaizen-implement for sub-issue #1
+Need to define the problem first?           → /kaizen-prd → /kaizen-write-plan
 Want strategic backlog analysis?            → /kaizen-gaps
 Want to audit issue hygiene?                → /kaizen-audit-issues
-Want autonomous category fix?               → /kaizen-deep-dive
 ```
 
 ## Key Triggers to Recognize
 
-- **Strategic gap analysis:** "gap analysis", "analyze gaps", "tooling gaps" -> `/kaizen-gaps`
-- **Autonomous deep-dive:** "make a dent", "hero mode", "deep dive" -> `/kaizen-deep-dive`
-- **Selecting work from backlog:** "pick a kaizen", "what's next", "find work" -> `/kaizen-pick`
-- **Evaluating specific work:** "look at issue #N", "evaluate this" -> `/kaizen-evaluate`
-- **Greenlighting work:** "lets do it", "go ahead", "build it", "ship it" -> `/kaizen-implement`
-- **All dev work should be in an isolated worktree.** If the host has a case CLI (`$KAIZEN_CLI`), use it. Otherwise, create a plain git worktree.
+- **Strategic gap analysis:** "gap analysis", "analyze gaps", "tooling gaps" → `/kaizen-gaps`
+- **Autonomous deep-dive:** "make a dent", "hero mode", "deep dive" → `/kaizen-deep-dive`
+- **Planning specific work:** "write plan", "plan #N", "look at issue #N", "evaluate this", "should we do this", "what should we work on", "what's next" → `/kaizen-write-plan`
+- **Greenlighting work:** "lets do it", "go ahead", "build it", "ship it" → `/kaizen-implement`
+- **All dev work should be in an isolated worktree.** Use `EnterWorktree` (not `claude-wt`) to enter it.
 
 ## Issue Routing (Three-Way)
 

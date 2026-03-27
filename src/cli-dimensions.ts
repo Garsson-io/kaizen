@@ -106,16 +106,17 @@ TODO: Add review instructions.
 
 ## Output Format
 
-Output a JSON block fenced with \`\`\`json ... \`\`\` containing this exact structure:
+Output JSON only — no prose before or after the block.
 
 \`\`\`json
 {
   "dimension": "${opts.name}",
+  "verdict": "pass",
   "summary": "<one-line summary of findings>",
   "findings": [
     {
       "requirement": "<name or description of the requirement>",
-      "status": "DONE | PARTIAL | MISSING",
+      "status": "DONE",
       "detail": "<specific evidence>"
     }
   ]
@@ -126,8 +127,6 @@ Rules for status:
 - DONE: The criterion is fully met.
 - PARTIAL: Some aspects are addressed but gaps remain. State what's missing.
 - MISSING: The criterion is not addressed.
-
-After the JSON block, you may add prose commentary, but the JSON block MUST come first.
 `;
 
   writeFileSync(filePath, content, 'utf8');
@@ -172,7 +171,7 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
       }
     }
 
-    // Check for ```json output format section
+    // Check for ```yaml output format section (```json accepted for legacy compatibility)
     if (!content.includes('```json')) {
       errors.push('Missing ```json output format section');
     }
