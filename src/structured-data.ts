@@ -361,7 +361,7 @@ export function storeGrounding(target: AttachmentTarget, groundingText: string):
  */
 export function retrieveGrounding(target: AttachmentTarget & SectionTarget): string | null {
   const attachment = readAttachment(target, 'grounding');
-  if (attachment) return attachment.content;
+  if (attachment?.content) return attachment.content;
   return null;
 }
 

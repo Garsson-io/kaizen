@@ -238,6 +238,14 @@ describe('storeGrounding + retrieveGrounding — round-trip', () => {
     const grounding = retrieveGrounding(issue);
     expect(grounding).toBeNull();
   });
+
+  it('returns null when attachment exists but content is empty', () => {
+    // INVARIANT: retrieveGrounding returns null (not '') when attachment has empty content.
+    // Latent landmine: '' is falsy in JS, so callers using !== null would not catch it.
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:grounding -->' }));
+    const grounding = retrieveGrounding(issue);
+    expect(grounding).toBeNull();
+  });
 });
 
 describe('retrieveDeepDive — combined body + metadata + connected', () => {
