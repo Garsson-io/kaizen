@@ -100,7 +100,7 @@ Create a case first:
 Or via /kaizen-implement (which calls the CLI for you).
 
 This ensures:
-  - /kaizen-pick filters out this work (prevents duplicate effort)
+  - /kaizen-write-plan collision detection prevents duplicate effort
   - Kaizen reflection fires on completion
 
 If this is exploratory work (not implementation), use the main checkout with .claude/ paths instead." \

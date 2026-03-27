@@ -25,7 +25,7 @@
 - **L4 (in progress):** `kaizen-reflect.sh` and MCP enforcement (#57, #108) require that reflections produce filed issues, not just prose. PR #157 pending.
 - **L5a (not started):** No structured incident data. Incidents are prose in issue comments — not countable, not queryable, not labeled by horizon or root-cause-class.
 - **L5b (not started):** Agents reflect but don't check the backlog for pattern matches. Level classification is per-incident, never cross-incident.
-- **L6 (partial):** `/kaizen-pick` skill exists but requires human to trigger it. No autonomous scheduling.
+- **L6 (partial):** `/kaizen-write-plan` skill exists but requires human to trigger it. No autonomous scheduling.
 
 ## Enforcement Channels
 
@@ -36,7 +36,7 @@ The L1→L4 taxonomy has an emerging channel: **tasks as enforcement** (L1.5). S
 1. **Complete L4** — merge #157 (enforce actionable reflections), verify that reflections consistently produce issues
 2. **L5a infrastructure** — structured incident records with horizon and root-cause-class fields
 3. **L5b pattern detection** — cross-incident pattern matching to trigger level escalation
-4. **L6 exploration** — what would it take for the system to autonomously run `/kaizen-pick` → `/kaizen-evaluate` on a schedule?
+4. **L6 exploration** — what would it take for the system to autonomously run `/kaizen-write-plan` on a schedule?
 
 ## What We Can't See Yet
 
