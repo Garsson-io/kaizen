@@ -46,11 +46,10 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | Skill | When to Use |
 |-------|-------------|
 | `/kaizen-reflect` | Post-work reflection — classify impediments, file issues |
-| `/kaizen-pick` | Select next issue from backlog |
 | `/kaizen-gaps` | Strategic analysis — tooling gaps, horizon concentration |
-| `/kaizen-evaluate` | Scope gate — evaluate issue before implementation |
-| `/kaizen-implement` | Spec-to-code executor |
-| `/kaizen-deep-dive` | Autonomous root-cause fix across a category |
+| `/kaizen-deep-dive` | Autonomous root-cause fix — find category, create meta-issue, hand off to write-plan |
+| `/kaizen-write-plan` | Planning gate — validate problem, gather incidents, form grounded plan, admin approval |
+| `/kaizen-implement` | Execution engine — read grounding, worktree, TDD, PR, review loop, merge, cleanup |
 | `/kaizen-audit-issues` | Taxonomy audit — label coverage, epic health |
 | `/kaizen-prd` | Problem mapping — iterative discovery to spec |
 | `/kaizen-plan` | Break large work into sequenced PRs |
@@ -71,7 +70,9 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 
 **Structured data**: Use `npx tsx src/cli-structured-data.ts` as the primary interface for storing and retrieving structured data on PRs and issues. Key commands:
 - Reviews: `store-review-finding`, `store-review-summary`, `list-review-rounds`, `read-review-finding`
-- Plans: `store-plan`, `retrieve-plan`, `store-testplan`, `retrieve-testplan`
+- Grounding: `store-grounding --issue N`, `retrieve-grounding --issue N` (canonical plan: write-plan → implement)
+- Plans: `store-plan`, `retrieve-plan` (implement's brief execution note — do not use for full plan)
+- Deep-dive: `retrieve-deep-dive --issue N` (body + metadata + connected issues in one call)
 - Metadata: `store-metadata`, `query-connected`, `query-pr`
 - PR sections: `update-pr-section --name "Validation" --text "..."`
 - Iteration: `store-iteration`, `retrieve-iteration`

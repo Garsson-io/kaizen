@@ -9,9 +9,10 @@ Kaizen is installed at `{{KAIZEN_ROOT}}`. It provides enforcement hooks, reflect
 | Skill | When to Use |
 |-------|-------------|
 | `/kaizen-reflect` | Post-work reflection — classify impediments, file issues (Level 1→2→3) |
-| `/kaizen-pick` | Select next kaizen issue — filters claimed, balances epic momentum vs diversity |
 | `/kaizen-gaps` | Strategic analysis — tooling/testing gaps, horizon concentration, unnamed dimensions |
-| `/kaizen-deep-dive` | Autonomous deep-dive — fix root cause category behind repeated issues |
+| `/kaizen-deep-dive` | Autonomous deep-dive — find root cause category, create meta-issue, hand off to write-plan |
+| `/kaizen-write-plan` | Planning gate — validate problem, gather incidents, form grounded plan, admin approval |
+| `/kaizen-implement` | Execution engine — read grounding, worktree, TDD, PR, review loop, merge, cleanup |
 | `/kaizen-audit-issues` | Periodic issue taxonomy audit — label coverage, epic health, incidents |
 
 ### Dev work skill chain — MUST follow this workflow
@@ -21,9 +22,8 @@ Kaizen is installed at `{{KAIZEN_ROOT}}`. It provides enforcement hooks, reflect
 Key triggers — activate the right skill for the user's intent:
 
 - "gap analysis", "analyze gaps", "tooling gaps" → `/kaizen-gaps`
-- "make a dent", "hero mode", "deep dive" → `/kaizen-deep-dive`
-- "what's next", "pick work", "pick a kaizen" → `/kaizen-pick`
-- "look at issue #N", "evaluate this" → `/kaizen-evaluate`
+- "make a dent", "hero mode", "deep dive" → `/kaizen-deep-dive` → `/kaizen-write-plan`
+- "write plan", "plan #N", "look at issue #N", "evaluate this", "what should we work on", "what's next" → `/kaizen-write-plan`
 - "lets do it", "go ahead", "build it", "ship it" → `/kaizen-implement`
 
 ### The Zen of Kaizen

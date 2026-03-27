@@ -24,32 +24,24 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 
 ## Task lists by skill
 
-### /kaizen-pick (4 tasks)
+### /kaizen-write-plan (6 tasks)
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | Gather landscape | Fetch open issues, claimed issues, active cases, worktrees, open PRs, recent closures |
-| 2 | Filter and score | Remove unavailable issues, map domains, score by momentum/diversity/priority |
-| 3 | Present recommendations | Show top 3-5 issues with reasoning, first step, estimated scope |
-| 4 | Hand off to evaluate | User selects → invoke `/kaizen-evaluate` with issue context |
+| 1 | Collision detection | Check GitHub labels, open PRs, git log for existing work (PATH B ONLY) |
+| 2 | Read artifacts | Read issue body + deep-dive artifacts (Path A) or issue body only (Path B) |
+| 3 | Problem validation + incidents | Confirm problem exists, gather incidents with specific data (PATH B ONLY) |
+| 4 | Scope + architecture | Assess implementation scope, architecture fitness, hypotheses |
+| 5 | Form grounded plan | 5 steps → write plan → store-grounding |
+| 6 | Admin approval | Plan coverage review, present to admin, get GO/NO-GO |
 
-**What comes next:** `/kaizen-evaluate` — expects issue number. Will do collision detection, evidence gathering, admin approval.
-
-### /kaizen-evaluate (6 tasks)
-
-| # | Task | Description |
-|---|------|-------------|
-| 1 | Collision detection | Check GitHub labels, case DB, open PRs for existing work on this issue |
-| 2 | Gather incidents | Search git log, PRs, review comments for concrete occurrences with dates and impact |
-| 3 | Assess scope and architecture | Check implementation fitness, testability, library reuse, E2E harness |
-| 4 | Critique spec (if exists) | Validate problem statement against incidents, check proportionality, identify gaps |
-| 5 | Ask the admin | Present 3 TLDRs (problem, current state, proposed change), ask targeted questions |
-| 6 | Record lessons and decide | Capture admin input, record calibration, output GO/NO-GO with scope |
+**Path A (from deep-dive):** skip tasks 1, 3 — deep-dive already ran collision detection and validated the problem.
+**Path B (admin-specified):** run all 6 tasks.
 
 **What comes next:**
-- **GO → single PR:** `/kaizen-implement` — will create case, worktree, and 11 implementation tasks
+- **GO → single PR:** `/kaizen-implement` — reads grounding, enters worktree, executes
 - **GO → multi-PR:** `/kaizen-plan` first (breaks into sub-issues), then `/kaizen-implement` per sub-issue
-- **Needs spec:** `/kaizen-prd` first, then back to evaluate
+- **Needs spec:** `/kaizen-prd` first, then back to write-plan
 - **NO-GO:** Close with reason
 
 ### /kaizen-plan (5 tasks)
@@ -74,7 +66,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 | 4 | Create GitHub issue | Epic anchor issue with spec (issue-only) or pointer to spec file |
 | 5 | Create docs-only PR | Branch + spec file + commit + PR (skip for issue-only PRDs) |
 
-**What comes next:** `/kaizen-evaluate` or `/kaizen-plan` to break into implementable pieces, then `/kaizen-implement`.
+**What comes next:** `/kaizen-write-plan` (to form a grounded plan) or `/kaizen-plan` (to break into sub-issues), then `/kaizen-implement`.
 
 ### /kaizen-implement (11 tasks)
 
@@ -84,13 +76,23 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 | 2 | Write failing tests (TDD RED) | Express target invariants as tests. They must fail before implementation. |
 | 3 | Implement (TDD GREEN) | Make failing tests pass with simplest correct change. Full test suite green. |
 | 4 | Self-review: `/kaizen-review-pr` | Read `.claude/kaizen/review-criteria.md`. Check all dimensions (DRY, testability, tooling, security, failure modes). Cite findings with confidence 0-100. Drop < 75. |
-| 5 | Review fix loop | Fix all MUST-FIX (≥90) and SHOULD-FIX (75-89) findings. Re-review after fixes. Max 3 rounds until clean. |
-| 6 | Commit + push | Stage changes, commit with descriptive message, push to remote branch. |
-| 7 | Create PR | `gh pr create` with `Fixes Garsson-io/kaizen#N` in body. Add `status:has-pr` label. |
-| 8 | Wait for CI | `gh pr checks` — watch for failures, fix and push if needed. |
-| 9 | Merge (squash) | Verify no conflicts, squash merge, verify merge completes cleanly. |
-| 10 | Kaizen reflection | Launch kaizen-bg subagent with session impediments. Wait for KAIZEN_IMPEDIMENTS to clear gate. |
-| 11 | Cleanup | Delete worktree (`ExitWorktree remove`), verify branch deleted, issue closed. |
+| 0 | Read grounding + enter worktree | `retrieve-grounding #N` → read canonical plan. `EnterWorktree`. Post brief execution note via `store-plan`. |
+| 1 | Assess architecture/tooling fitness | Validate language, runtime, libraries, E2E harness per grounding. |
+| 2 | Write failing tests (TDD RED) | Express target invariants from grounding's test plan. Must fail before implementation. |
+| 3 | Implement (TDD GREEN) | Make failing tests pass with simplest correct change. Full test suite green. |
+| 4 | Push + create PR | Run `/kaizen-write-pr` to draft PR body (Story Spine), then `gh pr create`. Add `status:has-pr` label. |
+| 5 | `/kaizen-review-pr` | Spawn review subagents for all dimensions. Classify MUST-FIX / SHOULD-FIX. Store findings. |
+| 6 | Review fix loop (max 3 rounds) | Fix findings → commit → push → re-run review. Repeat until clean or escalate. |
+| 7 | Wait for CI | `gh pr checks` — watch for failures, fix and push if needed. |
+| 8 | Merge (squash via GitHub) | `gh pr merge --squash` — merges on origin side. Then `git pull` in main to sync local. Verify PR state is "merged". |
+| 9 | Kaizen reflection | Launch kaizen-bg subagent with session impediments. Wait for KAIZEN_IMPEDIMENTS to clear gate. |
+| 10 | Cleanup | `ExitWorktree remove` — verify branch deleted, issue closed. No dirty files, no abandoned worktrees. |
+
+**Disciplines (enforced):**
+- **One PR at a time** — implement is called with a single issue/sub-issue number.
+- **No dirty files** — every changed file committed and pushed before ExitWorktree.
+- **No abandoned worktrees** — ExitWorktree always called, even on failure.
+- **EnterWorktree only** — not `claude-wt` (that's a shell alias for interactive use).
 
 **Hooks that fire during implementation:**
 - **PreToolUse(Edit/Write):** `enforce-case-exists` (blocks edits without case), `enforce-worktree-writes` (blocks edits in main checkout)
@@ -98,7 +100,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 - **PostToolUse(Bash):** `pr-review-loop` (initiates review after PR create), `reflect` (prompts for reflection)
 - **Stop:** `stop-gate.ts` (unified gate — blocks stop with any pending gate: review, reflection, post-merge), `verify-before-stop` (reminds about tsc + vitest)
 
-**Adapt the list:** Not every task applies. Docs-only PRs skip TDD (#2-3). Bug fixes might skip architecture (#1). But the default is ALL tasks — delete explicitly with a reason, don't silently skip.
+**Adapt the list:** Not every task applies. Docs-only PRs skip TDD (#2-3). But the default is ALL tasks — delete explicitly with a reason, don't silently skip.
 
 ### /kaizen-review-pr (4 tasks)
 
@@ -128,19 +130,18 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 
 **What comes next:** Cleanup (worktree + branch deletion). If sub-issues remain from `/kaizen-plan`, loop back to `/kaizen-implement` for next sub-issue.
 
-### /kaizen-deep-dive (7 tasks)
+### /kaizen-deep-dive (6 tasks)
 
 | # | Task | Description |
 |---|------|-------------|
 | 1 | WIP deconfliction | Map worktrees, cases, PRs. Build occupied/available domain map. Choose target from available. |
-| 2 | Map territory (parallel agents) | Agent A: issue archaeology. Agent B: code exploration. |
-| 3 | Find the category | Identify pattern, root cause, compound fix. Write as GitHub issue. |
-| 4 | Fix concrete bugs | Fix all symptoms of root cause. Run existing tests. |
-| 5 | Add prevention tests | Interaction tests at the boundary (not just unit tests per component). |
-| 6 | Ship PR | Branch, commit, self-review (`/kaizen-review-pr`), PR, CI, merge. |
-| 7 | Update metadata + reflect | Close/comment related issues, update labels. Run `/kaizen-reflect`. |
+| 2 | Problem-space exploration (parallel agents) | Agent A: issue archaeology — what issues exist, what pattern. Agent B: code exploration — which components, boundaries, untested seams. |
+| 3 | Find the category | Identify root cause pattern, compound fix. Write meta-issue body with Problem/RootCause/ConcreteBugs/CompoundFix/Scope. |
+| 4 | Store metadata attachment | `store-metadata --issue {N}` with YAML: linked symptoms, priority, area, connected issues. |
+| 5 | Validate against user request | Confirm meta-issue matches what was asked for. Adjust if needed. |
+| 6 | Hand off to write-plan | Invoke `/kaizen-write-plan #N` (Path A — skip Phases 0-3, jump to Phase 4). |
 
-**What comes next:** Issues closed, category addressed. Feeds back into `/kaizen-pick` scoring (domain now has coverage).
+**What comes next:** `/kaizen-write-plan #N` (Path A) — reads meta-issue body + metadata + connected issues in one call via `retrieve-deep-dive`.
 
 ### /kaizen-gaps (6 tasks)
 
@@ -153,7 +154,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 | 5 | Identify unnamed dimensions | Incident clusters not in existing horizons. Missing axes. Evaluate: new horizon vs axis vs feature. |
 | 6 | Present actionable output | 3 lists: low-hanging fruit, feature PRD candidates, meta/horizon PRD candidates. Present to admin. |
 
-**What comes next:** Low-hanging fruit → file issues → `/kaizen-pick`. Feature PRDs → `/kaizen-prd`. Meta/horizon PRDs → `/kaizen-prd` in horizon mode.
+**What comes next:** Low-hanging fruit → file issues → `/kaizen-write-plan`. Feature PRDs → `/kaizen-prd`. Meta/horizon PRDs → `/kaizen-prd` in horizon mode.
 
 ### /kaizen-audit-issues (5 tasks)
 
@@ -165,7 +166,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 | 4 | Audit horizons and staleness | Issues per horizon, concentration. Issues untouched 30+ days. |
 | 5 | Produce report and offer fixes | Structured report. Offer to apply labels, reopen epics, file meta-incidents. |
 
-**What comes next:** Findings feed into `/kaizen-gaps` for deeper analysis, or directly into `/kaizen-pick` for selection.
+**What comes next:** Findings feed into `/kaizen-gaps` for deeper analysis, or directly into `/kaizen-deep-dive` to fix high-incident issues.
 
 ### /kaizen-cleanup (3 tasks)
 
@@ -185,7 +186,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 | 2 | Scan branches and cases | Unmerged branches, merged-not-deleted, active cases with issue links |
 | 3 | Present summary | Concise table with recommendations (commit dirty, delete merged, etc.) |
 
-**What comes next:** Pick up existing work, or `/kaizen-pick` for new work.
+**What comes next:** Pick up existing work via `/kaizen-implement`, or `/kaizen-deep-dive` to find new work.
 
 ### /kaizen-setup (4 tasks)
 
@@ -215,60 +216,63 @@ Single step: print `.claude/kaizen/zen.md`. Too trivial for task tracking.
 ## Entry point decision tree
 
 ```
-Starting fresh, no specific work in mind?
-  → /kaizen-pick (selects from backlog)
+Want autonomous category fix?
+  → /kaizen-deep-dive (finds root cause, creates meta-issue)
+      → /kaizen-write-plan #N (Path A — skip Phases 0-3)
 
 Have a specific issue number?
-  → /kaizen-evaluate #N (evaluate before implementing)
+  → /kaizen-write-plan #N (Path B — full phases 0-6)
 
-Issue already evaluated, admin approved?
-  → /kaizen-implement (creates case, worktree, 11 tasks)
+Plan approved by admin?
+  → /kaizen-implement #N (reads grounding, enters worktree, executes)
 
-Large work already planned with sub-issues?
-  → /kaizen-implement for sub-issue #1 (skip evaluate — already done)
+Large work planned with sub-issues?
+  → /kaizen-implement for sub-issue #1
 
 Need to define the problem first?
   → /kaizen-prd (iterative discovery → spec)
+      → /kaizen-write-plan #N
 
 Want strategic analysis of the whole backlog?
   → /kaizen-gaps (finds patterns, recommends work)
 
 Want to audit issue hygiene?
   → /kaizen-audit-issues (labels, epics, staleness)
-
-Want autonomous category fix?
-  → /kaizen-deep-dive (finds root cause, fixes bugs, ships PR)
 ```
 
 ## The full dev workflow sequence
 
 ```
-/kaizen-pick  →  /kaizen-evaluate  →  /kaizen-implement
-    (4 tasks)      (6 tasks)           (11 tasks)
-                                           │
-                   ┌───────────────────────┘
-                   ↓
-            Case gate + worktree
-                   ↓
-            TDD RED → GREEN
-                   ↓
-            /kaizen-review-pr  ←──┐
-                (4 tasks)         │ max 3 rounds
-                   │              │
-                   ↓              │
-            Fix findings ─────────┘
-                   ↓
-            Commit + push + create PR
-                   ↓
-            Wait for CI ← fix failures
-                   ↓
-            Squash merge (watch for conflicts)
-                   ↓
-            /kaizen-reflect
-                (5 tasks)
-                   ↓
-            Cleanup (worktree + branch)
-                   ↓
-            Sub-issues remain? → loop to /kaizen-implement
-            Done? → session complete
+/kaizen-deep-dive  →  /kaizen-write-plan  →  /kaizen-implement
+    (6 tasks)              (6 tasks)              (11 tasks)
+                                                      │
+                           ┌──────────────────────────┘
+                           ↓
+                    retrieve-grounding #N → read canonical plan
+                           ↓
+                    EnterWorktree → isolated branch
+                           ↓
+                    store-plan (brief execution note)
+                           ↓
+                    TDD RED → GREEN
+                           ↓
+                    push + /kaizen-write-pr + gh pr create
+                           ↓
+                    /kaizen-review-pr  ←──────────────┐
+                        (4 tasks)                     │ max 3 rounds
+                           │                          │
+                           ↓                          │
+                    Fix MUST-FIX / SHOULD-FIX ────────┘
+                           ↓
+                    Wait for CI ← fix failures
+                           ↓
+                    gh pr merge --squash (on origin, pull clean)
+                           ↓
+                    ExitWorktree remove
+                           ↓
+                    /kaizen-reflect
+                        (5 tasks)
+                           ↓
+                    Sub-issues remain? → loop to /kaizen-implement
+                    Done? → session complete
 ```
