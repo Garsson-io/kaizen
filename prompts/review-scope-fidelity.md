@@ -70,9 +70,9 @@ Both are failures. A PR that fixes the bug AND rewrites the module is as wrong a
 
 ## Output Format
 
-Output a YAML block fenced with ```yaml ... ``` containing this exact structure:
+Output a JSON block fenced with ```json ... ``` containing this exact structure:
 
-```yaml
+```json
 {
   "dimension": "scope-fidelity",
   "summary": "<one-line summary: scope is clean | minor creep | significant creep | scope reduction found>",
@@ -100,4 +100,4 @@ Rules for `findings[].status`:
 
 Be specific. Quote file names and line numbers. "Looks good" is not a finding. Every requirement and every discrete change must appear as a `findings` entry. Omit nothing.
 
-Output YAML only — no prose before or after the block.
+Output JSON only — no prose before or after the block.

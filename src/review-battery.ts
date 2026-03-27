@@ -14,9 +14,10 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
+import { z } from 'zod';
 import YAML from 'yaml';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
-import { retrievePlan, retrieveGrounding, issueTarget } from './structured-data.js';
+import { retrievePlan, retrieveGrounding, issueTarget, prTarget, storeReviewFinding, ReviewFindingDataSchema, type ReviewFindingData } from './structured-data.js';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -77,6 +78,15 @@ export interface BatteryResult {
   /** Dimensions auto-skipped due to missing required data (e.g. no plan text) */
   skippedDimensions: string[];
 }
+
+// ── Structured Output Schema ─────────────────────────────────────────
+//
+// Passed to `claude -p --json-schema` so the model is forced to output
+// a JSON object matching this shape. No YAML/text parsing needed.
+// Derived from ReviewFindingDataSchema (zod) via z.toJSONSchema() so
+// the zod schema and the JSON Schema stay automatically in sync.
+
+export const REVIEW_FINDING_JSON_SCHEMA: object = z.toJSONSchema(ReviewFindingDataSchema);
 
 // ── Review Policy Constants ─────────────────────────────────────────
 //
@@ -426,6 +436,10 @@ export interface SpawnReviewOptions {
   dimension: ReviewDimension;
   /** PR URL (for implementation reviews) */
   prUrl?: string;
+  /** PR number as a string (for store-review-finding CLI) */
+  prNum?: string;
+  /** Review round number (for store-review-finding CLI) */
+  round?: number;
   /** Issue number (for requirement comparison) */
   issueNum?: string;
   /** GitHub repo (owner/name) */
@@ -455,19 +469,24 @@ export interface SpawnReviewOptions {
  */
 async function runClaude(
   prompt: string,
-  opts: { cwd?: string; timeoutMs?: number },
+  opts: { cwd?: string; timeoutMs?: number; jsonSchema?: object },
 ): Promise<{ text: string; costUsd: number; durationMs: number; exitCode: number }> {
   const model = process.env.REVIEW_MODEL ?? 'sonnet';
   const start = Date.now();
 
+  const args = [
+    '-p',
+    '--output-format', 'stream-json',
+    '--verbose',
+    '--dangerously-skip-permissions',
+    '--model', model,
+  ];
+  if (opts.jsonSchema) {
+    args.push('--json-schema', JSON.stringify(opts.jsonSchema));
+  }
+
   return new Promise((resolve) => {
-    const child = spawn('claude', [
-      '-p',
-      '--output-format', 'stream-json',
-      '--verbose',
-      '--dangerously-skip-permissions',
-      '--model', model,
-    ], {
+    const child = spawn('claude', args, {
       cwd: opts.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -517,6 +536,8 @@ async function runClaude(
 export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: DimensionReview | null; costUsd: number; durationMs: number }> {
   const vars: Record<string, string> = {
     pr_url: opts.prUrl ?? '',
+    pr_num: opts.prNum ?? '',
+    round: opts.round != null ? String(opts.round) : '',
     issue_num: opts.issueNum ?? '',
     repo: opts.repo ?? '',
     plan_text: opts.planText ?? '',
@@ -537,6 +558,7 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: D
   const { text, costUsd, durationMs, exitCode } = await runClaude(prompt, {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
+    jsonSchema: REVIEW_FINDING_JSON_SCHEMA,
   });
 
   if (exitCode !== 0) {
@@ -544,7 +566,39 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: D
     return { review: null, costUsd: 0, durationMs };
   }
 
-  const review = parseReviewOutput(text, opts.dimension);
+  // Try JSON.parse first (enforced by --json-schema flag), fall back to text scraping
+  let review: DimensionReview | null = null;
+  try {
+    const parsed = ReviewFindingDataSchema.parse(JSON.parse(text.trim()));
+    review = {
+      dimension: parsed.dimension || opts.dimension,
+      verdict: parsed.verdict,
+      summary: parsed.summary,
+      findings: parsed.findings,
+    };
+  } catch {
+    // --json-schema enforcement may not be perfect in all models; fall back gracefully
+    review = parseReviewOutput(text, opts.dimension);
+  }
+
+  // Auto-store finding on the PR when caller provides PR context
+  if (review && opts.prNum && opts.repo && opts.round != null) {
+    try {
+      const findingData: ReviewFindingData = {
+        dimension: review.dimension,
+        verdict: review.verdict,
+        summary: review.summary,
+        findings: review.findings,
+        round: opts.round,
+        durationSec: Math.round(durationMs / 1000),
+        costUsd,
+      };
+      storeReviewFinding(prTarget(opts.prNum, opts.repo), opts.round, findingData);
+    } catch (e) {
+      console.error(`  [review] failed to store finding for ${opts.dimension}: ${e}`);
+    }
+  }
+
   return { review, costUsd, durationMs };
 }
 
@@ -598,6 +652,8 @@ export async function spawnBatchReview(
 ): Promise<Array<{ review: DimensionReview | null; costUsd: number; durationMs: number }>> {
   const vars: Record<string, string> = {
     pr_url: opts.prUrl ?? '',
+    pr_num: opts.prNum ?? '',
+    round: opts.round != null ? String(opts.round) : '',
     issue_num: opts.issueNum ?? '',
     repo: opts.repo ?? '',
     plan_text: opts.planText ?? '',

@@ -117,9 +117,9 @@ For any test in the diff that:
 
 ## Output Format
 
-Output a YAML block fenced with ```yaml ... ``` containing this exact structure:
+Output a JSON block fenced with ```json ... ``` containing this exact structure:
 
-```yaml
+```json
 {
   "dimension": "tooling-fitness",
   "summary": "<one-line summary of findings>",
@@ -144,4 +144,4 @@ Be concrete. Quote the exact hand-rolled code and name the library that should r
 
 If no tooling issues are found, return a single DONE finding: "No tooling fitness issues detected."
 
-Output YAML only — no prose before or after the block.
+Output JSON only — no prose before or after the block.

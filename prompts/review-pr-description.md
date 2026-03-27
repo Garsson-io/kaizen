@@ -45,9 +45,9 @@ PR: {{pr_url}}
 
 ## Output Format
 
-Output a YAML block fenced with ```yaml ... ``` containing this exact structure:
+Output a JSON block fenced with ```json ... ``` containing this exact structure:
 
-```yaml
+```json
 {
   "dimension": "pr-description",
   "summary": "<one-line assessment>",

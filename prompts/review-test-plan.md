@@ -206,7 +206,7 @@ This loop is seconds per iteration. Only when the prompt looks right do you run 
 
 ## Output Format
 
-```yaml
+```json
 {
   "dimension": "test-plan",
   "summary": "<one-line assessment of testing strategy>",
@@ -227,4 +227,4 @@ Rules for status:
 
 Be calibrated: a 10-line config change doesn't need E2E tests. But a system with external process calls (LLM, API, subprocess) that has no E2E smoke test is a real gap — and a smoke test without observability is a PARTIAL, not a DONE.
 
-Output YAML only — no prose before or after the block.
+Output JSON only — no prose before or after the block.

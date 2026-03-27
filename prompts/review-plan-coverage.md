@@ -48,9 +48,9 @@ Plan:
 
 ## Output Format
 
-Output a YAML block fenced with ```yaml ... ``` containing this exact structure:
+Output a JSON block fenced with ```json ... ``` containing this exact structure:
 
-```yaml
+```json
 {
   "dimension": "plan-coverage",
   "summary": "<one-line summary of findings>",
@@ -71,4 +71,4 @@ Rules for status:
 
 Be specific. A plan that says "implement the feature" without describing HOW is not DONE — it's PARTIAL at best. Every requirement gets a finding entry.
 
-Output YAML only — no prose before or after the block.
+Output JSON only — no prose before or after the block.

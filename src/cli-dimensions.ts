@@ -106,16 +106,18 @@ TODO: Add review instructions.
 
 ## Output Format
 
-Output a YAML block fenced with \`\`\`yaml ... \`\`\` containing this exact structure:
+Output JSON only — no prose before or after the block.
 
-\`\`\`yaml
-dimension: ${opts.name}
-verdict: pass  # pass | fail
-summary: "<one-line summary of findings>"
-findings:
-  - requirement: "<name or description of the requirement>"
-    status: DONE  # DONE | PARTIAL | MISSING
-    detail: "<specific evidence>"
+\`\`\`json
+{
+  "dimension": "${opts.name}",
+  "verdict": "pass",
+  "summary": "<one-line summary of findings>",
+  "findings": [
+    {
+      "requirement": "<name or description of the requirement>",
+      "status": "DONE",
+      "detail": "<specific evidence>"
     }
   ]
 }
@@ -125,8 +127,6 @@ Rules for status:
 - DONE: The criterion is fully met.
 - PARTIAL: Some aspects are addressed but gaps remain. State what's missing.
 - MISSING: The criterion is not addressed.
-
-After the JSON block, you may add prose commentary, but the JSON block MUST come first.
 `;
 
   writeFileSync(filePath, content, 'utf8');
@@ -172,8 +172,8 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
     }
 
     // Check for ```yaml output format section (```json accepted for legacy compatibility)
-    if (!content.includes('```yaml') && !content.includes('```json')) {
-      errors.push('Missing ```yaml output format section');
+    if (!content.includes('```json')) {
+      errors.push('Missing ```json output format section');
     }
 
     if (errors.length > 0) ok = false;

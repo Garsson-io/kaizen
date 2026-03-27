@@ -114,9 +114,9 @@ For every file read/write in the diff:
 
 ## Output Format
 
-Output a YAML block fenced with ```yaml ... ``` containing this exact structure:
+Output a JSON block fenced with ```json ... ``` containing this exact structure:
 
-```yaml
+```json
 {
   "dimension": "security",
   "summary": "<one-line summary: N vulnerabilities found | no security issues found>",
@@ -141,4 +141,4 @@ Be specific. Quote the exact vulnerable line from the diff. "This looks safe" is
 
 If no security issues are found, return a single DONE finding: "No security vulnerabilities detected in this diff."
 
-Output YAML only — no prose before or after the block.
+Output JSON only — no prose before or after the block.

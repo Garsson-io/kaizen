@@ -43,7 +43,7 @@ Autonomous agents frequently hand-roll solutions that already exist — in the c
 
 ## Output Format
 
-```yaml
+```json
 {
   "dimension": "dry",
   "summary": "<one-line assessment>",
@@ -64,4 +64,4 @@ Rules for status:
 
 If no duplication is found, return a single DONE finding: "No significant duplication detected."
 
-Output YAML only — no prose before or after the block.
+Output JSON only — no prose before or after the block.

@@ -74,7 +74,7 @@ Does the reflection produce actionable learning?
 
 ## Output Format
 
-```yaml
+```json
 {
   "dimension": "reflection-quality",
   "summary": "<one-line summary>",

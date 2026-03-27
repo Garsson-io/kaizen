@@ -31,11 +31,8 @@ applies_to: ${appliesTo}
 
 Some instructions.
 
-\`\`\`yaml
-dimension: ${name}
-verdict: pass
-summary: ""
-findings: []
+\`\`\`json
+{"dimension": "${name}", "verdict": "pass", "summary": "", "findings": []}
 \`\`\`
 `;
 
@@ -78,7 +75,7 @@ describe('cli-dimensions against real prompts', () => {
     const output = cmdShow(['requirements'], realDir);
     expect(output).toContain('name: requirements');
     expect(output).toContain('adversarial PR reviewer');
-    expect(output).toContain('```yaml');
+    expect(output).toContain('```json');
   });
 
   it('show multiple dimensions includes headers', () => {
@@ -156,8 +153,8 @@ describe('cli-dimensions with temp fixtures', () => {
     expect(content).toContain('name: test-dim');
     expect(content).toContain('description: A test dimension');
     expect(content).toContain('applies_to: pr');
-    expect(content).toContain('```yaml');
-    expect(content).toContain('dimension: test-dim');
+    expect(content).toContain('```json');
+    expect(content).toContain('"dimension": "test-dim"');
   });
 
   it('add with applies_to plan scaffolds plan-oriented prompt', () => {
@@ -240,7 +237,7 @@ describe('cli-dimensions with temp fixtures', () => {
     writeFileSync(resolve(tmpDir, 'review-nojson.md'), '---\nname: nojson\ndescription: test\napplies_to: pr\n---\nNo json block.\n');
     const v = cmdValidate(tmpDir);
     expect(v.ok).toBe(false);
-    expect(v.results[0].errors).toContain('Missing ```yaml output format section');
+    expect(v.results[0].errors).toContain('Missing ```json output format section');
   });
 
   it('validate catches frontmatter name/filename mismatch', () => {

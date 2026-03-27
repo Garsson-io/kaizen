@@ -33,6 +33,7 @@ import {
   parseAllReviewOutputs,
   groupByDataNeeds,
   parseFrontmatter,
+  REVIEW_FINDING_JSON_SCHEMA,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
   PASSING_THRESHOLD,
@@ -42,6 +43,7 @@ import {
   type ReviewDimension,
 } from './review-battery.js';
 import { spawnSync, spawn } from 'node:child_process';
+import { storeReviewFinding } from './structured-data.js';
 import { EventEmitter } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -51,6 +53,14 @@ import { resolve } from 'node:path';
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, spawnSync: vi.fn(actual.spawnSync), spawn: vi.fn(actual.spawn) };
+});
+
+vi.mock('./structured-data.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./structured-data.js')>();
+  return {
+    ...actual,
+    storeReviewFinding: vi.fn().mockReturnValue('https://example.com/finding'),
+  };
 });
 
 // Shared test helpers — module-level to avoid copy-paste across describe blocks
@@ -600,6 +610,94 @@ describe('spawnReview', () => {
     mockClaude(streamJsonPayload(text, 0.05));
     const { costUsd } = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
     expect(costUsd).toBeCloseTo(0.05);
+  });
+});
+
+// Tier 1: spawnReview — structured output enforcement
+
+describe('spawnReview — structured output enforcement', () => {
+  afterEach(() => {
+    vi.mocked(spawnSync).mockRestore();
+    vi.mocked(spawn).mockRestore();
+    vi.mocked(storeReviewFinding).mockClear();
+  });
+
+  function mockClaudeArgs(capturedArgs: string[][], stdout: string) {
+    vi.mocked(spawnSync).mockImplementation((cmd: string) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+    vi.mocked(spawn).mockImplementation((_cmd: string, args: string[]) => {
+      capturedArgs.push(args as string[]);
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => {
+        proc.stdout.emit('data', Buffer.from(stdout));
+        proc.emit('close', 0);
+      });
+      return proc;
+    });
+  }
+
+  it('INVARIANT: passes --json-schema to claude so structured output is enforced at the API level', async () => {
+    // INVARIANT: every review spawn must include --json-schema so the model cannot
+    // output prose instead of structured findings (Policy #12/#13).
+    const capturedArgs: string[][] = [];
+    const text = JSON.stringify({ dimension: 'correctness', verdict: 'pass', summary: 'ok', findings: [] });
+    mockClaudeArgs(capturedArgs, streamJsonPayload(text, 0.01));
+
+    await spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    expect(capturedArgs[0]).toContain('--json-schema');
+    const schemaIdx = capturedArgs[0].indexOf('--json-schema');
+    const schema = JSON.parse(capturedArgs[0][schemaIdx + 1]);
+    expect(schema).toMatchObject({ type: 'object', required: expect.arrayContaining(['dimension', 'verdict', 'findings']) });
+  });
+
+  it('INVARIANT: REVIEW_FINDING_JSON_SCHEMA covers all required fields', () => {
+    // INVARIANT: the JSON schema must require dimension, verdict, summary, and findings
+    // so the model cannot omit them and produce a 0/0/0 silent garbage finding.
+    expect(REVIEW_FINDING_JSON_SCHEMA.required).toContain('dimension');
+    expect(REVIEW_FINDING_JSON_SCHEMA.required).toContain('verdict');
+    expect(REVIEW_FINDING_JSON_SCHEMA.required).toContain('summary');
+    expect(REVIEW_FINDING_JSON_SCHEMA.required).toContain('findings');
+  });
+
+  it('INVARIANT: stores finding automatically when prNum and round are provided', async () => {
+    // INVARIANT: spawnReview must call storeReviewFinding when pr+round context is given
+    // so orchestrators don't need to manually store per-dimension findings.
+    const capturedArgs: string[][] = [];
+    const text = JSON.stringify({ dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] });
+    mockClaudeArgs(capturedArgs, streamJsonPayload(text, 0.05));
+
+    await spawnReview({ dimension: 'requirements', repo: 'test/test', prNum: '42', round: 3 });
+    expect(vi.mocked(storeReviewFinding)).toHaveBeenCalledOnce();
+    const [target, round] = vi.mocked(storeReviewFinding).mock.calls[0];
+    expect((target as any).number).toBe('42');
+    expect(round).toBe(3);
+  });
+
+  it('INVARIANT: does not store when prNum or round is absent', async () => {
+    // INVARIANT: no-op store when caller omits PR context (plan reviews, local runs).
+    const capturedArgs: string[][] = [];
+    const text = JSON.stringify({ dimension: 'requirements', verdict: 'pass', summary: 'ok', findings: [] });
+    mockClaudeArgs(capturedArgs, streamJsonPayload(text, 0.02));
+
+    await spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    expect(vi.mocked(storeReviewFinding)).not.toHaveBeenCalled();
+  });
+
+  it('falls back to text scraping when --json-schema output has prose (model non-compliance)', async () => {
+    // INVARIANT: even if the model violates the schema constraint and outputs prose,
+    // the fallback parser must recover the embedded JSON so the review is not lost.
+    const capturedArgs: string[][] = [];
+    const prose = `Here is my review:\n{"dimension":"requirements","summary":"gap","verdict":"fail","findings":[{"requirement":"R1","status":"MISSING","detail":"not done"}]}\nDone.`;
+    mockClaudeArgs(capturedArgs, streamJsonPayload(prose, 0.04));
+
+    const { review } = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
+    expect(review).not.toBeNull();
+    expect(review!.verdict).toBe('fail');
   });
 });
 
