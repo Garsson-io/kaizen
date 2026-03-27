@@ -81,8 +81,8 @@ describe('handler registry', () => {
     }
   });
 
-  it('has exactly 20 handlers (no stale entries)', () => {
-    expect(Object.keys(handlers).length).toBe(20);
+  it('has exactly 23 handlers (no stale entries)', () => {
+    expect(Object.keys(handlers).length).toBe(23);
   });
 });
 

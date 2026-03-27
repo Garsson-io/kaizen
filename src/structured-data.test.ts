@@ -16,6 +16,9 @@ import {
   readReviewFinding,
   storePlan,
   retrievePlan,
+  storeGrounding,
+  retrieveGrounding,
+  retrieveDeepDive,
   storeMetadata,
   retrieveMetadata,
   queryConnectedIssues,
@@ -205,6 +208,40 @@ describe('storePlan + retrievePlan — round-trip', () => {
     const plan = retrievePlan(issue);
     expect(plan).toContain('Fix it');
     expect(plan).not.toContain('Test Plan');
+  });
+});
+
+describe('storeGrounding + retrieveGrounding — round-trip', () => {
+  it('stores and retrieves grounding via attachment', () => {
+    ghReturns(''); ghReturns('https://...');
+    storeGrounding(issue, '## Success Criteria\n\nGOAL: Fix the plan slot conflict.');
+
+    ghReturns(JSON.stringify({ url: 'https://...', body: '<!-- kaizen:grounding -->\n## Success Criteria\n\nGOAL: Fix the plan slot conflict.' }));
+    const grounding = retrieveGrounding(issue);
+    expect(grounding).toContain('Fix the plan slot conflict');
+  });
+
+  it('returns null when no grounding exists', () => {
+    ghReturns(''); // readAttachment: no attachment found
+    const grounding = retrieveGrounding(issue);
+    expect(grounding).toBeNull();
+  });
+});
+
+describe('retrieveDeepDive — combined body + metadata + connected', () => {
+  it('combines issue body, metadata attachment, and connected issues sections', () => {
+    // fetchBody (called first)
+    ghReturns('## Problem — The Pattern\n\nRepeated plan slot conflict.');
+    // readAttachment for metadata (called by retrieveDeepDive)
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\narea: skills\n```' }));
+    // retrieveMetadata call inside queryConnectedIssues
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\nconnected_issues: []\n```' }));
+
+    const result = retrieveDeepDive(issue);
+    expect(result).toContain('## Issue Body');
+    expect(result).toContain('Repeated plan slot conflict');
+    expect(result).toContain('## Metadata Attachment');
+    expect(result).toContain('## Connected Issues');
   });
 });
 

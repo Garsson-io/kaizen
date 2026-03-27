@@ -346,6 +346,62 @@ export function retrieveTestPlan(target: AttachmentTarget & SectionTarget): stri
   } catch { return null; }
 }
 
+/**
+ * Store a write-plan grounding document on an issue.
+ * This is the canonical plan artifact — owned exclusively by kaizen-write-plan.
+ * kaizen-implement reads this via retrieveGrounding at startup.
+ * Fixes issue #1003: separate slot so implement's store-plan never overwrites it.
+ */
+export function storeGrounding(target: AttachmentTarget, groundingText: string): string {
+  return writeAttachment(target, 'grounding', groundingText);
+}
+
+/**
+ * Retrieve the grounding document stored by kaizen-write-plan.
+ */
+export function retrieveGrounding(target: AttachmentTarget & SectionTarget): string | null {
+  const attachment = readAttachment(target, 'grounding');
+  if (attachment) return attachment.content;
+  return null;
+}
+
+/**
+ * Retrieve all deep-dive artifacts from a meta-issue in one call.
+ * Combines: issue body, metadata attachment, connected issues.
+ * Used by kaizen-write-plan Path A to read deep-dive output.
+ */
+export function retrieveDeepDive(target: AttachmentTarget & SectionTarget): string {
+  const body = (() => {
+    try { return fetchBody(target); } catch { return '(no body)'; }
+  })();
+
+  const metadata = (() => {
+    try {
+      const att = readAttachment(target, 'metadata');
+      return att ? att.content : '(no metadata attachment)';
+    } catch { return '(no metadata attachment)'; }
+  })();
+
+  const connected = (() => {
+    try {
+      const issues = queryConnectedIssues(target);
+      if (issues.length === 0) return '(no connected issues)';
+      return issues.map(i => `#${i.number} [${i.role}] ${i.title}`).join('\n');
+    } catch { return '(no connected issues)'; }
+  })();
+
+  return [
+    '## Issue Body',
+    body,
+    '',
+    '## Metadata Attachment',
+    metadata,
+    '',
+    '## Connected Issues',
+    connected,
+  ].join('\n');
+}
+
 // ── Metadata (connected issues, PR number) ──────────────────────────
 
 export interface ConnectedIssue {
