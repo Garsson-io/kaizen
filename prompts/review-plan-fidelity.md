@@ -70,7 +70,7 @@ Check for undocumented pivots:
 
 ## Output Format
 
-```json
+```yaml
 {
   "dimension": "plan-fidelity",
   "summary": "<one-line assessment>",
@@ -89,4 +89,4 @@ Rules for status:
 - PARTIAL: Plan exists but implementation diverges. Document what changed and whether the divergence was documented.
 - MISSING: No plan found (showstopper), or a planned step was completely skipped without explanation.
 
-After the JSON block, you may add prose commentary.
+Output YAML only — no prose before or after the block.

@@ -103,9 +103,9 @@ Flag any of these with specific file and line references:
 
 ## Output Format
 
-Output a JSON block fenced with ```json ... ``` containing this exact structure:
+Output a YAML block fenced with ```yaml ... ``` containing this exact structure:
 
-```json
+```yaml
 {
   "dimension": "test-quality",
   "summary": "<one-line summary of findings>",
@@ -139,4 +139,4 @@ Rules for status:
 
 Be specific. Quote file names, line numbers, and the actual weak assertions. "Tests look reasonable" is not a finding. Every claim must cite evidence from the diff.
 
-After the JSON block, you may add prose commentary, but the JSON block MUST come first.
+Output YAML only — no prose before or after the block.

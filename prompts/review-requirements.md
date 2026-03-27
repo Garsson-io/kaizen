@@ -37,9 +37,9 @@ Compare the PR's implementation against the issue's requirements, acceptance cri
 
 ## Output Format
 
-Output a JSON block fenced with ```json ... ``` containing this exact structure:
+Output a YAML block fenced with ```yaml ... ``` containing this exact structure:
 
-```json
+```yaml
 {
   "dimension": "requirements",
   "summary": "<one-line summary of findings>",
@@ -60,4 +60,4 @@ Rules for status:
 
 Be specific. Quote file names and line numbers. "Looks good" is not a finding. Every requirement gets a finding entry.
 
-After the JSON block, you may add prose commentary, but the JSON block MUST come first.
+Output YAML only — no prose before or after the block.

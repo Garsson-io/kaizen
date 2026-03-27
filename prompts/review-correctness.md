@@ -48,7 +48,7 @@ You are checking two things: (1) does the logic produce correct results for all 
 
 ## Output Format
 
-```json
+```yaml
 {
   "dimension": "correctness",
   "summary": "<one-line summary>",

@@ -112,14 +112,14 @@ async function handleStoreReviewFinding(a: CliArgs): Promise<void> {
   const r = resolveRound(a);
   const dim = a.dimension ?? 'unknown';
   const raw = resolveContent(a);
-  // Strip markdown code fences — agents often wrap JSON output in ```json ... ```
-  const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+  // Strip code fences (```yaml or ```json) — defensive, policy requires bare YAML
+  const text = raw.replace(/^```(?:yaml|json)?\s*/im, '').replace(/```\s*$/m, '').trim();
   let finding: ReviewFindingData;
   try {
-    finding = JSON.parse(text);
+    finding = YAML.parse(text);
   } catch (e) {
-    console.error(`store-review-finding: JSON parse failed for dimension '${dim}'.`);
-    console.error(`  Input (first 200 chars): ${text.slice(0, 200)}`);
+    console.error(`store-review-finding: YAML parse failed for dimension '${dim}'.`);
+    console.error(`  Input (first 200 chars): ${raw.slice(0, 200)}`);
     console.error(`  Error: ${e}`);
     process.exit(1);
     return;

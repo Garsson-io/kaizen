@@ -147,7 +147,7 @@ These are real findings from the session that built this dimension — every one
 
 ## Output Format
 
-```json
+```yaml
 {
   "dimension": "improvement-lifecycle",
   "summary": "<one-line assessment of improvement lifecycle completeness>",
@@ -177,4 +177,4 @@ Rules for status:
 
 Be concrete. Don't flag every function — focus on capabilities that others depend on or that introduce new artifact types. A utility function doesn't need its own improvement lifecycle. A new review dimension does.
 
-After the JSON block, you may add prose commentary about the overall improvement lifecycle health of this PR.
+Output YAML only — no prose before or after the block.

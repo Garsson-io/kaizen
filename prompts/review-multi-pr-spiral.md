@@ -55,7 +55,7 @@ For the most significant spiral found:
 
 ## Output Format
 
-```json
+```yaml
 {
   "dimension": "multi-pr-spiral",
   "summary": "<one-line summary: N spirals found | no spiral pattern detected>",

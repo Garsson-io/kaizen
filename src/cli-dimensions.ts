@@ -106,17 +106,16 @@ TODO: Add review instructions.
 
 ## Output Format
 
-Output a JSON block fenced with \`\`\`json ... \`\`\` containing this exact structure:
+Output a YAML block fenced with \`\`\`yaml ... \`\`\` containing this exact structure:
 
-\`\`\`json
-{
-  "dimension": "${opts.name}",
-  "summary": "<one-line summary of findings>",
-  "findings": [
-    {
-      "requirement": "<name or description of the requirement>",
-      "status": "DONE | PARTIAL | MISSING",
-      "detail": "<specific evidence>"
+\`\`\`yaml
+dimension: ${opts.name}
+verdict: pass  # pass | fail
+summary: "<one-line summary of findings>"
+findings:
+  - requirement: "<name or description of the requirement>"
+    status: DONE  # DONE | PARTIAL | MISSING
+    detail: "<specific evidence>"
     }
   ]
 }
@@ -172,9 +171,9 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
       }
     }
 
-    // Check for ```json output format section
-    if (!content.includes('```json')) {
-      errors.push('Missing ```json output format section');
+    // Check for ```yaml output format section (```json accepted for legacy compatibility)
+    if (!content.includes('```yaml') && !content.includes('```json')) {
+      errors.push('Missing ```yaml output format section');
     }
 
     if (errors.length > 0) ok = false;

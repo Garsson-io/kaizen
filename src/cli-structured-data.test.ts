@@ -134,22 +134,29 @@ describe('individual command handlers', () => {
     log.mockRestore();
   });
 
-  it('store-review-finding strips markdown code fences before parsing', async () => {
-    // INVARIANT: agents often wrap JSON in ```json ... ``` — the handler must strip fences
-    // so a fenced payload stores correctly instead of silently producing a 0/0/0 finding.
+  it('store-review-finding parses YAML finding output', async () => {
+    // INVARIANT: dimension prompts now require YAML output. The handler must parse YAML.
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const fenced = '```json\n{"dimension":"correctness","verdict":"pass","summary":"ok","findings":[]}\n```';
+    const yaml = 'dimension: correctness\nverdict: pass\nsummary: ok\nfindings: []';
+    await handlers['store-review-finding']({ ...baseArgs, pr: '903', round: '5', text: yaml });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Review finding stored'));
+    log.mockRestore();
+  });
+
+  it('store-review-finding strips yaml code fences before parsing', async () => {
+    // INVARIANT: defensive strip of ```yaml fences in case agents wrap output in fences.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fenced = '```yaml\ndimension: correctness\nverdict: pass\nsummary: ok\nfindings: []\n```';
     await handlers['store-review-finding']({ ...baseArgs, pr: '903', round: '5', text: fenced });
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Review finding stored'));
     log.mockRestore();
   });
 
-  it('store-review-finding exits non-zero on unparseable JSON', async () => {
-    // INVARIANT: a garbled --text must cause an explicit exit(1), not a silent 0/0/0 finding.
-    // The old silent fallback obscured storage failures — callers had no way to detect them.
+  it('store-review-finding exits non-zero on unparseable input', async () => {
+    // INVARIANT: garbled input must cause exit(1), not a silent 0/0/0 finding.
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await handlers['store-review-finding']({ ...baseArgs, pr: '903', round: '5', text: 'not-json' });
+    await handlers['store-review-finding']({ ...baseArgs, pr: '903', round: '5', text: ': invalid: yaml: {{{' });
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
     errSpy.mockRestore();
