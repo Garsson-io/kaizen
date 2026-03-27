@@ -49,11 +49,11 @@ export interface HookDecision {
   context?: Record<string, unknown>;
 }
 
-const TRACE_FILE = process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
-const TRACE_ENABLED = process.env.KAIZEN_HOOK_TRACE !== '0';
+const getTraceFile = (): string => process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
+const isTraceEnabled = (): boolean => process.env.KAIZEN_HOOK_TRACE !== '0';
 
 function trace(decision: HookDecision, trigger: string): void {
-  if (!TRACE_ENABLED) return;
+  if (!isTraceEnabled()) return;
   try {
     const entry = JSON.stringify({
       ts: new Date().toISOString(),
@@ -63,7 +63,7 @@ function trace(decision: HookDecision, trigger: string): void {
       reason: decision.reason,
       ...decision.context,
     });
-    appendFileSync(TRACE_FILE, entry + '\n');
+    appendFileSync(getTraceFile(), entry + '\n');
   } catch { /* never fail on trace */ }
 }
 
@@ -184,6 +184,22 @@ function findStateByStatuses(
   return latest;
 }
 
+/** Query gh for the open PR URL on the given branch. Returns undefined on failure.
+ *  Set KAIZEN_PR_LOOKUP_DISABLED=1 to skip (for testing environments). */
+function defaultLookupPrUrlForBranch(branch: string): string | undefined {
+  if (process.env.KAIZEN_PR_LOOKUP_DISABLED === '1') return undefined;
+  try {
+    const out = execSync(
+      `gh pr list --head "${branch}" --state open --json url --limit 1`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+    ).trim();
+    const parsed = JSON.parse(out) as Array<{ url: string }>;
+    return parsed[0]?.url;
+  } catch {
+    return undefined;
+  }
+}
+
 // ── Core logic (extracted for testability) ───────────────────────────
 
 export interface ProcessOptions {
@@ -197,6 +213,9 @@ export interface ProcessOptions {
   checkShaExists?: (sha: string) => boolean;
   /** Override review sentinel check for testing (#920) */
   checkReviewSentinel?: (prUrl: string, round: string, stateDir: string) => boolean;
+  /** Fallback: look up PR URL for branch when stdout/stderr are empty (#973).
+   *  Default: `gh pr list --head <branch> --json url --limit 1` */
+  lookupPrUrlForBranch?: (branch: string) => string | undefined;
 }
 
 function decide(action: HookDecision['action'], reason: string, message: string | null, context?: Record<string, unknown>): HookDecision {
@@ -280,13 +299,15 @@ export function processHookInput(
 
   // ── TRIGGER 1: gh pr create ────────────────────────────────────
   if (isPrCreate) {
-    const prUrl = reconstructPrUrl(
-      cmdLine,
-      stdout,
-      stderr,
-      'create',
-      repoFromGit,
-    );
+    let prUrl = reconstructPrUrl(cmdLine, stdout, stderr, 'create', repoFromGit);
+
+    // Fallback (#973): when stdout/stderr are empty (heredoc body command substitution
+    // can cause gh pr create output to be undetected), query gh for the current branch's PR.
+    if (!prUrl) {
+      const lookup = options.lookupPrUrlForBranch ?? defaultLookupPrUrlForBranch;
+      prUrl = lookup(branch);
+    }
+
     if (!prUrl) {
       return decide('ignore', 'no_pr_url_from_create', null);
     }
