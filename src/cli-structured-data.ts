@@ -111,12 +111,18 @@ async function handleStoreReviewFinding(a: CliArgs): Promise<void> {
   const pr = prTarget(a.pr, a.repo);
   const r = resolveRound(a);
   const dim = a.dimension ?? 'unknown';
-  const text = resolveContent(a);
+  const raw = resolveContent(a);
+  // Strip markdown code fences — agents often wrap JSON output in ```json ... ```
+  const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
   let finding: ReviewFindingData;
   try {
     finding = JSON.parse(text);
-  } catch {
-    finding = { dimension: dim, verdict: 'fail', summary: text.slice(0, 100), findings: [] };
+  } catch (e) {
+    console.error(`store-review-finding: JSON parse failed for dimension '${dim}'.`);
+    console.error(`  Input (first 200 chars): ${text.slice(0, 200)}`);
+    console.error(`  Error: ${e}`);
+    process.exit(1);
+    return;
   }
   if (!finding.dimension || finding.dimension === 'unknown') finding.dimension = dim;
   const url = storeReviewFinding(pr, r, finding);

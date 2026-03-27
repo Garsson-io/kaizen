@@ -134,6 +134,27 @@ describe('individual command handlers', () => {
     log.mockRestore();
   });
 
+  it('store-review-finding strips markdown code fences before parsing', async () => {
+    // INVARIANT: agents often wrap JSON in ```json ... ``` — the handler must strip fences
+    // so a fenced payload stores correctly instead of silently producing a 0/0/0 finding.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fenced = '```json\n{"dimension":"correctness","verdict":"pass","summary":"ok","findings":[]}\n```';
+    await handlers['store-review-finding']({ ...baseArgs, pr: '903', round: '5', text: fenced });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Review finding stored'));
+    log.mockRestore();
+  });
+
+  it('store-review-finding exits non-zero on unparseable JSON', async () => {
+    // INVARIANT: a garbled --text must cause an explicit exit(1), not a silent 0/0/0 finding.
+    // The old silent fallback obscured storage failures — callers had no way to detect them.
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await handlers['store-review-finding']({ ...baseArgs, pr: '903', round: '5', text: 'not-json' });
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
   it('store-plan stores and prints URL', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await handlers['store-plan']({ ...baseArgs, issue: '904', text: 'my plan' });
@@ -157,10 +178,15 @@ describe('individual command handlers', () => {
     log.mockRestore();
   });
 
-  it('retrieve-grounding prints grounding text', async () => {
+  it('retrieve-grounding calls retrieveGrounding with correct issue target', async () => {
+    // INVARIANT: retrieve-grounding must wire CLI args to retrieveGrounding(issueTarget(issue, repo)).
+    // Asserting the mock return value was passed to console.log is tautological — instead
+    // verify the argument wiring so a wrong issue number or repo would cause this test to fail.
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await handlers['retrieve-grounding']({ ...baseArgs, issue: '904' });
-    expect(log).toHaveBeenCalledWith('grounding text');
+    expect(vi.mocked(retrieveGrounding)).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'issue', number: 904, repo: 'Garsson-io/kaizen' }),
+    );
     log.mockRestore();
   });
 
