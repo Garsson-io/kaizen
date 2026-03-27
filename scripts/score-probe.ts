@@ -173,8 +173,10 @@ function main() {
     const files = readdirSync(outputDir).filter((f) => f.endsWith(".json") || f.endsWith(".yaml") || f.endsWith(".yml"));
     for (const file of files.sort()) {
       const ext = file.endsWith(".json") ? "json" : "yaml";
-      const taskId = file.replace(/^out-[a-z]+-/, "").replace(/\.(json|yaml|yml)$/, "").toUpperCase();
-      const gtFile = `${gtDir}/${taskId.toLowerCase().replace("_", "-")}.${ext}`;
+      const rawId = file.replace(/^out-[a-z]+-/, "").replace(/\.(json|yaml|yml)$/, "");
+      // Normalize ec04 → ec-04, EC-04 stays EC-04
+      const normalizedId = rawId.replace(/^([a-z]+)(\d+)$/i, "$1-$2").toLowerCase();
+      const gtFile = `${gtDir}/${normalizedId}.${ext}`;
       try {
         const output = loadAndValidate(`${outputDir}/${file}`, ProbeOutput) as z.infer<typeof ProbeOutput>;
         const gt = loadAndValidate(gtFile, GroundTruth) as z.infer<typeof GroundTruth>;
