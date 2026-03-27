@@ -29,7 +29,7 @@ Kaizen issues are often created and managed via raw `gh` CLI calls, bypassing an
 All kaizen issue lifecycle operations go through a cases abstraction. No agent ever calls `gh issue create/edit/list` directly for kaizen issues.
 
 ```
-Skills (/kaizen-prd, /kaizen-write-plan, /kaizen-write-plan, /kaizen-reflect)
+Skills (/kaizen-prd, /kaizen-write-plan, /kaizen-reflect)
         |
 Domain model (cases module)
         |
