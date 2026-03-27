@@ -307,9 +307,14 @@ BEHAVIOR: [what it does]
 LIVES IN: [file.ts, functionName()]
 TESTED IN: [tests/test_file.ts or tests/test_file.sh]
 SEAM: [the injection point that isolates this for testing]
+LADDER RUNG: [the lowest rung from docs/test-ladder-spec.md that actually exercises this boundary]
 ```
 
 If you cannot name the seam, the behavior is not testable in isolation. Add an extraction task before the implementation task. Red flags requiring extraction: the target location has more than 5 imports, the location is a CLI entry point or script's global scope, or testing it would require mocking more than 3 modules. Extract first, implement second — this is never the optional step.
+
+**Choose the ladder rung that matches the boundary, not the cheapest rung available.** Read `docs/test-ladder-spec.md` to identify what each rung actually proves and what it misses. The rule: a test must live at the same level as the failure mode it prevents. A bug at a component boundary (hook firing, CLI invocation, session lifecycle event, real file I/O) cannot be caught by a unit test that mocks the boundary away — those tests prove the mock is correct, not that the system works. If the seam for a behavior is a real subprocess, a real hook, or a real filesystem interaction, the test belongs at L2 or higher. If it is a session lifecycle event, the test belongs at the rung that exercises full session flow. If it involves real agent decisions, it belongs at L10+.
+
+**Seam → ladder cross-check (mandatory):** After filling in the seam map, verify: for every behavior in the plan, the test plan's rung is ≥ the seam's ladder rung. A seam that lives at L6 cannot be adequately tested at L1. If you find yourself writing "unit test" for a behavior whose seam is a real boundary interaction, that is the failure mode this check exists to catch — escalate the rung or explicitly justify why mocking the boundary is sufficient (naming the specific invariant that mocks correctly preserve).
 
 **Write the plan.** With all five steps complete, write the plan using this structure:
 
