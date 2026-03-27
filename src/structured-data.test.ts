@@ -255,6 +255,40 @@ describe('retrieveDeepDive — combined body + metadata + connected', () => {
     expect(result).toContain('## Metadata Attachment');
     expect(result).toContain('## Connected Issues');
   });
+
+  it('falls back to placeholder text when fetchBody fails', () => {
+    // INVARIANT: a gh failure on fetchBody must not throw — body section shows placeholder
+    ghFails('not found'); // fetchBody fails
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\narea: skills\n```' }));
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\nconnected_issues: []\n```' }));
+
+    const result = retrieveDeepDive(issue);
+    expect(result).toContain('## Issue Body');
+    expect(result).toContain('(no body)');
+    expect(result).toContain('## Metadata Attachment');
+  });
+
+  it('shows placeholder when metadata attachment is absent', () => {
+    // INVARIANT: missing metadata attachment must not throw — shows placeholder
+    ghReturns('## Problem\n\nSome problem.');
+    ghReturns(''); // no metadata attachment found
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\nconnected_issues: []\n```' }));
+
+    const result = retrieveDeepDive(issue);
+    expect(result).toContain('## Metadata Attachment');
+    expect(result).toContain('(no metadata attachment)');
+  });
+
+  it('shows placeholder when connected issues list is empty', () => {
+    // INVARIANT: zero connected issues must produce the placeholder, not an empty section
+    ghReturns('## Problem\n\nSome problem.');
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\narea: skills\n```' }));
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:metadata -->\n```yaml\nconnected_issues: []\n```' }));
+
+    const result = retrieveDeepDive(issue);
+    expect(result).toContain('## Connected Issues');
+    expect(result).toContain('(no connected issues)');
+  });
 });
 
 describe('storeIterationState + retrieveIterationState', () => {

@@ -750,7 +750,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   });
 
   if (skippedDimensions.length > 0) {
-    console.log(`  [review] ${skippedDimensions.length} dim(s) missing plan text (MISSING finding): ${skippedDimensions.join(', ')}`);
+    console.log(`  [review] ${skippedDimensions.length} dim(s) missing required data (plan/grounding) — MISSING finding: ${skippedDimensions.join(', ')}`);
   }
 
   // Group by shared data needs; batch same-needs dims into one call

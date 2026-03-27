@@ -2,7 +2,7 @@
 name: plan-fidelity
 description: Does the PR implement what the grounding (write-plan output) said? A grounding or plan MUST exist — the agent creates it before writing code. No plan = showstopper.
 applies_to: pr
-needs: [diff, issue, plan, pr]
+needs: [diff, issue, grounding, pr]
 high_when:
   - "PR was created by an autonomous agent (all agent work requires a plan)"
   - "Issue links to a parent epic with a phased implementation"
