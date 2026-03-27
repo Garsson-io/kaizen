@@ -687,14 +687,19 @@ export async function spawnBatchReview(
     return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs: 0 }));
   }
 
+  // Batch schema: array of ReviewFindingData — one entry per dimension.
+  // Derived from zod (Policy #14) so the schema stays in sync with validation.
+  const batchSchema = z.toJSONSchema(z.array(ReviewFindingDataSchema));
+
   const batchPrompt =
     `Review this PR across ${prompts.length} dimension(s). ` +
-    `For each dimension, output a separate \`\`\`json block with the "dimension" field set to the dimension name.\n\n` +
+    `Return a JSON array with one findings object per dimension (set the "dimension" field to the dimension name).\n\n` +
     prompts.join('\n\n---\n\n');
 
   const { text, costUsd, durationMs, exitCode } = await runClaude(batchPrompt, {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
+    jsonSchema: batchSchema,
   });
 
   if (exitCode !== 0) {
@@ -702,7 +707,20 @@ export async function spawnBatchReview(
     return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs }));
   }
 
-  const reviews = parseAllReviewOutputs(text, loadedDims);
+  // Try JSON array parse first (enforced by --json-schema), fall back to text scraping
+  let reviews: DimensionReview[];
+  try {
+    const parsed = z.array(ReviewFindingDataSchema).parse(JSON.parse(text.trim()));
+    reviews = parsed.map(f => ({
+      dimension: f.dimension,
+      verdict: f.verdict,
+      summary: f.summary,
+      findings: f.findings,
+    }));
+  } catch {
+    reviews = parseAllReviewOutputs(text, loadedDims);
+  }
+
   const costPerDim = costUsd / Math.max(loadedDims.length, 1);
 
   return opts.dimensions.map(dim => ({

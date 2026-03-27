@@ -906,13 +906,21 @@ describe('spawnBatchReview', () => {
     });
   }
 
+  // Legacy text-block payload (tests fallback path when structured_output absent)
   function batchPayload(reviews: Array<{ dim: string; verdict: string; findings: any[] }>, costUsd: number): string {
     const blocks = reviews.map(r =>
-      `\`\`\`json\n${JSON.stringify({ dimension: r.dim, summary: 'ok', findings: r.findings })}\n\`\`\``,
+      `\`\`\`json\n${JSON.stringify({ dimension: r.dim, summary: 'ok', verdict: r.verdict, findings: r.findings })}\n\`\`\``,
     ).join('\n\n');
     const assistantLine = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: blocks }] } });
     const resultLine = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd });
     return `${assistantLine}\n${resultLine}\n`;
+  }
+
+  // Structured output payload (--json-schema path via StructuredOutput tool)
+  function batchStructuredPayload(reviews: Array<{ dim: string; verdict: 'pass' | 'fail'; findings: any[] }>, costUsd: number): string {
+    const structuredOutput = reviews.map(r => ({ dimension: r.dim, verdict: r.verdict, summary: 'ok', findings: r.findings }));
+    const resultLine = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: costUsd, structured_output: structuredOutput });
+    return `${resultLine}\n`;
   }
 
   it('returns parsed reviews for each requested dimension', async () => {
@@ -967,6 +975,48 @@ describe('spawnBatchReview', () => {
 
     await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
+  });
+
+  it('INVARIANT: passes --json-schema to batch claude call (Policy #12/#14)', async () => {
+    // INVARIANT: spawnBatchReview must pass --json-schema so the model cannot
+    // output prose instead of a JSON array of findings.
+    const capturedArgs: string[][] = [];
+    vi.mocked(spawnSync).mockImplementation((cmd: string) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+    vi.mocked(spawn).mockImplementation((_cmd: string, args: string[]) => {
+      capturedArgs.push(args as string[]);
+      const payload = batchPayload([{ dim: 'correctness', verdict: 'pass', findings: [] }], 0.01);
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => { proc.stdout.emit('data', Buffer.from(payload)); proc.emit('close', 0); });
+      return proc;
+    });
+
+    await spawnBatchReview({ dimensions: ['correctness'], repo: 'test/test' });
+    expect(capturedArgs[0]).toContain('--json-schema');
+    const schemaIdx = capturedArgs[0].indexOf('--json-schema');
+    const schema = JSON.parse(capturedArgs[0][schemaIdx + 1]);
+    // Must be an array schema (wraps ReviewFindingDataSchema)
+    expect(schema.type).toBe('array');
+  });
+
+  it('INVARIANT: structured_output array path parsed correctly', async () => {
+    // INVARIANT: when claude returns structured_output (--json-schema path),
+    // the array is parsed directly without text scraping.
+    const payload = batchStructuredPayload([
+      { dim: 'correctness', verdict: 'pass', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] },
+      { dim: 'security', verdict: 'fail', findings: [{ requirement: 'R2', status: 'MISSING', detail: 'vuln' }] },
+    ], 0.12);
+    mockClaudeOnce(payload);
+
+    const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
+    expect(results[0].review?.verdict).toBe('pass');
+    expect(results[1].review?.verdict).toBe('fail');
+    expect(results[1].review?.findings[0].status).toBe('MISSING');
   });
 });
 
