@@ -93,6 +93,10 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 - PR sections: `update-pr-section --name "Validation" --text "..."`
 - Iteration: `store-iteration`, `retrieve-iteration`
 
+`store-review-finding` canonical payload:
+`{"dimension":"correctness","verdict":"pass|fail","summary":"...","findings":[{"requirement":"...","status":"DONE|PARTIAL|MISSING","detail":"..."}]}`
+Legacy fields are normalized (`status/result`, `item/description`, missing `findings`).
+
 Store plans immediately after creating them. Review findings are stored per-round per-dimension (e.g., `review/r5/correctness`). Use `list-review-rounds` to count rounds mechanistically. For low-level section/attachment operations, use `cli-section-editor.ts`.
 
 **PR review dimensions**: When running `/kaizen-review-pr`, bundle dimensions by shared data needs (use the briefing from `npx tsx src/cli-dimensions.ts briefing --lines N`). Don't spawn one agent per dimension — batch dims with identical `needs` into single agents.

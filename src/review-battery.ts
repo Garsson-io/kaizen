@@ -17,6 +17,12 @@ import { resolve, dirname, basename } from 'node:path';
 import YAML from 'yaml';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
 import { retrievePlan, issueTarget } from './structured-data.js';
+import {
+  normalizeFindingStatus,
+  deriveVerdictFromFindings,
+  type FindingStatus,
+  type ReviewFinding,
+} from './review-finding-contract.js';
 
 // ── Review Output Schema ────────────────────────────────────────────
 //
@@ -29,22 +35,10 @@ import { retrievePlan, issueTarget } from './structured-data.js';
 // Review prompts are instructed to output a JSON block fenced with
 // ```json ... ``` containing this structure.
 
-/** Status of a single requirement or criterion */
-export type FindingStatus = 'DONE' | 'PARTIAL' | 'MISSING';
-
 /** Prefix for synthetic findings that represent missing input data, not code gaps.
  * Used by review-fix.ts to distinguish fixable code gaps from unfixable data-availability gaps. */
 export const DATA_GAP_PREFIX = '[data-gap]';
-
-/** A single finding from a review dimension */
-export interface ReviewFinding {
-  /** The requirement or criterion being evaluated */
-  requirement: string;
-  /** Whether the requirement is met */
-  status: FindingStatus;
-  /** Explanation of the finding — what's done, what's missing, why */
-  detail: string;
-}
+export type { FindingStatus, ReviewFinding } from './review-finding-contract.js';
 
 /** Output from a single review dimension */
 export interface DimensionReview {
@@ -337,28 +331,19 @@ export function parseReviewOutput(raw: string, dimension: string): DimensionRevi
 
     const findings: ReviewFinding[] = parsed.findings.map((f: any) => ({
       requirement: String(f.requirement ?? f.item ?? ''),
-      status: normalizeStatus(f.status),
+      status: normalizeFindingStatus(f.status),
       detail: String(f.detail ?? f.description ?? ''),
     }));
 
-    const hasFailure = findings.some(f => f.status !== 'DONE');
-
     return {
       dimension: parsed.dimension ?? dimension,
-      verdict: hasFailure ? 'fail' : 'pass',
+      verdict: deriveVerdictFromFindings(findings),
       findings,
       summary: String(parsed.summary ?? ''),
     };
   } catch {
     return null;
   }
-}
-
-function normalizeStatus(s: unknown): FindingStatus {
-  const str = String(s).toUpperCase().trim();
-  if (str === 'DONE' || str === 'PASS' || str === 'COMPLETE' || str === 'ADDRESSED') return 'DONE';
-  if (str === 'PARTIAL' || str === 'PARTIALLY') return 'PARTIAL';
-  return 'MISSING';
 }
 
 // ── Prompt Loading ──────────────────────────────────────────────────

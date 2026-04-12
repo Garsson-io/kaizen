@@ -25,6 +25,14 @@ import {
   type AttachmentTarget,
   type SectionTarget,
 } from './section-editor.js';
+import {
+  normalizeReviewFindingData as normalizeReviewFindingDataContract,
+  makeReviewFindingMeta,
+  extractReviewFindingMeta,
+  type ReviewFinding,
+  type ReviewFindingData,
+  type ReviewFindingMeta,
+} from './review-finding-contract.js';
 
 // ── Target helpers ──────────────────────────────────────────────────
 
@@ -88,29 +96,17 @@ export function extractPlanText(text: string): string | undefined {
 
 // ── Reviews ─────────────────────────────────────────────────────────
 
-export interface ReviewFinding {
-  requirement: string;
-  status: 'DONE' | 'PARTIAL' | 'MISSING';
-  /** Short label for the table row */
-  detail: string;
-  /** Full analysis text — file references, code snippets, fix suggestions. Shown below the table for non-DONE findings. */
-  analysis?: string;
-}
-
-export interface ReviewFindingData {
-  dimension: string;
-  verdict: 'pass' | 'fail';
-  summary: string;
-  findings: ReviewFinding[];
-  /** Review round number (shown in header) */
-  round?: number;
-  /** Wall-clock duration in seconds */
-  durationSec?: number;
-  /** Cost in USD */
-  costUsd?: number;
-}
+export type { ReviewFinding, ReviewFindingData } from './review-finding-contract.js';
 
 const STATUS_ICON: Record<string, string> = { DONE: '✅', PARTIAL: '⚠️', MISSING: '❌' };
+
+/**
+ * Defensive coercion for CLI/API payloads. Supports legacy shapes (status-only,
+ * missing findings) so storage/formatting never throw.
+ */
+export function normalizeReviewFindingData(input: unknown): ReviewFindingData {
+  return normalizeReviewFindingDataContract(input);
+}
 
 /**
  * Format a dimension's findings as a structured attachment.
@@ -124,15 +120,8 @@ const STATUS_ICON: Record<string, string> = { DONE: '✅', PARTIAL: '⚠️', MI
  *   | 1 | ✅ DONE | ... | ... |
  */
 function formatFinding(round: number, finding: ReviewFindingData): string {
-  const done = finding.findings.filter(f => f.status === 'DONE').length;
-  const partial = finding.findings.filter(f => f.status === 'PARTIAL').length;
-  const missing = finding.findings.filter(f => f.status === 'MISSING').length;
-
-  const meta = JSON.stringify({
-    round, dimension: finding.dimension, verdict: finding.verdict, done, partial, missing,
-    ...(finding.durationSec != null ? { duration_sec: finding.durationSec } : {}),
-    ...(finding.costUsd != null ? { cost_usd: finding.costUsd } : {}),
-  });
+  const meta = makeReviewFindingMeta(round, finding);
+  const { done, partial, missing } = meta;
 
   const statsLine = [
     `Round ${round}`,
@@ -141,7 +130,7 @@ function formatFinding(round: number, finding: ReviewFindingData): string {
   ].filter(Boolean).join(' | ');
 
   const lines: string[] = [
-    `<!-- meta:${meta} -->`,
+    `<!-- meta:${JSON.stringify(meta)} -->`,
     `### ${finding.dimension} — ${finding.verdict.toUpperCase()}`,
     `*${statsLine}*`,
     '',
@@ -159,11 +148,13 @@ function formatFinding(round: number, finding: ReviewFindingData): string {
   lines.push('', `**${finding.findings.length} findings**: ${done} DONE, ${partial} PARTIAL, ${missing} MISSING`);
 
   // Expanded details for non-DONE findings
-  const nonDone = finding.findings.filter(f => f.status !== 'DONE');
+  const nonDone = finding.findings
+    .map((f, index) => ({ finding: f, index }))
+    .filter(({ finding: f }) => f.status !== 'DONE');
   if (nonDone.length > 0) {
     lines.push('', '---', '');
-    for (const f of nonDone) {
-      const idx = finding.findings.indexOf(f) + 1;
+    for (const { finding: f, index } of nonDone) {
+      const idx = index + 1;
       const icon = STATUS_ICON[f.status] ?? '❓';
       lines.push(`#### ${idx}. ${icon} ${f.requirement}`, '');
       lines.push(f.detail);
@@ -181,9 +172,10 @@ function formatFinding(round: number, finding: ReviewFindingData): string {
  * Parse the machine-readable meta from a stored finding attachment.
  */
 export function parseFindingMeta(content: string): { round: number; dimension: string; verdict: string; done: number; partial: number; missing: number } | null {
-  const match = content.match(/<!-- meta:(\{.*?\}) -->/);
-  if (!match) return null;
-  try { return JSON.parse(match[1]); } catch { return null; }
+  const meta = extractReviewFindingMeta(content);
+  if (!meta) return null;
+  const { round, dimension, verdict, done, partial, missing } = meta as ReviewFindingMeta;
+  return { round, dimension, verdict, done, partial, missing };
 }
 
 /**
@@ -195,7 +187,8 @@ export function storeReviewFinding(
   round: number,
   finding: ReviewFindingData,
 ): string {
-  return writeAttachment(target, `review/r${round}/${finding.dimension}`, formatFinding(round, finding));
+  const normalized = normalizeReviewFindingData(finding);
+  return writeAttachment(target, `review/r${round}/${normalized.dimension}`, formatFinding(round, normalized));
 }
 
 /**
