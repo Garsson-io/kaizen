@@ -56,7 +56,7 @@ Key architectural points:
 |------|---------|
 | `policies.md` | Kaizen enforcement policies (#11-17) — recursive kaizen, hooks, MCP, security, isolation, testing, language boundaries |
 | `verification.md` | Verification discipline — path tracing, invariant statements, runtime artifact verification, smoke tests |
-| `workflow.md` | Dev work skill chain — trigger→skill routing for `/kaizen-pick` → `/kaizen-evaluate` → `/kaizen-implement` → `/kaizen` |
+| `workflow.md` | Dev work skill chain — trigger→skill routing for `/kaizen-pick` → `/kaizen-evaluate` → `/kaizen-implement` → `/kaizen-reflect` |
 | `practices.md` | Engineering practices checklist — consulted before shipping (advisory) |
 | `zen.md` | The Zen of Kaizen — philosophical principles |
 | `horizon.md` | Horizon tracking dimensions |
@@ -189,7 +189,7 @@ Read-only mounts, mandatory worktree launcher, protected wrappers. Use when huma
 - **Lifecycle:**
   1. `gh pr merge` → `pr-review-loop.sh` writes `needs_post_merge` (direct merge) or `awaiting_merge` (`--auto`)
   2. `gh pr view` confirms MERGED → `post-merge-clear.sh` promotes `awaiting_merge` to `needs_post_merge`
-  3. Agent runs `/kaizen` → `post-merge-clear.sh` clears state
+  3. Agent runs `/kaizen-reflect` → `post-merge-clear.ts` clears state
   4. `stop-gate.ts` blocks Stop while any gate exists (review, reflection, post-merge)
 
 ### Cross-worktree isolation rule

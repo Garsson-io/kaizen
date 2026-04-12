@@ -1,10 +1,10 @@
 /**
- * post-merge-clear.ts — Clears post-merge gate when /kaizen is invoked or merge confirmed.
+ * post-merge-clear.ts — Clears post-merge gate when /kaizen-reflect is invoked or merge confirmed.
  *
  * PostToolUse hook on Bash and Skill — always exits 0 (state management, not blocking).
  *
  * Triggers:
- *   1. Skill: /kaizen or /kaizen-reflect invoked → clear all post-merge gates
+ *   1. Skill: /kaizen-reflect invoked → clear all post-merge gates
  *   2. Bash: gh pr view shows MERGED → promote awaiting_merge to needs_post_merge
  *
  * Part of kAIzen Agent Control Flow — kaizen #786
@@ -43,14 +43,14 @@ export function processPostMergeClear(
   currentBranch: string,
   stateDir: string = DEFAULT_STATE_DIR,
 ): string {
-  // Trigger 1: Skill tool — /kaizen or /kaizen-reflect
+  // Trigger 1: Skill tool — /kaizen-reflect
   if (toolName === 'Skill') {
     const skill = toolInput.skill ?? '';
     if (skill === 'kaizen-reflect' || skill === 'kaizen') {
       const cleared = clearAllStatesWithStatus('needs_post_merge', currentBranch, stateDir);
       if (cleared > 0) {
         const mc = resolveMainCheckout();
-        return `\nPost-merge gate cleared (${cleared} PR${cleared !== 1 ? 's' : ''}). The /kaizen reflection satisfies the post-merge workflow requirement.\n\nRemember to also:\n- Mark the case as done (if applicable)\n- Sync main: \`git -C ${mc} fetch origin main && git -C ${mc} merge origin/main --no-edit\`\n- Update linked kaizen issue`;
+        return `\nPost-merge gate cleared (${cleared} PR${cleared !== 1 ? 's' : ''}). The /kaizen-reflect reflection satisfies the post-merge workflow requirement.\n\nRemember to also:\n- Mark the case as done (if applicable)\n- Sync main: \`git -C ${mc} fetch origin main && git -C ${mc} merge origin/main --no-edit\`\n- Update linked kaizen issue`;
       }
     }
     return '';
