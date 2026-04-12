@@ -28,7 +28,7 @@ Create these tasks at skill start using TaskCreate:
 | 1 | Collision detection | Check GitHub labels, open PRs, worktrees for existing work on this issue |
 | 2 | Problem validation | Confirm the problem exists in current code (skip if from deep-dive) |
 | 3 | Gather incidents + scope | Find concrete occurrences, assess implementation scope and architecture (skip Phase 1-2 if from deep-dive) |
-| 4 | Phase 4.5: Form grounded plan | 5 grounding steps → write and store plan |
+| 4 | Phase 4.5: Form grounded plan | 6 grounding steps → write and store plan |
 | 5 | Ask the admin | Present 3 TLDRs, ask targeted questions, get approval |
 | 6 | Plan coverage review | Automated review of plan vs issue requirements |
 
@@ -250,12 +250,20 @@ IF WRONG: [what evidence would disqualify this hypothesis]
 
 Run the validation before committing to the plan. Do not skip for "obvious" fixes.
 
-### Step 5: Map the testability seams
+### Step 5: Extract testable behaviors and map seams
 
-For each significant behavior:
+Extract testable behaviors from **multiple perspectives** — not just the code-author view. For each perspective, ask: "What behaviors does this perspective reveal that the others miss?"
+
+- **Code perspective**: "What does this code do?" — function inputs/outputs, state transitions, error handling.
+- **Agent perspective**: "Will an AI agent use this tool/feature correctly?" — If the issue adds a CLI subcommand, hook output, or tool that agents are expected to call, then "the agent decides to use this tool in the right situation" is itself a testable behavior. Agent decisions depend on real LLM judgment and cannot be verified with mocks.
+- **Session/lifecycle perspective**: "Do these components compose correctly across a session lifecycle?" — If multiple hooks, scripts, or tools must work together across a session (e.g., SessionStart fires a hook, agent reads output, agent takes action), the composition is a testable behavior. Look for existing session simulation infrastructure in the codebase.
+- **User/operator perspective**: "Does the system work end-to-end from the user's point of view?" — If the issue fixes a workflow that was broken, the workflow itself is a testable behavior.
+
+For each behavior, map the testability seam:
 
 ```
 BEHAVIOR: [what it does]
+PERSPECTIVE: [code | agent | session | user]
 LIVES IN: [file.ts, functionName()]
 TESTED IN: [tests/test_file.ts or tests/test_file.sh]
 SEAM: [the injection point that isolates this for testing]
@@ -263,9 +271,55 @@ SEAM: [the injection point that isolates this for testing]
 
 If you cannot name the seam, the behavior is not testable in isolation. Red flags requiring extraction first: target has >5 imports, is a CLI entry point, or testing requires mocking >3 modules.
 
+### Step 6: Assign test levels
+
+For each behavior, determine the minimum test level needed to avoid false confidence from unit-only testing. Assume unit tests already exist; use `Unit` only when no higher-level reality check is required.
+
+- **LEVEL-DEFS** — choose `required_reality_check_level`:
+  - **Unit** — one local function or object boundary, no I/O
+  - **Integration** — several modules wired together, local DB or filesystem
+  - **System** — subprocess, OS behavior, real HTTP, real external API call, or proving an externally visible side effect via round-trip observation
+  - **Agentic** — result depends on real LLM non-determinism or a real AI/ML model call (e.g., classification, scoring, generation APIs). This includes: does the test verify that an AI agent makes the right DECISION (e.g., choosing to use a tool, following instructions, reading output correctly)? Agent decisions are LLM-dependent.
+  - **Workflow** — multiple agentic steps in sequence, or a full agent pipeline
+
+- **KEY-QUESTIONS** per behavior:
+  - **MOCK-MISS**: Does THIS SPECIFIC BEHAVIOR describe a failure that only appears when multiple modules interact — not just a failure that could theoretically exist somewhere in the feature? If the behavior tests one function's logic, parsing, or algorithm, Unit is acceptable only when higher-level checks add no new reality signal. If the bug appears when local modules hand off data/state, elevate to Integration. Then still apply REAL-INFRA, LLM-DEP, and MULTI-STEP.
+    Do not escalate based on generic "could miss wiring" language alone. Escalation requires behavior-text evidence of a concrete handoff/contract/order/state-boundary failure (for example: cross-module state propagation, ordering guarantees, durability/persistence boundary).
+    Local output-shape validation within one function/object is Unit unless behavior text states cross-component handoff failure.
+  - **REAL-INFRA**: Does the behavior depend on OS, real network, or real subprocess? → System.
+    Think: could an in-process fake (mock HTTP client, fake filesystem, stub subprocess) reproduce the exact failure, or does the failure only appear with real infrastructure?
+    **ROUND-TRIP EFFECT RULE**: If success means a side effect must be visible in an external boundary (service/API/UI/export/report), System is required unless you can prove visibility with a real readback path. Calling a function or endpoint is not sufficient.
+    **SYSTEM TRIAD** (any one => System):
+    1. You must verify a real external happy-path response shape/contract.
+    2. You must verify a real external error-path response shape/contract.
+    3. You must prove an externally visible side effect via round-trip readback.
+    Triad specificity gate: do not treat generic real-tool usage (e.g., git/CLI/repo state) alone as SYSTEM TRIAD evidence; require explicit external contract checks (status/body/header/exit-code/error-shape) or explicit round-trip side-effect visibility in the behavior text.
+    Explicit contract cues include: timeout behavior, status code/body/header shape, exit-code/stderr semantics, and retry/backoff contract headers.
+    Guard: these cues trigger System only when the behavior explicitly asks to verify the cue, not when infra terms are only contextual background.
+    System guard: choose System only when at least one SYSTEM TRIAD trigger is explicitly required by the behavior text.
+  - **MOCK-HIDE**: Would mocking this dependency always pass, hiding a real failure? If yes → raise the level.
+  - **LLM-DEP**: Does correctness depend on what a real LLM produces? → Agentic.
+    Think: would running this test 100 times with the real dependency give different outcomes? A deterministic API always returns the same result; an AI/ML model may classify or score differently each run. If outcomes vary → Agentic.
+    Default: if the behavior's correctness depends on AI/ML model output quality (classification accuracy, generation quality, ranking relevance, scoring calibration, moderation decisions), start at Agentic and demote to Integration only if the test truly needs nothing beyond deterministic stub responses.
+    Also Agentic: if the behavior's execution path passes through a real AI/ML API call (LLM, classifier, ranker, scorer), default to Agentic — even when the test assertion is deterministic. A mock replaces the real model with a constant, so any bug that depends on what the model actually returns is invisible. Only demote to Integration if the behavior EXCLUSIVELY tests infrastructure around the call (routing, retries, latency, payload format) with zero dependence on model output content.
+    Also Agentic: if the test verifies that an AI agent makes the right decision — choosing to use a tool, following instructions, reading output correctly. Agent decisions are LLM-dependent and cannot be verified with mocks.
+    **Caution — deterministic-assertion trap**: A deterministic fixture replaces the model's actual judgment with a constant, so it can never verify whether the LLM decides correctly or whether steering worked. If the behavior tests LLM output quality or the effect of steering the LLM, keep Agentic regardless of how the assertion is written.
+  - **MULTI-STEP**: Does it require multiple real agentic steps in sequence? → Workflow.
+
+- **SELF-CHECK** (plan_consistent): After deciding `required_reality_check_level`, does your test_description actually require that level, or would it pass at a lower one?
+
+- **INTEGRATION-BRAKE**: If your chosen level is Integration, explicitly verify:
+  (a) Does the failure need real OS/network/subprocess? If yes → System.
+  (b) Does correctness depend on real AI/ML output? If yes → Agentic.
+  (c) Does it chain multiple agentic steps? If yes → Workflow.
+  (d) If the behavior is about orchestration or state handoff across LLM-involved stages (planner→tool→critic, memory/context carryover, retry/replan loops), do not keep Integration by default: choose Agentic when one model decision governs handoff correctness, and Workflow when multiple model decisions are sequenced.
+  If any answer is yes, upgrade unless you can quote behavior text that disqualifies the higher level.
+
+- **REJECTION-GATE**: If during your reasoning you considered a level higher than your final choice and rejected it, state the specific behavior text that disqualifies the higher level. If you cannot point to concrete disqualifying evidence from the behavior description, keep the higher level.
+
 ### Write the plan
 
-With all five steps complete:
+With all six steps complete:
 
 ```markdown
 ## Success Criteria
@@ -285,11 +339,15 @@ Rejected because: ...
 ## Tasks
 [Ordered, concrete, traceable to DONE WHEN]
 
-## Seam Map
-[Per-behavior: file, test file, seam]
+## Seam Map & Test Plan
+[Per-behavior from all perspectives:]
 
-## Test Plan
-[Per-task: what invariant is tested, which test file, unit/integration/E2E]
+| # | Behavior | Perspective | Level | Test File | Invariant |
+|---|----------|-------------|-------|-----------|-----------|
+| 1 | ... | code | Unit | ... | ... |
+| 2 | ... | agent | Agentic | ... | ... |
+
+[For deferred behaviors (e.g., Agentic tests out of scope), state what they are, why they're deferred, and which issue tracks them.]
 ```
 
 Store immediately:
