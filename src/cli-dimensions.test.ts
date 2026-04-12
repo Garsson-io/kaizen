@@ -46,7 +46,7 @@ Some instructions.
 describe('kaizen policy invariants', () => {
   it('policies.md contains Policy 10 — skill changes require behavioral proof', () => {
     const projectRoot = resolveProjectRoot(import.meta.dirname);
-    const policiesPath = resolve(projectRoot, '.claude/kaizen/policies.md');
+    const policiesPath = resolve(projectRoot, '.agents/kaizen/policies.md');
     const content = readFileSync(policiesPath, 'utf8');
     expect(content).toContain('Skill changes require behavioral proof');
     expect(content).toContain('synthetic case');
