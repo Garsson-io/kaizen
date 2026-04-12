@@ -1,6 +1,6 @@
 ---
 name: kaizen-setup
-description: Install and configure the kaizen plugin for a host project. Creates kaizen.config.json, scaffolds policies-local.md, injects CLAUDE.md section. Triggers on "kaizen setup", "install kaizen", "configure kaizen", "setup kaizen plugin".
+description: Install and configure the kaizen plugin for a host project. Creates kaizen.config.json, scaffolds policies-local.md, injects agent-instructions section. Triggers on "kaizen setup", "install kaizen", "configure kaizen", "setup kaizen plugin".
 user_invocable: true
 ---
 
@@ -48,7 +48,7 @@ Creates `.claude/kaizen/policies-local.md` if it doesn't exist.
 
 ## Step 3: Inject CLAUDE.md section
 
-Read the fragment at `${CLAUDE_PLUGIN_ROOT}/.claude/kaizen/claude-md-fragment.md` and append it to CLAUDE.md. If CLAUDE.md doesn't exist, create it. If it already has a kaizen section, skip.
+Read the fragment at `${CLAUDE_PLUGIN_ROOT}/.agents/kaizen/instructions-fragment.md` and append it to the host agent-instructions file (typically `CLAUDE.md`; if your host workflow uses `AGENTS.md` as the primary instructions file, append there instead). If the target file doesn't exist, create it. If it already has a kaizen section, skip.
 
 ## Step 4: Verify
 
