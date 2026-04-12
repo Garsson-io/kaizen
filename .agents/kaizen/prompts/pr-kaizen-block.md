@@ -13,4 +13,4 @@ Or for no impediments: echo 'KAIZEN_IMPEDIMENTS: [] brief reason'
 This is mandatory — every PR must have a structured reflection.
 
 NOTE: This clears the pr-kaizen gate only. If you also have a post-merge gate,
-you must separately run `/kaizen` to clear that.
+you must separately run `/kaizen-reflect` to clear that.

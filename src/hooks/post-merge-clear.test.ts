@@ -42,7 +42,7 @@ describe('processPostMergeClear — Skill trigger', () => {
     expect(existsSync(join(TEST_STATE_DIR, 'post-merge-org_repo_42'))).toBe(false);
   });
 
-  it('clears post-merge gates when /kaizen invoked', () => {
+  it('clears post-merge gates when /kaizen (legacy alias) invoked', () => {
     writeStateFile(TEST_STATE_DIR, 'post-merge-org_repo_42', {
       PR_URL: 'https://github.com/org/repo/pull/42',
       STATUS: 'needs_post_merge',
