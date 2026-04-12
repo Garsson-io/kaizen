@@ -77,7 +77,7 @@ These live in the repo and evolve based on the recursive loops above:
 | **Skills** | `.claude/skills/*/SKILL.md` | kaizen-prd → kaizen-implement | kaizen-reflect, kaizen-deep-dive | Impediments from reflections → skill updates (e.g., this session added Story Spine to implement) |
 | **Hooks** | `.claude/hooks/`, `src/hooks/` | kaizen-implement | Escalation from L1→L2 | When instructions fail repeatedly → build hook enforcement |
 | **Review criteria** | `.claude/kaizen/review-criteria.md` | Manual | kaizen-review-pr (adds FM-N patterns) | Each review that catches a new failure mode → new learned pattern |
-| **Zen principles** | `.claude/kaizen/zen.md` | Aviad + Claude | Session learnings | Non-obvious insights from sessions → new principles with provenance |
+| **Zen principles** | `.agents/kaizen/zen.md` | Aviad + Claude | Session learnings | Non-obvious insights from sessions → new principles with provenance |
 | **This document** | `docs/artifact-lifecycle.md` | This session | Future sessions | As the process evolves, artifact locations and flows may change |
 
 ## Observability

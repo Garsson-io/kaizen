@@ -3,7 +3,7 @@
  *
  * Policy: Every change to a SKILL.md file MUST have a before/after behavioral
  * test showing the new skill solves a problem the old skill did not. This file
- * is the test harness for those proofs. See .claude/kaizen/verification.md
+ * is the test harness for those proofs. See .agents/kaizen/verification.md
  * (section: Skill Change Policy).
  *
  * Run with: KAIZEN_SKILL_TEST=1 npx vitest run src/e2e/skill-change.test.ts

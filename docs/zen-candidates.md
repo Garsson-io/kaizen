@@ -1,6 +1,6 @@
 # Zen Candidates
 
-Proposed principles that emerged from practice but haven't been formally adopted into [the Zen of Kaizen](../../.claude/kaizen/zen.md).
+Proposed principles that emerged from practice but haven't been formally adopted into [the Zen of Kaizen](../../.agents/kaizen/zen.md).
 Each candidate includes: the principle, its source, and the anomaly it addresses.
 
 ## Process

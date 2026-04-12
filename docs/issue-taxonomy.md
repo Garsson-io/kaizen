@@ -138,7 +138,7 @@ File new issue with required labels (kaizen + level + area)
 
 ## Zen Labels
 
-The `zen:*` labels (e.g., `zen:enforcement-point`, `zen:no-promises-without-mechanisms`) connect issues to philosophical principles from the [Zen of Kaizen](../.claude/kaizen/zen.md). They are optional — apply them when the connection is clear and useful for pattern queries.
+The `zen:*` labels (e.g., `zen:enforcement-point`, `zen:no-promises-without-mechanisms`) connect issues to philosophical principles from the [Zen of Kaizen](../.agents/kaizen/zen.md). They are optional — apply them when the connection is clear and useful for pattern queries.
 
 ## Related
 

@@ -28,10 +28,10 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | File | Purpose |
 |------|---------|
 | `kaizen.config.json` | Self-dogfood config (kaizen repo points to itself) |
-| `.claude/kaizen/zen.md` | Philosophy — run `/kaizen-zen` |
+| `.agents/kaizen/zen.md` | Philosophy — run `/kaizen-zen` |
 | `.agents/kaizen/policies.md` | Generic enforcement policies |
-| `.claude/kaizen/workflow.md` | Dev work skill chain |
-| `.claude/kaizen/verification.md` | Verification discipline |
+| `.agents/kaizen/workflow.md` | Dev work skill chain |
+| `.agents/kaizen/verification.md` | Verification discipline |
 | `.claude/hooks/` | All enforcement hooks (kaizen- prefixed) |
 | `.claude/hooks/lib/` | Shared hook libraries |
 | `.claude/hooks/tests/` | Hook test infrastructure |

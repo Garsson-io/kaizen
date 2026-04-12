@@ -84,7 +84,7 @@ Quick-check the kaizen system:
 
 Read the Zen of Kaizen:
 ```
-cat .claude/kaizen/zen.md
+cat .agents/kaizen/zen.md
 ```
 
 For each principle, consider:

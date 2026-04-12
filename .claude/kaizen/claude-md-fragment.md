@@ -16,7 +16,7 @@ Kaizen is installed at `{{KAIZEN_ROOT}}`. It provides enforcement hooks, reflect
 
 ### Dev work skill chain — MUST follow this workflow
 
-**Full workflow docs:** [`{{KAIZEN_ROOT}}/.claude/kaizen/workflow.md`]({{KAIZEN_ROOT}}/.claude/kaizen/workflow.md)
+**Full workflow docs:** [`{{KAIZEN_ROOT}}/.agents/kaizen/workflow.md`]({{KAIZEN_ROOT}}/.agents/kaizen/workflow.md)
 
 Key triggers — activate the right skill for the user's intent:
 
@@ -28,7 +28,7 @@ Key triggers — activate the right skill for the user's intent:
 
 ### The Zen of Kaizen
 
-Run `/kaizen-zen` to see the full commentary ([`{{KAIZEN_ROOT}}/.claude/kaizen/zen.md`]({{KAIZEN_ROOT}}/.claude/kaizen/zen.md)).
+Run `/kaizen-zen` to see the full commentary ([`{{KAIZEN_ROOT}}/.agents/kaizen/zen.md`]({{KAIZEN_ROOT}}/.agents/kaizen/zen.md)).
 
 ### Kaizen Policies
 
@@ -38,7 +38,7 @@ Run `/kaizen-zen` to see the full commentary ([`{{KAIZEN_ROOT}}/.claude/kaizen/z
 
 ### Verification Discipline
 
-**Read [`{{KAIZEN_ROOT}}/.claude/kaizen/verification.md`]({{KAIZEN_ROOT}}/.claude/kaizen/verification.md)** before writing fixes or tests. Covers: path tracing, invariant statements, runtime artifact verification, smoke tests.
+**Read [`{{KAIZEN_ROOT}}/.agents/kaizen/verification.md`]({{KAIZEN_ROOT}}/.agents/kaizen/verification.md)** before writing fixes or tests. Covers: path tracing, invariant statements, runtime artifact verification, smoke tests.
 
 ### Kaizen Backlog
 

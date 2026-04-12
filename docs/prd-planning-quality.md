@@ -596,7 +596,7 @@ Per kaizen-prd requirements — which files change and what new files are create
 - `.claude/skills/kaizen-reflect/SKILL.md` — Category mapping step added (Issue 5)
 
 **Docs that need updating:**
-- `.claude/kaizen/workflow.md` — Add Phase 4.5 to the workflow task table description
+- `.agents/kaizen/workflow.md` — Add Phase 4.5 to the workflow task table description
 - `docs/artifact-lifecycle.md` — Add FSI entries and category YAML to the artifact chain
 
 **New files created:**
