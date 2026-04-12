@@ -4,6 +4,9 @@
  *
  * Reviews:
  *   npx tsx src/cli-structured-data.ts store-review-finding --pr 903 --repo R --round 5 --dimension correctness --file findings.md
+ *   # Preferred payload:
+ *   # {"dimension":"correctness","verdict":"pass|fail","summary":"...","findings":[{"requirement":"...","status":"DONE|PARTIAL|MISSING","detail":"..."}]}
+ *   # Legacy payloads are normalized (status/result aliases, item/description fields, missing findings).
  *   npx tsx src/cli-structured-data.ts store-review-summary --pr 903 --repo R --round 5 --text "PASSED — 5 rounds"
  *   npx tsx src/cli-structured-data.ts list-review-rounds --pr 903 --repo R
  *   npx tsx src/cli-structured-data.ts list-review-dims --pr 903 --repo R --round 5
@@ -58,6 +61,7 @@ import {
   retrieveIterationState,
   type ReviewFindingData,
 } from './structured-data.js';
+import { normalizeReviewFindingData } from './review-finding-contract.js';
 
 export type CliArgs = Record<string, string> & { command: string };
 type Handler = (a: CliArgs) => Promise<void>;
@@ -91,6 +95,17 @@ export function resolveRound(a: CliArgs): number {
   return 1;
 }
 
+function writeReviewSentinel(repo: string, pr: string | undefined, round: number): void {
+  try {
+    const stateDir = process.env.STATE_DIR ?? '/tmp/.pr-review-state';
+    const stateKey = `${repo.replace('/', '_')}_${pr ?? ''}`;
+    mkdirSync(stateDir, { recursive: true });
+    appendFileSync(`${stateDir}/${stateKey}.reviewed-r${round}`, `reviewed_at=${new Date().toISOString()}\n`);
+  } catch {
+    // best effort — sentinel is advisory
+  }
+}
+
 // Review handlers
 
 async function handleNextRound(a: CliArgs): Promise<void> {
@@ -104,11 +119,10 @@ async function handleStoreReviewFinding(a: CliArgs): Promise<void> {
   const text = resolveContent(a);
   let finding: ReviewFindingData;
   try {
-    finding = JSON.parse(text);
+    finding = normalizeReviewFindingData(JSON.parse(text), { defaultDimension: dim });
   } catch {
-    finding = { dimension: dim, verdict: 'fail', summary: text.slice(0, 100), findings: [] };
+    finding = normalizeReviewFindingData({ summary: text.slice(0, 100) }, { defaultDimension: dim });
   }
-  if (!finding.dimension || finding.dimension === 'unknown') finding.dimension = dim;
   const url = storeReviewFinding(pr, r, finding);
   console.log(`Review finding stored (round ${r}): ${url}`);
 }
@@ -120,12 +134,7 @@ async function handleStoreReviewBatch(a: CliArgs): Promise<void> {
   const result = storeReviewBatch(pr, r, findings);
   // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
   // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
-  try {
-    const stateDir = process.env.STATE_DIR ?? '/tmp/.pr-review-state';
-    const stateKey = `${a.repo.replace('/', '_')}_${a.pr ?? ''}`;
-    mkdirSync(stateDir, { recursive: true });
-    appendFileSync(`${stateDir}/${stateKey}.reviewed-r${r}`, `reviewed_at=${new Date().toISOString()}\n`);
-  } catch { /* best effort — sentinel is advisory */ }
+  writeReviewSentinel(a.repo, a.pr, r);
   console.log(`Batch stored: ${result.urls.length} findings + summary (round ${r})`);
   console.log(`Summary: ${result.summaryUrl}`);
 }
@@ -143,12 +152,7 @@ async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
   const r = resolveRound(a);
   const url = storeReviewSummary(prTarget(a.pr, a.repo), r, text || undefined);
   // #920: Write review sentinel so pr-review-loop.ts can verify outcome
-  try {
-    const stateDir = process.env.STATE_DIR ?? '/tmp/.pr-review-state';
-    const stateKey = `${a.repo.replace('/', '_')}_${a.pr ?? ''}`;
-    mkdirSync(stateDir, { recursive: true });
-    appendFileSync(`${stateDir}/${stateKey}.reviewed-r${r}`, `reviewed_at=${new Date().toISOString()}\n`);
-  } catch { /* best effort — sentinel is advisory */ }
+  writeReviewSentinel(a.repo, a.pr, r);
   console.log(`Review summary stored (round ${r}): ${url}`);
 }
 

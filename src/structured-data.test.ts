@@ -22,6 +22,7 @@ import {
   storeIterationState,
   retrieveIterationState,
   updatePrSection,
+  normalizeReviewFindingData,
   type ReviewFindingData,
 } from './structured-data.js';
 
@@ -97,6 +98,34 @@ describe('storeReviewFinding — format and storage', () => {
     const bodyArg = args.find(a => a.startsWith('body='))!;
     expect(bodyArg).toContain('Round 2 | 120s | $0.150');
   });
+
+  it('accepts legacy status-only payload without findings', () => {
+    ghReturns('');
+    ghReturns('https://...');
+    storeReviewFinding(pr, 1, {
+      // legacy shape from older callers
+      dimension: 'self-review',
+      status: 'pass',
+      summary: 'Looks good',
+    } as any);
+    const args = mockGh.mock.calls[1][1] as string[];
+    const bodyArg = args.find(a => a.startsWith('body='))!;
+    expect(bodyArg).toContain('### self-review — PASS');
+    expect(bodyArg).toContain('**0 findings**: 0 DONE, 0 PARTIAL, 0 MISSING');
+  });
+
+  it('defaults missing verdict/findings to safe fail shape', () => {
+    ghReturns('');
+    ghReturns('https://...');
+    storeReviewFinding(pr, 1, {
+      dimension: 'self-review',
+      summary: 'brief note only',
+    } as any);
+    const args = mockGh.mock.calls[1][1] as string[];
+    const bodyArg = args.find(a => a.startsWith('body='))!;
+    expect(bodyArg).toContain('### self-review — FAIL');
+    expect(bodyArg).toContain('> brief note only');
+  });
 });
 
 describe('parseFindingMeta', () => {
@@ -111,6 +140,33 @@ describe('parseFindingMeta', () => {
 
   it('returns null for content without meta', () => {
     expect(parseFindingMeta('just plain text')).toBeNull();
+  });
+});
+
+describe('normalizeReviewFindingData', () => {
+  it('maps legacy status/result fields and defaults safely', () => {
+    const normalized = normalizeReviewFindingData({
+      dimension: 'self-review',
+      status: 'pass',
+      text: 'legacy message',
+    } as any);
+    expect(normalized.dimension).toBe('self-review');
+    expect(normalized.verdict).toBe('pass');
+    expect(normalized.summary).toBe('legacy message');
+    expect(normalized.findings).toEqual([]);
+  });
+
+  it('normalizes finding item statuses and computes derived verdict', () => {
+    const normalized = normalizeReviewFindingData({
+      dimension: 'correctness',
+      findings: [
+        { requirement: 'A', status: 'done' },
+        { requirement: 'B', verdict: 'fail' },
+      ],
+    } as any);
+    expect(normalized.findings[0].status).toBe('DONE');
+    expect(normalized.findings[1].status).toBe('MISSING');
+    expect(normalized.verdict).toBe('fail');
   });
 });
 

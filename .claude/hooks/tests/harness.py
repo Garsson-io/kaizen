@@ -352,6 +352,15 @@ class PRReviewState:
     def state_count(self) -> int:
         return len(list(self.state_dir.iterdir()))
 
+    def create_review_sentinel(self, pr_url: str, round_num: int | str):
+        """Create the review sentinel written by store-review-summary/store-review-batch.
+
+        Format: <STATE_DIR>/<owner_repo_pr>.reviewed-r<round>
+        """
+        state_key = pr_url.replace("https://github.com/", "").replace("/pull/", "_").replace("/", "_")
+        sentinel = self.state_dir / f"{state_key}.reviewed-r{round_num}"
+        sentinel.write_text("reviewed_at=test\n")
+
 
 # Mock git/gh helpers
 

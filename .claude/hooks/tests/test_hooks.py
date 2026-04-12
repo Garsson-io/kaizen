@@ -256,7 +256,10 @@ class TestPRLifecycle:
         r = review_harness.run_hook("kaizen-enforce-pr-review-ts.sh", PreToolUseInput.bash("gh pr diff 55"))
         assert r.allows(), "Should allow gh pr diff"
 
-        # Phase 3: gh pr diff → review passed
+        # Phase 3: Review outcome persisted (store-review-summary/store-review-batch sentinel)
+        state.create_review_sentinel(self.PR_URL, 1)
+
+        # gh pr diff → review passed
         r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "passed"
@@ -271,6 +274,22 @@ class TestPRLifecycle:
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "needs_review", "Push after passed should re-engage gate"
         assert s["ROUND"] == "2", "Round should be incremented after push"
+
+    def test_diff_requires_review_sentinel(self, review_harness, state):
+        """gh pr diff alone must not clear gate; sentinel is required (#920)."""
+        state.create_state(self.PR_URL, round_num=1, status="needs_review", branch="wt/test-branch")
+
+        # No sentinel yet -> stays blocked
+        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
+        s = state.read_state(self.PR_URL)
+        assert s["STATUS"] == "needs_review"
+        assert "No review findings stored" in r.stdout
+
+        # Sentinel present -> clears
+        state.create_review_sentinel(self.PR_URL, 1)
+        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
+        s = state.read_state(self.PR_URL)
+        assert s["STATUS"] == "passed"
 
     def test_merge_cleans_up(self, review_harness, state):
         state.create_state(self.PR_URL, round_num=2, status="needs_review", branch="wt/test-branch")
