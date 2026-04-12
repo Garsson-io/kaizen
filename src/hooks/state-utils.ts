@@ -21,7 +21,7 @@ const DEFAULT_MAX_STATE_AGE = 7200; // 2 hours
 
 // Default audit directory. Override via AUDIT_DIR env var for test isolation (kaizen #429).
 export const DEFAULT_AUDIT_DIR = new URL(
-  '../../.claude/kaizen/audit',
+  '../../.agents/kaizen/local/audit',
   import.meta.url,
 ).pathname;
 

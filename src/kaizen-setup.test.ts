@@ -104,17 +104,17 @@ describe("scaffoldPolicies", () => {
   it("creates policies-local.md", () => {
     const result = scaffoldPolicies(tempDir);
     expect(result.status).toBe("ok");
-    expect(existsSync(join(tempDir, ".claude", "kaizen", "policies-local.md"))).toBe(true);
+    expect(existsSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"))).toBe(true);
   });
 
   it("skips if already exists", () => {
-    mkdirSync(join(tempDir, ".claude", "kaizen"), { recursive: true });
-    writeFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "existing content");
+    mkdirSync(join(tempDir, ".agents", "kaizen", "local"), { recursive: true });
+    writeFileSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"), "existing content");
 
     const result = scaffoldPolicies(tempDir);
     expect(result.status).toBe("skipped");
 
-    const content = readFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "utf-8");
+    const content = readFileSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"), "utf-8");
     expect(content).toBe("existing content");
   });
 });
@@ -128,8 +128,8 @@ describe("verifySetup", () => {
 
   it("passes for complete plugin setup", () => {
     writeFileSync(join(tempDir, "kaizen.config.json"), JSON.stringify({ host: { name: "p", repo: "o/r" }, kaizen: { repo: "g/k" } }));
-    mkdirSync(join(tempDir, ".claude", "kaizen"), { recursive: true });
-    writeFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "# Policies");
+    mkdirSync(join(tempDir, ".agents", "kaizen", "local"), { recursive: true });
+    writeFileSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"), "# Policies");
     writeFileSync(join(tempDir, "CLAUDE.md"), "# Project\n\n## Kaizen\nkaizen stuff");
 
     const result = verifySetup(tempDir);
@@ -179,8 +179,8 @@ describe("verifySetup", () => {
     }));
 
     writeFileSync(join(tempDir, "kaizen.config.json"), JSON.stringify({ host: { name: "p", repo: "o/r" }, kaizen: { repo: "g/k" } }));
-    mkdirSync(join(tempDir, ".claude", "kaizen"), { recursive: true });
-    writeFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "# Policies");
+    mkdirSync(join(tempDir, ".agents", "kaizen", "local"), { recursive: true });
+    writeFileSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"), "# Policies");
     writeFileSync(join(tempDir, "CLAUDE.md"), "# kaizen");
 
     const result = verifySetup(tempDir, { pluginRoot });
@@ -370,8 +370,8 @@ depends_on: [skill-b]
     }));
 
     writeFileSync(join(tempDir, "kaizen.config.json"), JSON.stringify({ host: { name: "p", repo: "o/r" }, kaizen: { repo: "g/k" } }));
-    mkdirSync(join(tempDir, ".claude", "kaizen"), { recursive: true });
-    writeFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "# Policies");
+    mkdirSync(join(tempDir, ".agents", "kaizen", "local"), { recursive: true });
+    writeFileSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"), "# Policies");
     writeFileSync(join(tempDir, "CLAUDE.md"), "# kaizen");
 
     const result = verifySetup(tempDir, { pluginRoot });
@@ -402,8 +402,8 @@ description: B
     }));
 
     writeFileSync(join(tempDir, "kaizen.config.json"), JSON.stringify({ host: { name: "p", repo: "o/r" }, kaizen: { repo: "g/k" } }));
-    mkdirSync(join(tempDir, ".claude", "kaizen"), { recursive: true });
-    writeFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "# Policies");
+    mkdirSync(join(tempDir, ".agents", "kaizen", "local"), { recursive: true });
+    writeFileSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"), "# Policies");
     writeFileSync(join(tempDir, "CLAUDE.md"), "# kaizen");
 
     const result = verifySetup(tempDir, { pluginRoot });
@@ -428,8 +428,8 @@ min_version: "2.0.0"
     }));
 
     writeFileSync(join(tempDir, "kaizen.config.json"), JSON.stringify({ host: { name: "p", repo: "o/r" }, kaizen: { repo: "g/k" } }));
-    mkdirSync(join(tempDir, ".claude", "kaizen"), { recursive: true });
-    writeFileSync(join(tempDir, ".claude", "kaizen", "policies-local.md"), "# Policies");
+    mkdirSync(join(tempDir, ".agents", "kaizen", "local"), { recursive: true });
+    writeFileSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"), "# Policies");
     writeFileSync(join(tempDir, "CLAUDE.md"), "# kaizen");
 
     const result = verifySetup(tempDir, { pluginRoot });

@@ -1,1 +1,0 @@
-../../.agents/kaizen/instructions-fragment.md

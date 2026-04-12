@@ -11,7 +11,7 @@
  * Hooks, skills, and agents are registered via plugin.json automatically.
  * Setup creates host-project config files:
  *   1. kaizen.config.json — tells kaizen about the host project
- *   2. .claude/kaizen/policies-local.md — host-specific policies
+ *   2. .agents/kaizen/local/policies-local.md — host-specific policies
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
@@ -117,7 +117,7 @@ export function generateConfig(input: ConfigInput, cwd: string): ConfigResult {
 }
 
 export function scaffoldPolicies(cwd: string): ScaffoldResult {
-  const dir = join(cwd, ".claude", "kaizen");
+  const dir = join(cwd, ".agents", "kaizen", "local");
   const path = join(dir, "policies-local.md");
 
   if (existsSync(path)) {
@@ -144,7 +144,7 @@ Add project-specific enforcement rules here.
   const gitignoreEntries = [
     ".claude/review-fix/",
     ".claude/audit/",
-    ".claude/kaizen/audit/",
+    ".agents/kaizen/local/audit/",
     ".claude/worktrees/",
   ];
   const existing = existsSync(gitignorePath)
@@ -263,7 +263,7 @@ export function verifySetup(cwd: string, opts?: { pluginRoot?: string }): Verify
   }
 
   // Policies
-  const policiesPath = join(cwd, ".claude", "kaizen", "policies-local.md");
+  const policiesPath = join(cwd, ".agents", "kaizen", "local", "policies-local.md");
   checks.push({
     name: "policies-local",
     ok: existsSync(policiesPath),

@@ -232,7 +232,7 @@ const BAD_FILED_WHEN_FIXABLE: ReflectionScenario = {
   expectDetection: true,
   impediments: [
     {
-      finding: '.claude/kaizen/audit/ not in .gitignore — dirty file every session',
+      finding: '.agents/kaizen/local/audit/ not in .gitignore — dirty file every session',
       disposition: 'filed',
       ref: '#450',
     },

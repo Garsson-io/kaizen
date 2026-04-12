@@ -123,7 +123,7 @@ else
 fi
 
 # Check policies-local.md
-if [ -f "$TESTDIR/.claude/kaizen/policies-local.md" ]; then
+if [ -f "$TESTDIR/.agents/kaizen/local/policies-local.md" ]; then
   pass "policies-local.md created"
 else
   fail "policies-local.md NOT created"

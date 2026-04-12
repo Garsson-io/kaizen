@@ -30,7 +30,7 @@ Claude will install the plugin and tell you to restart. After restarting, run `/
 
 **Step 3:** Run `/kaizen-setup` to configure your project. This creates:
 - `kaizen.config.json` — project configuration
-- `.claude/kaizen/policies-local.md` — project-specific policies
+- `.agents/kaizen/local/policies-local.md` — project-specific policies
 - Kaizen section in `CLAUDE.md`
 
 **No Node.js required in your host project.** Kaizen runs from its own plugin directory.

@@ -213,7 +213,7 @@ describe("Live E2E: Full Installation Flow", () => {
     });
 
     it("creates policies-local.md", () => {
-      expect(existsSync(join(projectDir, ".claude", "kaizen", "policies-local.md")), "policies-local.md not created").toBe(true);
+      expect(existsSync(join(projectDir, ".agents", "kaizen", "local", "policies-local.md")), "policies-local.md not created").toBe(true);
     });
 
     it("injects kaizen section into CLAUDE.md", () => {
@@ -235,8 +235,8 @@ describe("Live E2E: Full Installation Flow", () => {
           kaizen: { repo: "Garsson-io/kaizen", issueLabel: "kaizen" },
         }, null, 2),
       );
-      mkdirSync(join(projectDir, ".claude", "kaizen"), { recursive: true });
-      writeFileSync(join(projectDir, ".claude", "kaizen", "policies-local.md"), "# Policies\n");
+      mkdirSync(join(projectDir, ".agents", "kaizen", "local"), { recursive: true });
+      writeFileSync(join(projectDir, ".agents", "kaizen", "local", "policies-local.md"), "# Policies\n");
     });
 
     afterAll(() => {

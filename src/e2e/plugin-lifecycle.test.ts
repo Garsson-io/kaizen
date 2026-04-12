@@ -129,7 +129,7 @@ describe("Part 1: Setup produces correct configuration", () => {
   it("scaffolds policies-local.md", () => {
     const result = scaffoldPolicies(hostProject);
     expect(result.status).toBe("ok");
-    expect(existsSync(join(hostProject, ".claude", "kaizen", "policies-local.md"))).toBe(true);
+    expect(existsSync(join(hostProject, ".agents", "kaizen", "local", "policies-local.md"))).toBe(true);
   });
 
   it("plugin.json registers hooks for all four event types", () => {

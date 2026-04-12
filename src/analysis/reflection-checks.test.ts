@@ -272,7 +272,7 @@ describe('FM8: detectFiledWhenFixable', () => {
   it('detects trivial gitignore fix filed as issue (issue #450 pattern)', () => {
     const impediments: Impediment[] = [
       {
-        finding: '.claude/kaizen/audit/ not in .gitignore — dirty file every session',
+        finding: '.agents/kaizen/local/audit/ not in .gitignore — dirty file every session',
         disposition: 'filed',
         ref: '#450',
       },

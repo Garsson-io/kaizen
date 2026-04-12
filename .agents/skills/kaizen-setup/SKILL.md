@@ -44,7 +44,7 @@ This creates `kaizen.config.json` in the current project root.
 npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" --step scaffold
 ```
 
-Creates `.claude/kaizen/policies-local.md` if it doesn't exist.
+Creates `.agents/kaizen/local/policies-local.md` if it doesn't exist.
 
 ## Step 3: Inject CLAUDE.md section
 

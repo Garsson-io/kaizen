@@ -40,7 +40,7 @@
     "policies": {
       "type": "object",
       "properties": {
-        "localFile": { "type": "string", "description": "Path to host-specific policies file", "default": ".claude/kaizen/policies-local.md" }
+        "localFile": { "type": "string", "description": "Path to host-specific policies file", "default": ".agents/kaizen/local/policies-local.md" }
       }
     },
     "notifications": {

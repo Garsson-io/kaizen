@@ -11,6 +11,8 @@ __pycache__/
 .worktree-lock.json
 .claude/audit/
 .claude/kaizen/audit/
+.claude/kaizen/audit
+.agents/kaizen/local/audit/
 .worktree-context.json
 .claude/worktrees/
 store/

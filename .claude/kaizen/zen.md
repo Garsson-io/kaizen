@@ -1,1 +1,0 @@
-../../.agents/kaizen/zen.md

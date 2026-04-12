@@ -72,22 +72,22 @@ describe("Setup E2E", () => {
   });
 
   describe("scaffold", () => {
-    it("creates policies-local.md in project .claude/kaizen/", () => {
+    it("creates policies-local.md in project .agents/kaizen/local/", () => {
       project = new SyntheticProject();
       project.runScaffold();
 
-      expect(project.fileExists(".claude/kaizen/policies-local.md")).toBe(true);
-      const content = project.readFile(".claude/kaizen/policies-local.md");
+      expect(project.fileExists(".agents/kaizen/local/policies-local.md")).toBe(true);
+      const content = project.readFile(".agents/kaizen/local/policies-local.md");
       expect(content).toContain("Host-Specific Kaizen Policies");
     });
 
     it("is idempotent — re-running does not overwrite", () => {
       project = new SyntheticProject();
       project.runScaffold();
-      project.writeFile(".claude/kaizen/policies-local.md", "custom policies");
+      project.writeFile(".agents/kaizen/local/policies-local.md", "custom policies");
       project.runScaffold();
 
-      expect(project.readFile(".claude/kaizen/policies-local.md")).toBe("custom policies");
+      expect(project.readFile(".agents/kaizen/local/policies-local.md")).toBe("custom policies");
     });
   });
 
