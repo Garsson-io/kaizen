@@ -176,7 +176,7 @@ These practices are violated frequently, cost significant time per violation, an
 
 ### 5.1 The Practices File
 
-**Location:** `.claude/kaizen/practices.md`
+**Location:** `.agents/kaizen/practices.md`
 
 A living, evolving checklist organized by practice category. Each practice is:
 
@@ -195,7 +195,7 @@ The file is NOT a copy of CLAUDE.md. CLAUDE.md is policy ("thou shalt"). Practic
 
 **Behavior:**
 
-1. Reads `.claude/kaizen/practices.md`
+1. Reads `.agents/kaizen/practices.md`
 2. Reads PR diff to determine change categories (shell, TS, tests, hooks, container, docs)
 3. Selects relevant practices based on change categories
 4. Prints them as an advisory checklist

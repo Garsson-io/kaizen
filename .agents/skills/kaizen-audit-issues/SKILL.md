@@ -3,7 +3,7 @@ name: kaizen-audit-issues
 description: Periodic issue taxonomy audit — checks label coverage, epic health, incident density, horizon coverage, and unlabeled issues. Produces structured report with suggested fixes. Triggers on "audit issues", "issue health", "label audit", "taxonomy check", "issue hygiene".
 ---
 
-<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
+<!-- Host config: read .agents/kaizen/skill-config-header.md before running commands -->
 
 # /kaizen-audit-issues — Periodic Issue Taxonomy Audit
 

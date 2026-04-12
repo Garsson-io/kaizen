@@ -83,7 +83,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 | 1 | Assess architecture/tooling fitness | Validate language, runtime, libraries, E2E harness. Re-examine spec freshness. |
 | 2 | Write failing tests (TDD RED) | Express target invariants as tests. They must fail before implementation. |
 | 3 | Implement (TDD GREEN) | Make failing tests pass with simplest correct change. Full test suite green. |
-| 4 | Self-review: `/kaizen-review-pr` | Read `.claude/kaizen/review-criteria.md`. Check all dimensions (DRY, testability, tooling, security, failure modes). Cite findings with confidence 0-100. Drop < 75. |
+| 4 | Self-review: `/kaizen-review-pr` | Read `prompts/review-*.md`. Check all dimensions (DRY, testability, tooling, security, failure modes). Cite findings with confidence 0-100. Drop < 75. |
 | 5 | Review fix loop | Fix all MUST-FIX (≥90) and SHOULD-FIX (75-89) findings. Re-review after fixes. Max 3 rounds until clean. |
 | 6 | Commit + push | Stage changes, commit with descriptive message, push to remote branch. |
 | 7 | Create PR | `gh pr create` with `Fixes Garsson-io/kaizen#N` in body. Add `status:has-pr` label. |
@@ -104,7 +104,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | Gather context | Load review criteria from `.claude/kaizen/review-criteria.md`, read full diff, read linked issues, scan failure modes |
+| 1 | Gather context | Load review dimensions from `prompts/review-*.md`, read full diff, read linked issues, scan failure modes |
 | 2 | Review (subagents or sequential) | Small PR (≤50 lines): sequential single-agent. Medium (50-300): 2-3 agents. Large (>300): 5 parallel agents (DRY, testability, tooling, security, horizons). |
 | 3 | Filter and classify findings | Drop confidence < 75. MUST-FIX ≥ 90 (blocks merge). SHOULD-FIX 75-89 (fix before merge). |
 | 4 | Fix loop (max 3 rounds) | Fix each finding, commit+push, re-review from task #1. Repeat until clean or 3 rounds. |
@@ -192,7 +192,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 | # | Task | Description |
 |---|------|-------------|
 | 1 | Detect installation method | Plugin, submodule, or fresh install |
-| 2 | Create config and policies | `kaizen.config.json` + `.claude/kaizen/policies-local.md` |
+| 2 | Create config and policies | `kaizen.config.json` + `.agents/kaizen/local/policies-local.md` |
 | 3 | Configure hooks/symlinks | Merge hook registrations (submodule) or skip (plugin). Symlinks for skills/agents. |
 | 4 | Inject CLAUDE.md and verify | Add kaizen section to CLAUDE.md. Run verification script. |
 
@@ -210,7 +210,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 
 ### /kaizen-zen (no tasks)
 
-Single step: print `.claude/kaizen/zen.md`. Too trivial for task tracking.
+Single step: print `.agents/kaizen/zen.md`. Too trivial for task tracking.
 
 ## Entry point decision tree
 

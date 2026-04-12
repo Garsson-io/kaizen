@@ -53,7 +53,7 @@ Pick the highest-value subtraction from this list:
 4. **Unused hooks**: Check `.claude/settings-fragment.json` for hooks that never trigger
    because their regex conditions can't match any real tool output.
 
-5. **Overlapping skills**: Review `.claude/kaizen/skills/` for skills that do
+5. **Overlapping skills**: Review `.agents/skills/` for skills that do
    similar things and could be consolidated.
 
 ## Chesterton's Fence

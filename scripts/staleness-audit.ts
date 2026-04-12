@@ -159,7 +159,7 @@ export function areaChangedSince(labels: string[], createdAt: string, repoRoot: 
   // Map labels to directory patterns
   const areaPaths: Record<string, string> = {
     'area/hooks': '.claude/hooks/ src/hooks/',
-    'area/skills': '.claude/kaizen/skills/',
+    'area/skills': '.agents/skills/',
     'area/testing': 'src/ scripts/',
     'area/worktree': 'src/claude-wt.ts src/worktree-du.ts',
     'area/deploy': 'scripts/',

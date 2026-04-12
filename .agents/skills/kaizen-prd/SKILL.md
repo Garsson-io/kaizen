@@ -43,7 +43,7 @@ This distinction matters because:
    - Spec document: `docs/{name}-spec.md` (feature) or domain-appropriate location (horizon)
    - GitHub issue (tracking anchor, links to spec)
    - Docs-only PR (reviewable, versionable)
-3. **Horizon:** The taxonomy lives with the domain it covers (e.g., `.claude/kaizen/horizon.md`), with a symlink from `docs/horizons/{name}.md`. Check `docs/horizons/` for existing horizons before creating a new one.
+3. **Horizon:** The taxonomy lives with the domain it covers (e.g., `.agents/kaizen/horizon.md`), with a symlink from `docs/horizons/{name}.md`. Check `docs/horizons/` for existing horizons before creating a new one.
 
 **Documentation deliverables (noted in the spec, produced during implementation):**
 

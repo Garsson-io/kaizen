@@ -4,7 +4,7 @@ description: Pull kaizen plugin updates and re-run setup to apply new hooks and 
 user_invocable: true
 ---
 
-<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
+<!-- Host config: read .agents/kaizen/skill-config-header.md before running commands -->
 
 # /kaizen-update — Update Kaizen Plugin
 

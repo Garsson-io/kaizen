@@ -7,7 +7,7 @@
  *   1. echo "KAIZEN_IMPEDIMENTS: [...]" — structured impediment declaration
  *   2. echo "KAIZEN_NO_ACTION [category]: <reason>" — restricted bypass
  *
- * Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+ * Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
  * Migration: kaizen #320 (Phase 3 of #223)
  */
 

@@ -1,0 +1,9 @@
+# Host-Specific Kaizen Policies
+
+Template for host-local policy overrides.
+Copy to `policies-local.md` and customize for your host repo.
+
+<!-- Example:
+10. Never install system packages on the host. System deps go in Dockerfiles.
+11. All dev work must be in a case with its own worktree.
+-->

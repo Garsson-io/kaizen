@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+# Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # capture-worktree-context.sh — Write .worktree-context.json on PR creation
 #
 # PostToolUse hook on Bash: detects successful `gh pr create`, extracts the

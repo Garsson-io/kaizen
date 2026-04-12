@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+# Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # allowlist.sh — Shared allowlist functions for gate hooks.
 # Source from hooks: source "$(dirname "$0")/lib/allowlist.sh"
 #

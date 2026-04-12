@@ -34,7 +34,7 @@ Without state integrity:
 |-----------|-------|----------|
 | Case collision detection | L1 | `src/ipc-cases.ts` |
 | Worktree locking | L1 | `src/cases.ts` |
-| Cross-worktree state isolation | L1-2 | `.claude/kaizen/hooks/lib/state-utils.sh` |
+| Cross-worktree state isolation | L1-2 | `src/hooks/state-utils.ts` |
 | CRM sync | L0-1 | `src/case-backend-github.ts` (can overwrite — #120) |
 
 ## L1→L2: Freshness Guarantees (next step)

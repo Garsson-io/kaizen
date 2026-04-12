@@ -29,7 +29,7 @@ TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null)
 echo "=== Runtime directories always allowed ==="
 
 # These should pass regardless of checkout type
-for dir in ".claude/settings.json" ".claude/kaizen/hooks/test.sh" \
+for dir in ".claude/settings.json" ".claude/hooks/test.sh" \
            "groups/telegram_garsson/CLAUDE.md" "data/ipc/main/messages/msg.json" \
            "store/messages.db" "logs/app.log"; do
   OUTPUT=$(run_edit_hook "$TOPLEVEL/$dir")

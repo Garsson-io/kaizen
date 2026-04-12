@@ -34,7 +34,7 @@ Run `/kaizen-zen` to see the full commentary ([`{{KAIZEN_ROOT}}/.agents/kaizen/z
 
 **Generic policies:** [`{{KAIZEN_ROOT}}/.agents/kaizen/policies.md`]({{KAIZEN_ROOT}}/.agents/kaizen/policies.md) — recursive kaizen, hooks infrastructure, worktree isolation, co-commit tests, smoke tests ship with feature.
 
-**Host-specific policies:** [`.claude/kaizen/policies-local.md`](.claude/kaizen/policies-local.md) — project-specific enforcement rules.
+**Host-specific policies:** [`.agents/kaizen/local/policies-local.md`](.agents/kaizen/local/policies-local.md) — project-specific enforcement rules.
 
 ### Verification Discipline
 

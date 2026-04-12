@@ -3,7 +3,7 @@ name: kaizen-write-plan
 description: Planning gate — takes an issue (from deep-dive or direct) and produces a grounded implementation plan with admin approval. Replaces kaizen-evaluate and kaizen-pick. Triggers on "write plan", "plan issue", "plan #N", "evaluate this", "look at issue #N", "should we do this", "plan kaizen", "accept case", "what should we work on", "pick work", "what's next".
 ---
 
-<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
+<!-- Host config: read .agents/kaizen/skill-config-header.md before running commands -->
 
 # Write Plan — Planning Gate
 

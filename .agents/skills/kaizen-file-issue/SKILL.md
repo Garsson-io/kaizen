@@ -3,7 +3,7 @@ name: kaizen-file-issue
 description: Fast incident-to-issue capture — takes an observed problem and files a well-formed GitHub issue in 2 minutes. Describes the failure mode, not a prescribed solution. Triggers on "file issue", "file kaizen", "file incident", "observed a problem", "log incident", "capture issue".
 ---
 
-<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
+<!-- Host config: read .agents/kaizen/skill-config-header.md before running commands -->
 
 # File Issue — Fast Incident-to-Issue Capture
 

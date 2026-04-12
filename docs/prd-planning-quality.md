@@ -165,7 +165,7 @@ The survey result must appear in the plan as a code block with actual grep outpu
 
 An accumulated library of failure patterns, each with a recognition signature, structural tests, and incident references. The library makes known failure categories recognition-fast — an agent with a good category match loads the prior in seconds rather than reasoning from scratch.
 
-The library lives at `.claude/kaizen/categories/`, one YAML file per category. Categories accumulate from incidents via `/kaizen-reflect`: when a failure is filed with an FSI-eligible label, the reflect step maps it to an existing category (incrementing incident count) or flags it for a new category if no existing category fits.
+The library lives at `.agents/kaizen/categories/`, one YAML file per category. Categories accumulate from incidents via `/kaizen-reflect`: when a failure is filed with an FSI-eligible label, the reflect step maps it to an existing category (incrementing incident count) or flags it for a new category if no existing category fits.
 
 Retrieval is three-pass:
 1. Keyword pre-filter: scan `trigger_keywords` for the issue's vocabulary
@@ -192,13 +192,13 @@ Two additions:
 
 First, enforce the structured plan schema in `store-plan`. The sections `## Success Criteria`, `## Information Retrieved`, `## Design Alternatives Considered`, `## Seam Map`, `## Test Plan` must be present. Warn (not error) on missing sections. This creates an auditable trail: a future reviewer can see whether Phase 4.5 was actually performed, not just whether a plan was stored. Advisory, not blocking.
 
-Second, build `src/cli-experience.ts` with `add-entry` and `query` subcommands, bootstrap `.claude/kaizen/categories/` with the 10 initial categories from the failure taxonomy, and wire Phase 0.7 into kaizen-evaluate: query by issue keywords before plan formation begins. Wire `add-entry` into `/kaizen-reflect` as a mandatory step when filing issues with FSI-eligible labels.
+Second, build `src/cli-experience.ts` with `add-entry` and `query` subcommands, bootstrap `.agents/kaizen/categories/` with the 10 initial categories from the failure taxonomy, and wire Phase 0.7 into kaizen-evaluate: query by issue keywords before plan formation begins. Wire `add-entry` into `/kaizen-reflect` as a mandatory step when filing issues with FSI-eligible labels.
 
 Dependency on Tier 1: Phase 4.5 (Tier 1) produces the plan sections that Tier 2 validates. Without Tier 1, the sections won't exist. Without Tier 2, they won't be auditable.
 
 ### Tier 3: Category Library + Recognition Algorithm + Plan Battery (Later, 2-3 PRs)
 
-Full category library with 10 YAML files under `.claude/kaizen/categories/`, each with recognition signature, structural test, failure topology, and incident links.
+Full category library with 10 YAML files under `.agents/kaizen/categories/`, each with recognition signature, structural test, failure topology, and incident links.
 
 Recognition algorithm: three-pass (keyword pre-filter, structural test, precursor signals), under 60 seconds, outputs confirmed categories with confidence scores. Only matches with confidence >= 0.8 load as priors. Ambiguous matches (0.5) proceed with full exploration.
 
@@ -241,7 +241,7 @@ Tier 3 without Tier 2: Category library has no calibrated incident data. Recogni
 
 ### Format
 
-Markdown files, one per category, flat directory at `.claude/kaizen/categories/`. YAML frontmatter with structured fields, markdown body for human-readable description and incident narrative.
+Markdown files, one per category, flat directory at `.agents/kaizen/categories/`. YAML frontmatter with structured fields, markdown body for human-readable description and incident narrative.
 
 ### Schema
 
@@ -280,7 +280,7 @@ Do not add categories from theory. Add from incidents. The category is not ready
 
 **When to edit:** Two triggers: (1) False negative — an incident occurred that the category should have caught, but the `trigger_keywords` were absent from the issue vocabulary. Action: add the missing keyword to `trigger_keywords`. (2) False positive — the category fired on an issue where the pattern didn't apply. Action: tighten the `structural_tests` to add a discriminating yes/no question.
 
-**When to archive:** When the failure mode is no longer relevant to the current codebase. The standard is: if the category has had zero confirmed recurrences in 6 months AND the `anti_pattern_shape` describes a pattern that no longer occurs in the architecture. Archive to `.claude/kaizen/categories/archive/` rather than delete — the incident history remains accessible.
+**When to archive:** When the failure mode is no longer relevant to the current codebase. The standard is: if the category has had zero confirmed recurrences in 6 months AND the `anti_pattern_shape` describes a pattern that no longer occurs in the architecture. Archive to `.agents/kaizen/categories/archive/` rather than delete — the incident history remains accessible.
 
 **Consolidation at 30-50+ entries:** When the library reaches 30-50 entries, domain partitioning becomes necessary. Partition by domain prefix: `storage/`, `testing/`, `enforcement/`, `hooks/`, `planning/`. Within each domain, consolidate categories with overlapping `trigger_keywords` into a single category with richer `structural_tests`. The goal is: no two categories should fire simultaneously on the same issue without one being a clear superset.
 
@@ -454,7 +454,7 @@ Then proceed to Phase 5 (Ask the Admin). The plan coverage review (Phase 5.5) ru
 - **Plan schema sections in kaizen-implement**: `## Information Retrieved` and `## Design Alternatives Considered` are not in the current plan template.
 - **Schema validation in `store-plan`**: no warning when required sections are absent.
 - **`src/cli-experience.ts`**: the CLI for FSI query and incident add. Does not exist.
-- **`.claude/kaizen/categories/` directory**: category library directory and initial 10 YAML files. Does not exist.
+- **`.agents/kaizen/categories/` directory**: category library directory and initial 10 YAML files. Does not exist.
 - **Phase 0.7 in kaizen-evaluate**: the pre-plan FSI retrieval step. Does not exist.
 - **Recognition algorithm**: the three-pass structural test confirmation. Does not exist.
 - **Mandatory category mapping in kaizen-reflect**: the reflect-to-FSI pipeline. Does not exist.
@@ -546,12 +546,12 @@ This is still L1 enforcement. If post-Tier-2 observation shows plans consistentl
 **Title:** `feat(kaizen-experience): bootstrap FSI store with 10 categories from documented incidents — Phase 0.7 retrieval in kaizen-evaluate`
 
 **Scope:** Three parts:
-1. Create `.claude/kaizen/categories/` directory with 10 YAML files from Section 5's starter set.
+1. Create `.agents/kaizen/categories/` directory with 10 YAML files from Section 5's starter set.
 2. Build `src/cli-experience.ts` with `query --keywords "..." --limit 3` (keyword scan against `trigger_keywords`, returns top-N matches as plain text) and `add-incident --category <id> --issue <N>` (increments incident_refs).
 3. Insert Phase 0.7 in kaizen-evaluate SKILL.md between Phase 0.5 and Phase 1: "Run `npx tsx src/cli-experience.ts query --keywords <3-5 keywords from issue title/body>`. If entries returned, note anti_pattern_shape for each before Phase 4.5 Step 3. If no entries, proceed."
 
 **Acceptance criteria:**
-- `.claude/kaizen/categories/` exists with 10 YAML files matching Section 5 schema
+- `.agents/kaizen/categories/` exists with 10 YAML files matching Section 5 schema
 - `npx tsx src/cli-experience.ts query --keywords "state session hook"` returns at least 2 matching entries
 - Phase 0.7 appears in kaizen-evaluate SKILL.md
 - `npm test` covers query command: keyword match, no-match, limit behavior
@@ -600,7 +600,7 @@ Per kaizen-prd requirements — which files change and what new files are create
 - `docs/artifact-lifecycle.md` — Add FSI entries and category YAML to the artifact chain
 
 **New files created:**
-- `.claude/kaizen/categories/` — Directory with 10 YAML category files (Issue 3)
+- `.agents/kaizen/categories/` — Directory with 10 YAML category files (Issue 3)
 - `src/cli-experience.ts` — FSI query and add-incident CLI (Issue 3, extended in Issue 4)
 
 **Existing infrastructure reused (not built):**

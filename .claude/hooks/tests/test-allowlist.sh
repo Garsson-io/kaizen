@@ -79,7 +79,7 @@ echo ""
 echo "=== is_allowed_runtime_dir: allowed directories ==="
 
 assert_ok ".claude/ allowed" is_allowed_runtime_dir ".claude/settings.json"
-assert_ok ".claude/kaizen allowed" is_allowed_runtime_dir ".claude/kaizen/hooks/test.sh"
+assert_ok ".claude/kaizen allowed" is_allowed_runtime_dir ".claude/hooks/test.sh"
 assert_ok ".claude/worktrees allowed" is_allowed_runtime_dir ".claude/worktrees/260319/src/foo.ts"
 assert_ok "groups/ allowed" is_allowed_runtime_dir "groups/telegram_garsson/CLAUDE.md"
 assert_ok "data/ allowed" is_allowed_runtime_dir "data/ipc/main/messages/msg.json"

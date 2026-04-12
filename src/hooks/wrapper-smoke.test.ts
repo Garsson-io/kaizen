@@ -2,7 +2,7 @@
  * Smoke tests for bash wrapper -> tsx -> hook chain.
  *
  * Verifies the ACTUAL deployment path: thin bash wrappers
- * (.claude/kaizen/hooks/*-ts.sh) correctly invoke npx tsx and the
+ * (.claude/hooks/*-ts.sh) correctly invoke npx tsx and the
  * TypeScript hooks produce expected output.
  *
  * IMPORTANT: All tests use isolated STATE_DIR (tmpDir) AND randomized

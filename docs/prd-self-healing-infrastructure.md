@@ -173,7 +173,7 @@ Health checks should be declarative -- each subsystem registers what to check, r
 ### 5.1 Registry Format
 
 ```yaml
-# .claude/kaizen/health-checks.yaml
+# .agents/kaizen/local/health-checks.yaml
 
 checks:
   - name: hook-conflict-markers
@@ -231,7 +231,7 @@ A single runner script (`kaizen-health-check.sh` or equivalent) that:
 3. Executes the detect command
 4. If unhealthy: runs diagnosis (severity classification)
 5. If repair is configured: executes repair action
-6. Writes incident record to `.claude/kaizen/health-log.jsonl`
+6. Writes incident record to `.agents/kaizen/local/health-log.jsonl`
 7. For critical/high severity: prints advisory to agent output
 
 ### 5.3 Incident Record Format
@@ -264,7 +264,7 @@ A single runner script (`kaizen-health-check.sh` or equivalent) that:
   - Stale state files / phantom gates (#309)
   - OOM-prone process detection (#474)
 - Session-start integration (run critical + important checks at session start)
-- Incident log (`.claude/kaizen/health-log.jsonl`)
+- Incident log (`.agents/kaizen/local/health-log.jsonl`)
 
 **Success criteria:**
 - Conflict markers detected within 1 session start

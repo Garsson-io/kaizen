@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+# Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # kaizen-pr-kaizen-clear-fallback.sh — Bash shim for PR kaizen gate clearing fallback.
 #
 # PostToolUse hook on Bash — always exits 0 (state management, not blocking).

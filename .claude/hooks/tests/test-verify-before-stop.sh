@@ -47,7 +47,7 @@ echo "=== Non-TS changes only: silent exit ==="
 
 setup_git_mock "README.md
 package.json
-.claude/kaizen/hooks/test.sh" ""
+.claude/hooks/test.sh" ""
 OUTPUT=$(run_hook)
 EXIT_CODE=$?
 assert_eq "exit code 0 with only non-TS changes" "0" "$EXIT_CODE"

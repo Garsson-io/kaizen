@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+# Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # hook-output.sh — Shared output helpers for hook scripts (kaizen #429)
 #
 # DRYs up the JSON output patterns used across hooks:
@@ -34,7 +34,7 @@ emit_stop_block() {
   exit 0
 }
 
-# Load a prompt template from .claude/kaizen/prompts/ and substitute {{VAR}} placeholders.
+# Load a prompt template from .agents/kaizen/prompts/ and substitute {{VAR}} placeholders.
 # Usage: render_prompt "post-merge-block.md" PR_HEADER="PR: url" MAIN_CHECKOUT="/path"
 # Returns the rendered text on stdout.
 render_prompt() {

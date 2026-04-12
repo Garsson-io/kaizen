@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+# Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # enforce-case-exists.sh — Level 2 kaizen enforcement (Issue #94)
 # PreToolUse hook on Edit|Write: blocks source code edits in worktrees
 # that don't have a corresponding case record.

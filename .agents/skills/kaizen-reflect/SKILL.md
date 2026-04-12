@@ -3,7 +3,7 @@ name: kaizen-reflect
 description: Recursive process improvement — core workflow for continuous improvement across all verticals. Escalation framework (Level 1→2→3), reflection triggers, backlog management. Triggers on "kaizen", "process improvement", "improve processes", "recursive kaizen".
 ---
 
-<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
+<!-- Host config: read .agents/kaizen/skill-config-header.md before running commands -->
 
 # Recursive Kaizen — Core Workflow
 
@@ -194,7 +194,7 @@ Positive findings are equally valuable signal — they validate practices that f
 Positive findings use `type: "positive"` in KAIZEN_IMPEDIMENTS:
 ```json
 {"finding": "TDD caught Buffer vs string mock mismatch in RED phase", "type": "positive", "disposition": "amplified", "target": "memory/practices_tdd_validation.md"}
-{"finding": "Testability-first approach saved 5x iteration time", "type": "positive", "disposition": "amplified", "target": ".claude/kaizen/practices.md"}
+{"finding": "Testability-first approach saved 5x iteration time", "type": "positive", "disposition": "amplified", "target": ".agents/kaizen/practices.md"}
 {"finding": "Foundation-first approach validated", "type": "positive", "disposition": "no-action", "reason": "Already documented in practices.md"}
 ```
 
@@ -370,10 +370,10 @@ Starting concrete and zooming out produces actionable output. Starting abstract 
   | Teaching type | Where to embed | Example |
   |---------------|----------------|----------|
   | Workflow discipline | SKILL.md (the relevant skill) | "Always check for existing work before starting" → add to evaluate skill |
-  | Philosophical principle | `.claude/kaizen/zen.md` | "Specs are hypotheses" → add as a zen principle |
-  | Quality standard | `.claude/kaizen/review-criteria.md` | "Never ship without E2E test" → add review criterion |
+  | Philosophical principle | `.agents/kaizen/zen.md` | "Specs are hypotheses" → add as a zen principle |
+  | Quality standard | `prompts/review-*.md` | "Never ship without E2E test" → add review criterion |
   | Recurring enforcement need | File L2 hook issue | "Agents keep forgetting X" → propose a hook |
-  | Operational practice | `.claude/kaizen/policies.md` or `verification.md` | "Always timeout subprocesses" → add to verification |
+  | Operational practice | `.agents/kaizen/policies.md` or `verification.md` | "Always timeout subprocesses" → add to verification |
 
   **The recursive principle:** "Admin had to prompt me" = kaizen failed to teach the agent automatically. The fix is not memory (helps one agent) — it is infrastructure (helps all agents). Memory is a bandaid; skill/hook/doc changes are the cure.
 

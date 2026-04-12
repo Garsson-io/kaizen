@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+# Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # input-utils.sh — Shared input parsing for hook scripts (kaizen #429)
 #
 # DRYs up the boilerplate pattern duplicated across 12+ hooks:

@@ -15,7 +15,7 @@
  * Uses cross-branch iteration (listStateFilesAnyBranch) to match the primary hook's
  * findNewestStateWithStatusAnyBranch behaviour. See kaizen #492.
  *
- * Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+ * Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
  * Migrated to TS state functions in #790 gap fix.
  */
 

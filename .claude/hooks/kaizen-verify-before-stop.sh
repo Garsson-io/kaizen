@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+# Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # verify-before-stop.sh — Level 2 kaizen enforcement
 # Runs when Claude Code agent finishes. Checks if source files were
 # modified and reminds the agent to verify before stopping.

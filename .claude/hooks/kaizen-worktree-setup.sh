@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+# Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # kaizen-worktree-setup.sh — SessionStart hook.
 #
 # Symlinks node_modules and dist from the main repo into a fresh worktree.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+# Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # search-before-file.sh — PreToolUse advisory hook (Issue #704)
 #
 # When an agent runs `gh issue create`, this hook automatically searches

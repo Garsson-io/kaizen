@@ -3,7 +3,7 @@ name: kaizen-deep-dive
 description: Autonomous deep-dive into a kaizen domain — find the root cause category behind repeated issues, create a meta-issue tying them together, then hand off to /kaizen-implement. Triggers on "make a dent", "hero mode", "deep dive kaizen", "fix the category", "autonomous fix".
 ---
 
-<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
+<!-- Host config: read .agents/kaizen/skill-config-header.md before running commands -->
 
 # Make a Dent — Root Cause Discovery and Meta-Issue Creation
 

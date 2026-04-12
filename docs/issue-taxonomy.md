@@ -144,5 +144,5 @@ The `zen:*` labels (e.g., `zen:enforcement-point`, `zen:no-promises-without-mech
 
 - [Horizons README](horizons/README.md) — maturity dimensions index
 - [Kaizen Skill](../.claude/skills/kaizen/SKILL.md) — reflection engine
-- [kAIzen README](../.claude/kaizen/README.md) — enforcement system
+- [kAIzen README](../.agents/kaizen/README.md) — enforcement system
 - [Incident-Driven Kaizen horizon](horizons/incident-driven-kaizen.md) — incident recording taxonomy

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * CLI for managing autoresearch experiments.
- * Stores experiments as markdown files in .claude/kaizen/experiments/.
+ * Stores experiments as markdown files in .agents/kaizen/experiments/.
  * No database dependency — fully portable with the kaizen repo.
  *
  * Usage:

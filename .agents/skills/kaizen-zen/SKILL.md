@@ -6,6 +6,6 @@ user_invocable: true
 
 # The Zen of Kaizen
 
-Read and present the full Zen of Kaizen from `.claude/kaizen/zen.md`.
+Read and present the full Zen of Kaizen from `.agents/kaizen/zen.md`.
 
 Simply read the file and present it to the user — the aphorisms first, then the commentary. No additional analysis needed.

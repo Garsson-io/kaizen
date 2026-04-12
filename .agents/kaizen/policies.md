@@ -7,7 +7,7 @@ These policies govern the kaizen enforcement system. Host-specific policies live
     - **Has this type of failure happened before?** If yes, the previous level wasn't enough — escalate.
     - **Affects humans directly?** → Must be Level 3 (humans should never wait on agent mistakes)
     - CLAUDE.md instructions are Level 1 — necessary but not sufficient. When they fail, escalate to hooks (Level 2) or architectural enforcement (Level 3).
-2. **Hooks are the foundation of our kaizen infrastructure.** The `.claude/hooks/` directory contains Level 2 enforcement — automated checks that catch mistakes before they reach humans. See `.claude/kaizen/README.md` for the full kAIzen Agent Control Flow system documentation. When a hook blocks you:
+2. **Hooks are the foundation of our kaizen infrastructure.** The `.claude/hooks/` directory contains Level 2 enforcement — automated checks that catch mistakes before they reach humans. See `.agents/kaizen/README.md` for the full kAIzen Agent Control Flow system documentation. When a hook blocks you:
     - **Do NOT override it blindly.** The hook exists because a past mistake proved instructions alone weren't enough.
     - **If it's a false positive**, fix the hook. Improve its matching logic, add exclusions with rationale, and add a test case that covers the false-positive scenario. This is recursive kaizen — making the enforcement smarter, not weaker.
     - **If it's a true positive**, fix the underlying issue. The hook is doing its job.

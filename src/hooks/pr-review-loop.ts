@@ -9,7 +9,7 @@
  *   3. gh pr diff    — outputs checklist for current round
  *   4. gh pr merge   — sets up post-merge workflow gate
  *
- * Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+ * Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
  * Migration: kaizen #320 (Phase 3 of #223)
  */
 

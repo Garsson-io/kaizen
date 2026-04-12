@@ -2,7 +2,7 @@
 
 This document captures hard-won knowledge about the Claude Code hooks system. It's the reference for anyone writing, debugging, or maintaining hooks. Last verified: 2026-03-24.
 
-> **Hook inventory:** See [`.claude/kaizen/docs/hook-catalog.md`](../.claude/kaizen/docs/hook-catalog.md) for the complete hook list, gate patterns, and TS migration status. This doc covers **how to write hooks**, not which hooks exist.
+> **Hook inventory:** See [`.agents/kaizen/docs/hook-catalog.md`](../.agents/kaizen/docs/hook-catalog.md) for the complete hook list, gate patterns, and TS migration status. This doc covers **how to write hooks**, not which hooks exist.
 
 ## Architecture
 

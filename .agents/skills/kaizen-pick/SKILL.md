@@ -3,7 +3,7 @@ name: kaizen-pick
 description: Intelligently select the next kaizen issue to work on. Filters out claimed issues, balances epic momentum vs topic diversity, and flows into /kaizen-evaluate. Triggers on "pick work", "what's next", "choose issue", "next kaizen", "pick an issue", "what should I work on", "pick a kaizen", "find work", "pick a high value kaizen".
 ---
 
-<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
+<!-- Host config: read .agents/kaizen/skill-config-header.md before running commands -->
 
 # Pick Work — Intelligent Issue Selection
 

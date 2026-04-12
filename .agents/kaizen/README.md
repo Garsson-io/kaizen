@@ -99,7 +99,7 @@ These participate in kAIzen but live where their tools require:
 | CI workflow | `.github/workflows/ci.yml` | GitHub convention | Format, typecheck, unit tests, contract check, PR policy (test coverage + verification), E2E (container build + MCP tools + IPC round-trip with stub API) |
 | Hook registration | `.claude/settings.json` | Claude Code convention | Maps hook scripts to tool-use events |
 
-To install kAIzen in another project, copy `.claude/kaizen/`, merge the settings.json hook entries, and install the git hooks and CI workflow.
+To install kAIzen in another project, copy `.agents/kaizen/`, merge the settings.json hook entries, and install the git hooks and CI workflow.
 
 ## Core Invariants
 

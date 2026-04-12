@@ -1,5 +1,5 @@
 #!/bin/bash
-# Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+# Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # block-git-rebase.sh — Level 2 rebase safety (kaizen #296)
 # PreToolUse hook: blocks `git rebase` commands to prevent history rewriting.
 #

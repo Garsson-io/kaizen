@@ -79,7 +79,7 @@ Beyond L6, the system starts to exhibit genuine learning: not just tracking inci
 
 ## Relationship to Other Horizons
 
-This horizon intersects with **Autonomous Kaizen** (`.claude/kaizen/horizon.md`):
+This horizon intersects with **Autonomous Kaizen** (`.agents/kaizen/horizon.md`):
 - L4 here (incident-driven scoring) directly feeds L6 there (autonomous work selection)
 - L6 here (auto-escalation) is a prerequisite for L7 there (autonomous implementation — the system needs to know WHAT to implement)
 - Incident data is the fuel that makes autonomous kaizen possible. Without it, autonomous selection is just random backlog ordering.

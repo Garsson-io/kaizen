@@ -2,7 +2,7 @@
 
 ## 1. Problem Statement
 
-The hook test suite (`.claude/kaizen/hooks/tests/`) has ~308 lines of duplicated boilerplate across 10+ files. The same mock `gh`, `create_state()`, `setup()`/`teardown()`, and decision-extraction helpers are copy-pasted with minor variations. When a shared function like `find_needs_review_state()` gains a new external dependency (as happened with kaizen #85's `gh pr view` call), every test file must be updated independently — 10 files touched, ~300 lines added, for what should have been a 1-line change.
+The hook test suite (`.claude/hooks/tests/`) has ~308 lines of duplicated boilerplate across 10+ files. The same mock `gh`, `create_state()`, `setup()`/`teardown()`, and decision-extraction helpers are copy-pasted with minor variations. When a shared function like `find_needs_review_state()` gains a new external dependency (as happened with kaizen #85's `gh pr view` call), every test file must be updated independently — 10 files touched, ~300 lines added, for what should have been a 1-line change.
 
 ### Cost
 
@@ -185,7 +185,7 @@ Update `PRReviewState.create_state()` to always include BRANCH (already done in 
 After refactoring, run the full hook test suite:
 
 ```bash
-bash .claude/kaizen/hooks/tests/run-all-tests.sh
+bash .claude/hooks/tests/run-all-tests.sh
 ```
 
 **Pass criteria:** Same pass/fail counts as before. Zero regressions.

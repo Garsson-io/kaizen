@@ -469,7 +469,7 @@ Human Feedback ──────┘                          │
 | Case completion reflection | `case_mark_done` kaizen array | Working, basic schema |
 | Kaizen backlog | GitHub Issues `Garsson-io/kaizen` | Working |
 | Dev case suggestions | `case_suggest_dev` MCP tool + IPC | Working |
-| Hook enforcement framework | 12 hooks in `.claude/kaizen/hooks/` | Working |
+| Hook enforcement framework | 12 hooks in `.claude/hooks/` | Working |
 | PR self-review | `pr-review-loop.sh` (4 rounds) | Working |
 | Escalation levels (L1-L3) | Documented in SKILL.md | Working (conceptual) |
 

@@ -1,5 +1,5 @@
 /**
- * parse-command.ts — TypeScript port of .claude/kaizen/hooks/lib/parse-command.sh
+ * parse-command.ts — TypeScript port of .claude/hooks/lib/parse-command.sh
  *
  * Shared utilities for parsing hook command inputs. Replaces fragile sed/grep
  * pipelines with proper string handling.

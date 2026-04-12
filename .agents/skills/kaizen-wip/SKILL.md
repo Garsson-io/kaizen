@@ -3,7 +3,7 @@ name: kaizen-wip
 description: Search for in-progress work — worktrees, open PRs, dirty branches, active cases. Triggers on "wip", "in progress", "what's open", "existing work".
 ---
 
-<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
+<!-- Host config: read .agents/kaizen/skill-config-header.md before running commands -->
 
 # /wip — Find In-Progress Work
 

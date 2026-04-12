@@ -76,7 +76,7 @@ Consumers call `listDimensions()` or `loadDimensionMetas()` from `src/review-bat
 
 ## When to Create a Dimension vs. Add to review-criteria.md
 
-| Create a dimension (`prompts/review-*.md`) | Add to criteria (`.claude/kaizen/review-criteria.md`) |
+| Create a dimension (`prompts/review-*.md`) | Add to criteria (`prompts/review-*.md`) |
 |---|---|
 | Needs issue/plan context beyond the diff | Pure code-level check |
 | Must be independent of the implementing agent | Agent self-checks are sufficient |

@@ -1,11 +1,11 @@
 /**
- * kaizen-reflect.ts — TypeScript port of .claude/kaizen/hooks/kaizen-reflect.sh
+ * kaizen-reflect.ts — TypeScript port of .claude/hooks/kaizen-reflect.sh
  *
  * PostToolUse hook that triggers after `gh pr create` or `gh pr merge`.
  * Emits reflection prompts instructing the agent to launch a kaizen-bg subagent.
  * Always exits 0 — advisory, not blocking.
  *
- * Part of kAIzen Agent Control Flow — see .claude/kaizen/README.md
+ * Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
  * Migration: kaizen #320 (Phase 3 of #223)
  */
 

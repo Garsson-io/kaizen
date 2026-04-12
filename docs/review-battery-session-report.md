@@ -248,7 +248,7 @@ Only `requirements` is wired into auto-dent and implement. `plan-coverage` is wi
 
 The review system has two fundamentally different execution paths:
 
-1. **Criteria sections** (in `.claude/kaizen/review-criteria.md`): Loaded into the reviewing agent's context as instructions. The same agent that implemented the code reads and applies them. Cost: zero marginal (already in session). Trust: low (the implementing agent reviews its own work).
+1. **Criteria sections** (in `prompts/review-*.md`): Loaded into the reviewing agent's context as instructions. The same agent that implemented the code reads and applies them. Cost: zero marginal (already in session). Trust: low (the implementing agent reviews its own work).
 
 2. **Independent dimensions** (in `prompts/review-*.md`): Spawned as separate `claude -p` subagents. Fresh context, no access to the implementing agent's reasoning. Cost: $0.10-0.20 per dimension. Trust: high (adversarial, cannot be gamed).
 

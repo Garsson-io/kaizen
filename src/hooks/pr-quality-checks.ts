@@ -293,7 +293,7 @@ Which of these are relevant to your change?
 ${list}
 
 Address relevant items or consciously skip.
-Full checklist: .claude/kaizen/practices.md`;
+Full checklist: .agents/kaizen/practices.md`;
 }
 
 // Check 4: Code quality warnings

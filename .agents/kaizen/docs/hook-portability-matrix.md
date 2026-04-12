@@ -2,7 +2,7 @@
 
 This matrix maps each current Claude hook to the best alternative control layer if the repo wants equivalent behavior outside Claude Code.
 
-See also `.claude/kaizen/README.md`.
+See also `.agents/kaizen/README.md`.
 
 | Hook | Current event | Current role | Best portable target | Target level | Fidelity | Notes |
 |------|---------------|--------------|----------------------|--------------|----------|-------|

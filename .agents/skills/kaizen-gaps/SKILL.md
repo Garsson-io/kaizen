@@ -3,7 +3,7 @@ name: kaizen-gaps
 description: Systematic analysis of kaizen issues and incidents to find tooling gaps, testing gaps, horizon concentration, and unnamed dimensions. Produces prioritized lists for filing kaizens, writing feature PRDs, and writing meta/horizon PRDs. Triggers on "gap analysis", "analyze gaps", "what gaps do we have", "tooling gaps", "testing gaps", "horizon analysis", "where are problems concentrated".
 ---
 
-<!-- Host config: read .claude/kaizen/skill-config-header.md before running commands -->
+<!-- Host config: read .agents/kaizen/skill-config-header.md before running commands -->
 
 # Gap Analysis — Strategic Kaizen Intelligence
 
@@ -40,7 +40,7 @@ $KAIZEN_CLI case-list --status suggested,backlog,active,blocked
 
 Also read:
 - Existing horizon taxonomies: `docs/horizons/` directory and any `horizon.md` files
-- The kaizen system docs: `.claude/kaizen/` directory
+- The kaizen system docs: `.agents/kaizen/` directory
 - The enforcement level framework in the kaizen SKILL.md
 
 **Agent B — Incidents & Friction:**
@@ -50,7 +50,7 @@ gh issue list --repo "$ISSUES_REPO" --state open --limit 100 --json number,title
 ```
 
 Also search for:
-- Hook enforcement gaps: `.claude/kaizen/hooks/` and what they cover vs what they don't
+- Hook enforcement gaps: `.claude/hooks/` and what they cover vs what they don't
 - Test coverage: what's tested, what critical paths have zero coverage
 - CI pipeline: what checks exist, what's missing
 

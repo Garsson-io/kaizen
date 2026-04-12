@@ -1,6 +1,6 @@
 #!/bin/bash
 # Tests for kaizen-enforce-case-worktree.sh hook
-# Run: bash .claude/kaizen/hooks/tests/test-kaizen-enforce-case-worktree.sh
+# Run: bash .claude/hooks/tests/test-kaizen-enforce-case-worktree.sh
 #
 # INVARIANT: git commit/push inside a git worktree are ALLOWED.
 # INVARIANT: git commit/push outside a worktree (main checkout) produce a warning on stderr.
