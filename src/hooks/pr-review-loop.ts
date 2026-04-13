@@ -24,6 +24,7 @@ import { execSync } from 'node:child_process';
 import { appendFileSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
+import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import {
   isGhPrCommand,
   isGitCommand,
@@ -54,6 +55,8 @@ export interface HookDecision {
   message: string | null;
   /** Context data for debugging */
   context?: Record<string, unknown>;
+  /** Structured gate signal (emitted as YAML prefix in hook output). */
+  gateSignal?: GateSignal;
 }
 
 const getTraceFile = (): string => process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
@@ -225,8 +228,14 @@ export interface ProcessOptions {
   lookupPrUrlForBranch?: (branch: string) => string | undefined;
 }
 
-function decide(action: HookDecision['action'], reason: string, message: string | null, context?: Record<string, unknown>): HookDecision {
-  return { action, reason, message, context };
+function decide(
+  action: HookDecision['action'],
+  reason: string,
+  message: string | null,
+  context?: Record<string, unknown>,
+  gateSignal?: GateSignal,
+): HookDecision {
+  return { action, reason, message, context, gateSignal };
 }
 
 export function processHookInput(
@@ -333,7 +342,8 @@ export function processHookInput(
     }
 
     const createMsg = `\n\ud83d\udccb PR created: ${prUrl}\n\nMANDATORY SELF-REVIEW LOOP \u2014 you MUST complete this before proceeding.\nROUND 1/${MAX_ROUNDS}: Start your review now.\n${printChecklist(prUrl, '1', MAX_ROUNDS)}\nTrack your round: "ROUND N/${MAX_ROUNDS}: [reviewing|issues found|clean]"\n`;
-    return decide('create_gate', 'pr_created', createMsg, { prUrl });
+    return decide('create_gate', 'pr_created', createMsg, { prUrl },
+      { gate: 'needs_review', action: 'set', pr: prUrl, round: 1, reason: 'pr_created' });
   }
 
   // ── TRIGGER 2: git push ────────────────────────────────────────
@@ -420,7 +430,8 @@ export function processHookInput(
     });
     return decide('needs_review', 'push_exceeds_threshold',
       `\n\ud83d\udd04 Push detected (${incrementalLines} lines incremental, ${cumulativeLines} cumulative). Starting ROUND ${nextRound}/${MAX_ROUNDS}.\nRun \`gh pr diff ${found.prUrl}\` now.\n`,
-      diffContext);
+      diffContext,
+      { gate: 'needs_review', action: 'set', pr: found.prUrl, round: nextRound, reason: 'push_exceeds_threshold' });
   }
 
   // ── TRIGGER 3: gh pr diff ──────────────────────────────────────
@@ -452,7 +463,8 @@ export function processHookInput(
     }
 
     const msg = `\n\ud83d\udccb REVIEW ROUND ${found.round}/${MAX_ROUNDS}\n${printChecklist(found.prUrl, found.round, MAX_ROUNDS)}\n\u2705 REVIEW PASSED (round ${found.round}/${MAX_ROUNDS})\n`;
-    return decide('review_passed', 'diff_reviewed', msg, { prUrl: found.prUrl, round: found.round });
+    return decide('review_passed', 'diff_reviewed', msg, { prUrl: found.prUrl, round: found.round },
+      { gate: 'needs_review', action: 'clear', pr: found.prUrl, round: parseInt(found.round, 10), reason: 'diff_reviewed' });
   }
 
   return decide('ignore', 'unmatched_trigger', null);
@@ -478,7 +490,10 @@ async function main(): Promise<void> {
   ].find(Boolean) || 'other';
   trace(decision, String(trigger));
 
-  if (decision.message) writeHookOutput(decision.message);
+  if (decision.message) {
+    const prefix = decision.gateSignal ? formatGateSignal(decision.gateSignal) : '';
+    writeHookOutput(prefix + decision.message);
+  }
   process.exit(0);
 }
 

@@ -15,6 +15,7 @@ import type {
   ParsedHookEvent,
   HookTimeline,
 } from './hook-gym-schema.js';
+import { parseGateSignal } from '../src/hooks/lib/gate-signal.js';
 
 // ── Gate detection patterns ────────────────────────────────────────
 
@@ -64,13 +65,23 @@ export function parseHookDecision(
   exitCode: number,
   extraStdout: string = '',
 ): { decision: ParsedHookEvent['decision']; reason: string | null } {
-  // Check output/stdout/stderr for gate signals — hooks that set/clear gates
-  // often emit informational text rather than structured JSON. Do this before
-  // the empty-output early-return so gate signals aren't missed.
-  //
-  // For backward compat, the 2nd arg is treated as "any stream text" and we
-  // ALSO scan extraStdout if provided. The processor passes both streams.
+  // ── YAML gate signals (preferred path) ──────────────────────────
+  // Hooks that have been upgraded emit a YAML block (---\ngate: ...\n---\n)
+  // at the start of their output. This is unambiguous — no regex needed.
+  // Check output first, then combined stdout/stderr.
   const combined = `${stderrOrStdout}\n${extraStdout}`;
+  for (const text of [output, combined]) {
+    if (!text) continue;
+    const signal = parseGateSignal(text);
+    if (signal) {
+      return {
+        decision: signal.action === 'set' ? 'set-gate' : 'clear-gate',
+        reason: signal.gate,
+      };
+    }
+  }
+
+  // ── Regex fallback (for hooks not yet upgraded to YAML signals) ──
   // Check CLEAR patterns before SET so phrases like "clearing needs_review"
   // or "STATUS=passed" aren't misclassified as set-gate when the underlying
   // gate name also matches the SET regex.

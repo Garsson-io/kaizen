@@ -19,6 +19,7 @@ import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
+import { formatGateSignal } from './lib/gate-signal.js';
 import { stripHeredocBody } from './parse-command.js';
 import {
   buildReflectionRecord,
@@ -697,7 +698,7 @@ export function processHookInput(
     output.push(
       `\nPR kaizen gate cleared (${clearReason}). You may proceed with other work.\n`,
     );
-    return output.join('');
+    return formatGateSignal({ gate: 'needs_pr_kaizen', action: 'clear', reason: clearReason }) + output.join('');
   }
 
   return null;
