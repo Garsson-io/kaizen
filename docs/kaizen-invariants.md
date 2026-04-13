@@ -191,6 +191,74 @@ The first 8 invariants above were identified from PR-creation incidents. A syste
 **Why**: Hook/skill changes can silently break host-project integration.
 **Enforcement**: L1 policy (`.agents/kaizen/policies.md` §11). Candidate for a CI check.
 
+### Post-merge / branch hygiene invariants
+
+### I24 — After PR merges, delete the branch AND clean up the worktree
+**Why**: Merged branches are dead weight that confuse future navigation. Worktrees left around leak disk space, accumulate stale state files, and re-trigger hooks (`check-wip` pings, orphan locks). Dirty worktrees with merged PRs are especially dangerous because they pretend to be live work.
+
+**Check point**: After `gh pr merge` succeeds (or after `gh pr view --json state` returns MERGED)
+**Enforcement**:
+- L2 ⚠️ partial: `pr-review-loop-ts.sh` sets `needs_post_merge` gate on merge; `kaizen-post-merge-clear-ts.sh` clears it when `/kaizen-reflect` runs. Remote branch auto-deletes via `--delete-branch --auto` on the merge command.
+- L1: `kaizen-check-cleanup-on-stop.sh` warns at session stop.
+- **MISSING**: no hook forces deletion of the LOCAL branch or the worktree after merge. Candidate for new hook (see #1037 to be filed).
+
+### I25 — Never leave dirty files in a branch/worktree between operations
+**Why**: Dirty files accumulate between commands: "I'll commit that later", then "later" never comes. `gh pr create` fires the dirty-files hook only once; between-commit drift isn't caught.
+
+**Check point**: PreToolUse on `git push`, PostToolUse on Edit/Write, Stop
+**Enforcement**:
+- L2 ✅ partial: `kaizen-check-dirty-files-ts.sh` blocks `gh pr create` on dirty worktrees; warns on `git push` and `gh pr merge`.
+- L1: `kaizen-check-cleanup-on-stop.sh` warns at session stop.
+- **MISSING**: no hook blocks `git push` when the worktree is dirty (as opposed to warn). Candidate for extension of check-dirty-files to escalate the push warning to a block (behind a confirmation override).
+
+### I26 — All new branches must be created from `origin/main` (fresh fetch)
+**Why**: Branching off a stale local main, another feature branch, or a pre-merge worktree produces PRs with duplicated diff (the PR #1031 incident). `git merge-base HEAD origin/main` should be a recent commit on `origin/main`, not an older history point.
+
+**Check point**: PostToolUse on `git checkout -b <name>` (and `git branch <name>`)
+**Enforcement**:
+- L1: `.agents/AGENTS.md` Branch & PR hygiene section mentions not pushing to merged branches but doesn't say "branch from origin/main".
+- **MISSING**: no hook verifies branch parentage. Candidate for new L2 hook that runs `git merge-base HEAD origin/main` and denies if the base is not a recent commit on `origin/main`.
+
+### Scope/test-plan completeness invariants
+
+### I27 — Test-plan behaviors must be fully implemented in the PR (no deferring)
+**Why**: Deferred behaviors are a scope-matching failure in disguise. If the scope truly excludes a behavior, the behavior shouldn't be on the test plan. If the behavior is on the plan, it must ship. Exception: a deferred behavior with an explicit tracking issue is acceptable — but then the issue's acceptance criteria must include it.
+
+**Check point**: Review-time (every push triggers a review round — see I15)
+**Enforcement**:
+- L2 ✅ partial: `prompts/review-plan-coverage.md` checks plan vs issue requirements; `prompts/review-test-plan.md` checks test strategy correctness.
+- **MISSING**: no dimension explicitly flags "behavior marked ⏳ deferred with no tracking issue". Candidate for new review dimension or extension of `review-plan-coverage.md`.
+- Escape: a deferred behavior may remain IF the PR body names an open tracking issue for it. Review must verify the tracking issue exists and is open.
+
+### I28 — PR review must cover ALL applicable documented dimensions, not just one
+**Why**: Reviewing a PR through a single lens (e.g., only correctness) misses orthogonal failure modes (DRY violations, scope creep, test strategy gaps, security issues, etc.). 15 dimensions are documented in `prompts/review-*.md`; each has `applies_to` and `high_when` metadata to guide selection.
+
+**Check point**: During `/kaizen-review-pr` skill invocation
+**Enforcement**:
+- L2 ✅ partial: `pr-review-loop-ts.sh` sentinel requires structured findings to clear the gate. `/kaizen-review-pr` skill runs the dimension battery via `review-battery.ts`.
+- L1: AGENTS.md mentions batching dimensions by shared `needs`.
+- **MISSING**: no hook verifies that every applicable dimension produced a finding. An agent could store a finding for `correctness` only and clear the gate. Candidate for a post-review verifier that cross-checks stored findings against `npx tsx src/cli-dimensions.ts briefing` output.
+
+The 15 documented dimensions (see `prompts/review-*.md`):
+
+| Dimension | When it applies |
+|-----------|-----------------|
+| correctness | every PR |
+| dry | every PR with code changes |
+| improvement-lifecycle | PRs that claim to improve a workflow |
+| multi-pr-spiral | PRs in a multi-PR epic (detect drift across the set) |
+| plan-coverage | PR claiming to close an issue — does plan address the issue? |
+| plan-fidelity | does PR match stored plan? |
+| pr-description | every PR (Story Spine check) |
+| reflection-quality | PRs that include reflection output |
+| requirements | every PR claiming `Closes #N` |
+| scope-fidelity | every PR — creep + reduction |
+| security | PRs touching auth/secrets/external I/O |
+| skill-changes | PRs modifying `.claude/skills/*/SKILL.md` |
+| test-plan | every PR with testable behaviors |
+| test-quality | every PR with test changes |
+| tooling-fitness | PRs adding/modifying tooling |
+
 ---
 
 ## Summary — where the gaps are
@@ -198,8 +266,11 @@ The first 8 invariants above were identified from PR-creation incidents. A syste
 ### L2-enforced (no gap)
 I5, I6, I9, I10, I11, I12, I13, I14, I15, I16 — **10 invariants fully at L2.**
 
+### L2-partial (some enforcement, but with gaps)
+I24 (post-merge gate sets, but branch/worktree deletion not forced), I25 (dirty-check blocks at PR create but only warns on push), I27 (review dimensions check plan but don't flag ⏳ items without tracking), I28 (review sentinel required but doesn't verify dimension coverage).
+
 ### L1-only policy (gap — agent must remember)
-I1, I2, I3, I4, I7, I8, I17, I18, I19, I20, I21, I22, I23 — **13 invariants only at L1.**
+I1, I2, I3, I4, I7, I8, I17, I18, I19, I20, I21, I22, I23, I26 — **14 invariants only at L1.**
 
 ### Follow-up issues escalating to L2
 
@@ -208,6 +279,8 @@ I1, I2, I3, I4, I7, I8, I17, I18, I19, I20, I21, I22, I23 — **13 invariants on
 | I1, I2, I3, I4 | **#1036** | PR preconditions hook on `gh pr create` |
 | I7 | **#1032** | `git push` hook for merged-branch detection |
 | I8 | **#1035** | implementation precondition: issue has stored test plan |
+| I24, I25, I26 | **#1037** (to file) | post-merge cleanup + push-dirty block + branch-from-origin-main |
+| I27, I28 | **#1038** (to file) | no-deferred-behaviors + all-dimensions-covered review checks |
 | I17 (co-commit tests) | — | candidate — file issue to escalate pr-quality-checks warning to block |
 | I19 (secrets) | — | candidate — file issue for proper secret-scanner integration |
 | I22, I23 (meta) | — | candidates — tooling-fitness PRDs

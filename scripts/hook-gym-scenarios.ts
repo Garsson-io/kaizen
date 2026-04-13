@@ -274,7 +274,7 @@ export const INVARIANT_SCENARIOS: Scenario[] = [
     name: 'invariant-i1-deny-missing-closes',
     description:
       'I1: PR body without `Closes #N` must be denied at `gh pr create` time (enforced by issue #1036).',
-    prompt: '', // not used — validation-only
+    prompt: '',
     model: 'haiku',
     maxBudget: 0,
     timeoutSeconds: 0,
@@ -286,6 +286,46 @@ export const INVARIANT_SCENARIOS: Scenario[] = [
         severity: 3,
         description:
           'kaizen-enforce-pr-preconditions must DENY when PR body has no Closes keyword',
+      },
+    ],
+    expectedGates: [],
+  },
+  {
+    name: 'invariant-i26-deny-branch-from-feature',
+    description:
+      'I26: `git checkout -b` from a non-main merge base must be denied (enforced by issue #1037).',
+    prompt: '',
+    model: 'haiku',
+    maxBudget: 0,
+    timeoutSeconds: 0,
+    expectedHooks: [
+      {
+        hookPattern: 'PostToolUse',
+        eventType: 'PostToolUse',
+        expectedDecision: 'deny',
+        severity: 2,
+        description:
+          'kaizen-enforce-branch-from-main must DENY when new branch base is not on origin/main',
+      },
+    ],
+    expectedGates: [],
+  },
+  {
+    name: 'invariant-i24-deny-stale-merged-worktree',
+    description:
+      'I24: entering a worktree whose PR is already merged must trigger cleanup enforcement (enforced by issue #1037).',
+    prompt: '',
+    model: 'haiku',
+    maxBudget: 0,
+    timeoutSeconds: 0,
+    expectedHooks: [
+      {
+        hookPattern: 'SessionStart',
+        eventType: 'SessionStart',
+        expectedDecision: 'deny',
+        severity: 2,
+        description:
+          'kaizen-post-merge-cleanup must DENY session start (or force cleanup) when current worktree PR is merged',
       },
     ],
     expectedGates: [],

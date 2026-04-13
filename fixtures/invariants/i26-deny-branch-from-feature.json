@@ -1,0 +1,25 @@
+[
+  {
+    "type": "system",
+    "subtype": "hook_started",
+    "hook_id": "I26-post-01",
+    "hook_name": "PostToolUse:Bash",
+    "hook_event": "PostToolUse",
+    "uuid": "uuid-start",
+    "session_id": "fixture-session"
+  },
+  {
+    "type": "system",
+    "subtype": "hook_response",
+    "hook_id": "I26-post-01",
+    "hook_name": "PostToolUse:Bash",
+    "hook_event": "PostToolUse",
+    "output": "{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"BLOCKED: new branch violates kaizen invariant I26 — all new work must branch from origin/main (fresh fetch). The merge-base of HEAD vs origin/main is behind origin/main, suggesting the branch was created from a feature branch or stale local main.\\n\\nRecovery:\\n  git fetch origin main\\n  git checkout -b <name> origin/main\\n\\nFor intentional PR stacking, set KAIZEN_STACKED_PR_PARENT=<base-branch> before checkout.\\n\\nSee docs/kaizen-invariants.md (I26) for details.\"}}",
+    "stdout": "",
+    "stderr": "",
+    "exit_code": 0,
+    "outcome": "success",
+    "uuid": "uuid-resp",
+    "session_id": "fixture-session"
+  }
+]
