@@ -16,6 +16,7 @@ import {
   readReviewFinding,
   storePlan,
   retrievePlan,
+  retrieveTestPlan,
   storeMetadata,
   retrieveMetadata,
   queryConnectedIssues,
@@ -261,6 +262,49 @@ describe('storePlan + retrievePlan — round-trip', () => {
     const plan = retrievePlan(issue);
     expect(plan).toContain('Fix it');
     expect(plan).not.toContain('Test Plan');
+  });
+});
+
+describe('retrieveTestPlan — lookup order', () => {
+  it('prefers dedicated testplan attachment', () => {
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:testplan -->\n## Test Plan\n\nBehavior X: Unit' }));
+    const tp = retrieveTestPlan(issue);
+    expect(tp).toContain('Behavior X');
+  });
+
+  it('falls back to Test Plan section inside plan attachment', () => {
+    ghReturns(''); // no dedicated testplan attachment
+    ghReturns(JSON.stringify({
+      url: 'u',
+      body: '<!-- kaizen:plan -->\n## Plan\n\nSteps.\n\n## Test Plan\n\nBehavior Y: Integration',
+    })); // plan attachment contains Test Plan section
+    const tp = retrieveTestPlan(issue);
+    expect(tp).toContain('Behavior Y');
+  });
+
+  it('falls back to Seam Map & Test Plan section inside plan attachment', () => {
+    ghReturns(''); // no dedicated testplan
+    ghReturns(JSON.stringify({
+      url: 'u',
+      body: '<!-- kaizen:plan -->\n## Plan\n\nSteps.\n\n## Seam Map & Test Plan\n\nBehavior Z: System',
+    }));
+    const tp = retrieveTestPlan(issue);
+    expect(tp).toContain('Behavior Z');
+  });
+
+  it('falls back to Test Plan section in issue body', () => {
+    ghReturns(''); // no testplan
+    ghReturns(''); // no plan
+    ghReturns('## Context\n\nBug.\n\n## Test Plan\n\nBehavior W: Workflow'); // issue body
+    const tp = retrieveTestPlan(issue);
+    expect(tp).toContain('Behavior W');
+  });
+
+  it('returns null when no test plan anywhere', () => {
+    ghReturns(''); // no testplan
+    ghReturns(''); // no plan
+    ghReturns('## Just a body with no test plan');
+    expect(retrieveTestPlan(issue)).toBeNull();
   });
 });
 

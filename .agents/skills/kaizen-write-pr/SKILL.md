@@ -49,7 +49,13 @@ Follow the story with structured sections:
 5. **Find the inciting incident**: What specific failure, discovery, or user request triggered this work? If you can't name it, the PR may be solving a theoretical problem.
 6. **Gather evidence**: Test results, cost data, performance numbers, real output. The "Because of that" beats need concrete data, not assertions.
 7. **Write the narrative first**, then the structured sections. The story is the skeleton — the sections are the flesh.
-8. **Write the test plan** with behaviors × levels (see `.agents/skills/kaizen-write-plan/SKILL.md` §"Assign test levels"). Store the full plan on the linked issue via `npx tsx src/cli-structured-data.ts store-testplan --issue <N> --repo <R> --file <plan.md>`.
+8. **Retrieve the test plan from the linked issue** and include the behaviors × levels table in the PR body:
+   ```bash
+   npx tsx src/cli-structured-data.ts retrieve-testplan --issue <N> --repo "$ISSUES_REPO"
+   ```
+   Copy the behaviors × levels table into the PR body under a "Test Plan (Behaviors × Levels)" section, with coverage status (✅ tested / ⏳ deferred) per behavior. Cite which behaviors are in-scope, which are deferred, and which issue tracks each deferred behavior. Reviewers retrieve this same plan to check the PR against it (`review-plan-coverage`, `review-test-plan`, `review-requirements`).
+
+   If `retrieve-testplan` returns nothing, the issue has no plan — run `/kaizen-write-plan` against the issue first.
 
 ## Issue linkage (MANDATORY)
 
