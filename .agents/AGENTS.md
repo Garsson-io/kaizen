@@ -101,6 +101,23 @@ Store plans immediately after creating them. Review findings are stored per-roun
 
 **PR review dimensions**: When running `/kaizen-review-pr`, bundle dimensions by shared data needs (use the briefing from `npx tsx src/cli-dimensions.ts briefing --lines N`). Don't spawn one agent per dimension — batch dims with identical `needs` into single agents.
 
+**Codify learnings publicly, not just in memory**: Local auto-memory (`~/.claude/projects/.../memory/`) is per-machine and does NOT sync across devices. When an admin corrects you or teaches a rule, memory is the FIRST step, never the only step. You MUST also codify the learning in at least one visible artifact:
+- **Durable rules** → add to this file (`.agents/AGENTS.md`) or a dedicated policy doc under `.agents/kaizen/`
+- **Actionable bugs / follow-ups** → file a GitHub issue
+- **Workflow changes** → update the relevant SKILL.md
+Memory-only retention means the next session on a different machine repeats the same mistake.
+
+### Branch & PR hygiene
+
+- **Never push new commits to a branch whose most recent PR was already merged with no subsequent open PR.** Commits pushed to such a branch can get orphaned and the review-loop state file points at the merged PR, not the new work. Always create a new branch (via `EnterWorktree` or `git checkout -b`) for follow-up work.
+- **Detect merged-branch state before pushing.** Run:
+  ```bash
+  gh pr list --repo <repo> --head <branch> --state all --json number,state --jq '.[0]'
+  ```
+  If the most recent PR is `MERGED` and there's no newer `OPEN` PR on the branch, you must branch off before pushing. If an `OPEN` PR already exists on the branch, pushing to extend it is fine (new round bump is correct).
+- **If you accidentally pushed to a merged branch:** create a fresh branch from `main` (or from the merge commit), cherry-pick your new commits there, and open a new PR from the new branch.
+- **Review round bumps on push within an open PR are intended.** Each push is new code and deserves fresh review; the previous round's pass is stale. Complete the new round before proceeding.
+
 ## Configuration
 
 All skills and hooks read `kaizen.config.json` from the host project root:
