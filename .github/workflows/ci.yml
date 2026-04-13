@@ -91,7 +91,13 @@ jobs:
 
       - name: Verify no test side-effects on repo files
         run: |
-          DIRTY=$(git status --porcelain | grep -v '^?? artifacts/' || true)
+          # Filter out artifacts/ (our own coverage output) and the codecov
+          # uploader binary+signatures that codecov/codecov-action@v5 drops
+          # into the repo root. These are CI-step side-effects, not test
+          # side-effects, so they shouldn't trigger the #448 guard.
+          DIRTY=$(git status --porcelain \
+            | grep -Ev '^\?\? (artifacts/|codecov(\.SHA256SUM(\.sig)?)?$)' \
+            || true)
           if [ -n "$DIRTY" ]; then
             echo "::error::Tests left side-effects on repo files (kaizen #448):"
             echo "$DIRTY"
