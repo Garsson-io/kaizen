@@ -7,6 +7,8 @@ description: Planning gate — takes an issue (from deep-dive or direct) and pro
 
 # Write Plan — Planning Gate
 
+**Upholds invariants**: I3 (stored test plan), I8 (plan before implementation). See [`docs/kaizen-invariants.md`](../../../docs/kaizen-invariants.md).
+
 **Role:** The planning gate. Takes a specific issue (from `/kaizen-deep-dive` or from the admin directly) and produces a grounded implementation plan, then gets admin approval before implementation starts. Scope decisions live here — `/kaizen-implement` executes the scope this skill sets and must not change it unilaterally.
 
 **Philosophy:** See the [Zen of Kaizen](../../kaizen/zen.md) — *"Specs are hypotheses. Incidents are data."* and *"No promises without mechanisms."*

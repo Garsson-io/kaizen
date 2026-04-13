@@ -1,6 +1,8 @@
 #!/bin/bash
 # Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # enforce-worktree-writes.sh — Level 3 kaizen enforcement
+# @enforces I9 — No source edits on main branch outside a worktree.
+#                Canonical: docs/kaizen-invariants.md
 # Blocks Edit/Write tools that target SOURCE CODE in the main checkout on main branch.
 # Source code changes must go through worktrees and PRs.
 #

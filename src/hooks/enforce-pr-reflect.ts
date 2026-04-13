@@ -1,6 +1,9 @@
 /**
  * enforce-pr-reflect.ts — PreToolUse gate: blocks Bash commands until kaizen reflection is done.
  *
+ * @enforces I14 — During `needs_pr_kaizen`, only kaizen-scoped commands run.
+ *                 Canonical: docs/kaizen-invariants.md.
+ *
  * TypeScript port of .claude/hooks/kaizen-enforce-pr-reflect.sh (kaizen #775).
  *
  * When a needs_pr_kaizen state file exists for the current branch, only

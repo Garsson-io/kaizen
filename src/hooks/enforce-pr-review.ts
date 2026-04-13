@@ -1,6 +1,9 @@
 /**
  * enforce-pr-review.ts — PreToolUse gate: blocks tools until PR review is done.
  *
+ * @enforces I13 — During `needs_review`, only review-scoped commands run.
+ *                 Canonical: docs/kaizen-invariants.md (search for "I13").
+ *
  * Handles ALL tool types during review enforcement (kaizen #775, #789):
  *   - Bash: allowlist-based (review commands like gh pr diff, git diff pass through)
  *   - Edit/Write: always blocked during review (write tools, not useful for reviewing)

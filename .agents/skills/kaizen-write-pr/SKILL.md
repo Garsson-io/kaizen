@@ -6,6 +6,8 @@ user_invocable: true
 
 # Write PR Description — Story Spine Narrative
 
+**Upholds invariants**: I1 (Closes #N adjacent), I2 (scope-matched), I3 (issue has test plan), I4 (PR body has B×L table). See [`docs/kaizen-invariants.md`](../../../docs/kaizen-invariants.md) for the canonical rules.
+
 Write a PR description that a reviewer can understand **without reading the diff**. The diff is proof — the description is the argument.
 
 **When to use:**

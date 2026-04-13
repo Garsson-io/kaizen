@@ -101,17 +101,51 @@ Store plans immediately after creating them. Review findings are stored per-roun
 
 **PR review dimensions**: When running `/kaizen-review-pr`, bundle dimensions by shared data needs (use the briefing from `npx tsx src/cli-dimensions.ts briefing --lines N`). Don't spawn one agent per dimension — batch dims with identical `needs` into single agents.
 
-**Every PR MUST close exactly one scope-matched issue.** Orphan PRs (no issue) are not accepted, and PRs MUST NOT close epic/parent issues. If the PR scope is smaller than an epic, file a sub-issue with that exact scope and close THAT. GitHub's closing keywords (`Closes/Close/Closed/Fixes/Fix/Fixed/Resolves/Resolve/Resolved`) followed by `#N` on a new line close issue N on merge — this is a hard auto-close, not a soft link. **Never write `Closes #<epic>` on a sub-PR.** Correct pattern:
+## Kaizen Invariants
 
+**Canonical source**: [`docs/kaizen-invariants.md`](../docs/kaizen-invariants.md) — full text (why/check-point/enforcement) for every invariant. Reference invariants by ID (`I1`, `I2`, …); do NOT restate their rules here or in skill docs.
+
+Compact in-context summary (one-line per invariant):
+
+| ID | Invariant | L2 |
+|:-:|----------|:--:|
+| **I1** | Every PR has `Closes #<N>` with `#N` adjacent to the closing keyword | ⚠️ |
+| **I2** | Closed `#N` is scope-matched (not an epic; no open sub-issues) | ⚠️ |
+| **I3** | Closed `#N` has a stored test plan (`retrieve-testplan` ≠ null) | ⚠️ |
+| **I4** | PR body includes behaviors × levels table (Unit/Integration/System/Agentic/Workflow) | ⚠️ |
+| **I5** | Review round has structured findings stored | ✅ |
+| **I6** | Gates cleared by mechanism, never by `rm` of state files | ✅ |
+| **I7** | No push to a branch whose most-recent PR merged with no newer open PR | ⚠️ |
+| **I8** | Implementation begins only after plan is stored on the issue | ⚠️ |
+| **I9** | No source edits on main branch outside a worktree | ✅ |
+| **I10** | No source edits in worktree without a kaizen case | ✅ |
+| **I11** | No dirty/uncommitted files at `gh pr create` | ✅ |
+| **I12** | No `git rebase` on PR branches | ✅ |
+| **I13** | During `needs_review`, only review-scoped commands run | ✅ |
+| **I14** | During `needs_pr_kaizen`, only kaizen-scoped commands run | ✅ |
+| **I15** | Every push to an open PR's branch triggers a review round | ✅ |
+| **I16** | Every PR create/merge requires reflection (`KAIZEN_IMPEDIMENTS`) | ✅ |
+| **I17** | Source file changes co-commit with their tests | ⚠️ |
+| **I18** | Tests pass before stopping | ⚠️ |
+| **I19** | No secrets / credentials in commits | ⚠️ |
+| **I20** | Search for similar issues before creating a new one | ⚠️ |
+| **I21** | Worktree cleanup on stop (no orphan locks, no uncommitted work) | ⚠️ |
+| **I22** | Skill changes require behavioral proof | ⚠️ |
+| **I23** | PRs changing hooks/skills run E2E tests against `kaizen-test-fixture` | ⚠️ |
+| **I24** | After merge: delete local branch AND clean up worktree | ⚠️ |
+| **I25** | Never leave dirty files in a branch between operations | ⚠️ |
+| **I26** | New branches are created from `origin/main` (fresh fetch) | ⚠️ |
+| **I27** | Test-plan behaviors are fully implemented in the PR (no silent deferring) | ⚠️ |
+| **I28** | PR review covers ALL applicable documented dimensions, not just one | ⚠️ |
+
+✅ = L2 hook enforces · ⚠️ = L1 only (agent must remember; escalation tracked — see canonical doc).
+
+**Correct issue-linkage pattern for PR bodies** (see I1, I2):
 ```
 Closes #<scope-matched-sub-issue>
-Parent: #<epic>          (informational, does NOT close)
-Refs: #<related>         (informational, does NOT close)
+Parent: #<epic>          ← informational, does NOT close
+Refs: #<related>         ← informational, does NOT close
 ```
-
-If no scope-matched issue exists, file one first (`gh issue create`). The issue's acceptance criteria must match the PR's actual deliverable — not the epic's full vision.
-
-**Every PR MUST include a test plan with behaviors × levels.** The PR body needs a Test Plan section structured as behaviors with `required_reality_check_level` ∈ {Unit, Integration, System, Agentic, Workflow}. See `.agents/skills/kaizen-write-plan/SKILL.md` §"Assign test levels". For non-trivial PRs, store the full plan on the parent issue via `npx tsx src/cli-structured-data.ts store-testplan --issue <N> --repo <R> --file <plan.md>` and link from the PR body. "Test plan: tests pass" is NOT a test plan — it's a result. A plan names behaviors, justifies levels, and flags what's deferred. Even docs-only PRs need a thin plan (file contents assertions).
 
 ## Configuration
 

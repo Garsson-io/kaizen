@@ -6,6 +6,8 @@ user_invocable: true
 
 # Review PR
 
+**Upholds invariants**: I5 (findings stored), I13 (review gate), I15 (push → review round), I27 (no silent deferring), I28 (all applicable dimensions). See [`docs/kaizen-invariants.md`](../../../docs/kaizen-invariants.md).
+
 ## Loop
 
 | Phase | What you do | Done when |

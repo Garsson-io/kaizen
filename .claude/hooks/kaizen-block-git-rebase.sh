@@ -1,6 +1,8 @@
 #!/bin/bash
 # Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # block-git-rebase.sh — Level 2 rebase safety (kaizen #296)
+# @enforces I12 — No `git rebase` on PR branches.
+#                 Canonical: docs/kaizen-invariants.md
 # PreToolUse hook: blocks `git rebase` commands to prevent history rewriting.
 #
 # Rebase on PR branches:

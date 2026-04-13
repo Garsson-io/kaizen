@@ -1,6 +1,8 @@
 #!/bin/bash
 # Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # enforce-case-exists.sh — Level 2 kaizen enforcement (Issue #94)
+# @enforces I10 — No source edits in worktree without a kaizen case.
+#                 Canonical: docs/kaizen-invariants.md
 # PreToolUse hook on Edit|Write: blocks source code edits in worktrees
 # that don't have a corresponding case record.
 #

@@ -1,5 +1,7 @@
 # Kaizen Process Invariants
 
+> **CANONICAL SOURCE OF TRUTH.** This file is the single authoritative list of kaizen process invariants. Other files (AGENTS.md, skill docs, hook source files, review dimensions) reference invariants by their ID (`I1`..`IN`) and must NOT restate the rules. When an invariant changes, update this file only.
+
 Properties that MUST always hold in the kaizen workflow. Each invariant lists its check point and the enforcement layer that mandates it.
 
 **Layer legend:**
@@ -8,6 +10,115 @@ Properties that MUST always hold in the kaizen workflow. Each invariant lists it
 - **L3** — Mechanistic (cannot be bypassed; built into data structures)
 
 When L1 fails, escalate to L2. When L2 can be bypassed, escalate to L3.
+
+---
+
+## Enforcement matrix — Invariant → Artifact (forward index)
+
+Which artifacts uphold each invariant. Use this to answer "who cares about I7?"
+
+| Invariant | Hook(s) enforcing | Skill(s) upholding | Review dimension(s) | Gap issue |
+|-----------|-------------------|--------------------|---------------------|:----:|
+| **I1** closes #N adjacent | — | `kaizen-write-pr` (write-time) | `requirements`, `pr-description` | [#1036](https://github.com/Garsson-io/kaizen/issues/1036) |
+| **I2** scope-matched closure | — | `kaizen-write-pr`, `kaizen-evaluate` | `requirements`, `scope-fidelity` | [#1036](https://github.com/Garsson-io/kaizen/issues/1036) |
+| **I3** issue has stored testplan | — | `kaizen-write-plan`, `kaizen-write-pr` | `plan-coverage`, `plan-fidelity` | [#1036](https://github.com/Garsson-io/kaizen/issues/1036) |
+| **I4** PR body has B×L table | — | `kaizen-write-pr` (step 8) | `pr-description`, `test-plan` | [#1036](https://github.com/Garsson-io/kaizen/issues/1036) |
+| **I5** review findings stored | `pr-review-loop` | `kaizen-review-pr` | `reflection-quality` | — |
+| **I6** gates cleared by mechanism | `stop-gate`, `pr-kaizen-clear`, `post-merge-clear` | `kaizen-reflect` | — | — |
+| **I7** no push to merged branch | — | — | — | [#1032](https://github.com/Garsson-io/kaizen/issues/1032) |
+| **I8** plan before implementation | — | `kaizen-implement`, `kaizen-write-plan` | `plan-fidelity` | [#1035](https://github.com/Garsson-io/kaizen/issues/1035) |
+| **I9** no edits on main outside worktree | `enforce-worktree-writes` | — | — | — |
+| **I10** edit requires case | `enforce-case-exists` | — | — | — |
+| **I11** no dirty files at PR create | `check-dirty-files` | — | — | — |
+| **I12** no git rebase on PR branches | `block-git-rebase` | — | — | — |
+| **I13** review gate limits tools | `enforce-pr-review` | `kaizen-review-pr` | — | — |
+| **I14** reflect gate limits tools | `enforce-pr-reflect` | `kaizen-reflect` | — | — |
+| **I15** push triggers review round | `pr-review-loop` | `kaizen-review-pr` | `multi-pr-spiral` | — |
+| **I16** PR create/merge → reflection | `kaizen-reflect-ts` | `kaizen-reflect` | `reflection-quality` | — |
+| **I17** co-commit source + tests | `pr-quality-checks` (advisory) | — | `test-quality` | candidate |
+| **I18** tests pass before stop | `verify-before-stop` (advisory) | — | `test-plan`, `test-quality` | candidate |
+| **I19** no secrets in commits | `pr-quality-checks` (advisory) | — | `security` | candidate |
+| **I20** search before issue create | `search-before-file` (advisory) | `kaizen-file-issue` | — | candidate |
+| **I21** worktree cleanup on stop | `check-cleanup-on-stop` (advisory) | `kaizen-cleanup` | — | candidate |
+| **I22** skill changes need proof | — | — | `skill-changes` | candidate |
+| **I23** hook/skill PRs run E2E | — | — | `tooling-fitness` | candidate |
+| **I24** post-merge branch+worktree cleanup | `post-merge-clear` (partial) | `kaizen-cleanup`, `kaizen-wip` | — | [#1037](https://github.com/Garsson-io/kaizen/issues/1037) |
+| **I25** no dirty files between ops | `check-dirty-files` (partial) | — | — | [#1037](https://github.com/Garsson-io/kaizen/issues/1037) |
+| **I26** branch from origin/main | — | `kaizen-evaluate` (collision detect) | — | [#1037](https://github.com/Garsson-io/kaizen/issues/1037) |
+| **I27** test plan fully implemented | — | `kaizen-implement`, `kaizen-review-pr` | `plan-coverage`, `test-plan`, `scope-fidelity` | [#1038](https://github.com/Garsson-io/kaizen/issues/1038) |
+| **I28** review covers all dimensions | `pr-review-loop` (sentinel, partial) | `kaizen-review-pr` | all | [#1038](https://github.com/Garsson-io/kaizen/issues/1038) |
+
+## Enforcement matrix — Artifact → Invariants (reverse index)
+
+### Hooks
+
+| Hook | Event | Enforces |
+|------|:-----:|----------|
+| `enforce-pr-review` | PreToolUse (Bash/Edit/Write/Agent) | I13 |
+| `enforce-pr-reflect` | PreToolUse (Bash) | I14 |
+| `enforce-worktree-writes` | PreToolUse (Edit/Write) | I9 |
+| `enforce-case-exists` | PreToolUse (Edit/Write) | I10 |
+| `check-dirty-files` | PreToolUse (Bash) | I11, I25 (partial) |
+| `block-git-rebase` | PreToolUse (Bash) | I12 |
+| `pr-review-loop` | PostToolUse (Bash) | I5, I15, I16 (partial), I28 (partial) |
+| `kaizen-reflect` | PostToolUse (Bash) | I16 |
+| `pr-kaizen-clear` | PostToolUse (Bash) | I6, I16 (clear path) |
+| `post-merge-clear` | PostToolUse (Bash/Skill) | I6, I24 (partial) |
+| `stop-gate` | Stop | I6, I13/I14/I16/I24 (Stop-time check) |
+| `pr-quality-checks` | PreToolUse (Bash) advisory | I17, I18, I19 (all advisory) |
+| `verify-before-stop` | Stop advisory | I18 |
+| `check-cleanup-on-stop` | Stop advisory | I21, I24 (partial) |
+| `search-before-file` | PreToolUse (Bash) advisory | I20 |
+| `capture-worktree-context` | PostToolUse (Bash) | — (infrastructure for I24/cleanup skills) |
+| `worktree-setup`, `session-cleanup`, `check-wip` | SessionStart | — (infrastructure) |
+| `bump-plugin-version` | PreToolUse (Bash) | — (infrastructure) |
+
+### Skills
+
+| Skill | Invariants it upholds / assumes |
+|-------|--------------------------------|
+| `/kaizen-write-pr` | I1, I2, I3, I4 (write-time enforcement) |
+| `/kaizen-write-plan` | I3 (stores test plan), I8 (plan must exist) |
+| `/kaizen-implement` | I3, I8, I10, I15, I17, I18, I27 |
+| `/kaizen-review-pr` | I5, I13, I15, I27, I28 |
+| `/kaizen-reflect` | I16 |
+| `/kaizen-evaluate` | I2, I8, I26 |
+| `/kaizen-cleanup` | I21, I24 |
+| `/kaizen-wip` | I13, I14, I24 (awareness) |
+| `/kaizen-file-issue` | I20 |
+| `/kaizen-sections` | I3, I5 (storage primitives) |
+| `/kaizen-dimensions` | I28 |
+| `/kaizen-pick`, `/kaizen-prd`, `/kaizen-plan` | I2 (scope), I8 (plan-driven) |
+
+### Review dimensions
+
+| Dimension | Checks invariants |
+|-----------|-------------------|
+| `requirements` | I1, I2, I3, I27 |
+| `scope-fidelity` | I2, I27 |
+| `plan-coverage` | I2, I3, I8, I27 |
+| `plan-fidelity` | I3, I8, I27 |
+| `pr-description` | I1, I4, I27 |
+| `test-plan` | I18, I27 |
+| `test-quality` | I17, I18 |
+| `security` | I19 |
+| `skill-changes` | I22 |
+| `tooling-fitness` | I9, I10, I19 (infrastructure placement) |
+| `multi-pr-spiral` | I15, I18, I27 |
+| `reflection-quality` | I5, I16 |
+| `dry` | I17 (code reuse discipline) |
+| `correctness` | I18, I27 (baseline code quality) |
+| `improvement-lifecycle` | I5, I15, I16, I27, I28 (meta: kaizen capabilities improvable?) |
+
+## How to add a new invariant
+
+1. Pick the next unused ID (highest existing + 1).
+2. Add a section in the invariants list below with: **Why** / **Check point** / **Enforcement**.
+3. Add a row to the forward-index matrix above.
+4. Add entries to the reverse-index matrices for each hook/skill/dimension that touches it.
+5. If an L2 hook is missing, file a follow-up issue and add it to the **Gap issue** column.
+6. In `.agents/AGENTS.md`, if the invariant needs to be visible in-context, add a one-line summary (NOT the full text — keep the canonical copy here).
+7. For each hook source file that enforces the new invariant, add `@enforces IN` to its top-of-file JSDoc.
 
 ---
 

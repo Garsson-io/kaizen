@@ -1,6 +1,9 @@
 /**
  * kaizen-reflect.ts — TypeScript port of .claude/hooks/kaizen-reflect.sh
  *
+ * @enforces I16 — Every PR create/merge requires reflection (sets `needs_pr_kaizen` gate).
+ *                 Canonical: docs/kaizen-invariants.md.
+ *
  * PostToolUse hook that triggers after `gh pr create` or `gh pr merge`.
  * Emits reflection prompts instructing the agent to launch a kaizen-bg subagent.
  * Always exits 0 — advisory, not blocking.

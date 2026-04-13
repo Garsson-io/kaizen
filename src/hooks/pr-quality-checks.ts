@@ -1,6 +1,11 @@
 /**
  * pr-quality-checks.ts — Consolidated PreToolUse advisory checks for PR quality.
  *
+ * @enforces I17 — Source + test co-commit (advisory; escalation to block is a candidate).
+ * @enforces I18 — Tests pass before stop (advisory reminder).
+ * @enforces I19 — No secrets in commits (light heuristic; escalation candidate).
+ *                 Canonical: docs/kaizen-invariants.md.
+ *
  * Replaces 4 independent bash hooks that all parsed the same JSON, sourced the same
  * libraries, and triggered on overlapping commands:
  *   - kaizen-check-test-coverage.sh

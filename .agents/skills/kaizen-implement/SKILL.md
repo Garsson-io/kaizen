@@ -7,6 +7,8 @@ description: Take a spec from PRD to working code. Re-examines the spec against 
 
 # Implement Spec — From PRD to Working Code
 
+**Upholds invariants**: I3 (stored test plan), I8 (plan before implementation), I10 (case required), I15 (push → review round), I17 (co-commit source + tests), I18 (tests pass), I27 (no silent deferring). See [`docs/kaizen-invariants.md`](../../../docs/kaizen-invariants.md).
+
 **Role:** The execution engine. Takes scope decided by `/kaizen-evaluate` and turns it into working code. Does NOT decide scope — if re-examination reveals the scope should change, escalate to the admin or loop back to `/kaizen-evaluate`.
 
 **Philosophy:** See the [Zen of Kaizen](../../kaizen/zen.md) — especially *"Specs are hypotheses. Incidents are data."* and *"The most dangerous requirement is the one nobody re-examined."*

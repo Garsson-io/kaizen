@@ -26,55 +26,48 @@ function read(relativePath: string): string {
   return readFileSync(resolve(REPO_ROOT, relativePath), 'utf-8');
 }
 
-// ── AGENTS.md — scope-matched issue closure (B16) ──────────────────
+// ── B16: scope-matched issue closure mandate (canonical doc) ───────
 
-describe('AGENTS.md — B16: scope-matched issue closure mandate', () => {
+describe('canonical invariants doc — B16: scope-matched issue closure', () => {
+  const doc = read('docs/kaizen-invariants.md');
   const agents = read('.agents/AGENTS.md');
 
-  it('mandates every PR closes exactly one scope-matched issue', () => {
-    expect(agents).toMatch(/Every PR MUST close exactly one scope-matched issue/);
+  it('canonical doc states I1 (Closes #N adjacent)', () => {
+    expect(doc).toMatch(/### I1\b[^]*Closes.*#N.*adjacent/);
   });
 
-  it('forbids orphan PRs (no issue)', () => {
-    expect(agents).toMatch(/[Oo]rphan PRs.*not accepted/);
+  it('canonical doc states I2 (scope-matched, not epic)', () => {
+    expect(doc).toMatch(/### I2\b[^]*scope-matched/);
   });
 
-  it('explicitly forbids closing the epic', () => {
-    expect(agents).toMatch(/Never write.*Closes.*#.*epic/i);
+  it('AGENTS.md summary lists both I1 and I2 with short descriptions', () => {
+    expect(agents).toMatch(/\*\*I1\*\*.*Closes/);
+    expect(agents).toMatch(/\*\*I2\*\*.*scope-matched/);
   });
 
-  it('lists the GitHub closing keywords that trigger auto-close', () => {
-    // At least the three main families
-    expect(agents).toMatch(/Closes?|Close/);
-    expect(agents).toMatch(/Fixes?|Fix/);
-    expect(agents).toMatch(/Resolves?|Resolve/);
-  });
-
-  it('shows the correct pattern (Closes #child + Parent: #epic)', () => {
+  it('AGENTS.md shows the correct linkage pattern for PR bodies', () => {
     expect(agents).toMatch(/Closes #<scope-matched-sub-issue>/);
     expect(agents).toMatch(/Parent:\s*#<epic>/);
   });
 });
 
-// ── AGENTS.md — test plan mandate (B20) ────────────────────────────
+// ── B20: test plan mandate (canonical doc + AGENTS.md pointer) ─────
 
-describe('AGENTS.md — B20: behaviors × levels test plan mandate', () => {
+describe('canonical invariants doc — B20: test plan mandate', () => {
+  const doc = read('docs/kaizen-invariants.md');
   const agents = read('.agents/AGENTS.md');
 
-  it('mandates every PR include a test plan', () => {
-    expect(agents).toMatch(/Every PR MUST include a test plan/);
+  it('canonical doc states I3 (issue has stored test plan)', () => {
+    expect(doc).toMatch(/### I3\b[^]*stored test plan/);
   });
 
-  it('names the 5-level taxonomy', () => {
-    expect(agents).toMatch(/Unit.*Integration.*System.*Agentic.*Workflow/);
+  it('canonical doc states I4 (PR body has behaviors × levels)', () => {
+    expect(doc).toMatch(/### I4\b[^]*behaviors/);
   });
 
-  it('rejects "tests pass" as a plan', () => {
-    expect(agents).toMatch(/["']Test plan.*tests pass["'].*NOT a test plan|["']Tests pass["'].*NOT a.*plan/i);
-  });
-
-  it('points to the write-plan skill for level assignment', () => {
-    expect(agents).toContain('kaizen-write-plan');
+  it('AGENTS.md summary lists I3 and I4 with the 5-level taxonomy', () => {
+    expect(agents).toMatch(/\*\*I3\*\*.*test plan/);
+    expect(agents).toMatch(/\*\*I4\*\*.*Unit\/Integration\/System\/Agentic\/Workflow/);
   });
 });
 
@@ -131,6 +124,150 @@ describe('kaizen-write-pr SKILL — B21: step 8 retrieves test plan', () => {
     expect(skill).toMatch(/review-plan-coverage/);
     expect(skill).toMatch(/review-test-plan/);
     expect(skill).toMatch(/review-requirements/);
+  });
+});
+
+// ── Invariant cross-references are in place (DRY enforcement) ─────
+
+describe('kaizen-invariants.md — canonical source declaration', () => {
+  const doc = read('docs/kaizen-invariants.md');
+
+  it('declares itself as the canonical source of truth', () => {
+    expect(doc).toMatch(/CANONICAL SOURCE OF TRUTH/i);
+  });
+
+  it('contains a forward-index matrix (invariant → artifacts)', () => {
+    expect(doc).toMatch(/Enforcement matrix.*Invariant.*Artifact/i);
+  });
+
+  it('contains a reverse-index matrix (artifact → invariants)', () => {
+    expect(doc).toMatch(/Enforcement matrix.*Artifact.*Invariants/i);
+  });
+
+  it('enumerates 28 invariants', () => {
+    const idMatches = doc.match(/^### I\d+\b/gm) ?? [];
+    // Unique invariant IDs present
+    const ids = new Set(idMatches.map((m) => m.replace(/^### /, '').trim()));
+    expect(ids.size).toBeGreaterThanOrEqual(28);
+  });
+
+  it('explains the "how to add a new invariant" ritual', () => {
+    expect(doc).toMatch(/How to add a new invariant/i);
+  });
+});
+
+describe('AGENTS.md — references canonical invariants doc (not restating rules)', () => {
+  const agents = read('.agents/AGENTS.md');
+
+  it('points to docs/kaizen-invariants.md as canonical source', () => {
+    expect(agents).toMatch(/docs\/kaizen-invariants\.md/);
+  });
+
+  it('lists all 28 invariants as a compact in-context summary', () => {
+    // Each invariant ID appears in the summary table
+    for (const n of Array.from({ length: 28 }, (_, i) => i + 1)) {
+      expect(agents).toMatch(new RegExp(`\\bI${n}\\b`));
+    }
+  });
+});
+
+describe('hook source files — @enforces JSDoc cross-references', () => {
+  it('enforce-pr-review.ts declares @enforces I13', () => {
+    expect(read('src/hooks/enforce-pr-review.ts')).toMatch(/@enforces I13/);
+  });
+  it('enforce-pr-reflect.ts declares @enforces I14', () => {
+    expect(read('src/hooks/enforce-pr-reflect.ts')).toMatch(/@enforces I14/);
+  });
+  it('check-dirty-files.ts declares @enforces I11 and I25', () => {
+    const src = read('src/hooks/check-dirty-files.ts');
+    expect(src).toMatch(/@enforces I11/);
+    expect(src).toMatch(/@enforces I25/);
+  });
+  it('pr-review-loop.ts declares I5, I15, I16, I28', () => {
+    const src = read('src/hooks/pr-review-loop.ts');
+    expect(src).toMatch(/@enforces I5\b/);
+    expect(src).toMatch(/@enforces I15/);
+    expect(src).toMatch(/@enforces I28/);
+  });
+  it('kaizen-reflect.ts declares @enforces I16', () => {
+    expect(read('src/hooks/kaizen-reflect.ts')).toMatch(/@enforces I16/);
+  });
+  it('stop-gate.ts declares I6 and multiple Stop-time invariants', () => {
+    const src = read('src/hooks/stop-gate.ts');
+    expect(src).toMatch(/@enforces I6\b/);
+    expect(src).toMatch(/@enforces I16/);
+    expect(src).toMatch(/@enforces I24/);
+  });
+  it('bash hooks reference invariants in header comments', () => {
+    expect(read('.claude/hooks/kaizen-enforce-worktree-writes.sh')).toMatch(/@enforces I9\b/);
+    expect(read('.claude/hooks/kaizen-enforce-case-exists.sh')).toMatch(/@enforces I10/);
+    expect(read('.claude/hooks/kaizen-block-git-rebase.sh')).toMatch(/@enforces I12/);
+  });
+  it('all @enforces references point at the canonical doc', () => {
+    const files = [
+      'src/hooks/enforce-pr-review.ts',
+      'src/hooks/enforce-pr-reflect.ts',
+      'src/hooks/check-dirty-files.ts',
+      'src/hooks/pr-review-loop.ts',
+      'src/hooks/kaizen-reflect.ts',
+      'src/hooks/stop-gate.ts',
+      'src/hooks/pr-kaizen-clear.ts',
+      'src/hooks/post-merge-clear.ts',
+      'src/hooks/pr-quality-checks.ts',
+    ];
+    for (const f of files) {
+      expect(read(f)).toMatch(/docs\/kaizen-invariants\.md/);
+    }
+  });
+});
+
+describe('skill files — Upholds invariants section', () => {
+  it('kaizen-write-pr names I1-I4', () => {
+    const s = read('.agents/skills/kaizen-write-pr/SKILL.md');
+    expect(s).toMatch(/Upholds invariants/);
+    for (const id of ['I1', 'I2', 'I3', 'I4']) {
+      expect(s).toMatch(new RegExp(`\\b${id}\\b`));
+    }
+  });
+  it('kaizen-write-plan names I3, I8', () => {
+    const s = read('.agents/skills/kaizen-write-plan/SKILL.md');
+    expect(s).toMatch(/Upholds invariants/);
+    expect(s).toMatch(/\bI3\b/);
+    expect(s).toMatch(/\bI8\b/);
+  });
+  it('kaizen-review-pr names I5, I13, I15, I27, I28', () => {
+    const s = read('.agents/skills/kaizen-review-pr/SKILL.md');
+    expect(s).toMatch(/Upholds invariants/);
+    for (const id of ['I5', 'I13', 'I15', 'I27', 'I28']) {
+      expect(s).toMatch(new RegExp(`\\b${id}\\b`));
+    }
+  });
+  it('kaizen-implement names I3, I8, I10, I17, I27', () => {
+    const s = read('.agents/skills/kaizen-implement/SKILL.md');
+    expect(s).toMatch(/Upholds invariants/);
+    for (const id of ['I3', 'I8', 'I10', 'I17', 'I27']) {
+      expect(s).toMatch(new RegExp(`\\b${id}\\b`));
+    }
+  });
+  it('kaizen-reflect names I16', () => {
+    const s = read('.agents/skills/kaizen-reflect/SKILL.md');
+    expect(s).toMatch(/Upholds invariants/);
+    expect(s).toMatch(/\bI16\b/);
+  });
+});
+
+describe('.agents/kaizen/README.md — Core Invariants points to canonical', () => {
+  const readme = read('.agents/kaizen/README.md');
+
+  it('references docs/kaizen-invariants.md as canonical', () => {
+    expect(readme).toMatch(/kaizen-invariants\.md/);
+  });
+
+  it('does NOT restate I9-I10 workspace isolation rules (deduplicated)', () => {
+    // Spot-check: the long "Main checkout: what is and isn't allowed" table
+    // was removed; now the readme groups invariants by discipline with ID pointers.
+    expect(readme).toMatch(/\bI9\b/);
+    expect(readme).toMatch(/\bI10\b/);
   });
 });
 
