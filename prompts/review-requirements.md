@@ -34,6 +34,11 @@ Compare the PR's implementation against the issue's requirements, acceptance cri
 6. Check for silent scope reductions:
    - Did the PR defer anything without filing a follow-up issue?
    - Did it use `Fixes #N` when `Relates to #N` would be more accurate?
+7. **Check for premature epic closure (CRITICAL)**: GitHub auto-closes any `#N` after a closing keyword (`close/closes/closed/fix/fixes/fixed/resolve/resolves/resolved`) when the PR merges. If the PR body or commits use a closing keyword on a `#N` that is:
+   - An **epic/parent issue** (multi-PR scope, labeled `epic`, or with sub-issues) — this is a **FAIL**. The epic will close prematurely. Flag as `MISSING` with the specific keyword+issue pair.
+   - An issue whose **acceptance criteria are NOT fully met** by THIS PR — this is a **FAIL**. Flag as `MISSING`.
+   - Verify with `gh issue view <N> --json labels,title,body` that the closed issue's scope matches the PR's deliverable.
+   - Patterns to flag: `Closes #<epic>`, `Closes subtask of #<epic>` (parser-ambiguous), `Fixes #<parent-with-children>`.
 
 ## Output Format
 

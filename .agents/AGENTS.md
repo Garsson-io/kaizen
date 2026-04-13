@@ -101,7 +101,15 @@ Store plans immediately after creating them. Review findings are stored per-roun
 
 **PR review dimensions**: When running `/kaizen-review-pr`, bundle dimensions by shared data needs (use the briefing from `npx tsx src/cli-dimensions.ts briefing --lines N`). Don't spawn one agent per dimension — batch dims with identical `needs` into single agents.
 
-**Every PR MUST link at least one issue.** The PR body needs an explicit "Related issues" or "Closes" line with an issue reference — not just `Refs: #N`. Orphan PRs (no issue) are not accepted. If no issue exists, file one first. Scope must be declared: `Closes #N` (full) / `Closes subtask of #N` (partial) / `Partial address of #N` (split delivery) / `Refs #N` (informational only).
+**Every PR MUST close exactly one scope-matched issue.** Orphan PRs (no issue) are not accepted, and PRs MUST NOT close epic/parent issues. If the PR scope is smaller than an epic, file a sub-issue with that exact scope and close THAT. GitHub's closing keywords (`Closes/Close/Closed/Fixes/Fix/Fixed/Resolves/Resolve/Resolved`) followed by `#N` on a new line close issue N on merge — this is a hard auto-close, not a soft link. **Never write `Closes #<epic>` on a sub-PR.** Correct pattern:
+
+```
+Closes #<scope-matched-sub-issue>
+Parent: #<epic>          (informational, does NOT close)
+Refs: #<related>         (informational, does NOT close)
+```
+
+If no scope-matched issue exists, file one first (`gh issue create`). The issue's acceptance criteria must match the PR's actual deliverable — not the epic's full vision.
 
 **Every PR MUST include a test plan with behaviors × levels.** The PR body needs a Test Plan section structured as behaviors with `required_reality_check_level` ∈ {Unit, Integration, System, Agentic, Workflow}. See `.agents/skills/kaizen-write-plan/SKILL.md` §"Assign test levels". For non-trivial PRs, store the full plan on the parent issue via `npx tsx src/cli-structured-data.ts store-testplan --issue <N> --repo <R> --file <plan.md>` and link from the PR body. "Test plan: tests pass" is NOT a test plan — it's a result. A plan names behaviors, justifies levels, and flags what's deferred. Even docs-only PRs need a thin plan (file contents assertions).
 
