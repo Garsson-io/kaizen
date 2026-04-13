@@ -20,6 +20,7 @@ import { SCENARIOS, getScenario, renderPrompt } from './hook-gym-scenarios.js';
 import type { Scenario } from './hook-gym-schema.js';
 import { SEVERITY_WEIGHT } from './hook-gym-schema.js';
 import { validateFixtureFile, formatValidationReport } from './hook-gym-validate.js';
+import { runScenario, runAll } from './hook-gym-run.js';
 
 // ── CLI helpers ────────────────────────────────────────────────────
 
@@ -109,20 +110,29 @@ function cmdDryRun(scenarioName: string): void {
   console.log(rendered);
 }
 
-function cmdRun(scenarioName: string): void {
-  console.error(
-    `\n[hook-gym] Live run not yet implemented (PR 3 of epic #1028).\n` +
-      `[hook-gym] Use \`--run ${scenarioName} --dry-run\` to preview the rendered prompt.\n`,
-  );
-  process.exit(1);
+async function cmdRun(scenarioName: string, modelOverride?: string, debug?: boolean): Promise<void> {
+  const scenario = getScenario(scenarioName);
+  if (!scenario) {
+    console.error(`Unknown scenario: ${scenarioName}`);
+    console.error(`Available: ${SCENARIOS.map((s) => s.name).join(', ')}`);
+    process.exit(1);
+  }
+
+  const result = await runScenario(scenario, {
+    hostRepo: getHostRepo(),
+    modelOverride,
+    debug,
+  });
+  process.exit(result.passed ? 0 : 1);
 }
 
-function cmdRunAll(): void {
-  console.error(
-    `\n[hook-gym] Run-all not yet implemented (PR 3 of epic #1028).\n` +
-      `[hook-gym] Use \`--list\` to see available scenarios.\n`,
-  );
-  process.exit(1);
+async function cmdRunAll(modelOverride?: string, debug?: boolean): Promise<void> {
+  const { allPassed } = await runAll(SCENARIOS, {
+    hostRepo: getHostRepo(),
+    modelOverride,
+    debug,
+  });
+  process.exit(allPassed ? 0 : 1);
 }
 
 function cmdReplay(logPath: string): void {
@@ -148,7 +158,10 @@ function cmdValidate(fixturePath: string, scenarioName: string): void {
 
 // ── Main ───────────────────────────────────────────────────────────
 
-function main(): void {
+async function main(): Promise<void> {
+  const modelOverride = getFlag('--model');
+  const debug = hasFlag('--debug');
+
   if (hasFlag('--help') || hasFlag('-h')) {
     console.log(`hook-gym — Synthetic problem runner with hook observability
 
@@ -181,13 +194,13 @@ See docs/hook-gym-spec.md for full design.`);
     if (hasFlag('--dry-run')) {
       cmdDryRun(scenarioName);
     } else {
-      cmdRun(scenarioName);
+      await cmdRun(scenarioName, modelOverride, debug);
     }
     return;
   }
 
   if (hasFlag('--run-all')) {
-    cmdRunAll();
+    await cmdRunAll(modelOverride, debug);
     return;
   }
 

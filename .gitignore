@@ -5,6 +5,7 @@ dist
 *.tsbuildinfo
 artifacts/
 artifacts
+.hook-gym/runs/
 # Codecov uploader binary + signatures (downloaded by codecov/codecov-action@v5)
 /codecov
 /codecov.SHA256SUM
