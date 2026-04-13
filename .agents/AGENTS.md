@@ -109,9 +109,14 @@ Memory-only retention means the next session on a different machine repeats the 
 
 ### Branch & PR hygiene
 
-- **Never push new commits to a branch whose PR has already been merged.** Commits pushed to a merged branch get orphaned or confuse the review loop. Always create a new branch (via `EnterWorktree` or `git checkout -b`) for follow-up work.
-- **If you accidentally pushed to a merged branch, detect and recover.** Check `gh pr list --head <branch>` and `gh pr view <last-pr> --json state`. If the last PR on the branch is `MERGED`, create a fresh branch from `main` (or from the merge commit), cherry-pick or re-apply your new commits there, and open a new PR from the new branch.
-- **Review round bumps on push are intended.** Within a single open PR, `pr-review-loop` correctly sets `needs_review` for a new round after every `git push`. Each push is new code and deserves fresh review; the previous round's pass is stale. This is not a bug — complete the new review round before proceeding.
+- **Never push new commits to a branch whose most recent PR was already merged with no subsequent open PR.** Commits pushed to such a branch can get orphaned and the review-loop state file points at the merged PR, not the new work. Always create a new branch (via `EnterWorktree` or `git checkout -b`) for follow-up work.
+- **Detect merged-branch state before pushing.** Run:
+  ```bash
+  gh pr list --repo <repo> --head <branch> --state all --json number,state --jq '.[0]'
+  ```
+  If the most recent PR is `MERGED` and there's no newer `OPEN` PR on the branch, you must branch off before pushing. If an `OPEN` PR already exists on the branch, pushing to extend it is fine (new round bump is correct).
+- **If you accidentally pushed to a merged branch:** create a fresh branch from `main` (or from the merge commit), cherry-pick your new commits there, and open a new PR from the new branch.
+- **Review round bumps on push within an open PR are intended.** Each push is new code and deserves fresh review; the previous round's pass is stale. Complete the new round before proceeding.
 
 ## Configuration
 
