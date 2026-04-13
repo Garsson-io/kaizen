@@ -265,6 +265,46 @@ describe('storePlan + retrievePlan — round-trip', () => {
   });
 });
 
+describe('storePlan + retrieveTestPlan — round-trip via plan-section fallback (B15)', () => {
+  it('a plan containing a ## Test Plan section is retrievable via retrieveTestPlan', () => {
+    // Store: writeAttachment with the full plan (no dedicated testplan stored)
+    const planDoc = '## Plan\n\nSteps:\n1. Do X\n2. Do Y\n\n## Test Plan\n\n| # | Behavior | Level |\n|---|----------|-------|\n| 1 | X does Y | Unit |';
+    ghReturns(''); // readAttachment: no existing plan attachment
+    ghReturns('https://github.com/.../comments/1'); // createComment succeeds
+    storePlan(issue, planDoc);
+
+    // Retrieve the test plan — should fall back to plan attachment's Test Plan section
+    ghReturns(''); // readAttachment for 'testplan': none
+    ghReturns(JSON.stringify({ url: 'u', body: `<!-- kaizen:plan -->\n${planDoc}` })); // readAttachment for 'plan': the stored plan
+    const testPlan = retrieveTestPlan(issue);
+
+    expect(testPlan).not.toBeNull();
+    expect(testPlan).toContain('X does Y');
+    expect(testPlan).toContain('Unit');
+    // Must NOT contain unrelated sections of the plan
+    expect(testPlan).not.toContain('1. Do X');
+  });
+
+  it('a plan containing ## Seam Map & Test Plan is retrievable (matches write-plan template)', () => {
+    const planDoc = '## Plan\n\nSteps\n\n## Seam Map & Test Plan\n\n| # | Behavior | Level |\n|---|----------|-------|\n| 1 | A | Integration |';
+    ghReturns(''); ghReturns('https://...');
+    storePlan(issue, planDoc);
+
+    ghReturns(''); // no testplan attachment
+    ghReturns(JSON.stringify({ url: 'u', body: `<!-- kaizen:plan -->\n${planDoc}` }));
+    const testPlan = retrieveTestPlan(issue);
+    expect(testPlan).toContain('A');
+    expect(testPlan).toContain('Integration');
+  });
+
+  it('dedicated testplan attachment takes precedence over plan attachment section', () => {
+    const dedicated = '## Test Plan\n\nDedicated version with B-prime';
+    ghReturns(JSON.stringify({ url: 'u', body: `<!-- kaizen:testplan -->\n${dedicated}` }));
+    const testPlan = retrieveTestPlan(issue);
+    expect(testPlan).toContain('B-prime');
+  });
+});
+
 describe('retrieveTestPlan — lookup order', () => {
   it('prefers dedicated testplan attachment', () => {
     ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:testplan -->\n## Test Plan\n\nBehavior X: Unit' }));
