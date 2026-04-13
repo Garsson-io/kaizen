@@ -9,11 +9,14 @@
  * - I/O is done through an injectable writer interface for the same reason.
  * - Budget tracking is advisory (soft warning, not kill) — we already paid.
  * - Timeout enforcement kills the child process after scenario.timeoutSeconds.
+ * - For non-self-dogfood repos, the runner auto-clones the host repo into a
+ *   temp dir so the spawned agent's git/gh operations target the right remote.
  */
 
-import { spawn as realSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { spawn as realSpawn, execSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { HookTimeline, Scenario } from './hook-gym-schema.js';
 import { createHookStreamProcessor, parseLogFile } from './hook-gym-stream.js';
 import { renderPrompt, getScenario, SCENARIOS } from './hook-gym-scenarios.js';
@@ -46,6 +49,13 @@ export interface RunOptions {
   debug?: boolean;
   /** Logger for status messages. Default: console.log. */
   log?: (...args: unknown[]) => void;
+  /**
+   * Override cwd for the spawned claude process.
+   * - undefined (default): auto-clone for non-self-dogfood repos, inherit cwd otherwise.
+   * - null: skip auto-clone, inherit cwd (for unit tests with mocked spawn).
+   * - string: use that directory directly.
+   */
+  cwd?: string | null;
 }
 
 function getHostRepo(): string {
@@ -59,6 +69,67 @@ function getHostRepo(): string {
 
 function timestamp(): string {
   return new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+}
+
+/**
+ * Clone the host repo into a temp dir and install kaizen hooks for subprocess
+ * isolation. The spawned agent runs in this temp dir so its git push / gh pr
+ * create target the right remote, and kaizen hooks are active (symlinked from
+ * the current kaizen repo so we test the *current* hooks, not a stale install).
+ *
+ * Returns the temp dir path on success, undefined on failure.
+ */
+function cloneAndSetup(
+  hostRepo: string,
+  scenarioName: string,
+  log: (...args: unknown[]) => void,
+): string | undefined {
+  const dir = join(tmpdir(), `hook-gym-${scenarioName}-${Date.now()}`);
+  log(`[hook-gym] Cloning ${hostRepo} into temp dir for isolation...`);
+  try {
+    execSync(
+      `git clone --depth 1 "https://github.com/${hostRepo}.git" "${dir}"`,
+      { stdio: 'pipe', timeout: 30_000 },
+    );
+  } catch (err) {
+    log(`[hook-gym] Clone failed: ${err instanceof Error ? err.message : err}`);
+    log(`[hook-gym] Falling back to current directory (agent may target wrong repo).`);
+    return undefined;
+  }
+
+  // Install kaizen hooks via symlinks from the current kaizen repo.
+  // This ensures the spawned agent tests the *current* hooks (from this
+  // worktree), not whatever version was last installed as a plugin.
+  const kaizenRoot = resolve(__dirname, '..');
+  try {
+    // Symlink .claude/hooks → kaizen's hooks
+    mkdirSync(join(dir, '.claude'), { recursive: true });
+    execSync(`ln -sf "${kaizenRoot}/.claude/hooks" "${join(dir, '.claude/hooks')}"`, { stdio: 'pipe' });
+
+    // Symlink .claude-plugin → kaizen's plugin manifest (hooks reference ${CLAUDE_PLUGIN_ROOT})
+    execSync(`ln -sf "${kaizenRoot}/.claude-plugin" "${join(dir, '.claude-plugin')}"`, { stdio: 'pipe' });
+
+    // Symlink node_modules + dist so TS hooks can find their compiled output
+    execSync(`ln -sf "${kaizenRoot}/node_modules" "${join(dir, 'node_modules')}"`, { stdio: 'pipe' });
+    if (existsSync(join(kaizenRoot, 'dist'))) {
+      execSync(`ln -sf "${kaizenRoot}/dist" "${join(dir, 'dist')}"`, { stdio: 'pipe' });
+    }
+
+    // Copy settings.json if it exists (project-level hook registrations)
+    const settingsSrc = join(kaizenRoot, '.claude', 'settings.json');
+    if (existsSync(settingsSrc)) {
+      mkdirSync(join(dir, '.claude'), { recursive: true });
+      execSync(`cp "${settingsSrc}" "${join(dir, '.claude/settings.json')}"`, { stdio: 'pipe' });
+    }
+
+    log(`[hook-gym] Hooks installed in temp clone (symlinked from ${kaizenRoot})`);
+  } catch (err) {
+    log(`[hook-gym] Hook setup failed: ${err instanceof Error ? err.message : err}`);
+    log(`[hook-gym] Hooks may not fire in the spawned agent.`);
+  }
+
+  log(`[hook-gym] Clone ready at ${dir}`);
+  return dir;
 }
 
 /**
@@ -85,7 +156,28 @@ export async function runScenario(
     host_repo: hostRepo,
   });
 
-  log(`[hook-gym] Running scenario: ${scenario.name} (model=${model}, timeout=${scenario.timeoutSeconds}s, budget=$${scenario.maxBudget.toFixed(2)})`);
+  // Determine cwd for the spawned agent.
+  // For non-self-dogfood repos, auto-clone into a temp dir so the agent's
+  // git push / gh pr create target the right remote and don't pollute the
+  // kaizen repo's working tree.
+  let agentCwd: string | undefined;
+  let tempCloneDir: string | undefined;
+  const isSelfDogfood = hostRepo === getHostRepo();
+
+  if (opts.cwd === null) {
+    // Explicit null = skip auto-clone (unit tests with mocked spawn).
+    agentCwd = undefined;
+  } else if (opts.cwd) {
+    // Explicit path = use directly.
+    agentCwd = opts.cwd;
+  } else if (!isSelfDogfood) {
+    // Auto-clone the host repo + install kaizen hooks for isolation.
+    tempCloneDir = cloneAndSetup(hostRepo, scenario.name, log);
+    agentCwd = tempCloneDir;
+  }
+  // else: self-dogfood — run in CWD (the kaizen repo itself), hooks present.
+
+  log(`[hook-gym] Running scenario: ${scenario.name} (model=${model}, timeout=${scenario.timeoutSeconds}s, budget=$${scenario.maxBudget.toFixed(2)}, cwd=${agentCwd ?? 'inherited'})`);
 
   const streamLines: string[] = [];
   const processor = createHookStreamProcessor();
@@ -95,6 +187,7 @@ export async function runScenario(
     const args = [
       '-p', rendered,
       '--model', model,
+      '--verbose',
       '--output-format', 'stream-json',
       '--include-hook-events',
       '--max-turns', '50',
@@ -104,6 +197,7 @@ export async function runScenario(
     const child: ChildProcess = spawnFn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
+      ...(agentCwd ? { cwd: agentCwd } : {}),
     } as SpawnOptions);
 
     let timedOut = false;
@@ -155,6 +249,16 @@ export async function runScenario(
   const timeline = processor.getTimeline();
 
   log(`[hook-gym] Finished in ${(durationMs / 1000).toFixed(1)}s — ${timeline.events.length} hook events captured.`);
+
+  // Clean up temp clone if we made one
+  if (tempCloneDir) {
+    try {
+      rmSync(tempCloneDir, { recursive: true, force: true });
+      log(`[hook-gym] Cleaned up temp clone at ${tempCloneDir}`);
+    } catch {
+      log(`[hook-gym] Warning: failed to clean up ${tempCloneDir}`);
+    }
+  }
 
   // Validate against ground truth
   const validation = validateAgainstScenario(timeline, scenario);

@@ -69,7 +69,7 @@ function cmdList(): void {
   console.log(`Total: ${SCENARIOS.length} scenarios`);
 }
 
-function cmdDryRun(scenarioName: string): void {
+function cmdDryRun(scenarioName: string, hostRepoOverride: string): void {
   const scenario = getScenario(scenarioName);
   if (!scenario) {
     console.error(`Unknown scenario: ${scenarioName}`);
@@ -77,7 +77,7 @@ function cmdDryRun(scenarioName: string): void {
     process.exit(1);
   }
 
-  const hostRepo = getHostRepo();
+  const hostRepo = hostRepoOverride;
   const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
 
   const rendered = renderPrompt(scenario.prompt, {
@@ -194,7 +194,7 @@ See docs/hook-gym-spec.md for full design.`);
   const scenarioName = getFlag('--run');
   if (scenarioName) {
     if (hasFlag('--dry-run')) {
-      cmdDryRun(scenarioName);
+      cmdDryRun(scenarioName, hostRepo);
     } else {
       await cmdRun(scenarioName, hostRepo, modelOverride, debug);
     }
