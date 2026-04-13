@@ -1,6 +1,10 @@
 /**
  * pr-kaizen-clear.ts — Clears the PR kaizen gate on valid impediment declarations.
  *
+ * @enforces I6  — Gates cleared by mechanism (validates JSON shape; `rm` bypass impossible).
+ * @enforces I16 — Gate-clear path for reflection requirement.
+ *                 Canonical: docs/kaizen-invariants.md.
+ *
  * PostToolUse hook on Bash — always exits 0 (state management, not blocking).
  *
  * Triggers:

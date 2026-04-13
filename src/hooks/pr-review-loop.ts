@@ -1,6 +1,13 @@
 /**
  * pr-review-loop.ts — Multi-round PR self-review with state tracking.
  *
+ * @enforces I5  — Review round has structured findings stored (sentinel gate).
+ * @enforces I15 — Every push to an open PR's branch triggers a review round.
+ * @enforces I16 — PR create/merge triggers reflection gate (partial; clear path in pr-kaizen-clear).
+ * @enforces I28 — Review must cover all dimensions (partial: sentinel requires at least one finding;
+ *                 full dimension coverage check tracked in #1038).
+ *                 Canonical: docs/kaizen-invariants.md.
+ *
  * PostToolUse hook on Bash — always exits 0 (advisory, not blocking).
  *
  * Triggers:

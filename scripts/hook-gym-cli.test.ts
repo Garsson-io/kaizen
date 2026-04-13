@@ -1,0 +1,162 @@
+/**
+ * hook-gym-cli.test.ts — Integration tests for the hook-gym CLI entry point.
+ *
+ * Behaviors covered (from issue #1034 test plan):
+ *   B8 — `--list` emits formatted scenario summary with severity weights
+ *   B9 — `--run <name> --dry-run` renders prompt with template vars substituted
+ *
+ * These are Integration level: they spawn a real `npx tsx` subprocess,
+ * exercise the full CLI pipeline (arg parsing → scenario lookup → template
+ * rendering → stdout), and assert on the composed output. Mocking stdout
+ * would always pass — this is why the level is Integration not Unit.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+
+const REPO_ROOT = resolve(__dirname, '..');
+const CLI = resolve(REPO_ROOT, 'scripts/hook-gym.ts');
+
+function runCli(args: string[]): { stdout: string; stderr: string; status: number } {
+  const result = spawnSync('npx', ['tsx', CLI, ...args], {
+    cwd: REPO_ROOT,
+    encoding: 'utf-8',
+    timeout: 30000,
+  });
+  return {
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    status: result.status ?? -1,
+  };
+}
+
+describe('hook-gym CLI — --list (B8)', () => {
+  it('exits 0 and lists all three scenarios', () => {
+    const { stdout, status } = runCli(['--list']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('probe-hooks');
+    expect(stdout).toContain('lifecycle-gates');
+    expect(stdout).toContain('full-clear');
+  });
+
+  it('shows total count', () => {
+    const { stdout } = runCli(['--list']);
+    expect(stdout).toContain('Total: 3 scenarios');
+  });
+
+  it('includes model, budget, and timeout columns', () => {
+    const { stdout } = runCli(['--list']);
+    // probe-hooks uses haiku
+    expect(stdout).toMatch(/probe-hooks\s+haiku/);
+    // full-clear uses sonnet
+    expect(stdout).toMatch(/full-clear\s+sonnet/);
+    // At least one scenario has a dollar budget
+    expect(stdout).toMatch(/\$\d+\.\d{2}/);
+    // At least one scenario has a seconds timeout
+    expect(stdout).toMatch(/\d+s\b/);
+  });
+
+  it('includes weighted severity total per scenario', () => {
+    const { stdout } = runCli(['--list']);
+    // Severity weight is printed as weight=NN
+    expect(stdout).toMatch(/weight=\d+/);
+  });
+
+  it('shows description for each scenario', () => {
+    const { stdout } = runCli(['--list']);
+    expect(stdout).toContain('Minimal: create file, commit, PR');
+    expect(stdout).toContain('Gate lifecycle');
+    expect(stdout).toContain('Full lifecycle');
+  });
+});
+
+describe('hook-gym CLI — --run <name> --dry-run (B9)', () => {
+  it('exits 0 for a valid scenario', () => {
+    const { status } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    expect(status).toBe(0);
+  });
+
+  it('substitutes the {{timestamp}} template variable', () => {
+    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    // The placeholder must be gone
+    expect(stdout).not.toContain('{{timestamp}}');
+    // And a real timestamp (14-digit YYYYMMDDHHMMSS) should appear
+    expect(stdout).toMatch(/\d{14}/);
+  });
+
+  it('substitutes the {{host_repo}} template variable', () => {
+    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    expect(stdout).not.toContain('{{host_repo}}');
+    // Host repo read from kaizen.config.json — kaizen self-dogfoods
+    expect(stdout).toContain('Garsson-io/kaizen');
+  });
+
+  it('prints the scenario header block with model + budget + timeout', () => {
+    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    expect(stdout).toContain('=== Scenario: probe-hooks ===');
+    expect(stdout).toContain('Model: haiku');
+    expect(stdout).toContain('Budget: $');
+    expect(stdout).toContain('Timeout:');
+  });
+
+  it('prints the expected-hooks section with severity and weight', () => {
+    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    expect(stdout).toContain('--- Expected hooks ---');
+    // Severity and weight annotation appears on every expected hook
+    expect(stdout).toMatch(/\[sev=\d w=\d\]/);
+  });
+
+  it('prints the expected-gates section', () => {
+    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    expect(stdout).toContain('--- Expected gates ---');
+    expect(stdout).toContain('needs_review');
+    expect(stdout).toContain('needs_pr_kaizen');
+  });
+
+  it('prints the rendered prompt section', () => {
+    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    expect(stdout).toContain('--- Rendered prompt ---');
+    // The probe-hooks scenario instructs creating hook-gym-probe.md
+    expect(stdout).toContain('hook-gym-probe.md');
+  });
+
+  it('exits non-zero for an unknown scenario', () => {
+    const { stderr, status } = runCli(['--run', 'no-such-scenario', '--dry-run']);
+    expect(status).not.toBe(0);
+    expect(stderr).toContain('Unknown scenario');
+  });
+});
+
+describe('hook-gym CLI — unimplemented commands exit non-zero', () => {
+  // Regression (round 12 correctness finding): stubs returned exit 0, so CI
+  // treated invocations of incomplete commands as success.
+  it('--run (live) exits non-zero with a message on stderr', () => {
+    const { stderr, status } = runCli(['--run', 'probe-hooks']);
+    expect(status).not.toBe(0);
+    expect(stderr).toContain('not yet implemented');
+  });
+
+  it('--run-all exits non-zero', () => {
+    const { status, stderr } = runCli(['--run-all']);
+    expect(status).not.toBe(0);
+    expect(stderr).toContain('not yet implemented');
+  });
+
+  it('--replay exits non-zero', () => {
+    const { status, stderr } = runCli(['--replay', '/tmp/nonexistent.log']);
+    expect(status).not.toBe(0);
+    expect(stderr).toContain('not yet implemented');
+  });
+});
+
+describe('hook-gym CLI — --help', () => {
+  it('prints usage and exits 0', () => {
+    const { stdout, status } = runCli(['--help']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('Synthetic problem runner');
+    expect(stdout).toContain('--list');
+    expect(stdout).toContain('--run');
+    expect(stdout).toContain('--replay');
+  });
+});

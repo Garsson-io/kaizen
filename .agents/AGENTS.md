@@ -118,6 +118,52 @@ Memory-only retention means the next session on a different machine repeats the 
 - **If you accidentally pushed to a merged branch:** create a fresh branch from `main` (or from the merge commit), cherry-pick your new commits there, and open a new PR from the new branch.
 - **Review round bumps on push within an open PR are intended.** Each push is new code and deserves fresh review; the previous round's pass is stale. Complete the new round before proceeding.
 
+## Kaizen Invariants
+
+**Canonical source**: [`docs/kaizen-invariants.md`](../docs/kaizen-invariants.md) — full text (why/check-point/enforcement) for every invariant. Reference invariants by ID (`I1`, `I2`, …); do NOT restate their rules here or in skill docs.
+
+Compact in-context summary (one-line per invariant):
+
+| ID | Invariant | L2 |
+|:-:|----------|:--:|
+| **I1** | Every PR has `Closes #<N>` with `#N` adjacent to the closing keyword | ⚠️ |
+| **I2** | Closed `#N` is scope-matched (not an epic; no open sub-issues) | ⚠️ |
+| **I3** | Closed `#N` has a stored test plan (`retrieve-testplan` ≠ null) | ⚠️ |
+| **I4** | PR body includes behaviors × levels table (Unit/Integration/System/Agentic/Workflow) | ⚠️ |
+| **I5** | Review round has structured findings stored | ✅ |
+| **I6** | Gates cleared by mechanism, never by `rm` of state files | ✅ |
+| **I7** | No push to a branch whose most-recent PR merged with no newer open PR | ⚠️ |
+| **I8** | Implementation begins only after plan is stored on the issue | ⚠️ |
+| **I9** | No source edits on main branch outside a worktree | ✅ |
+| **I10** | No source edits in worktree without a kaizen case | ✅ |
+| **I11** | No dirty/uncommitted files at `gh pr create` | ✅ |
+| **I12** | No `git rebase` on PR branches | ✅ |
+| **I13** | During `needs_review`, only review-scoped commands run | ✅ |
+| **I14** | During `needs_pr_kaizen`, only kaizen-scoped commands run | ✅ |
+| **I15** | Every push to an open PR's branch triggers a review round | ✅ |
+| **I16** | Every PR create/merge requires reflection (`KAIZEN_IMPEDIMENTS`) | ✅ |
+| **I17** | Source file changes co-commit with their tests | ⚠️ |
+| **I18** | Tests pass before stopping | ⚠️ |
+| **I19** | No secrets / credentials in commits | ⚠️ |
+| **I20** | Search for similar issues before creating a new one | ⚠️ |
+| **I21** | Worktree cleanup on stop (no orphan locks, no uncommitted work) | ⚠️ |
+| **I22** | Skill changes require behavioral proof | ⚠️ |
+| **I23** | PRs changing hooks/skills run E2E tests against `kaizen-test-fixture` | ⚠️ |
+| **I24** | After merge: delete local branch AND clean up worktree | ⚠️ |
+| **I25** | Never leave dirty files in a branch between operations | ⚠️ |
+| **I26** | New branches are created from `origin/main` (fresh fetch) | ⚠️ |
+| **I27** | Test-plan behaviors are fully implemented in the PR (no silent deferring) | ⚠️ |
+| **I28** | PR review covers ALL applicable documented dimensions, not just one | ⚠️ |
+
+✅ = L2 hook enforces · ⚠️ = L1 only (agent must remember; escalation tracked — see canonical doc).
+
+**Correct issue-linkage pattern for PR bodies** (see I1, I2):
+```
+Closes #<scope-matched-sub-issue>
+Parent: #<epic>          ← informational, does NOT close
+Refs: #<related>         ← informational, does NOT close
+```
+
 ## Configuration
 
 All skills and hooks read `kaizen.config.json` from the host project root:

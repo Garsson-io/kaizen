@@ -7,6 +7,8 @@ description: Recursive process improvement — core workflow for continuous impr
 
 # Recursive Kaizen — Core Workflow
 
+**Upholds invariants**: I16 (PR create/merge → reflection; this is the reflection itself). See [`docs/kaizen-invariants.md`](../../../docs/kaizen-invariants.md).
+
 **Role:** The reflection engine. Fires after work is done and produces actionable improvements. Classifies the right enforcement level and files issues. Also the meta-layer: reflects on whether the kaizen system itself is working.
 
 **Philosophy:** See the [Zen of Kaizen](../../kaizen/zen.md) — run `/kaizen-zen` to print it.

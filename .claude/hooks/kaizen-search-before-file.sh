@@ -1,6 +1,8 @@
 #!/bin/bash
 # Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # search-before-file.sh — PreToolUse advisory hook (Issue #704)
+# @enforces I20 — Search for similar issues before creating a new one (advisory).
+#                 Canonical: docs/kaizen-invariants.md
 #
 # When an agent runs `gh issue create`, this hook automatically searches
 # for similar open issues and shows matches. Advisory only (does not block).

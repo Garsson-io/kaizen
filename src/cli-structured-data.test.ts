@@ -5,6 +5,7 @@ import {
   nextReviewRound,
   storePlan,
   storeMetadata,
+  storeReviewFinding,
 } from './structured-data.js';
 
 vi.mock('node:fs', () => ({
@@ -191,7 +192,7 @@ describe('store-review-batch — review sentinel', () => {
       ...baseArgs,
       pr: '456',
       repo: 'my/repo',
-      text: JSON.stringify([{ dimension: 'dry', verdict: 'pass', summary: '', findings: [] }]),
+      text: JSON.stringify([{ dimension: 'dry', verdict: 'pass', summary: 'ok', findings: [] }]),
     });
     log.mockRestore();
 
@@ -201,5 +202,122 @@ describe('store-review-batch — review sentinel', () => {
     );
     expect(sentinelCall).toBeDefined();
     expect(String(sentinelCall![0])).toContain('456');
+  });
+});
+
+// ── store-review-finding strict validation (#1039) ─────────────────────────
+
+describe('store-review-finding — strict payload validation (#1039)', () => {
+  const baseArgs: CliArgs = {
+    command: 'store-review-finding',
+    pr: '1030',
+    repo: 'Garsson-io/kaizen',
+    round: '13',
+    dimension: 'correctness',
+  };
+
+  // Use process.exit stubbing: handler calls process.exit(1) on error paths.
+  function spyExit() {
+    return vi.spyOn(process, 'exit').mockImplementation((code?: number | string | null) => {
+      throw new Error(`process.exit(${code})`);
+    });
+  }
+
+  it('H1: rejects non-JSON payload with non-zero exit and descriptive error', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = spyExit();
+    await expect(handlers['store-review-finding']({ ...baseArgs, text: 'not json at all{' }))
+      .rejects.toThrow('process.exit(1)');
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/not valid JSON/));
+    expect(vi.mocked(storeReviewFinding)).not.toHaveBeenCalled();
+    err.mockRestore();
+    exit.mockRestore();
+  });
+
+  it('H2: rejects verdict=fail with empty findings (the #1039 core bug)', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = spyExit();
+    await expect(handlers['store-review-finding']({
+      ...baseArgs,
+      text: JSON.stringify({ dimension: 'correctness', verdict: 'fail', summary: 'broken', findings: [] }),
+    })).rejects.toThrow('process.exit(1)');
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/#1039|empty findings/i));
+    expect(vi.mocked(storeReviewFinding)).not.toHaveBeenCalled();
+    err.mockRestore();
+    exit.mockRestore();
+  });
+
+  it('H3: accepts a valid payload and stores it', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['store-review-finding']({
+      ...baseArgs,
+      text: JSON.stringify({
+        dimension: 'correctness',
+        verdict: 'pass',
+        summary: 'all checks addressed',
+        findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }],
+      }),
+    });
+    expect(vi.mocked(storeReviewFinding)).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Review finding stored'));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/1 DONE/));
+    log.mockRestore();
+  });
+
+  it('H4: --payload-file reads content from disk', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.mocked(readFileSync).mockReturnValueOnce(JSON.stringify({
+      dimension: 'correctness',
+      verdict: 'pass',
+      summary: 'multi\nline\n"quoted"',
+      findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }],
+    }));
+    await handlers['store-review-finding']({ ...baseArgs, ['payload-file']: '/tmp/finding.json' } as CliArgs);
+    expect(vi.mocked(readFileSync)).toHaveBeenCalledWith('/tmp/finding.json', 'utf8');
+    expect(vi.mocked(storeReviewFinding)).toHaveBeenCalledTimes(1);
+    log.mockRestore();
+  });
+
+  it('rejects empty payload with actionable message', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = spyExit();
+    await expect(handlers['store-review-finding']({ ...baseArgs, text: '   ' }))
+      .rejects.toThrow('process.exit(1)');
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/no payload/i));
+    err.mockRestore();
+    exit.mockRestore();
+  });
+
+  it('H6: store-review-batch rejects empty-fail and does NOT write sentinel', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = vi.spyOn(process, 'exit').mockImplementation((code?: number | string | null) => {
+      throw new Error(`process.exit(${code})`);
+    });
+    await expect(handlers['store-review-batch']({
+      command: 'store-review-batch',
+      pr: '1030',
+      repo: 'Garsson-io/kaizen',
+      round: '13',
+      text: JSON.stringify([{ dimension: 'correctness', verdict: 'fail', summary: 'bad', findings: [] }]),
+    } as CliArgs)).rejects.toThrow('process.exit(1)');
+    // Sentinel must NOT be written when batch is rejected
+    const sentinelCall = vi.mocked(appendFileSync).mock.calls.find(
+      ([path]) => typeof path === 'string' && path.includes('.reviewed-r'),
+    );
+    expect(sentinelCall).toBeUndefined();
+    err.mockRestore();
+    exit.mockRestore();
+  });
+
+  it('rejects missing summary', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = spyExit();
+    await expect(handlers['store-review-finding']({
+      ...baseArgs,
+      text: JSON.stringify({ dimension: 'correctness', verdict: 'pass', findings: [] }),
+    })).rejects.toThrow('process.exit(1)');
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/summary/i));
+    err.mockRestore();
+    exit.mockRestore();
   });
 });

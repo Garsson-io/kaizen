@@ -1,6 +1,10 @@
 #!/bin/bash
 # Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # check-cleanup-on-stop.sh — Level 2 kaizen enforcement
+# @enforces I21 — Worktree cleanup on stop (advisory).
+# @enforces I24 — Post-merge branch/worktree cleanup (partial advisory; escalation in #1037).
+# @enforces I25 — No dirty files between ops (advisory at stop).
+#                 Canonical: docs/kaizen-invariants.md
 # On session stop, warn about orphaned worktrees for the current branch.
 # Also removes the lock file if present (prevents orphaned locks from Pattern 3).
 # Does NOT block — just reminds. The auto-prune handles actual cleanup.

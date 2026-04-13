@@ -1,6 +1,13 @@
 /**
  * stop-gate.ts — Unified stop hook entry point.
  *
+ * @enforces I6  — Gates cleared by mechanism, never by `rm` of state files.
+ * @enforces I13 — Enforces review gate at Stop time (if `needs_review` pending).
+ * @enforces I14 — Enforces reflection gate at Stop time (if `needs_pr_kaizen` pending).
+ * @enforces I16 — Ensures reflection happens before completion.
+ * @enforces I24 — Enforces post-merge gate (if `needs_post_merge` pending).
+ *                 Canonical: docs/kaizen-invariants.md.
+ *
  * Replaces 3 separate stop hooks (enforce-pr-review-stop, enforce-reflect-stop,
  * enforce-post-merge-stop) with a single gate that reads all pending state files
  * and produces one rich, context-aware message.

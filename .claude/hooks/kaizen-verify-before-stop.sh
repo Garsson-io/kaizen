@@ -1,6 +1,8 @@
 #!/bin/bash
 # Part of kAIzen Agent Control Flow — see .agents/kaizen/README.md
 # verify-before-stop.sh — Level 2 kaizen enforcement
+# @enforces I18 — Tests pass before stop (advisory reminder).
+#                 Canonical: docs/kaizen-invariants.md
 # Runs when Claude Code agent finishes. Checks if source files were
 # modified and reminds the agent to verify before stopping.
 #

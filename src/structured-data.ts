@@ -325,18 +325,39 @@ export function retrievePlan(target: AttachmentTarget & SectionTarget): string |
 }
 
 /**
- * Retrieve test plan text. Checks attachment first, falls back to body ## Test Plan.
+ * Retrieve test plan text. Lookup order:
+ *   1. Dedicated `testplan` attachment
+ *   2. `## Test Plan` (or `## Seam Map & Test Plan`) section inside the `plan` attachment
+ *   3. `## Test Plan` section inside the issue body
+ *
+ * A single `store-plan` call with a plan that contains the section is
+ * enough — review dimensions retrieve the test plan via this function.
  */
 export function retrieveTestPlan(target: AttachmentTarget & SectionTarget): string | null {
-  const attachment = readAttachment(target, 'testplan');
-  if (attachment) return attachment.content;
+  const dedicated = readAttachment(target, 'testplan');
+  if (dedicated) return dedicated.content;
+
+  // Fall back to the plan attachment's Test Plan section
+  const planAttachment = readAttachment(target, 'plan');
+  if (planAttachment) {
+    const section = findTestPlanSection(planAttachment.content);
+    if (section) return section;
+  }
 
   try {
     const body = fetchBody(target);
-    const sections = parseSections(body);
-    const testPlan = sections.find(s => /^Test Plan/i.test(s.name));
-    return testPlan?.content ?? null;
-  } catch { return null; }
+    const section = findTestPlanSection(body);
+    if (section) return section;
+  } catch { /* fall through */ }
+
+  return null;
+}
+
+/** Extract a ## Test Plan section from markdown text. */
+function findTestPlanSection(markdown: string): string | null {
+  const sections = parseSections(markdown);
+  const testPlan = sections.find(s => /^(Test Plan|Seam Map.*Test Plan)/i.test(s.name));
+  return testPlan?.content ?? null;
 }
 
 // ── Metadata (connected issues, PR number) ──────────────────────────

@@ -6,6 +6,8 @@ user_invocable: true
 
 # Write PR Description — Story Spine Narrative
 
+**Upholds invariants**: I1 (Closes #N adjacent), I2 (scope-matched), I3 (issue has test plan), I4 (PR body has B×L table). See [`docs/kaizen-invariants.md`](../../../docs/kaizen-invariants.md) for the canonical rules.
+
 Write a PR description that a reviewer can understand **without reading the diff**. The diff is proof — the description is the argument.
 
 **When to use:**
@@ -42,12 +44,59 @@ Follow the story with structured sections:
 
 ## Process
 
-1. **Read the commits**: `git log main..HEAD --oneline` — understand what was built
-2. **Read the diff**: `git diff main..HEAD --stat` — understand the scope
-3. **Read the linked issue**: `gh issue view <N> --repo "$ISSUES_REPO"` — understand the motivation
-4. **Find the inciting incident**: What specific failure, discovery, or user request triggered this work? If you can't name it, the PR may be solving a theoretical problem.
-5. **Gather evidence**: Test results, cost data, performance numbers, real output. The "Because of that" beats need concrete data, not assertions.
-6. **Write the narrative first**, then the structured sections. The story is the skeleton — the sections are the flesh.
+1. **Confirm a scope-matched issue exists** (see "Issue linkage" below). If the PR scope is smaller than any open issue, file a sub-issue BEFORE writing the PR.
+2. **Read the commits**: `git log main..HEAD --oneline` — understand what was built
+3. **Read the diff**: `git diff main..HEAD --stat` — understand the scope
+4. **Read the linked issue**: `gh issue view <N> --repo "$ISSUES_REPO"` — understand the motivation
+5. **Find the inciting incident**: What specific failure, discovery, or user request triggered this work? If you can't name it, the PR may be solving a theoretical problem.
+6. **Gather evidence**: Test results, cost data, performance numbers, real output. The "Because of that" beats need concrete data, not assertions.
+7. **Write the narrative first**, then the structured sections. The story is the skeleton — the sections are the flesh.
+8. **Retrieve the test plan from the linked issue** and include the behaviors × levels table in the PR body:
+   ```bash
+   npx tsx src/cli-structured-data.ts retrieve-testplan --issue <N> --repo "$ISSUES_REPO"
+   ```
+   Copy the behaviors × levels table into the PR body under a "Test Plan (Behaviors × Levels)" section, with coverage status (✅ tested / ⏳ deferred) per behavior. Cite which behaviors are in-scope, which are deferred, and which issue tracks each deferred behavior. Reviewers retrieve this same plan to check the PR against it (`review-plan-coverage`, `review-test-plan`, `review-requirements`).
+
+   If `retrieve-testplan` returns nothing, the issue has no plan — run `/kaizen-write-plan` against the issue first.
+
+## Issue linkage (MANDATORY)
+
+**Every PR closes exactly one scope-matched issue.** Before writing the PR body, verify:
+
+1. **A linked issue exists** — `gh issue list --repo <R> --search "<PR topic>"`. If none matches, file one: `gh issue create --title ... --body ...` with acceptance criteria that mirror the PR's deliverable.
+2. **Scope matches** — the issue's acceptance criteria must be achievable by THIS PR alone. If the issue is an epic/parent spanning multiple PRs, DO NOT close it. Close a scope-matched child instead.
+3. **Use safe keywords precisely.**
+
+### GitHub closing keywords — what closes what
+
+GitHub auto-closes issue `#N` when a PR containing one of these patterns merges:
+
+- `close #N` / `closes #N` / `closed #N`
+- `fix #N` / `fixes #N` / `fixed #N`
+- `resolve #N` / `resolves #N` / `resolved #N`
+
+Case-insensitive. Works in PR body and commit messages. The `#N` must be a direct issue reference (with `#`, not inside a URL path). Words between the keyword and `#` that aren't issue references (e.g. `Closes subtask of #N`) may still be parsed as closing — **do not rely on parser leniency**. Keep keywords and `#N` adjacent when you mean to close, and use non-keyword wording when you don't.
+
+### Correct body patterns
+
+```
+Closes #<scope-matched-sub-issue>
+
+Parent: #<epic>          ← informational, does NOT close
+Refs: #<related>         ← informational, does NOT close
+```
+
+### Wrong patterns (ship-bricking)
+
+```
+Closes #<epic>                    ← closes the epic prematurely
+Closes subtask of #<epic>         ← "Closes" near #<epic> is parser-ambiguous; avoid
+Refs: #<epic>                     ← orphan PR: nothing closes on merge
+```
+
+### Real incident
+
+PR #1029 used `Closes #1028 (spec deliverable)` in the commit message. Issue #1028 was the Hook Gym EPIC with 6 sub-PRs planned. When #1029 merged, GitHub auto-closed #1028 even though 5 PRs were still outstanding. The epic had to be manually reopened. Prevention: close the scope-matched sub-issue, not the parent.
 
 ## Examples of each beat
 

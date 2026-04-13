@@ -61,7 +61,7 @@ import {
   retrieveIterationState,
   type ReviewFindingData,
 } from './structured-data.js';
-import { normalizeReviewFindingData } from './review-finding-contract.js';
+import { normalizeReviewFindingData, validateReviewFindingPayload, summarizeFindingStatuses } from './review-finding-contract.js';
 
 export type CliArgs = Record<string, string> & { command: string };
 type Handler = (a: CliArgs) => Promise<void>;
@@ -78,10 +78,12 @@ export function parseArgs(argv?: string[]): CliArgs {
   return { command, ...flags } as CliArgs;
 }
 
-/** Read content from --file, --text, or stdin (--stdin flag). */
+/** Read content from --file / --payload-file, --text / --payload, or stdin (--stdin flag). */
 export function resolveContent(a: CliArgs): string {
-  if (a.file) return readFileSync(a.file, 'utf8');
-  if (a.text) return a.text;
+  const file = a.file ?? a['payload-file'];
+  if (file) return readFileSync(file, 'utf8');
+  const text = a.text ?? a.payload;
+  if (text) return text;
   if (a.stdin === 'true' || a.stdin === '') {
     try { return execSync('cat', { encoding: 'utf8', timeout: 5000 }); } catch { return ''; }
   }
@@ -117,20 +119,66 @@ async function handleStoreReviewFinding(a: CliArgs): Promise<void> {
   const r = resolveRound(a);
   const dim = a.dimension ?? 'unknown';
   const text = resolveContent(a);
-  let finding: ReviewFindingData;
-  try {
-    finding = normalizeReviewFindingData(JSON.parse(text), { defaultDimension: dim });
-  } catch {
-    finding = normalizeReviewFindingData({ summary: text.slice(0, 100) }, { defaultDimension: dim });
+  if (!text.trim()) {
+    console.error('store-review-finding: no payload supplied (use --payload-file <path>, --file <path>, --text, --payload, or --stdin)');
+    process.exit(1);
   }
+
+  // #1039: Strict validation. Previously parse failures and missing fields
+  // were silently coerced to a fail-with-empty-findings sentinel, which
+  // satisfied the review gate while losing every actual finding.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`store-review-finding: payload is not valid JSON (${msg}). Tip: for multi-line or quote-heavy JSON, use --payload-file <path> instead of --text/--payload.`);
+    process.exit(1);
+  }
+
+  const validation = validateReviewFindingPayload(parsed, { defaultDimension: dim });
+  if (!validation.ok) {
+    console.error(`store-review-finding: ${validation.error}`);
+    process.exit(1);
+  }
+
+  const finding = normalizeReviewFindingData(parsed, { defaultDimension: dim });
   const url = storeReviewFinding(pr, r, finding);
-  console.log(`Review finding stored (round ${r}): ${url}`);
+  const stats = summarizeFindingStatuses(finding.findings);
+  console.log(`Review finding stored (round ${r}, verdict=${finding.verdict}): ${url}`);
+  console.log(`  ${finding.findings.length} findings (${stats.done} DONE, ${stats.partial} PARTIAL, ${stats.missing} MISSING)`);
 }
 
 async function handleStoreReviewBatch(a: CliArgs): Promise<void> {
   const pr = prTarget(a.pr, a.repo);
   const r = resolveRound(a);
-  const findings: ReviewFindingData[] = JSON.parse(resolveContent(a));
+  const text = resolveContent(a);
+  if (!text.trim()) {
+    console.error('store-review-batch: no payload supplied (use --payload-file <path>, --file <path>, --text, --payload, or --stdin)');
+    process.exit(1);
+  }
+  // #1039: Strict validation — don't let a batch smuggle empty-fail findings
+  // through the sentinel. Each entry is validated individually.
+  let parsedBatch: unknown;
+  try {
+    parsedBatch = JSON.parse(text);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`store-review-batch: payload is not valid JSON (${msg}). Tip: use --payload-file <path> for multi-line JSON.`);
+    process.exit(1);
+  }
+  if (!Array.isArray(parsedBatch)) {
+    console.error('store-review-batch: payload must be a JSON array of finding objects');
+    process.exit(1);
+  }
+  for (let i = 0; i < parsedBatch.length; i++) {
+    const v = validateReviewFindingPayload(parsedBatch[i]);
+    if (!v.ok) {
+      console.error(`store-review-batch: findings[${i}] invalid — ${v.error}`);
+      process.exit(1);
+    }
+  }
+  const findings = parsedBatch as ReviewFindingData[];
   const result = storeReviewBatch(pr, r, findings);
   // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
   // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.

@@ -6,6 +6,8 @@ user_invocable: true
 
 # Review PR
 
+**Upholds invariants**: I5 (findings stored), I13 (review gate), I15 (push → review round), I27 (no silent deferring), I28 (all applicable dimensions). See [`docs/kaizen-invariants.md`](../../../docs/kaizen-invariants.md).
+
 ## Loop
 
 | Phase | What you do | Done when |
@@ -130,13 +132,32 @@ Send **one message with all Agent tool calls** (parallel launch). For each group
 - **Instruct each agent to store its own findings immediately** (see storage instruction below)
 
 **Storage instruction to include in every subagent prompt** (substitute actual PR number, repo, round):
-> After outputting your JSON findings blocks, immediately store each dimension you reviewed:
-> ```bash
-> npx tsx src/cli-structured-data.ts store-review-finding \
->   --pr <PR_NUMBER> --repo <owner/repo> --round <ROUND> \
->   --dimension <dimension_name> --text '<your findings JSON>'
-> ```
-> Call this once per dimension your group covers, before ending your response.
+> After outputting your JSON findings blocks, for EACH dimension you reviewed:
+>
+> 1. Write the JSON payload to a temp file (shell-quoting on `--text` is brittle for
+>    payloads with quotes/newlines — #1039 showed this silently degrades to a
+>    fail-with-empty-findings sentinel that satisfies the review gate but loses
+>    every actual finding):
+>    ```bash
+>    cat > /tmp/finding-<dim>.json <<'JSON'
+>    {"dimension":"<dim>","verdict":"pass|fail","summary":"...","findings":[...]}
+>    JSON
+>    ```
+> 2. Store it via `--payload-file`:
+>    ```bash
+>    npx tsx src/cli-structured-data.ts store-review-finding \
+>      --pr <PR_NUMBER> --repo <owner/repo> --round <ROUND> \
+>      --dimension <dim> --payload-file /tmp/finding-<dim>.json
+>    ```
+>
+> The CLI now validates the payload strictly: it exits non-zero with an actionable
+> error if the JSON doesn't parse, required fields are missing, or `verdict=fail`
+> has empty findings. If you see a non-zero exit, FIX the payload and re-run —
+> do not ignore it, or the review gate will clear on empty findings.
+>
+> On success the CLI prints the stored URL plus a one-line summary
+> (`N findings (D DONE, P PARTIAL, M MISSING)`). Verify the counts match your
+> intent before ending your response.
 
 **Why per-agent storage (not orchestrator batch):** If the orchestrating session is interrupted after some agents complete, already-stored findings survive on the PR. The orchestrator only stores the summary (Phase 5) — per-dimension storage is each agent's own responsibility.
 

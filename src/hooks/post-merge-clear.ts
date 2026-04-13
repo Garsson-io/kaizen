@@ -1,6 +1,10 @@
 /**
  * post-merge-clear.ts — Clears post-merge gate when /kaizen is invoked or merge confirmed.
  *
+ * @enforces I6  — Gates cleared by mechanism (transition on merge-confirm + skill-invoke).
+ * @enforces I24 — Post-merge gate (partial: clears the gate; branch/worktree deletion tracked in #1037).
+ *                 Canonical: docs/kaizen-invariants.md.
+ *
  * PostToolUse hook on Bash and Skill — always exits 0 (state management, not blocking).
  *
  * Triggers:

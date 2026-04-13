@@ -7,6 +7,8 @@ description: Planning gate — takes an issue (from deep-dive or direct) and pro
 
 # Write Plan — Planning Gate
 
+**Upholds invariants**: I3 (stored test plan), I8 (plan before implementation). See [`docs/kaizen-invariants.md`](../../../docs/kaizen-invariants.md).
+
 **Role:** The planning gate. Takes a specific issue (from `/kaizen-deep-dive` or from the admin directly) and produces a grounded implementation plan, then gets admin approval before implementation starts. Scope decisions live here — `/kaizen-implement` executes the scope this skill sets and must not change it unilaterally.
 
 **Philosophy:** See the [Zen of Kaizen](../../kaizen/zen.md) — *"Specs are hypotheses. Incidents are data."* and *"No promises without mechanisms."*
@@ -350,11 +352,20 @@ Rejected because: ...
 [For deferred behaviors (e.g., Agentic tests out of scope), state what they are, why they're deferred, and which issue tracks them.]
 ```
 
-Store immediately:
+Store the plan on the issue. The plan MUST contain a `## Seam Map & Test Plan` section — review dimensions retrieve it from there automatically.
 
 ```bash
-npx tsx src/cli-structured-data.ts store-grounding --issue {N} --repo "$ISSUES_REPO" --file plan.md
+npx tsx src/cli-structured-data.ts store-plan --issue {N} --repo "$ISSUES_REPO" --file plan.md
 ```
+
+Verify it landed and the test-plan section is extractable:
+
+```bash
+npx tsx src/cli-structured-data.ts retrieve-plan --issue {N} --repo "$ISSUES_REPO" | head -20
+npx tsx src/cli-structured-data.ts retrieve-testplan --issue {N} --repo "$ISSUES_REPO" | head -20
+```
+
+`retrieve-testplan` resolves in this order: dedicated `testplan` attachment → `## Test Plan` (or `## Seam Map & Test Plan`) section inside the plan attachment → `## Test Plan` section in the issue body. One `store-plan` call is sufficient as long as your plan has the section.
 
 **Time budget:** Simple (single file, no new abstractions): 10-12 min. Complex (new module, state decision, multi-component): 15-20 min. Longer than 20 min = you're designing, not surveying. Go back to step 2.
 

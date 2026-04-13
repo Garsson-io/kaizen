@@ -103,44 +103,17 @@ To install kAIzen in another project, copy `.agents/kaizen/`, merge the settings
 
 ## Core Invariants
 
-### Workspace isolation
+**Canonical source**: [`docs/kaizen-invariants.md`](../../docs/kaizen-invariants.md) — 28 invariants (`I1`..`I28`) with check points, enforcement layers, and L2 gap tracking. This README deliberately does NOT restate them; reference by ID instead.
 
-- Dev work must happen in worktrees, not the main checkout.
-- Main-checkout source code should not be edited directly.
-- One worktree must not interfere with another worktree's state.
+Grouped by discipline (each bullet points at canonical IDs):
 
-### Main checkout: what is and isn't allowed
-
-The main checkout is the **running production instance**. It is not a development workspace.
-
-| Operation | Allowed? | Why |
-|-----------|----------|-----|
-| `git fetch` | Yes | Read-only, no state change |
-| `git pull origin main` (ff-only) | Yes | Required after every PR merge to sync production |
-| `git worktree add/list/prune` | Yes | Managing worktrees is a main-checkout responsibility |
-| Service ops (restart, build, status) | Yes | Main checkout is the deployment target |
-| `git commit` (any branch) | **No** | Committing = dev work, dev work belongs in worktrees |
-| `git push` (any branch) | **No** | If you have commits to push, you committed in the wrong place |
-| Source file edits | **No** | Enforced by `enforce-worktree-writes.sh` |
-
-**Why blocking only the `main` branch is insufficient:** Creating a feature branch in the main checkout (`git checkout -b feature && vim src/config.ts`) violates workspace isolation even though the branch isn't `main`. The branch name is irrelevant — what matters is **where** the work happens, not **what branch** it's on.
-
-### Shipping discipline
-
-- PR creation should not happen with forgotten dirty files.
-- Test and verification expectations must be explicit before merge.
-
-### Review discipline
-
-- Creating or updating a PR is not the end of the work.
-- The agent must perform self-review (including requirements verification) before resuming unrelated work.
-- Review state must be scoped to the current worktree only.
-
-### Completion discipline
-
-- The agent should not stop after changing code without verification.
-- Merged changes require explicit post-merge verification and communication.
-- Kaizen reflection must happen at workflow boundaries.
+- **Workspace isolation** → I9 (no edits on main), I10 (case required), I26 (branch from origin/main)
+- **Shipping discipline** → I11 (no dirty at PR create), I17 (tests co-commit), I25 (no dirty between ops)
+- **Review discipline** → I5 (findings stored), I13 (review gate limits tools), I15 (push → review round), I28 (all dimensions)
+- **Completion discipline** → I6 (gates clear by mechanism), I16 (PR create/merge → reflection), I18 (tests pass before stop), I21 (worktree cleanup), I24 (branch+worktree deletion after merge)
+- **Issue linkage** → I1 (Closes #N adjacent), I2 (scope-matched, no epic), I3 (issue has test plan), I4 (PR body has B×L table)
+- **Plan discipline** → I8 (plan before implementation), I27 (no silent deferring)
+- **Safety** → I7 (no push to merged branch), I12 (no rebase on PR branches), I14 (reflect gate limits tools), I19 (no secrets), I20 (search before filing), I22 (skill proof), I23 (E2E for hook/skill PRs)
 
 ## Control Layers (Kaizen Levels)
 

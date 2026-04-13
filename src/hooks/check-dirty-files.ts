@@ -1,6 +1,10 @@
 /**
  * check-dirty-files.ts — PreToolUse gate: ensures clean worktree before PR create/push.
  *
+ * @enforces I11 — No dirty files at `gh pr create` (denies).
+ * @enforces I25 — No dirty files between ops (currently advisory on push/merge; escalation tracked in #1037).
+ *                 Canonical: docs/kaizen-invariants.md.
+ *
  * TypeScript port of .claude/hooks/kaizen-check-dirty-files.sh (kaizen #775).
  *
  * Triggers:
