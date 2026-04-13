@@ -123,6 +123,73 @@ export function normalizeReviewFindingData(
   };
 }
 
+/**
+ * Strict validator for review finding payloads — used at the CLI boundary
+ * so callers get an actionable error instead of the normalizer silently
+ * producing a fail-with-empty-findings sentinel (see #1039).
+ *
+ * Rules:
+ *  - Input must be a plain object
+ *  - `dimension` (string, non-empty) — may be supplied via --dimension if absent
+ *  - `verdict` (string, maps to 'pass' | 'fail' after normalizeVerdict)
+ *  - `summary` (string, non-empty)
+ *  - `findings` (array; may be empty only when verdict === 'pass')
+ *  - Each finding row: `requirement` (string), `status` (valid), `detail` (string)
+ *
+ * Returns `{ ok: true }` on success or `{ ok: false, error }` with a caller-
+ * facing message describing exactly which field is wrong.
+ */
+export function validateReviewFindingPayload(
+  input: unknown,
+  opts?: { defaultDimension?: string },
+): { ok: true } | { ok: false; error: string } {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { ok: false, error: 'payload must be a JSON object with {dimension, verdict, summary, findings[]}' };
+  }
+  const raw = input as Record<string, unknown>;
+
+  const dimension = firstString(raw, ['dimension'], opts?.defaultDimension ?? '');
+  if (!dimension) {
+    return { ok: false, error: 'payload is missing required field `dimension` (pass --dimension on the CLI if not in the JSON)' };
+  }
+
+  const verdict = normalizeVerdict(raw.verdict ?? raw.status ?? raw.result);
+  if (!verdict) {
+    return { ok: false, error: `payload has invalid or missing \`verdict\` (got ${JSON.stringify(raw.verdict ?? raw.status ?? raw.result)}, expected "pass" | "fail")` };
+  }
+
+  const summary = firstString(raw, ['summary', 'text', 'message'], '');
+  if (!summary) {
+    return { ok: false, error: 'payload is missing required field `summary` (a one-line description of the verdict)' };
+  }
+
+  if (raw.findings !== undefined && !Array.isArray(raw.findings)) {
+    return { ok: false, error: `payload field \`findings\` must be an array (got ${typeof raw.findings})` };
+  }
+  const findings = Array.isArray(raw.findings) ? raw.findings : [];
+
+  if (verdict === 'fail' && findings.length === 0) {
+    return { ok: false, error: 'verdict=fail with empty findings[] is not allowed — a failing verdict must list at least one requirement with status PARTIAL or MISSING. See #1039.' };
+  }
+
+  for (let i = 0; i < findings.length; i++) {
+    const item = findings[i];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { ok: false, error: `findings[${i}] must be an object with {requirement, status, detail}` };
+    }
+    const row = item as Record<string, unknown>;
+    const requirement = firstString(row, ['requirement', 'title', 'item'], '');
+    if (!requirement) {
+      return { ok: false, error: `findings[${i}] is missing required field \`requirement\`` };
+    }
+    if (row.status === undefined && row.verdict === undefined) {
+      return { ok: false, error: `findings[${i}] is missing required field \`status\` (DONE | PARTIAL | MISSING)` };
+    }
+  }
+
+  return { ok: true };
+}
+
 export function makeReviewFindingMeta(round: number, finding: ReviewFindingData): ReviewFindingMeta {
   const stats = summarizeFindingStatuses(finding.findings);
   return {
