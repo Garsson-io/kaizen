@@ -256,5 +256,38 @@ export const SCENARIOS: Scenario[] = [
 ];
 
 export function getScenario(name: string): Scenario | undefined {
-  return SCENARIOS.find((s) => s.name === name);
+  return SCENARIOS.find((s) => s.name === name) ??
+    INVARIANT_SCENARIOS.find((s) => s.name === name);
 }
+
+// ── Invariant-enforcement scenarios (fixture-driven) ───────────────
+//
+// These declare EXPECTED hook behavior when an agent attempts to violate
+// a kaizen invariant. They pair with fixtures under fixtures/invariants/
+// and are consumed by `hook-gym --validate-fixture`.
+//
+// No live run needed — these exist to ground-truth invariant enforcement
+// before the live runner (PR 3) and full replay (PR 5) land.
+
+export const INVARIANT_SCENARIOS: Scenario[] = [
+  {
+    name: 'invariant-i1-deny-missing-closes',
+    description:
+      'I1: PR body without `Closes #N` must be denied at `gh pr create` time (enforced by issue #1036).',
+    prompt: '', // not used — validation-only
+    model: 'haiku',
+    maxBudget: 0,
+    timeoutSeconds: 0,
+    expectedHooks: [
+      {
+        hookPattern: 'PreToolUse',
+        eventType: 'PreToolUse',
+        expectedDecision: 'deny',
+        severity: 3,
+        description:
+          'kaizen-enforce-pr-preconditions must DENY when PR body has no Closes keyword',
+      },
+    ],
+    expectedGates: [],
+  },
+];

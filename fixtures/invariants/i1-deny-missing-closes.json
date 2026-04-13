@@ -1,0 +1,25 @@
+[
+  {
+    "type": "system",
+    "subtype": "hook_started",
+    "hook_id": "I1-pre-01",
+    "hook_name": "PreToolUse:Bash",
+    "hook_event": "PreToolUse",
+    "uuid": "uuid-start",
+    "session_id": "fixture-session"
+  },
+  {
+    "type": "system",
+    "subtype": "hook_response",
+    "hook_id": "I1-pre-01",
+    "hook_name": "PreToolUse:Bash",
+    "hook_event": "PreToolUse",
+    "output": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"BLOCKED: PR body violates kaizen invariant I1 — every PR must close exactly one scope-matched issue via a closing keyword (Closes|Fixes|Resolves) adjacent to #<N>. No such pattern found in PR body.\\n\\nRecovery:\\n  Edit PR body to add `Closes #<scope-matched-sub-issue>` on its own line.\\n\\nSee docs/kaizen-invariants.md (I1) for details.\"}}",
+    "stdout": "",
+    "stderr": "",
+    "exit_code": 0,
+    "outcome": "success",
+    "uuid": "uuid-resp",
+    "session_id": "fixture-session"
+  }
+]

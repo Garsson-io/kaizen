@@ -102,20 +102,115 @@ When L1 fails, escalate to L2. When L2 can be bypassed, escalate to L3.
 
 ---
 
+---
+
+## Additional invariants discovered via hook inventory
+
+The first 8 invariants above were identified from PR-creation incidents. A systematic review of every registered hook surfaces more invariants currently in force — some already at L2, others at L1 only.
+
+### Edit/Write invariants (L2-enforced ✅)
+
+### I9 — No source edits on main branch outside a worktree
+**Why**: Main checkout is the canonical workspace; changes there bypass worktree isolation and race with other agents.
+**Check point**: PreToolUse on Edit/Write
+**Enforcement**: L2 ✅ `kaizen-enforce-worktree-writes.sh` — denies Edit/Write on source paths (src/, package.json, tsconfig.json, docs/, …) when in main checkout on main branch.
+
+### I10 — No source edits in worktree without a kaizen case
+**Why**: Every code change should be tied to a case record for traceability.
+**Check point**: PreToolUse on Edit/Write (in worktree)
+**Enforcement**: L2 ✅ `kaizen-enforce-case-exists.sh` — denies when case backend CLI is configured and no case matches the current worktree.
+
+### Commit/push invariants (L2-enforced ✅)
+
+### I11 — No dirty/uncommitted files at PR creation
+**Why**: `gh pr create` with uncommitted work mislabels the PR's contents and orphans the missing commits.
+**Check point**: PreToolUse on `gh pr create`
+**Enforcement**: L2 ✅ `kaizen-check-dirty-files-ts.sh` — denies `gh pr create` when the worktree is dirty. Advisory on `git push` / `gh pr merge`.
+
+### I12 — No `git rebase` on PR branches
+**Why**: Rebase rewrites history, requires force-push, and loses the merge point. Safer path: `git merge origin/main`.
+**Check point**: PreToolUse on Bash
+**Enforcement**: L2 ✅ `kaizen-block-git-rebase.sh` — denies `git rebase` except `--abort`/`--continue`/`--skip`.
+
+### Gate invariants (L2-enforced ✅)
+
+### I13 — While review is pending (`needs_review`), only review-scoped commands run
+**Why**: Prevents the agent from sidestepping the review by doing other work first.
+**Check point**: PreToolUse on any tool during review gate
+**Enforcement**: L2 ✅ `kaizen-enforce-pr-review-ts.sh` — denies all non-review Bash/Edit/Write; allows `gh pr diff/view/comment`, `git diff`, `grep`, `npm test`, `npx`, Agent.
+
+### I14 — While reflection is pending (`needs_pr_kaizen`), only kaizen-scoped commands run
+**Why**: Parallel to I13 — enforces the reflection step before continuation.
+**Check point**: PreToolUse on any Bash during reflection gate
+**Enforcement**: L2 ✅ `kaizen-enforce-pr-reflect-ts.sh`.
+
+### I15 — Every push to an open PR's branch triggers a review round
+**Why**: New code is new risk; a prior round's pass is stale.
+**Check point**: PostToolUse on `git push`
+**Enforcement**: L2 ✅ `pr-review-loop-ts.sh` — bumps round and re-activates `needs_review`. Auto-passes only tiny pushes (<15 lines) and never past `CUMULATIVE_CAP=100`.
+
+### I16 — Every PR create/merge requires a reflection
+**Why**: Each PR is a learning opportunity; skipping reflection lets impediments compound.
+**Check point**: PostToolUse on `gh pr create` / `gh pr merge`
+**Enforcement**: L2 ✅ `kaizen-reflect-ts.sh` — sets `needs_pr_kaizen`. Cleared by valid `KAIZEN_IMPEDIMENTS` JSON or `KAIZEN_NO_ACTION` declaration via `pr-kaizen-clear-ts.sh`.
+
+### Quality invariants (L1 advisory — candidates for escalation)
+
+### I17 — Source files co-commit with their tests
+**Why**: Without co-commit, tests can lag forever. Every changed source file should have a matching test file changed in the same commit OR an explicit `@test-exception: <reason>` annotation.
+**Check point**: PreToolUse on `git commit`, `gh pr create`
+**Enforcement**: L1 only ⚠️ — `kaizen-pr-quality-checks-ts.sh` warns but does not block. Candidate for escalation to L2.
+
+### I18 — Tests pass before stopping
+**Why**: Stopping with failing tests hides regressions.
+**Check point**: Stop
+**Enforcement**: L1 only ⚠️ — `kaizen-verify-before-stop.sh` reminds. Cannot be automated without spawning heavy subprocesses on Stop (retry loops risk OOM — see hooks-design.md).
+
+### I19 — No secrets/credentials in commits
+**Why**: Irrecoverable once pushed.
+**Check point**: PreToolUse on `git commit`, `gh pr create`
+**Enforcement**: L1 only ⚠️ — `kaizen-pr-quality-checks-ts.sh` has a light heuristic check. Candidate for L2 with a proper secret-scanner.
+
+### I20 — Search for similar issues before creating a new one
+**Why**: Duplicate issues fragment attention.
+**Check point**: PreToolUse on `gh issue create`
+**Enforcement**: L1 advisory ⚠️ — `kaizen-search-before-file.sh` searches and shows results but does not block.
+
+### I21 — Worktree cleanup before stopping (no orphan locks, no uncommitted work)
+**Why**: Orphan locks block future sessions; uncommitted work gets lost on worktree removal.
+**Check point**: Stop
+**Enforcement**: L1 advisory ⚠️ — `kaizen-check-cleanup-on-stop.sh` warns + removes lock.
+
+### Meta invariants (L1 only — candidates for future enforcement)
+
+### I22 — Skill changes require behavioral proof (before/after test)
+**Why**: Prompt-level changes can't be verified by unit tests; need a `claude -p` demonstration of the intended behavior difference.
+**Enforcement**: L1 policy (`.agents/kaizen/policies.md` §10). Candidate for a L2 hook that inspects `.claude/skills/*/SKILL.md` diffs in PRs.
+
+### I23 — PRs changing hooks/skills must run E2E tests against `kaizen-test-fixture`
+**Why**: Hook/skill changes can silently break host-project integration.
+**Enforcement**: L1 policy (`.agents/kaizen/policies.md` §11). Candidate for a CI check.
+
+---
+
 ## Summary — where the gaps are
 
-| Invariant | L1 | L2 | L3 | Gap |
-|-----------|:---:|:---:|:---:|-----|
-| I1 — Closes #N adjacent | ✅ | — | — | hook issue #1036 |
-| I2 — Scope-matched (no epic) | ✅ | — | — | hook issue #1036 |
-| I3 — Issue has test plan | ✅ | — | partial | hook issue #1036 |
-| I4 — PR body has B×L table | ✅ | — | — | hook issue #1036 |
-| I5 — Review findings stored | — | ✅ | — | complete |
-| I6 — Gates cleared via mechanism | ✅ | ✅ | — | complete |
-| I7 — No push to merged branch | ✅ | — | — | hook issue #1032 |
-| I8 — Plan before implementation | — | — | — | tracked in #1035 (needs both L1 and L2) |
+### L2-enforced (no gap)
+I5, I6, I9, I10, I11, I12, I13, I14, I15, I16 — **10 invariants fully at L2.**
 
-**Five of eight invariants need L2 hooks** to move from "the agent must remember" to "the system blocks the violation." Three follow-up issues track the missing hooks: #1032, #1035, #1036 (filed alongside this doc).
+### L1-only policy (gap — agent must remember)
+I1, I2, I3, I4, I7, I8, I17, I18, I19, I20, I21, I22, I23 — **13 invariants only at L1.**
+
+### Follow-up issues escalating to L2
+
+| Invariants | Tracking issue | Scope |
+|------------|:-:|---|
+| I1, I2, I3, I4 | **#1036** | PR preconditions hook on `gh pr create` |
+| I7 | **#1032** | `git push` hook for merged-branch detection |
+| I8 | **#1035** | implementation precondition: issue has stored test plan |
+| I17 (co-commit tests) | — | candidate — file issue to escalate pr-quality-checks warning to block |
+| I19 (secrets) | — | candidate — file issue for proper secret-scanner integration |
+| I22, I23 (meta) | — | candidates — tooling-fitness PRDs
 
 ---
 

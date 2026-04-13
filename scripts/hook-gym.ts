@@ -19,6 +19,7 @@ import { execSync } from 'node:child_process';
 import { SCENARIOS, getScenario, renderPrompt } from './hook-gym-scenarios.js';
 import type { Scenario } from './hook-gym-schema.js';
 import { SEVERITY_WEIGHT } from './hook-gym-schema.js';
+import { validateFixtureFile, formatValidationReport } from './hook-gym-validate.js';
 
 // ── CLI helpers ────────────────────────────────────────────────────
 
@@ -127,6 +128,19 @@ function cmdReplay(logPath: string): void {
   process.exit(0);
 }
 
+function cmdValidate(fixturePath: string, scenarioName: string): void {
+  const scenario = getScenario(scenarioName);
+  if (!scenario) {
+    console.error(`Unknown scenario: ${scenarioName}`);
+    console.error(`Available: ${SCENARIOS.map((s) => s.name).join(', ')}`);
+    process.exit(1);
+  }
+
+  const report = validateFixtureFile(fixturePath, scenario);
+  console.log(formatValidationReport(report));
+  process.exit(report.passed ? 0 : 1);
+}
+
 // ── Main ───────────────────────────────────────────────────────────
 
 function main(): void {
@@ -134,11 +148,14 @@ function main(): void {
     console.log(`hook-gym — Synthetic problem runner with hook observability
 
 Usage:
-  npx tsx scripts/hook-gym.ts --list                    List scenarios
-  npx tsx scripts/hook-gym.ts --run <name> --dry-run    Show rendered prompt
-  npx tsx scripts/hook-gym.ts --run <name>              Run scenario (live)
-  npx tsx scripts/hook-gym.ts --run-all                 Run all scenarios
-  npx tsx scripts/hook-gym.ts --replay <log>            Replay captured log
+  npx tsx scripts/hook-gym.ts --list                              List scenarios
+  npx tsx scripts/hook-gym.ts --run <name> --dry-run              Show rendered prompt
+  npx tsx scripts/hook-gym.ts --run <name>                        Run scenario (live)
+  npx tsx scripts/hook-gym.ts --run-all                           Run all scenarios
+  npx tsx scripts/hook-gym.ts --replay <log>                      Replay captured log
+  npx tsx scripts/hook-gym.ts --validate-fixture <path> --scenario <name>
+      Validate a fixture file (stream-json or JSON array of events) against
+      a scenario's ground truth. Exits 0 on pass, 1 on fail.
 
 Options:
   --model <model>    Override scenario model (haiku, sonnet, opus)
@@ -173,6 +190,17 @@ See docs/hook-gym-spec.md for full design.`);
   if (logPath) {
     cmdReplay(logPath);
     return;
+  }
+
+  const fixturePath = getFlag('--validate-fixture');
+  const scenarioForValidate = getFlag('--scenario');
+  if (fixturePath && scenarioForValidate) {
+    cmdValidate(fixturePath, scenarioForValidate);
+    return;
+  }
+  if (fixturePath && !scenarioForValidate) {
+    console.error('--validate-fixture requires --scenario <name>');
+    process.exit(1);
   }
 
   // No command — show help
