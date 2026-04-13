@@ -90,6 +90,55 @@ describe('parseHookDecision', () => {
     expect(reason).toBe('needs_review');
   });
 
+  // Smoke-run regression tests: real hook output from fixtures/live/probe-hooks.jsonl
+  it('detects needs_review set-gate from real pr-review-loop PostToolUse output', () => {
+    const realOutput = '\n📋 PR created: https://github.com/Garsson-io/kaizen/pull/1048\n\nMANDATORY SELF-REVIEW LOOP — you MUST complete this before proceeding.\nROUND 1/4: Start your review now.\n';
+    const { decision, reason } = parseHookDecision(realOutput, '', 0);
+    expect(decision).toBe('set-gate');
+    expect(reason).toBe('needs_review');
+  });
+
+  it('detects needs_pr_kaizen set-gate from real kaizen-reflect PostToolUse output', () => {
+    const realOutput = '\n━━━━━━\n🔄 KAIZEN REFLECTION — Post-PR Creation\n━━━━━━\n\nYou are GATED — spawn a kaizen-bg subagent to handle reflection.\n';
+    const { decision, reason } = parseHookDecision(realOutput, '', 0);
+    expect(decision).toBe('set-gate');
+    expect(reason).toBe('needs_pr_kaizen');
+  });
+
+  it('detects needs_review clear-gate from "REVIEW PASSED" text', () => {
+    const { decision, reason } = parseHookDecision('REVIEW PASSED (round 1/4)', '', 0);
+    expect(decision).toBe('clear-gate');
+    expect(reason).toBe('needs_review');
+  });
+
+  it('processes real fixture: SELF-REVIEW event classified as set-gate (not clear-gate)', () => {
+    const { readFileSync } = require('node:fs');
+    const { resolve } = require('node:path');
+    const fixturePath = resolve(__dirname, '..', 'fixtures', 'live', 'probe-hooks.jsonl');
+    const timeline = parseLogFile(readFileSync(fixturePath, 'utf-8'));
+
+    // Dump all non-none decisions for diagnosis
+    const nonNone = timeline.events.filter(e => e.decision !== 'none' && e.decision !== null);
+    console.log('Non-none decisions:', nonNone.map(e =>
+      `${e.eventType}:${e.decision}:${e.reason} raw=${e.rawOutput.slice(0,60).replace(/\n/g,' ')}`
+    ));
+
+    const selfReview = timeline.events.find(e => e.rawOutput.includes('SELF-REVIEW'));
+    expect(selfReview).toBeDefined();
+    console.log('SELF-REVIEW decision:', selfReview!.decision, 'reason:', selfReview!.reason);
+    expect(selfReview!.decision).toBe('set-gate');
+    expect(selfReview!.reason).toBe('needs_review');
+
+    const kaizenReflect = timeline.events.find(e => e.rawOutput.includes('KAIZEN REFLECTION'));
+    expect(kaizenReflect).toBeDefined();
+    console.log('KAIZEN REFLECTION decision:', kaizenReflect!.decision, 'reason:', kaizenReflect!.reason);
+    expect(kaizenReflect!.decision).toBe('set-gate');
+    expect(kaizenReflect!.reason).toBe('needs_pr_kaizen');
+
+    expect(timeline.gatesActivated).toHaveProperty('needs_review');
+    expect(timeline.gatesActivated).toHaveProperty('needs_pr_kaizen');
+  });
+
   it('falls through to none for unrecognized JSON', () => {
     const output = JSON.stringify({ foo: 'bar' });
     const { decision } = parseHookDecision(output, '', 0);

@@ -171,6 +171,9 @@ export const SCENARIOS: Scenario[] = [
       { gate: 'needs_review', shouldActivate: true, shouldClear: false },
       { gate: 'needs_pr_kaizen', shouldActivate: true, shouldClear: false },
     ],
+    // The stop-gate blocks the agent from stopping. Haiku can't clear
+    // the review+reflect gates within the timeout, so timeout is expected.
+    expectTimeout: true,
   },
 
   {

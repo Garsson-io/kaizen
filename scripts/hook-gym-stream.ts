@@ -18,16 +18,38 @@ import type {
 
 // ── Gate detection patterns ────────────────────────────────────────
 
+// Gate detection patterns — updated from Hook Gym smoke run (PR #1047).
+// Real hooks emit human-readable text, not STATUS=<gate> tokens:
+//   - pr-review-loop.ts emits "MANDATORY SELF-REVIEW LOOP" and "ROUND N/M"
+//   - kaizen-reflect.ts emits "KAIZEN REFLECTION" and "GATED"
+//   - stop-gate.ts emits {"decision":"block","reason":"...PR REVIEW...KAIZEN REFLECTION..."}
+//
+// The patterns below match both the literal gate name (for structured/state-file
+// contexts) AND the human-readable phrases from real hook stdout.
+
 const GATE_SET_PATTERNS: Record<string, RegExp> = {
-  needs_review: /needs_review|STATUS=needs_review/i,
-  needs_pr_kaizen: /needs_pr_kaizen|STATUS=needs_pr_kaizen/i,
-  needs_post_merge: /needs_post_merge|STATUS=needs_post_merge/i,
+  needs_review: /needs_review|STATUS=needs_review|MANDATORY SELF-REVIEW LOOP|PR REVIEW.*round/i,
+  needs_pr_kaizen: /needs_pr_kaizen|STATUS=needs_pr_kaizen|KAIZEN REFLECTION|GATED.*kaizen-bg/i,
+  needs_post_merge: /needs_post_merge|STATUS=needs_post_merge|POST-MERGE|post.merge.*sync/i,
 };
 
+// CLEAR patterns must NOT match quoted instructions. Real hooks often include
+// the gate-clearing command as an instruction to the agent (e.g. 'state
+// "REVIEW PASSED"' or 'echo KAIZEN_IMPEDIMENTS: [...]'). Those are SET signals
+// (the hook is telling the agent what to do), not CLEAR signals.
+//
+// Real CLEAR signals:
+//   - pr-review-loop.ts: "✅ REVIEW PASSED" at start of line, STATUS=passed
+//   - kaizen-reflect.ts: agent actually runs KAIZEN_IMPEDIMENTS/KAIZEN_UNFINISHED
+//     which appears as a PostToolUse Bash stdout starting with "KAIZEN_IMPEDIMENTS:"
+//     or "KAIZEN_UNFINISHED:", not as a hook output mentioning the keyword
+//
+// Strategy: require CLEAR patterns to be anchored or preceded by non-instruction
+// context. The `^` + multiline flag catches start-of-line patterns.
 const GATE_CLEAR_PATTERNS: Record<string, RegExp> = {
-  needs_review: /STATUS=passed|review_passed|clear(?:ed|ing)\s+needs_review/i,
-  needs_pr_kaizen: /KAIZEN_UNFINISHED|KAIZEN_IMPEDIMENTS|cleared.*kaizen|clear(?:ed|ing)\s+needs_pr_kaizen/i,
-  needs_post_merge: /post.merge.*clear|clear(?:ed|ing)\s+needs_post_merge/i,
+  needs_review: /STATUS=passed|review_passed|✅\s*REVIEW PASSED|^REVIEW PASSED|clear(?:ed|ing)\s+needs_review/im,
+  needs_pr_kaizen: /^KAIZEN_IMPEDIMENTS:|^KAIZEN_UNFINISHED:|cleared.*kaizen|clear(?:ed|ing)\s+needs_pr_kaizen/im,
+  needs_post_merge: /STATUS=post_merge_clear|^post.merge.*cleared|clear(?:ed|ing)\s+needs_post_merge/im,
 };
 
 // ── Decision parsing ───────────────────────────────────────────────

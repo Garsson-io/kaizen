@@ -301,14 +301,22 @@ export async function runScenario(
     log(`[hook-gym] Self-check failed to run: ${err instanceof Error ? err.message : err}`);
   }
 
-  const passed = validation.passed && !result.timedOut && !budgetExceeded && selfCheckPassed;
+  // A timeout is only a failure if the scenario doesn't expect one.
+  // Scenarios like probe-hooks expect the agent to hit the stop-gate and
+  // be killed by the timeout — that's correct behavior, not a failure.
+  const timeoutIsFailure = result.timedOut && !scenario.expectTimeout;
+  const passed = validation.passed && !timeoutIsFailure && !budgetExceeded && selfCheckPassed;
 
   // Print validation report
   log('');
   log(formatValidationReport(validation));
   log(summarizeTimeline(scenario.name, timeline));
 
-  if (result.timedOut) log(`[hook-gym] ❌ TIMEOUT after ${scenario.timeoutSeconds}s`);
+  if (result.timedOut && scenario.expectTimeout) {
+    log(`[hook-gym] ⏱ Expected timeout after ${scenario.timeoutSeconds}s (scenario.expectTimeout=true).`);
+  } else if (result.timedOut) {
+    log(`[hook-gym] ❌ TIMEOUT after ${scenario.timeoutSeconds}s`);
+  }
   if (budgetExceeded) log(`[hook-gym] ❌ BUDGET EXCEEDED ($${scenario.maxBudget.toFixed(2)})`);
   if (!selfCheckPassed) log(`[hook-gym] ❌ SELF-CHECK FAILED (fixture replay disagrees with live verdict)`);
 
