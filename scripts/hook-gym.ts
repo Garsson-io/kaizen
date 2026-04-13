@@ -110,7 +110,7 @@ function cmdDryRun(scenarioName: string): void {
   console.log(rendered);
 }
 
-async function cmdRun(scenarioName: string, modelOverride?: string, debug?: boolean): Promise<void> {
+async function cmdRun(scenarioName: string, hostRepo: string, modelOverride?: string, debug?: boolean): Promise<void> {
   const scenario = getScenario(scenarioName);
   if (!scenario) {
     console.error(`Unknown scenario: ${scenarioName}`);
@@ -119,16 +119,16 @@ async function cmdRun(scenarioName: string, modelOverride?: string, debug?: bool
   }
 
   const result = await runScenario(scenario, {
-    hostRepo: getHostRepo(),
+    hostRepo,
     modelOverride,
     debug,
   });
   process.exit(result.passed ? 0 : 1);
 }
 
-async function cmdRunAll(modelOverride?: string, debug?: boolean): Promise<void> {
+async function cmdRunAll(hostRepo: string, modelOverride?: string, debug?: boolean): Promise<void> {
   const { allPassed } = await runAll(SCENARIOS, {
-    hostRepo: getHostRepo(),
+    hostRepo,
     modelOverride,
     debug,
   });
@@ -160,6 +160,7 @@ function cmdValidate(fixturePath: string, scenarioName: string): void {
 
 async function main(): Promise<void> {
   const modelOverride = getFlag('--model');
+  const hostRepo = getFlag('--host-repo') ?? getHostRepo();
   const debug = hasFlag('--debug');
 
   if (hasFlag('--help') || hasFlag('-h')) {
@@ -177,6 +178,7 @@ Usage:
 
 Options:
   --model <model>    Override scenario model (haiku, sonnet, opus)
+  --host-repo <r>    Override host repo (default: from kaizen.config.json)
   --debug            Print raw hook event JSON
   --dry-run          Show prompt without spawning agent
 
@@ -194,13 +196,13 @@ See docs/hook-gym-spec.md for full design.`);
     if (hasFlag('--dry-run')) {
       cmdDryRun(scenarioName);
     } else {
-      await cmdRun(scenarioName, modelOverride, debug);
+      await cmdRun(scenarioName, hostRepo, modelOverride, debug);
     }
     return;
   }
 
   if (hasFlag('--run-all')) {
-    await cmdRunAll(modelOverride, debug);
+    await cmdRunAll(hostRepo, modelOverride, debug);
     return;
   }
 
