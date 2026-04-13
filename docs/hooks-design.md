@@ -200,6 +200,27 @@ Tests that don't override `STATE_DIR` will interact with real gates from other s
 ### 6. Silent Failures in Advisory Hooks
 PostToolUse hooks that set gates should log what they're doing. Silent gate creation leads to mysterious blocks later.
 
+### 8. YAML Gate Signals (#1049)
+
+Hooks that set or clear gates emit a structured YAML block in their stdout, before the human-readable message:
+
+```yaml
+---
+gate: needs_review
+action: set
+pr: https://github.com/.../pull/42
+round: 1
+reason: pr_created
+---
+📋 PR created: ...
+```
+
+Schema: `src/hooks/lib/gate-signal.ts` (Zod-validated `GateSignal` type). Use `formatGateSignal()` to emit; `parseGateSignal()` to extract from hook output.
+
+**Why YAML, not JSON?** Humans read hook output in the terminal. YAML is readable at a glance. JSON requires mental parsing. The Hook Gym stream parser (`scripts/hook-gym-stream.ts`) tries YAML first, falls back to regex for hooks not yet upgraded.
+
+**All gate-transitioning hooks are wired:** `pr-review-loop.ts` (set/clear needs_review), `kaizen-reflect.ts` (set needs_pr_kaizen), `pr-kaizen-clear.ts` (clear needs_pr_kaizen), `post-merge-clear.ts` (set/clear needs_post_merge).
+
 ### 7. Heavy Subprocesses in Accumulating Hooks (#474)
 Never spawn heavy subprocesses (vitest, tsc, npm test, npx) in hooks that can fire multiple times without blocking the AI. Stop hooks retry on exit 2, PostToolUse hooks fire on every tool call, advisory PreToolUse hooks don't block — all of these can accumulate unboundedly.
 

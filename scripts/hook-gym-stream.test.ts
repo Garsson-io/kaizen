@@ -117,21 +117,13 @@ describe('parseHookDecision', () => {
     const fixturePath = resolve(__dirname, '..', 'fixtures', 'live', 'probe-hooks.jsonl');
     const timeline = parseLogFile(readFileSync(fixturePath, 'utf-8'));
 
-    // Dump all non-none decisions for diagnosis
-    const nonNone = timeline.events.filter(e => e.decision !== 'none' && e.decision !== null);
-    console.log('Non-none decisions:', nonNone.map(e =>
-      `${e.eventType}:${e.decision}:${e.reason} raw=${e.rawOutput.slice(0,60).replace(/\n/g,' ')}`
-    ));
-
     const selfReview = timeline.events.find(e => e.rawOutput.includes('SELF-REVIEW'));
     expect(selfReview).toBeDefined();
-    console.log('SELF-REVIEW decision:', selfReview!.decision, 'reason:', selfReview!.reason);
     expect(selfReview!.decision).toBe('set-gate');
     expect(selfReview!.reason).toBe('needs_review');
 
     const kaizenReflect = timeline.events.find(e => e.rawOutput.includes('KAIZEN REFLECTION'));
     expect(kaizenReflect).toBeDefined();
-    console.log('KAIZEN REFLECTION decision:', kaizenReflect!.decision, 'reason:', kaizenReflect!.reason);
     expect(kaizenReflect!.decision).toBe('set-gate');
     expect(kaizenReflect!.reason).toBe('needs_pr_kaizen');
 

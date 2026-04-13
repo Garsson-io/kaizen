@@ -62,7 +62,7 @@ export interface RunOptions {
   cwd?: string | null;
 }
 
-function getHostRepo(): string {
+export function getHostRepo(): string {
   try {
     const config = JSON.parse(readFileSync('kaizen.config.json', 'utf-8'));
     return config?.host?.repo ?? 'Garsson-io/kaizen';

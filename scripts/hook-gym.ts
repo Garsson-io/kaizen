@@ -15,12 +15,11 @@
  * See docs/hook-gym-spec.md for full design.
  */
 
-import { readFileSync } from 'node:fs';
 import { SCENARIOS, getScenario, renderPrompt } from './hook-gym-scenarios.js';
 import type { Scenario } from './hook-gym-schema.js';
 import { SEVERITY_WEIGHT } from './hook-gym-schema.js';
 import { validateFixtureFile, formatValidationReport } from './hook-gym-validate.js';
-import { runScenario, runAll } from './hook-gym-run.js';
+import { runScenario, runAll, getHostRepo } from './hook-gym-run.js';
 
 // ── CLI helpers ────────────────────────────────────────────────────
 
@@ -32,17 +31,6 @@ function getFlag(flag: string): string | undefined {
 
 function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);
-}
-
-// ── Config ─────────────────────────────────────────────────────────
-
-function getHostRepo(): string {
-  try {
-    const config = JSON.parse(readFileSync('kaizen.config.json', 'utf-8'));
-    return config?.host?.repo ?? 'Garsson-io/kaizen';
-  } catch {
-    return 'Garsson-io/kaizen';
-  }
 }
 
 // ── Commands ───────────────────────────────────────────────────────
