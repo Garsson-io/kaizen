@@ -128,6 +128,28 @@ describe('hook-gym CLI — --run <name> --dry-run (B9)', () => {
   });
 });
 
+describe('hook-gym CLI — unimplemented commands exit non-zero', () => {
+  // Regression (round 12 correctness finding): stubs returned exit 0, so CI
+  // treated invocations of incomplete commands as success.
+  it('--run (live) exits non-zero with a message on stderr', () => {
+    const { stderr, status } = runCli(['--run', 'probe-hooks']);
+    expect(status).not.toBe(0);
+    expect(stderr).toContain('not yet implemented');
+  });
+
+  it('--run-all exits non-zero', () => {
+    const { status, stderr } = runCli(['--run-all']);
+    expect(status).not.toBe(0);
+    expect(stderr).toContain('not yet implemented');
+  });
+
+  it('--replay exits non-zero', () => {
+    const { status, stderr } = runCli(['--replay', '/tmp/nonexistent.log']);
+    expect(status).not.toBe(0);
+    expect(stderr).toContain('not yet implemented');
+  });
+});
+
 describe('hook-gym CLI — --help', () => {
   it('prints usage and exits 0', () => {
     const { stdout, status } = runCli(['--help']);

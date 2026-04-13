@@ -68,6 +68,28 @@ describe('parseHookDecision', () => {
     expect(reason).toBe('needs_review');
   });
 
+  it('classifies "clearing needs_review" text as clear-gate, not set-gate', () => {
+    // Regression: SET patterns were checked before CLEAR, so the substring
+    // "needs_review" in "clearing needs_review" matched SET first.
+    const { decision, reason } = parseHookDecision(
+      '',
+      'clearing needs_review gate',
+      0,
+    );
+    expect(decision).toBe('clear-gate');
+    expect(reason).toBe('needs_review');
+  });
+
+  it('classifies STATUS=passed as clear-gate even when text mentions needs_review', () => {
+    const { decision, reason } = parseHookDecision(
+      '',
+      'needs_review: STATUS=passed',
+      0,
+    );
+    expect(decision).toBe('clear-gate');
+    expect(reason).toBe('needs_review');
+  });
+
   it('falls through to none for unrecognized JSON', () => {
     const output = JSON.stringify({ foo: 'bar' });
     const { decision } = parseHookDecision(output, '', 0);

@@ -25,9 +25,9 @@ const GATE_SET_PATTERNS: Record<string, RegExp> = {
 };
 
 const GATE_CLEAR_PATTERNS: Record<string, RegExp> = {
-  needs_review: /STATUS=passed|review_passed/i,
-  needs_pr_kaizen: /KAIZEN_UNFINISHED|KAIZEN_IMPEDIMENTS|cleared.*kaizen/i,
-  needs_post_merge: /post.merge.*clear/i,
+  needs_review: /STATUS=passed|review_passed|clear(?:ed|ing)\s+needs_review/i,
+  needs_pr_kaizen: /KAIZEN_UNFINISHED|KAIZEN_IMPEDIMENTS|cleared.*kaizen|clear(?:ed|ing)\s+needs_pr_kaizen/i,
+  needs_post_merge: /post.merge.*clear|clear(?:ed|ing)\s+needs_post_merge/i,
 };
 
 // ── Decision parsing ───────────────────────────────────────────────
@@ -49,15 +49,18 @@ export function parseHookDecision(
   // For backward compat, the 2nd arg is treated as "any stream text" and we
   // ALSO scan extraStdout if provided. The processor passes both streams.
   const combined = `${stderrOrStdout}\n${extraStdout}`;
+  // Check CLEAR patterns before SET so phrases like "clearing needs_review"
+  // or "STATUS=passed" aren't misclassified as set-gate when the underlying
+  // gate name also matches the SET regex.
   const scanForGatePatterns = (): { decision: ParsedHookEvent['decision']; reason: string | null } | null => {
-    for (const [gate, pattern] of Object.entries(GATE_SET_PATTERNS)) {
-      if (pattern.test(output) || pattern.test(combined)) {
-        return { decision: 'set-gate', reason: gate };
-      }
-    }
     for (const [gate, pattern] of Object.entries(GATE_CLEAR_PATTERNS)) {
       if (pattern.test(output) || pattern.test(combined)) {
         return { decision: 'clear-gate', reason: gate };
+      }
+    }
+    for (const [gate, pattern] of Object.entries(GATE_SET_PATTERNS)) {
+      if (pattern.test(output) || pattern.test(combined)) {
+        return { decision: 'set-gate', reason: gate };
       }
     }
     return null;
@@ -98,16 +101,16 @@ export function parseHookDecision(
     return { decision: 'block', reason: parsed.reason ?? null };
   }
 
-  // Check for gate patterns in parsed output
+  // Check for gate patterns in parsed output (CLEAR before SET — see above).
   const outputStr = JSON.stringify(parsed);
-  for (const [gate, pattern] of Object.entries(GATE_SET_PATTERNS)) {
-    if (pattern.test(outputStr)) {
-      return { decision: 'set-gate', reason: gate };
-    }
-  }
   for (const [gate, pattern] of Object.entries(GATE_CLEAR_PATTERNS)) {
     if (pattern.test(outputStr)) {
       return { decision: 'clear-gate', reason: gate };
+    }
+  }
+  for (const [gate, pattern] of Object.entries(GATE_SET_PATTERNS)) {
+    if (pattern.test(outputStr)) {
+      return { decision: 'set-gate', reason: gate };
     }
   }
 

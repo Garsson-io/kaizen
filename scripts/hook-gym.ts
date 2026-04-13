@@ -15,7 +15,7 @@
  * See docs/hook-gym-spec.md for full design.
  */
 
-import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { SCENARIOS, getScenario, renderPrompt } from './hook-gym-scenarios.js';
 import type { Scenario } from './hook-gym-schema.js';
 import { SEVERITY_WEIGHT } from './hook-gym-schema.js';
@@ -37,10 +37,8 @@ function hasFlag(flag: string): boolean {
 
 function getHostRepo(): string {
   try {
-    return execSync('jq -r ".host.repo" kaizen.config.json', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
+    const config = JSON.parse(readFileSync('kaizen.config.json', 'utf-8'));
+    return config?.host?.repo ?? 'Garsson-io/kaizen';
   } catch {
     return 'Garsson-io/kaizen';
   }
@@ -112,20 +110,27 @@ function cmdDryRun(scenarioName: string): void {
 }
 
 function cmdRun(scenarioName: string): void {
-  console.log(`\n[hook-gym] Live run not yet implemented (PR 3).`);
-  console.log(`[hook-gym] Use --dry-run to see the prompt.\n`);
-  process.exit(0);
+  console.error(
+    `\n[hook-gym] Live run not yet implemented (PR 3 of epic #1028).\n` +
+      `[hook-gym] Use \`--run ${scenarioName} --dry-run\` to preview the rendered prompt.\n`,
+  );
+  process.exit(1);
 }
 
 function cmdRunAll(): void {
-  console.log(`\n[hook-gym] Run-all not yet implemented (PR 3).`);
-  console.log(`[hook-gym] Use --list to see available scenarios.\n`);
-  process.exit(0);
+  console.error(
+    `\n[hook-gym] Run-all not yet implemented (PR 3 of epic #1028).\n` +
+      `[hook-gym] Use \`--list\` to see available scenarios.\n`,
+  );
+  process.exit(1);
 }
 
 function cmdReplay(logPath: string): void {
-  console.log(`\n[hook-gym] Replay not yet implemented (PR 5).`);
-  process.exit(0);
+  console.error(
+    `\n[hook-gym] Replay not yet implemented (PR 5 of epic #1028).\n` +
+      `[hook-gym] To validate a captured fixture now, use \`--validate-fixture <path> --scenario <name>\`.\n`,
+  );
+  process.exit(1);
 }
 
 function cmdValidate(fixturePath: string, scenarioName: string): void {
