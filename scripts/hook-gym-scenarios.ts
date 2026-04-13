@@ -16,29 +16,37 @@ import type { Scenario } from './hook-gym-schema.js';
 // ── Prompt templates ───────────────────────────────────────────────
 
 const PROBE_HOOKS_PROMPT = `You are running a hook-gym synthetic test scenario.
+This project has kaizen hooks installed. Work WITH them, not against them.
 
 ## Task
 
-Create a simple test file, commit it, and create a PR. Follow these exact steps:
+Create a simple test file, commit it, and create a PR. Follow the kaizen workflow:
 
-1. Create a file called \`hook-gym-probe.md\` with content:
+1. Create a new branch for this work:
+   git checkout -b hook-gym-probe-{{timestamp}}
+
+2. Create a file called \`hook-gym-probe.md\` with content:
    \`\`\`
    # Hook Gym Probe
    Timestamp: {{timestamp}}
    \`\`\`
 
-2. Stage and commit:
+3. Stage and commit:
    git add hook-gym-probe.md
    git commit -m "test: hook-gym probe {{timestamp}}"
 
-3. Push and create PR:
-   git push origin HEAD
+4. Push and create PR:
+   git push -u origin hook-gym-probe-{{timestamp}}
    gh pr create --title "test: hook-gym probe {{timestamp}}" --body "Synthetic hook-gym scenario. Auto-close after capture." --repo {{host_repo}}
 
-4. After creating the PR, stop. Do NOT merge, do NOT run review, do NOT reflect.
-   The harness will capture hook behavior and clean up.
+5. After the PR is created, the stop gate will block you (needs_review + needs_pr_kaizen).
+   This is expected. Try to stop — the harness will capture the block and kill the session.
 
-Do not ask for confirmation. Complete all steps autonomously.
+IMPORTANT:
+- Do NOT ask for confirmation. Complete all steps autonomously.
+- Do NOT run /kaizen-review-pr or /kaizen-reflect — the harness captures the gate block.
+- If a hook denies an action, adapt (e.g. if dirty-files blocks PR create, commit first).
+- The timeout will kill this session — that is the expected exit path.
 `;
 
 const LIFECYCLE_GATES_PROMPT = `You are running a hook-gym synthetic test scenario that exercises the full gate lifecycle.

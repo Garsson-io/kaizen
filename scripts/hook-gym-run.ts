@@ -14,7 +14,7 @@
  */
 
 import { spawn as realSpawn, execSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -103,11 +103,13 @@ function cloneAndSetup(
     return undefined;
   }
 
-  // Install kaizen as a plugin — same as any host project would.
-  // 1. Register the kaizen repo as a marketplace (idempotent if already registered)
-  // 2. Install the kaizen plugin with project scope
-  log(`[hook-gym] Installing kaizen plugin from ${kaizenRepoPath}...`);
+  // Install kaizen — full setup, same as any host project:
+  // 1. Register marketplace + install plugin (hooks fire via plugin.json)
+  // 2. Run kaizen-setup config + scaffold (creates kaizen.config.json + policies)
+  // 3. Inject CLAUDE.md instructions fragment (so the agent knows the workflow)
+  log(`[hook-gym] Installing kaizen from ${kaizenRepoPath}...`);
   try {
+    // Plugin installation
     execSync(
       `claude plugins marketplace add "${kaizenRepoPath}" 2>/dev/null || true`,
       { stdio: 'pipe', timeout: 15_000, cwd: dir },
@@ -116,10 +118,55 @@ function cloneAndSetup(
       `claude plugins install kaizen@kaizen --scope project`,
       { stdio: 'pipe', timeout: 15_000, cwd: dir },
     );
-    log(`[hook-gym] Plugin installed successfully.`);
+
+    // Config step — creates kaizen.config.json
+    const repoSlug = hostRepo;
+    const repoName = hostRepo.split('/').pop() ?? 'fixture';
+    execSync(
+      `npx --prefix "${kaizenRepoPath}" tsx "${kaizenRepoPath}/src/kaizen-setup.ts" ` +
+      `--step config --name "${repoName}" --repo "${repoSlug}" ` +
+      `--description "Hook Gym test fixture" --kaizen-repo "Garsson-io/kaizen"`,
+      { stdio: 'pipe', timeout: 15_000, cwd: dir },
+    );
+
+    // Scaffold step — creates policies-local.md
+    execSync(
+      `npx --prefix "${kaizenRepoPath}" tsx "${kaizenRepoPath}/src/kaizen-setup.ts" --step scaffold`,
+      { stdio: 'pipe', timeout: 15_000, cwd: dir },
+    );
+
+    // Inject CLAUDE.md instructions fragment
+    const fragmentPath = join(kaizenRepoPath, '.agents', 'kaizen', 'instructions-fragment.md');
+    if (existsSync(fragmentPath)) {
+      let fragment = readFileSync(fragmentPath, 'utf-8');
+      fragment = fragment.replace(/\{\{KAIZEN_ROOT\}\}/g, kaizenRepoPath);
+      const claudeMdPath = join(dir, 'CLAUDE.md');
+      const existing = existsSync(claudeMdPath) ? readFileSync(claudeMdPath, 'utf-8') : '';
+      if (!existing.toLowerCase().includes('kaizen')) {
+        writeFileSync(claudeMdPath, existing + '\n' + fragment);
+      }
+    }
+
+    // Gitignore runtime artifacts that hooks create as side-effects,
+    // so the dirty-files hook doesn't block PR creation.
+    const gitignorePath = join(dir, '.gitignore');
+    const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf-8') : '';
+    if (!existing.includes('.kaizen/telemetry')) {
+      writeFileSync(gitignorePath, existing + '\n.kaizen/telemetry/\n');
+    }
+
+    // Commit all setup-generated files so the working tree is clean.
+    // The dirty-files hook blocks PR creation when there are uncommitted changes,
+    // and kaizen-setup creates .agents/, CLAUDE.md, kaizen.config.json, etc.
+    execSync(
+      'git add -A && git commit -m "chore: kaizen setup (hook-gym)" --no-verify',
+      { stdio: 'pipe', timeout: 10_000, cwd: dir },
+    );
+
+    log(`[hook-gym] Full kaizen setup complete (files committed).`);
   } catch (err) {
-    log(`[hook-gym] Plugin install failed: ${err instanceof Error ? err.message : err}`);
-    log(`[hook-gym] Hooks may not fire in the spawned agent.`);
+    log(`[hook-gym] Setup failed: ${err instanceof Error ? err.message : err}`);
+    log(`[hook-gym] Hooks may not fire correctly.`);
   }
 
   log(`[hook-gym] Clone ready at ${dir}`);
