@@ -3,6 +3,12 @@ node_modules
 dist/
 dist
 *.tsbuildinfo
+artifacts/
+artifacts
+# Codecov uploader binary + signatures (downloaded by codecov/codecov-action@v5)
+/codecov
+/codecov.SHA256SUM
+/codecov.SHA256SUM.sig
 *.tmp
 __pycache__/
 *.pyc

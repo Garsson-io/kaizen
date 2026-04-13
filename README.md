@@ -1,5 +1,13 @@
 # Kaizen — Continuous Improvement Plugin for Claude Code
 
+[![CI (main)](https://github.com/Garsson-io/kaizen/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Garsson-io/kaizen/actions/workflows/ci.yml?query=branch%3Amain)
+[![CodeQL (main)](https://github.com/Garsson-io/kaizen/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Garsson-io/kaizen/actions/workflows/codeql.yml?query=branch%3Amain)
+[![Coverage (main)](https://codecov.io/gh/Garsson-io/kaizen/branch/main/graph/badge.svg)](https://app.codecov.io/gh/Garsson-io/kaizen/tree/main)
+[![TypeScript](https://img.shields.io/badge/lang-typescript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vitest](https://img.shields.io/badge/tests-vitest-6E9F18?logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Node 22](https://img.shields.io/badge/node-22-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Dependabot](https://img.shields.io/badge/dependabot-enabled-025E8C?logo=dependabot)](https://github.com/Garsson-io/kaizen/security/dependabot)
+
 A process improvement methodology implemented as a Claude Code plugin. Kaizen provides enforcement hooks, reflection workflows, dev workflow skills, and a philosophical framework for autonomous, recursive self-improvement.
 
 ## What You Get

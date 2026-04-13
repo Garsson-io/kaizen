@@ -1,18 +1,39 @@
 name: CI
+
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  shell-tests:
+  typecheck:
+    name: TypeScript typecheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  shell-tests:
+    name: Shell hook tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
       - run: npm ci
       - run: npm run build
       - name: Run shell hook tests
@@ -27,6 +48,7 @@ jobs:
           fi
 
   hook-integrity:
+    name: Hook integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,18 +56,48 @@ jobs:
         run: bash .claude/hooks/tests/validate-hook-integrity.sh
 
   ts-tests:
+    name: TypeScript tests + coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - run: npm ci
       - run: npm run build
-      - run: npm test
+      - name: Run tests with coverage
+        run: npm run test:ci
+
+      - name: Upload test and coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: artifacts/
+          if-no-files-found: warn
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: artifacts/coverage/cobertura-coverage.xml,artifacts/coverage/lcov.info
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Coverage summary
+        if: always()
+        run: node scripts/coverage-summary.mjs
+
       - name: Verify no test side-effects on repo files
         run: |
-          DIRTY=$(git status --porcelain)
+          # Filter out artifacts/ (our own coverage output) and the codecov
+          # uploader binary+signatures that codecov/codecov-action@v5 drops
+          # into the repo root. These are CI-step side-effects, not test
+          # side-effects, so they shouldn't trigger the #448 guard.
+          DIRTY=$(git status --porcelain \
+            | grep -Ev '^\?\? (artifacts/|codecov(\.SHA256SUM(\.sig)?)?$)' \
+            || true)
           if [ -n "$DIRTY" ]; then
             echo "::error::Tests left side-effects on repo files (kaizen #448):"
             echo "$DIRTY"
