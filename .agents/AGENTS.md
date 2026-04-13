@@ -107,9 +107,11 @@ Store plans immediately after creating them. Review findings are stored per-roun
 - **Workflow changes** → update the relevant SKILL.md
 Memory-only retention means the next session on a different machine repeats the same mistake.
 
-### Hook behavior notes
+### Branch & PR hygiene
 
-- **Review round bumps on push are intended, not a bug.** `pr-review-loop` sets `needs_review` for a new round after every `git push` — including pushes to branches whose prior PR was merged. Rationale: new code deserves a fresh review; the previous round's pass is stale. Do not file this as a hook bug.
+- **Never push new commits to a branch whose PR has already been merged.** Commits pushed to a merged branch get orphaned or confuse the review loop. Always create a new branch (via `EnterWorktree` or `git checkout -b`) for follow-up work.
+- **If you accidentally pushed to a merged branch, detect and recover.** Check `gh pr list --head <branch>` and `gh pr view <last-pr> --json state`. If the last PR on the branch is `MERGED`, create a fresh branch from `main` (or from the merge commit), cherry-pick or re-apply your new commits there, and open a new PR from the new branch.
+- **Review round bumps on push are intended.** Within a single open PR, `pr-review-loop` correctly sets `needs_review` for a new round after every `git push`. Each push is new code and deserves fresh review; the previous round's pass is stale. This is not a bug — complete the new review round before proceeding.
 
 ## Configuration
 
