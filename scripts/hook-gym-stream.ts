@@ -38,10 +38,34 @@ const GATE_CLEAR_PATTERNS: Record<string, RegExp> = {
  */
 export function parseHookDecision(
   output: string,
-  stderr: string,
+  stderrOrStdout: string,
   exitCode: number,
+  extraStdout: string = '',
 ): { decision: ParsedHookEvent['decision']; reason: string | null } {
+  // Check output/stdout/stderr for gate signals — hooks that set/clear gates
+  // often emit informational text rather than structured JSON. Do this before
+  // the empty-output early-return so gate signals aren't missed.
+  //
+  // For backward compat, the 2nd arg is treated as "any stream text" and we
+  // ALSO scan extraStdout if provided. The processor passes both streams.
+  const combined = `${stderrOrStdout}\n${extraStdout}`;
+  const scanForGatePatterns = (): { decision: ParsedHookEvent['decision']; reason: string | null } | null => {
+    for (const [gate, pattern] of Object.entries(GATE_SET_PATTERNS)) {
+      if (pattern.test(output) || pattern.test(combined)) {
+        return { decision: 'set-gate', reason: gate };
+      }
+    }
+    for (const [gate, pattern] of Object.entries(GATE_CLEAR_PATTERNS)) {
+      if (pattern.test(output) || pattern.test(combined)) {
+        return { decision: 'clear-gate', reason: gate };
+      }
+    }
+    return null;
+  };
+
   if (!output && exitCode === 0) {
+    const gateResult = scanForGatePatterns();
+    if (gateResult) return gateResult;
     return { decision: 'none', reason: null };
   }
 
@@ -50,17 +74,9 @@ export function parseHookDecision(
   try {
     parsed = JSON.parse(output);
   } catch {
-    // Not JSON — check for gate patterns in raw output
-    for (const [gate, pattern] of Object.entries(GATE_SET_PATTERNS)) {
-      if (pattern.test(output) || pattern.test(stderr)) {
-        return { decision: 'set-gate', reason: gate };
-      }
-    }
-    for (const [gate, pattern] of Object.entries(GATE_CLEAR_PATTERNS)) {
-      if (pattern.test(output) || pattern.test(stderr)) {
-        return { decision: 'clear-gate', reason: gate };
-      }
-    }
+    // Not JSON — fall back to raw pattern scan
+    const gateResult = scanForGatePatterns();
+    if (gateResult) return gateResult;
     return { decision: 'none', reason: null };
   }
 
@@ -148,6 +164,7 @@ export function createHookStreamProcessor() {
           hookEvent.output ?? '',
           hookEvent.stderr ?? '',
           hookEvent.exit_code,
+          hookEvent.stdout ?? '',
         );
 
         const parsed: ParsedHookEvent = {
