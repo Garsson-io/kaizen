@@ -26,7 +26,8 @@ import {
   chmodSync,
   unlinkSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
 import {
@@ -45,7 +46,9 @@ import {
 
 // ── Constants ──
 
-const KAIZEN_ROOT = resolve(__dirname, "../..");
+const __filename_esm = fileURLToPath(import.meta.url);
+const __dirname_esm = dirname(__filename_esm);
+const KAIZEN_ROOT = resolve(typeof __dirname !== "undefined" ? __dirname : __dirname_esm, "../..");
 const HOOKS_DIR = join(KAIZEN_ROOT, ".claude", "hooks");
 // ── Hook Registry (matches plugin.json) ──
 
