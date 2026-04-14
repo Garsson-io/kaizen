@@ -200,6 +200,30 @@ Tests that don't override `STATE_DIR` will interact with real gates from other s
 ### 6. Silent Failures in Advisory Hooks
 PostToolUse hooks that set gates should log what they're doing. Silent gate creation leads to mysterious blocks later.
 
+### 8. YAML Gate Signals (#1049)
+
+Hooks that set or clear gates emit a structured YAML block in their stdout. The YAML *is* the human-readable output — it's designed to be read by both machines and humans:
+
+```yaml
+---
+gate: needs_review
+action: set
+pr: https://github.com/.../pull/42
+round: 1
+reason: PR created — mandatory self-review loop starts now
+---
+```
+
+Schema: `src/hooks/lib/gate-signal.ts` (Zod-validated `GateSignal` type). Use `formatGateSignal()` to emit; `parseGateSignal()` to extract from hook output.
+
+**Why YAML?** Humans read hook output in the terminal. YAML is readable at a glance — `gate: needs_review` / `action: set` / `reason: ...` tells the whole story. JSON requires mental parsing. Regex on prose is fragile (see #1049: three false-positive bugs from instructional text matching gate keywords).
+
+**All gate-transitioning hooks emit YAML as their primary output:** `pr-review-loop.ts` (set/clear needs_review), `kaizen-reflect.ts` (set needs_pr_kaizen), `pr-kaizen-clear.ts` (clear needs_pr_kaizen), `post-merge-clear.ts` (set/clear needs_post_merge).
+
+Some hooks (e.g. `kaizen-reflect.ts`) append operational context after the YAML block (timing reports, agent instructions). This is not a gate signal — it's context for the agent to act on. The `parseGateSignal` function extracts only the `---`-delimited YAML block.
+
+The Hook Gym stream parser (`scripts/hook-gym-stream.ts`) tries YAML first, falls back to regex for hooks that don't set/clear gates.
+
 ### 7. Heavy Subprocesses in Accumulating Hooks (#474)
 Never spawn heavy subprocesses (vitest, tsc, npm test, npx) in hooks that can fire multiple times without blocking the AI. Stop hooks retry on exit 2, PostToolUse hooks fire on every tool call, advisory PreToolUse hooks don't block — all of these can accumulate unboundedly.
 

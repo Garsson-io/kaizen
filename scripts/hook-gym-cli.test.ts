@@ -65,7 +65,7 @@ describe('hook-gym CLI — --list (B8)', () => {
 
   it('shows description for each scenario', () => {
     const { stdout } = runCli(['--list']);
-    expect(stdout).toContain('Minimal: create file, commit, PR');
+    expect(stdout).toContain('Full workflow');
     expect(stdout).toContain('Gate lifecycle');
     expect(stdout).toContain('Full lifecycle');
   });
@@ -95,16 +95,16 @@ describe('hook-gym CLI — --run <name> --dry-run (B9)', () => {
   it('prints the scenario header block with model + budget + timeout', () => {
     const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
     expect(stdout).toContain('=== Scenario: probe-hooks ===');
-    expect(stdout).toContain('Model: haiku');
-    expect(stdout).toContain('Budget: $');
-    expect(stdout).toContain('Timeout:');
+    expect(stdout).toContain('haiku');
+    expect(stdout).toMatch(/\$\d+\.\d{2}/);
+    expect(stdout).toMatch(/\d+s/);
   });
 
   it('prints the expected-hooks section with severity and weight', () => {
     const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
     expect(stdout).toContain('--- Expected hooks ---');
     // Severity and weight annotation appears on every expected hook
-    expect(stdout).toMatch(/\[sev=\d w=\d\]/);
+    expect(stdout).toMatch(/\[sev=\d\]/);
   });
 
   it('prints the expected-gates section', () => {
@@ -128,25 +128,11 @@ describe('hook-gym CLI — --run <name> --dry-run (B9)', () => {
   });
 });
 
-describe('hook-gym CLI — unimplemented commands exit non-zero', () => {
-  // Regression (round 12 correctness finding): stubs returned exit 0, so CI
-  // treated invocations of incomplete commands as success.
-  it('--run (live) exits non-zero with a message on stderr', () => {
-    const { stderr, status } = runCli(['--run', 'probe-hooks']);
+describe('hook-gym CLI — implemented commands reject bad input', () => {
+  it('--run with unknown scenario exits non-zero', () => {
+    const { stderr, status } = runCli(['--run', 'no-such-scenario']);
     expect(status).not.toBe(0);
-    expect(stderr).toContain('not yet implemented');
-  });
-
-  it('--run-all exits non-zero', () => {
-    const { status, stderr } = runCli(['--run-all']);
-    expect(status).not.toBe(0);
-    expect(stderr).toContain('not yet implemented');
-  });
-
-  it('--replay exits non-zero', () => {
-    const { status, stderr } = runCli(['--replay', '/tmp/nonexistent.log']);
-    expect(status).not.toBe(0);
-    expect(stderr).toContain('not yet implemented');
+    expect(stderr).toContain('Unknown scenario');
   });
 });
 
@@ -154,9 +140,9 @@ describe('hook-gym CLI — --help', () => {
   it('prints usage and exits 0', () => {
     const { stdout, status } = runCli(['--help']);
     expect(status).toBe(0);
-    expect(stdout).toContain('Synthetic problem runner');
+    expect(stdout).toContain('hook-gym');
     expect(stdout).toContain('--list');
     expect(stdout).toContain('--run');
-    expect(stdout).toContain('--replay');
+    expect(stdout).toContain('--validate-fixture');
   });
 });

@@ -2,26 +2,18 @@
 /**
  * hook-gym.ts — Synthetic problem runner with hook observability.
  *
- * Spawns cheap agents (haiku/sonnet) on simple synthetic problems
- * with --include-hook-events to capture full hook lifecycle.
- *
  * Usage:
  *   npx tsx scripts/hook-gym.ts --list
+ *   npx tsx scripts/hook-gym.ts --run probe-hooks --host-repo Garsson-io/kaizen-test-fixture
  *   npx tsx scripts/hook-gym.ts --run probe-hooks --dry-run
- *   npx tsx scripts/hook-gym.ts --run probe-hooks
- *   npx tsx scripts/hook-gym.ts --run-all
- *   npx tsx scripts/hook-gym.ts --replay <log-file>
- *
- * See docs/hook-gym-spec.md for full design.
+ *   npx tsx scripts/hook-gym.ts --run-all --host-repo Garsson-io/kaizen-test-fixture
+ *   npx tsx scripts/hook-gym.ts --validate-fixture <path> --scenario <name>
  */
 
-import { readFileSync } from 'node:fs';
 import { SCENARIOS, getScenario, renderPrompt } from './hook-gym-scenarios.js';
-import type { Scenario } from './hook-gym-schema.js';
 import { SEVERITY_WEIGHT } from './hook-gym-schema.js';
 import { validateFixtureFile, formatValidationReport } from './hook-gym-validate.js';
-
-// ── CLI helpers ────────────────────────────────────────────────────
+import { FixtureRepo, getHostRepo, type RunResult } from './hook-gym-harness.js';
 
 function getFlag(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
@@ -33,107 +25,49 @@ function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);
 }
 
-// ── Config ─────────────────────────────────────────────────────────
-
-function getHostRepo(): string {
-  try {
-    const config = JSON.parse(readFileSync('kaizen.config.json', 'utf-8'));
-    return config?.host?.repo ?? 'Garsson-io/kaizen';
-  } catch {
-    return 'Garsson-io/kaizen';
-  }
-}
-
-// ── Commands ───────────────────────────────────────────────────────
-
 function cmdList(): void {
   console.log('Available scenarios:\n');
   const maxName = Math.max(...SCENARIOS.map((s) => s.name.length));
-
   for (const s of SCENARIOS) {
     const hookCount = s.expectedHooks.length;
     const gateCount = s.expectedGates.length;
     const totalWeight = s.expectedHooks.reduce(
-      (sum, h) => sum + (SEVERITY_WEIGHT[h.severity] ?? 1),
-      0,
+      (sum, h) => sum + (SEVERITY_WEIGHT[h.severity] ?? 1), 0,
     );
-
     console.log(
       `  ${s.name.padEnd(maxName)}  ${s.model.padEnd(6)}  $${s.maxBudget.toFixed(2)}  ${s.timeoutSeconds}s  ${hookCount} hooks  ${gateCount} gates  weight=${totalWeight}`,
     );
     console.log(`  ${''.padEnd(maxName)}  ${s.description}`);
     console.log();
   }
-
   console.log(`Total: ${SCENARIOS.length} scenarios`);
 }
 
-function cmdDryRun(scenarioName: string): void {
+function cmdDryRun(scenarioName: string, hostRepo: string): void {
   const scenario = getScenario(scenarioName);
   if (!scenario) {
     console.error(`Unknown scenario: ${scenarioName}`);
     console.error(`Available: ${SCENARIOS.map((s) => s.name).join(', ')}`);
     process.exit(1);
   }
-
-  const hostRepo = getHostRepo();
-  const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-
-  const rendered = renderPrompt(scenario.prompt, {
-    timestamp,
-    host_repo: hostRepo,
-  });
-
+  const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+  const rendered = renderPrompt(scenario.prompt, { timestamp: ts, host_repo: hostRepo });
   console.log(`=== Scenario: ${scenario.name} ===`);
-  console.log(`Model: ${scenario.model}`);
-  console.log(`Budget: $${scenario.maxBudget.toFixed(2)}`);
-  console.log(`Timeout: ${scenario.timeoutSeconds}s`);
-  console.log(`Host repo: ${hostRepo}`);
-  console.log();
+  console.log(`Model: ${scenario.model} | Budget: $${scenario.maxBudget.toFixed(2)} | Timeout: ${scenario.timeoutSeconds}s`);
+  console.log(`Host repo: ${hostRepo}\n`);
   console.log('--- Expected hooks ---');
   for (const h of scenario.expectedHooks) {
-    const w = SEVERITY_WEIGHT[h.severity] ?? 1;
-    console.log(
-      `  [sev=${h.severity} w=${w}] ${h.eventType.padEnd(14)} ${h.expectedDecision.padEnd(10)} ${h.description}`,
-    );
+    console.log(`  [sev=${h.severity}] ${h.eventType.padEnd(14)} ${h.expectedDecision.padEnd(10)} ${h.description}`);
   }
-  console.log();
-  console.log('--- Expected gates ---');
+  console.log('\n--- Expected gates ---');
   for (const g of scenario.expectedGates) {
-    const activate = g.shouldActivate ? 'SET' : 'skip';
-    const clear = g.shouldClear ? '→ CLEAR' : '→ stays';
-    console.log(`  ${g.gate}: ${activate} ${clear}`);
+    console.log(`  ${g.gate}: ${g.shouldActivate ? 'SET' : 'skip'} ${g.shouldClear ? '→ CLEAR' : '→ stays'}`);
   }
-  console.log();
-  console.log('--- Rendered prompt ---');
+  console.log('\n--- Rendered prompt ---');
   console.log(rendered);
 }
 
-function cmdRun(scenarioName: string): void {
-  console.error(
-    `\n[hook-gym] Live run not yet implemented (PR 3 of epic #1028).\n` +
-      `[hook-gym] Use \`--run ${scenarioName} --dry-run\` to preview the rendered prompt.\n`,
-  );
-  process.exit(1);
-}
-
-function cmdRunAll(): void {
-  console.error(
-    `\n[hook-gym] Run-all not yet implemented (PR 3 of epic #1028).\n` +
-      `[hook-gym] Use \`--list\` to see available scenarios.\n`,
-  );
-  process.exit(1);
-}
-
-function cmdReplay(logPath: string): void {
-  console.error(
-    `\n[hook-gym] Replay not yet implemented (PR 5 of epic #1028).\n` +
-      `[hook-gym] To validate a captured fixture now, use \`--validate-fixture <path> --scenario <name>\`.\n`,
-  );
-  process.exit(1);
-}
-
-function cmdValidate(fixturePath: string, scenarioName: string): void {
+async function cmdRun(scenarioName: string, hostRepo: string, model?: string, debug?: boolean): Promise<void> {
   const scenario = getScenario(scenarioName);
   if (!scenario) {
     console.error(`Unknown scenario: ${scenarioName}`);
@@ -141,74 +75,99 @@ function cmdValidate(fixturePath: string, scenarioName: string): void {
     process.exit(1);
   }
 
-  const report = validateFixtureFile(fixturePath, scenario);
-  console.log(formatValidationReport(report));
-  process.exit(report.passed ? 0 : 1);
+  const isSelf = hostRepo === getHostRepo();
+  let result: RunResult;
+
+  if (isSelf) {
+    // Self-dogfood: run in CWD, no clone needed
+    // TODO: implement self-dogfood path via harness
+    console.error('Self-dogfood mode not yet supported via harness. Use --host-repo.');
+    process.exit(1);
+  }
+
+  const fixture = await FixtureRepo.create(hostRepo);
+  try {
+    result = await fixture.run(scenario, { model, debug });
+  } finally {
+    await fixture.cleanup();
+  }
+  process.exit(result.passed ? 0 : 1);
 }
 
-// ── Main ───────────────────────────────────────────────────────────
+async function cmdRunAll(hostRepo: string, model?: string, debug?: boolean): Promise<void> {
+  const isSelf = hostRepo === getHostRepo();
+  if (isSelf) {
+    console.error('Self-dogfood mode not yet supported via harness. Use --host-repo.');
+    process.exit(1);
+  }
 
-function main(): void {
+  const fixture = await FixtureRepo.create(hostRepo);
+  let allPassed = true;
+  const results: RunResult[] = [];
+
+  try {
+    for (const scenario of SCENARIOS) {
+      const result = await fixture.run(scenario, { model, debug });
+      results.push(result);
+      if (!result.passed) allPassed = false;
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+
+  console.log('\n=== Summary ===\n');
+  for (const r of results) {
+    const status = r.passed ? '✅ PASS' : '❌ FAIL';
+    console.log(`  ${r.scenario.padEnd(20)} ${status}  ${r.events.length} events  ${(r.durationMs / 1000).toFixed(1)}s`);
+  }
+  console.log(`\n${results.filter(r => r.passed).length}/${results.length} passed.`);
+  process.exit(allPassed ? 0 : 1);
+}
+
+async function main(): Promise<void> {
+  const model = getFlag('--model');
+  const hostRepo = getFlag('--host-repo') ?? getHostRepo();
+  const debug = hasFlag('--debug');
+
   if (hasFlag('--help') || hasFlag('-h')) {
     console.log(`hook-gym — Synthetic problem runner with hook observability
 
 Usage:
-  npx tsx scripts/hook-gym.ts --list                              List scenarios
-  npx tsx scripts/hook-gym.ts --run <name> --dry-run              Show rendered prompt
-  npx tsx scripts/hook-gym.ts --run <name>                        Run scenario (live)
-  npx tsx scripts/hook-gym.ts --run-all                           Run all scenarios
-  npx tsx scripts/hook-gym.ts --replay <log>                      Replay captured log
+  npx tsx scripts/hook-gym.ts --list
+  npx tsx scripts/hook-gym.ts --run <name> --host-repo <owner/repo>
+  npx tsx scripts/hook-gym.ts --run <name> --dry-run
+  npx tsx scripts/hook-gym.ts --run-all --host-repo <owner/repo>
   npx tsx scripts/hook-gym.ts --validate-fixture <path> --scenario <name>
-      Validate a fixture file (stream-json or JSON array of events) against
-      a scenario's ground truth. Exits 0 on pass, 1 on fail.
 
 Options:
   --model <model>    Override scenario model (haiku, sonnet, opus)
+  --host-repo <r>    Target repo (default: kaizen.config.json)
   --debug            Print raw hook event JSON
-  --dry-run          Show prompt without spawning agent
-
-See docs/hook-gym-spec.md for full design.`);
+  --dry-run          Show prompt without spawning agent`);
     process.exit(0);
   }
 
-  if (hasFlag('--list')) {
-    cmdList();
-    return;
-  }
+  if (hasFlag('--list')) { cmdList(); return; }
 
   const scenarioName = getFlag('--run');
   if (scenarioName) {
-    if (hasFlag('--dry-run')) {
-      cmdDryRun(scenarioName);
-    } else {
-      cmdRun(scenarioName);
-    }
+    if (hasFlag('--dry-run')) cmdDryRun(scenarioName, hostRepo);
+    else await cmdRun(scenarioName, hostRepo, model, debug);
     return;
   }
 
-  if (hasFlag('--run-all')) {
-    cmdRunAll();
-    return;
-  }
-
-  const logPath = getFlag('--replay');
-  if (logPath) {
-    cmdReplay(logPath);
-    return;
-  }
+  if (hasFlag('--run-all')) { await cmdRunAll(hostRepo, model, debug); return; }
 
   const fixturePath = getFlag('--validate-fixture');
   const scenarioForValidate = getFlag('--scenario');
   if (fixturePath && scenarioForValidate) {
-    cmdValidate(fixturePath, scenarioForValidate);
-    return;
-  }
-  if (fixturePath && !scenarioForValidate) {
-    console.error('--validate-fixture requires --scenario <name>');
-    process.exit(1);
+    const scenario = getScenario(scenarioForValidate);
+    if (!scenario) { console.error(`Unknown scenario: ${scenarioForValidate}`); process.exit(1); }
+    const report = validateFixtureFile(fixturePath, scenario);
+    console.log(formatValidationReport(report));
+    process.exit(report.passed ? 0 : 1);
   }
 
-  // No command — show help
   console.log('No command specified. Use --help for usage.');
   process.exit(1);
 }

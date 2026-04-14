@@ -84,6 +84,8 @@ export interface HookExpectation {
   eventType: string;
   /** Expected decision */
   expectedDecision: ExpectedDecision;
+  /** For set-gate / clear-gate: which gate? Must match event's reason field. */
+  expectedGate?: string;
   /** 1=advisory, 2=enforcement, 3=gate-critical */
   severity: number;
   /** Human description */
@@ -93,6 +95,8 @@ export interface HookExpectation {
 export interface GateExpectation {
   gate: string;
   shouldActivate: boolean;
+  /** When true, clearing state is non-deterministic — don't fail on either outcome. */
+  clearNonDeterministic?: boolean;
   shouldClear: boolean;
 }
 
@@ -105,6 +109,13 @@ export interface Scenario {
   timeoutSeconds: number;
   expectedHooks: HookExpectation[];
   expectedGates: GateExpectation[];
+  /**
+   * When true, the scenario expects a timeout (e.g. the agent can't clear the
+   * stop-gate within timeoutSeconds). A timeout is then NOT a failure — the
+   * validation is based solely on the hook/gate ground truth from whatever
+   * events were captured before the timeout killed the subprocess.
+   */
+  expectTimeout?: boolean;
 }
 
 // ── Scoring ────────────────────────────────────────────────────────

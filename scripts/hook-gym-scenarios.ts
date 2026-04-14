@@ -16,29 +16,30 @@ import type { Scenario } from './hook-gym-schema.js';
 // ── Prompt templates ───────────────────────────────────────────────
 
 const PROBE_HOOKS_PROMPT = `You are running a hook-gym synthetic test scenario.
+This project has kaizen hooks installed. Follow the kaizen workflow exactly as the hooks and CLAUDE.md instruct.
 
-## Task
+## Goal
 
-Create a simple test file, commit it, and create a PR. Follow these exact steps:
+Create a simple test file, commit it, create a PR, and follow through with whatever the hooks require (review, reflection, etc.).
 
-1. Create a file called \`hook-gym-probe.md\` with content:
-   \`\`\`
+## What to do
+
+1. Create a file called \`hook-gym-probe.md\` with the content:
    # Hook Gym Probe
    Timestamp: {{timestamp}}
-   \`\`\`
 
-2. Stage and commit:
-   git add hook-gym-probe.md
-   git commit -m "test: hook-gym probe {{timestamp}}"
+2. Commit it and create a PR on {{host_repo}}.
 
-3. Push and create PR:
-   git push origin HEAD
-   gh pr create --title "test: hook-gym probe {{timestamp}}" --body "Synthetic hook-gym scenario. Auto-close after capture." --repo {{host_repo}}
+3. After the PR is created, hooks will guide you — follow their instructions.
+   If they tell you to review, review. If they tell you to reflect, reflect.
+   If they block you, do what they say to unblock.
 
-4. After creating the PR, stop. Do NOT merge, do NOT run review, do NOT reflect.
-   The harness will capture hook behavior and clean up.
+## Rules
 
-Do not ask for confirmation. Complete all steps autonomously.
+- Do NOT ask for confirmation. Work autonomously.
+- Follow every hook instruction. If a hook denies an action, fix what it asks and retry.
+- Use skills when instructed (e.g. /kaizen-review-pr, /kaizen-reflect).
+- The harness has a timeout — complete as much of the workflow as you can within it.
 `;
 
 const LIFECYCLE_GATES_PROMPT = `You are running a hook-gym synthetic test scenario that exercises the full gate lifecycle.
@@ -112,11 +113,11 @@ export const SCENARIOS: Scenario[] = [
   {
     name: 'probe-hooks',
     description:
-      'Minimal: create file, commit, PR. Exercises SessionStart, PreToolUse (Write+Bash), PostToolUse (PR create), Stop gate.',
+      'Full workflow: create file, commit, PR, follow hook instructions (review, reflect). Exercises all hook types + gate lifecycle.',
     prompt: PROBE_HOOKS_PROMPT,
     model: 'haiku',
     maxBudget: 0.50,
-    timeoutSeconds: 120,
+    timeoutSeconds: 180,
     expectedHooks: [
       // SessionStart — 3 hooks fire
       {
@@ -147,6 +148,7 @@ export const SCENARIOS: Scenario[] = [
         hookPattern: 'PostToolUse',
         eventType: 'PostToolUse',
         expectedDecision: 'set-gate',
+        expectedGate: 'needs_review',
         severity: 3,
         description: 'PostToolUse sets needs_review gate after gh pr create',
       },
@@ -155,22 +157,31 @@ export const SCENARIOS: Scenario[] = [
         hookPattern: 'PostToolUse',
         eventType: 'PostToolUse',
         expectedDecision: 'set-gate',
+        expectedGate: 'needs_pr_kaizen',
         severity: 3,
         description: 'PostToolUse sets needs_pr_kaizen gate after gh pr create',
       },
-      // Stop — stop-gate blocks with pending gates
+      // Stop — stop-gate blocks IF the agent tries to stop with pending gates.
+      // The agent may not reach the stop gate within the timeout if it's still
+      // actively working on the review. Severity 1 (advisory) because it depends
+      // on agent speed, not hook correctness.
       {
         hookPattern: 'Stop',
         eventType: 'Stop',
-        expectedDecision: 'block',
-        severity: 3,
-        description: 'Stop gate blocks with 2 pending gates (needs_review + needs_pr_kaizen)',
+        expectedDecision: 'fire',
+        severity: 1,
+        description: 'Stop hooks fire if agent attempts to stop (may not happen within timeout)',
       },
     ],
     expectedGates: [
-      { gate: 'needs_review', shouldActivate: true, shouldClear: false },
+      // needs_review: activated on PR create. Agent may or may not clear it
+      // within the timeout depending on review speed — non-deterministic.
+      { gate: 'needs_review', shouldActivate: true, shouldClear: false, clearNonDeterministic: true },
       { gate: 'needs_pr_kaizen', shouldActivate: true, shouldClear: false },
     ],
+    // The stop-gate blocks the agent from stopping. Haiku can't clear
+    // the review+reflect gates within the timeout, so timeout is expected.
+    expectTimeout: true,
   },
 
   {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { parseSections, listSections, readSection, addSection, replaceSection, removeSection, listAttachments, readAttachment, writeAttachment, removeAttachment, listAttachmentSections, readAttachmentSection, addAttachmentSection, removeAttachmentSection, type AttachmentTarget } from './section-editor.js';
+import { parseSections, listSections, readSection, addSection, replaceSection, removeSection, listAttachments, readAttachment, writeAttachment, removeAttachment, listAttachmentSections, readAttachmentSection, addAttachmentSection, removeAttachmentSection, clearCommentCache, type AttachmentTarget } from './section-editor.js';
 
 vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
@@ -12,9 +12,6 @@ function ghReturns(stdout: string) {
   mockGh.mockReturnValueOnce({ status: 0, stdout, stderr: '', signal: null, pid: 0, output: [null, stdout, ''] } as any);
 }
 
-function ghFails(stderr = 'error') {
-  mockGh.mockReturnValueOnce({ status: 1, stdout: '', stderr, signal: null, pid: 0, output: [null, '', stderr] } as any);
-}
 
 describe('parseSections — pure markdown section parsing', () => {
   it('parses multiple ## sections', () => {
@@ -134,7 +131,7 @@ describe('parseSections — pure markdown section parsing', () => {
 const target = { kind: 'pr' as const, number: '903', repo: 'Garsson-io/kaizen' };
 
 describe('listSections — fetches body and returns section names', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('returns section names from PR body', () => {
     ghReturns('## Plan\n\nContent.\n\n## Test Plan\n\nTests.');
@@ -149,7 +146,7 @@ describe('listSections — fetches body and returns section names', () => {
 });
 
 describe('readSection — fetches body and returns one section', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('returns section content by name', () => {
     ghReturns('## Plan\n\n1. Do X\n\n## Test Plan\n\nRun tests.');
@@ -165,7 +162,7 @@ describe('readSection — fetches body and returns one section', () => {
 });
 
 describe('addSection — upserts a named section', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('appends new section when it does not exist', () => {
     ghReturns('## Plan\n\nOld plan.'); // fetchBody
@@ -205,7 +202,7 @@ describe('addSection — upserts a named section', () => {
 });
 
 describe('replaceSection — replaces existing section or throws if missing', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('replaces existing section content', () => {
     ghReturns('## Plan\n\nOld content.\n\n## Notes\n\nStay.'); // fetchBody
@@ -226,7 +223,7 @@ describe('replaceSection — replaces existing section or throws if missing', ()
 });
 
 describe('removeSection — removes a named section', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('removes existing section', () => {
     ghReturns('## Plan\n\nKeep.\n\n## Draft\n\nRemove.\n\n## Notes\n\nAlso keep.'); // fetchBody
@@ -252,7 +249,7 @@ const issueAttach: AttachmentTarget = { kind: 'issue', number: '904', repo: 'Gar
 const prAttach: AttachmentTarget = { kind: 'pr', number: '903', repo: 'Garsson-io/kaizen' };
 
 describe('listAttachments', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('lists attachment names from issue comments', () => {
     ghReturns([
@@ -280,7 +277,7 @@ describe('listAttachments', () => {
 });
 
 describe('readAttachment', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('reads content after marker', () => {
     ghReturns(JSON.stringify({ url: 'https://...#issuecomment-456', body: '<!-- kaizen:plan -->\n## Plan\n\n1. Do X' }));
@@ -297,7 +294,7 @@ describe('readAttachment', () => {
 });
 
 describe('writeAttachment', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('creates new comment when attachment does not exist', () => {
     ghReturns(''); // fetchComments: empty
@@ -325,7 +322,7 @@ describe('writeAttachment', () => {
 });
 
 describe('removeAttachment', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('deletes comment via gh api DELETE', () => {
     ghReturns(JSON.stringify({ url: 'https://...#issuecomment-456', body: '<!-- kaizen:plan -->\nstuff' }));
@@ -344,7 +341,7 @@ describe('removeAttachment', () => {
 });
 
 describe('readAttachmentSection — sections within an attachment', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('reads a ## section from inside an attachment', () => {
     ghReturns(JSON.stringify({
@@ -371,7 +368,7 @@ describe('readAttachmentSection — sections within an attachment', () => {
 });
 
 describe('listAttachmentSections', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('lists section names within an attachment', () => {
     ghReturns(JSON.stringify({
@@ -388,7 +385,7 @@ describe('listAttachmentSections', () => {
 });
 
 describe('addAttachmentSection', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('appends new section to attachment', () => {
     // readAttachment (fetches comment once — rewriteAttachmentContent reuses it)
@@ -424,7 +421,7 @@ describe('addAttachmentSection', () => {
 });
 
 describe('removeAttachmentSection', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
   it('removes a section from an attachment', () => {
     // readAttachment (fetches comment once — rewriteAttachmentContent reuses it)

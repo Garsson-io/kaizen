@@ -88,7 +88,11 @@ async function main(): Promise<void> {
   const result = bumpPluginVersion(command);
 
   if (result) {
-    process.stdout.write(`\n${result}\n   (Claude Code requires version bumps to deliver updates to users)\n`);
+    const { formatHookOutput } = await import('./lib/gate-signal.js');
+    process.stdout.write(
+      formatHookOutput({ hook: 'bump-plugin-version', type: 'info', reason: result }) +
+      `   (Claude Code requires version bumps to deliver updates to users)\n`,
+    );
   }
   process.exit(0);
 }

@@ -16,6 +16,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
+import { formatGateSignal } from './lib/gate-signal.js';
 import {
   extractRepoFlag,
   isGhPrCommand,
@@ -416,7 +417,8 @@ async function main(): Promise<void> {
 
   const output = processHookInput(input);
   if (output) {
-    writeHookOutput(output);
+    const gateYaml = formatGateSignal({ hook: 'kaizen-reflect', type: 'gate-set', gate: 'needs_pr_kaizen', reason: 'Kaizen reflection required' });
+    writeHookOutput(gateYaml + output);
   }
   process.exit(0);
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { clearCommentCache } from './section-editor.js';
 import {
   prTarget,
   issueTarget,
@@ -37,11 +38,8 @@ function ghReturns(stdout: string) {
   mockGh.mockReturnValueOnce({ status: 0, stdout, stderr: '', signal: null, pid: 0, output: [null, stdout, ''] } as any);
 }
 
-function ghFails(stderr = 'error') {
-  mockGh.mockReturnValueOnce({ status: 1, stdout: '', stderr, signal: null, pid: 0, output: [null, '', stderr] } as any);
-}
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
 const pr = prTarget('903', 'Garsson-io/kaizen');
 const issue = issueTarget('904', 'Garsson-io/kaizen');

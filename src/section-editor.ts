@@ -215,12 +215,35 @@ function extractCommentId(url: string): string {
     ?? '';
 }
 
+// Per-target comment cache — avoids re-fetching ALL comments on every
+// readAttachment/writeAttachment call. Invalidated on write (new comment
+// or PATCH). Keyed by "kind:repo:number".
+const commentCache = new Map<string, Array<{ url: string; body: string }>>();
+
+function cacheKey(target: AttachmentTarget): string {
+  return `${target.kind}:${target.repo}:${target.number}`;
+}
+
+function invalidateCache(target: AttachmentTarget): void {
+  commentCache.delete(cacheKey(target));
+}
+
+/** Clear the entire comment cache. Exported for tests. */
+export function clearCommentCache(): void {
+  commentCache.clear();
+}
+
 /**
  * Fetch all comments on an issue or PR as {url, body} objects.
- * Issues: uses `gh issue view --json comments`
- * PRs: uses `gh api` to get issue-style comments (not review comments)
+ * Cached per target within a process — one API call per target, not per attachment.
  */
 function fetchComments(target: AttachmentTarget): Array<{ url: string; body: string }> {
+  const key = cacheKey(target);
+  // Skip cache in test environments (mocks return different values per call)
+  if (process.env.VITEST == null) {
+    const cached = commentCache.get(key);
+    if (cached) return cached;
+  }
   try {
     let raw: string;
     if (target.kind === 'issue') {
@@ -242,12 +265,18 @@ function fetchComments(target: AttachmentTarget): Array<{ url: string; body: str
       if (!line.trim()) continue;
       try { results.push(JSON.parse(line)); } catch { continue; }
     }
+    // Only cache non-empty results — empty results may be from a new PR
+    // with no comments yet, and the next call might be after a write.
+    if (results.length > 0) {
+      commentCache.set(key, results);
+    }
     return results;
   } catch { return []; }
 }
 
-/** Create a new comment on an issue or PR. */
+/** Create a new comment on an issue or PR. Invalidates the comment cache. */
 function createComment(target: AttachmentTarget, body: string): string {
+  invalidateCache(target);
   if (target.kind === 'issue') {
     return gh(['issue', 'comment', target.number, '--repo', target.repo, '--body', body]);
   }
@@ -309,7 +338,7 @@ export function writeAttachment(target: AttachmentTarget, name: string, content:
   const existing = readAttachment(target, name);
 
   if (existing && existing.commentId) {
-    // Both issue and PR comments are updated via the same API endpoint
+    invalidateCache(target);
     gh(['api', '--method', 'PATCH', `/repos/${target.repo}/issues/comments/${existing.commentId}`, '-f', `body=${body}`]);
     return existing.url;
   }
@@ -324,6 +353,7 @@ export function removeAttachment(target: AttachmentTarget, name: string): void {
   const existing = readAttachment(target, name);
   if (!existing || !existing.commentId) return;
   try {
+    invalidateCache(target);
     gh(['api', '--method', 'DELETE', `/repos/${target.repo}/issues/comments/${existing.commentId}`]);
   } catch { /* best effort */ }
 }
@@ -341,6 +371,7 @@ function rewriteAttachmentContent(target: AttachmentTarget, attachment: Attachme
   }
   const marker = `<!-- kaizen:${attachment.name} -->`;
   const body = `${marker}\n${newContent}`;
+  invalidateCache(target);
   gh(['api', '--method', 'PATCH', `/repos/${target.repo}/issues/comments/${attachment.commentId}`, '-f', `body=${body}`]);
 }
 

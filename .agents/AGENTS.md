@@ -154,6 +154,7 @@ Compact in-context summary (one-line per invariant):
 | **I26** | New branches are created from `origin/main` (fresh fetch) | ⚠️ |
 | **I27** | Test-plan behaviors are fully implemented in the PR (no silent deferring) | ⚠️ |
 | **I28** | PR review covers ALL applicable documented dimensions, not just one | ⚠️ |
+| **I29** | No hand-rolled parsing/regex for structured data — use Zod schemas, prefer YAML | ⚠️ |
 
 ✅ = L2 hook enforces · ⚠️ = L1 only (agent must remember; escalation tracked — see canonical doc).
 

@@ -19,6 +19,7 @@ import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
+import { formatGateSignal } from './lib/gate-signal.js';
 import { stripHeredocBody } from './parse-command.js';
 import {
   buildReflectionRecord,
@@ -81,18 +82,7 @@ function logNoAction(category: string, reason: string, prUrl: string): void {
   );
 }
 
-function logWaiver(
-  desc: string,
-  reason: string,
-  type: string,
-  prUrl: string,
-): void {
-  const ts = new Date().toISOString();
-  logAudit(
-    'waiver.log',
-    `${ts} | branch=${currentBranch()} | type=${type} | pr=${prUrl} | desc=${desc} | reason=${reason}\n`,
-  );
-}
+// logWaiver removed — was unused (CodeQL js/unused-local-variable)
 
 // ── Waiver quality (kaizen #446) ─────────────────────────────────────
 
@@ -697,7 +687,7 @@ export function processHookInput(
     output.push(
       `\nPR kaizen gate cleared (${clearReason}). You may proceed with other work.\n`,
     );
-    return output.join('');
+    return formatGateSignal({ hook: 'pr-kaizen-clear', type: 'gate-clear', gate: 'needs_pr_kaizen', reason: clearReason }) + output.join('');
   }
 
   return null;
@@ -737,7 +727,7 @@ function autoCloseKaizenIssues(prUrl: string): void {
   }
 
   const issueNums = new Set<string>();
-  for (const m of prBody.matchAll(/Garsson-io\/kaizen[#/issues/]*(\d+)/g))
+  for (const m of prBody.matchAll(/Garsson-io\/kaizen(?:[#/]|\/issues\/)*(\d+)/g))
     issueNums.add(m[1]);
   for (const m of prBody.matchAll(
     /github\.com\/Garsson-io\/kaizen\/issues\/(\d+)/g,
