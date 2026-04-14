@@ -82,18 +82,7 @@ function logNoAction(category: string, reason: string, prUrl: string): void {
   );
 }
 
-function logWaiver(
-  desc: string,
-  reason: string,
-  type: string,
-  prUrl: string,
-): void {
-  const ts = new Date().toISOString();
-  logAudit(
-    'waiver.log',
-    `${ts} | branch=${currentBranch()} | type=${type} | pr=${prUrl} | desc=${desc} | reason=${reason}\n`,
-  );
-}
+// logWaiver removed — was unused (CodeQL js/unused-local-variable)
 
 // ── Waiver quality (kaizen #446) ─────────────────────────────────────
 
@@ -738,7 +727,7 @@ function autoCloseKaizenIssues(prUrl: string): void {
   }
 
   const issueNums = new Set<string>();
-  for (const m of prBody.matchAll(/Garsson-io\/kaizen[#/issues/]*(\d+)/g))
+  for (const m of prBody.matchAll(/Garsson-io\/kaizen[#/issues]*(\d+)/g))
     issueNums.add(m[1]);
   for (const m of prBody.matchAll(
     /github\.com\/Garsson-io\/kaizen\/issues\/(\d+)/g,

@@ -38,9 +38,6 @@ function ghReturns(stdout: string) {
   mockGh.mockReturnValueOnce({ status: 0, stdout, stderr: '', signal: null, pid: 0, output: [null, stdout, ''] } as any);
 }
 
-function ghFails(stderr = 'error') {
-  mockGh.mockReturnValueOnce({ status: 1, stdout: '', stderr, signal: null, pid: 0, output: [null, '', stderr] } as any);
-}
 
 beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
