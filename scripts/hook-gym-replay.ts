@@ -12,10 +12,18 @@
  * Flow: stream.jsonl → extractToolActions → ToolAction[] → replayThroughHooks → HookTimeline → validate
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import type { HookTimeline, ParsedHookEvent, Scenario } from './hook-gym-schema.js';
 import { validateAgainstScenario, type ValidationReport } from './hook-gym-validate.js';
 import { parseHookDecision } from './hook-gym-stream.js';
+
+const __replay_dirname = dirname(fileURLToPath(import.meta.url));
+const KAIZEN_ROOT = resolve(__replay_dirname, '..');
+const HOOKS_DIR = join(KAIZEN_ROOT, '.claude', 'hooks');
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -154,17 +162,221 @@ export function extractToolActionsFromFile(fixturePath: string): ToolAction[] {
   return extractToolActions(raw.split('\n'));
 }
 
+// ── Hook registry (matches plugin.json) ───────────────────────────
+
+const PRE_TOOL_USE_BASH = [
+  'kaizen-bump-plugin-version-ts.sh',
+  'kaizen-enforce-pr-review-ts.sh',
+  'kaizen-enforce-case-worktree.sh',
+  'kaizen-pr-quality-checks-ts.sh',
+  'kaizen-check-dirty-files-ts.sh',
+  'kaizen-enforce-pr-reflect-ts.sh',
+  'kaizen-block-git-rebase.sh',
+  'kaizen-search-before-file.sh',
+];
+
+const PRE_TOOL_USE_WRITE = [
+  'kaizen-enforce-worktree-writes.sh',
+  'kaizen-enforce-case-exists.sh',
+  'kaizen-enforce-pr-review-ts.sh',
+];
+
+const POST_TOOL_USE_BASH = [
+  'pr-review-loop-ts.sh',
+  'kaizen-reflect-ts.sh',
+  'kaizen-post-merge-clear-ts.sh',
+  'pr-kaizen-clear-ts.sh',
+  'kaizen-pr-kaizen-clear-fallback.sh',
+  'kaizen-capture-worktree-context.sh',
+];
+
+const STOP_HOOKS = [
+  'kaizen-stop-gate.sh',
+  'kaizen-verify-before-stop.sh',
+  'kaizen-check-cleanup-on-stop.sh',
+];
+
+const SESSION_START_HOOKS = [
+  'kaizen-check-wip.sh',
+  'kaizen-session-cleanup-ts.sh',
+  'kaizen-worktree-setup.sh',
+];
+
+// ── Replay environment ────────────────────────────────────────────
+
+/** Create a minimal git repo for hook replay. Real git, real state, no mocks. */
+function createReplayRepo(branch: string, log: (...args: unknown[]) => void): { dir: string; stateDir: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'hook-replay-'));
+  const stateDir = mkdtempSync(join(tmpdir(), 'hook-replay-state-'));
+
+  log(`[replay] Setting up git repo at ${dir} (branch: ${branch})`);
+  execFileSync('git', ['init', '--initial-branch', 'main'], { cwd: dir, stdio: 'pipe' });
+  execFileSync('git', ['config', 'user.name', 'hook-gym-replay'], { cwd: dir, stdio: 'pipe' });
+  execFileSync('git', ['config', 'user.email', 'replay@hook-gym'], { cwd: dir, stdio: 'pipe' });
+  writeFileSync(join(dir, 'README.md'), '# Replay repo\n');
+  execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'pipe' });
+  execFileSync('git', ['commit', '-m', 'init', '--no-verify'], { cwd: dir, stdio: 'pipe' });
+
+  if (branch !== 'main') {
+    execFileSync('git', ['checkout', '-b', branch], { cwd: dir, stdio: 'pipe' });
+    writeFileSync(join(dir, 'hook-gym-replay.md'), `replay at ${new Date().toISOString()}\n`);
+    execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'pipe' });
+    execFileSync('git', ['commit', '-m', 'replay commit', '--no-verify'], { cwd: dir, stdio: 'pipe' });
+  }
+
+  return {
+    dir,
+    stateDir,
+    cleanup: () => {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
+    },
+  };
+}
+
+/** Detect branch name from captured tool actions. */
+function detectBranch(actions: ToolAction[]): string {
+  for (const a of actions) {
+    if (a.tool !== 'Bash') continue;
+    const cmd = String(a.input.command ?? '');
+    // git checkout -b <branch>
+    const checkoutMatch = cmd.match(/git\s+checkout\s+-b\s+(\S+)/);
+    if (checkoutMatch) return checkoutMatch[1];
+    // git push -u origin <branch>
+    const pushMatch = cmd.match(/git\s+push\s+(?:-u\s+)?origin\s+(\S+)/);
+    if (pushMatch) return pushMatch[1];
+  }
+  return 'wt/replay-branch';
+}
+
+// ── Run a single hook ─────────────────────────────────────────────
+
+interface HookResult {
+  hookPath: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  timedOut: boolean;
+}
+
+function runHook(hookPath: string, event: Record<string, unknown>, opts: { cwd: string; env: Record<string, string>; timeout: number }): HookResult {
+  const json = JSON.stringify(event);
+
+  const result = spawnSync('bash', [hookPath], {
+    input: json,
+    encoding: 'utf-8' as const,
+    env: { ...process.env, ...opts.env },
+    cwd: opts.cwd,
+    timeout: opts.timeout,
+  });
+
+  if (result.error && (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+    return { hookPath, stdout: '', stderr: `TIMEOUT after ${opts.timeout}ms`, exitCode: 124, timedOut: true };
+  }
+
+  return {
+    hookPath,
+    stdout: (result.stdout ?? '').trim(),
+    stderr: (result.stderr ?? '').trim(),
+    exitCode: result.status ?? 1,
+    timedOut: false,
+  };
+}
+
+// ── Fire hooks for an event type ──────────────────────────────────
+
+function fireHooks(
+  hookNames: string[],
+  event: Record<string, unknown>,
+  opts: { cwd: string; env: Record<string, string>; timeout: number },
+): HookResult[] {
+  const results: HookResult[] = [];
+  for (const name of hookNames) {
+    const hookPath = join(HOOKS_DIR, name);
+    if (!existsSync(hookPath)) continue;
+    results.push(runHook(hookPath, event, opts));
+  }
+  return results;
+}
+
+// ── Build hook events from tool actions ───────────────────────────
+
+function buildPreToolUseEvent(action: ToolAction, cwd: string): Record<string, unknown> | null {
+  if (action.tool === 'Bash') {
+    return {
+      session_id: 'hook-gym-replay',
+      transcript_path: '/tmp/replay-transcript.txt',
+      cwd,
+      permission_mode: 'default',
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: String(action.input.command ?? '') },
+    };
+  }
+  if (action.tool === 'Write' || action.tool === 'Edit') {
+    return {
+      session_id: 'hook-gym-replay',
+      transcript_path: '/tmp/replay-transcript.txt',
+      cwd,
+      permission_mode: 'default',
+      hook_event_name: 'PreToolUse',
+      tool_name: action.tool,
+      tool_input: action.input,
+    };
+  }
+  return null;
+}
+
+function buildPostToolUseEvent(action: ToolAction, cwd: string): Record<string, unknown> | null {
+  if (action.tool !== 'Bash' || !action.result) return null;
+  return {
+    session_id: 'hook-gym-replay',
+    transcript_path: '/tmp/replay-transcript.txt',
+    cwd,
+    permission_mode: 'default',
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: String(action.input.command ?? '') },
+    tool_response: {
+      stdout: action.result.stdout,
+      stderr: action.result.stderr,
+      exit_code: action.result.exitCode,
+    },
+  };
+}
+
+function buildStopEvent(cwd: string): Record<string, unknown> {
+  return {
+    session_id: 'hook-gym-replay',
+    transcript_path: '/tmp/replay-transcript.txt',
+    cwd,
+    permission_mode: 'default',
+    hook_event_name: 'Stop',
+    reason: 'task_complete',
+  };
+}
+
+function buildSessionStartEvent(cwd: string): Record<string, unknown> {
+  return {
+    session_id: 'hook-gym-replay',
+    transcript_path: '/tmp/replay-transcript.txt',
+    cwd,
+    permission_mode: 'default',
+    hook_event_name: 'SessionStart',
+  };
+}
+
 // ── Replay ────────────────────────────────────────────────────────
 
 /**
- * Replay tool actions through real hooks via hook-runner.
+ * Replay tool actions through real hooks in a real git environment.
  *
  * This is the $0 deterministic replay layer: no LLM, just hooks.
- * Fires the actual hook scripts (same as SessionSimulator) and
- * converts the results into a HookTimeline for validation.
+ * Creates a real git repo, fires the actual hook scripts with the
+ * captured tool commands and responses, and collects decisions.
  *
- * Lazy-imports hook-runner and session-simulator to avoid pulling
- * in the E2E test infrastructure unless replay is actually used.
+ * What's real: git repo, git branch, state files, hook scripts.
+ * What's absent: the LLM (tool actions come from the captured fixture).
  */
 export async function replayThroughHooks(
   actions: ToolAction[],
@@ -174,102 +386,90 @@ export async function replayThroughHooks(
     log?: (...args: unknown[]) => void;
   } = {},
 ): Promise<{ timeline: HookTimeline; steps: ReplayStep[] }> {
-  // Dynamic import to avoid circular deps and keep hook-runner optional
-  const { SessionSimulator } = await import('../src/e2e/session-simulator.js');
-
   const log = opts.log ?? console.log;
-  const session = new SessionSimulator({ hookTimeout: opts.hookTimeout ?? 5000 });
+  const timeout = opts.hookTimeout ?? 10000;
+  const branch = detectBranch(actions);
+
+  const repo = createReplayRepo(branch, log);
+  const env: Record<string, string> = {
+    STATE_DIR: repo.stateDir,
+    KAIZEN_TELEMETRY_DISABLED: '1',
+    AUDIT_LOG: '/dev/null',
+    AUDIT_DIR: '/dev/null',
+  };
+  const hookOpts = { cwd: repo.dir, env, timeout };
 
   const steps: ReplayStep[] = [];
-  const allParsedEvents: ParsedHookEvent[] = [];
+  const allEvents: ParsedHookEvent[] = [];
   const gatesActivated: Record<string, number> = {};
   const gatesCleared: Record<string, number> = {};
   let timeOffset = 0;
 
   try {
-    // Fire SessionStart
+    // SessionStart
     log('[replay] Firing SessionStart...');
-    const startStep = session.fireSessionStart();
-    const startEvents = convertStepToEvents(startStep, 'SessionStart', timeOffset);
-    allParsedEvents.push(...startEvents);
-    trackGates(startEvents, gatesActivated, gatesCleared);
+    const startEvent = buildSessionStartEvent(repo.dir);
+    const startResults = fireHooks(SESSION_START_HOOKS, startEvent, hookOpts);
+    const startParsed = resultsToEvents(startResults, 'SessionStart', timeOffset);
+    allEvents.push(...startParsed);
+    trackGates(startParsed, gatesActivated, gatesCleared);
     timeOffset += 100;
 
-    // Fire PreToolUse + PostToolUse for each action
+    // Replay each tool action
     for (const action of actions) {
-      const stepResult: ReplayStep = {
-        action,
-        preHooks: [],
-        postHooks: [],
-      };
+      const step: ReplayStep = { action, preHooks: [], postHooks: [] };
 
       // PreToolUse
-      const preStep = firePreToolUse(session, action);
-      if (preStep) {
-        stepResult.preHooks = preStep.results.map(r => ({
-          hookPath: r.hookPath,
-          stdout: r.stdout,
-          stderr: r.stderr,
-          exitCode: r.exitCode,
-          timedOut: r.timedOut,
-        }));
-        const preEvents = convertStepToEvents(preStep, 'PreToolUse', timeOffset);
-        allParsedEvents.push(...preEvents);
-        trackGates(preEvents, gatesActivated, gatesCleared);
+      const preEvent = buildPreToolUseEvent(action, repo.dir);
+      if (preEvent) {
+        const hookList = action.tool === 'Bash' ? PRE_TOOL_USE_BASH
+          : (action.tool === 'Write' || action.tool === 'Edit') ? PRE_TOOL_USE_WRITE
+          : [];
+        const preResults = fireHooks(hookList, preEvent, hookOpts);
+        step.preHooks = preResults;
+        const preParsed = resultsToEvents(preResults, 'PreToolUse', timeOffset);
+        allEvents.push(...preParsed);
+        trackGates(preParsed, gatesActivated, gatesCleared);
         timeOffset += 50;
 
-        // Check for denials — if denied, skip PostToolUse
-        const denied = preStep.results.some(r => {
-          try {
-            const d = JSON.parse(r.stdout);
-            return d?.hookSpecificOutput?.permissionDecision === 'deny';
-          } catch { return false; }
+        // If denied, skip PostToolUse
+        const denied = preResults.some(r => {
+          try { return JSON.parse(r.stdout)?.hookSpecificOutput?.permissionDecision === 'deny'; }
+          catch { return false; }
         });
-        if (denied) {
-          steps.push(stepResult);
-          continue;
-        }
+        if (denied) { steps.push(step); continue; }
       }
 
-      // PostToolUse (only for tools that have post hooks)
-      if (action.result && hasPostHooks(action.tool)) {
-        const postStep = firePostToolUse(session, action);
-        if (postStep) {
-          stepResult.postHooks = postStep.results.map(r => ({
-            hookPath: r.hookPath,
-            stdout: r.stdout,
-            stderr: r.stderr,
-            exitCode: r.exitCode,
-            timedOut: r.timedOut,
-          }));
-          const postEvents = convertStepToEvents(postStep, 'PostToolUse', timeOffset);
-          allParsedEvents.push(...postEvents);
-          trackGates(postEvents, gatesActivated, gatesCleared);
-          timeOffset += 50;
-        }
+      // PostToolUse
+      const postEvent = buildPostToolUseEvent(action, repo.dir);
+      if (postEvent) {
+        const postResults = fireHooks(POST_TOOL_USE_BASH, postEvent, hookOpts);
+        step.postHooks = postResults;
+        const postParsed = resultsToEvents(postResults, 'PostToolUse', timeOffset);
+        allEvents.push(...postParsed);
+        trackGates(postParsed, gatesActivated, gatesCleared);
+        timeOffset += 50;
       }
 
-      steps.push(stepResult);
+      steps.push(step);
+      if ((action.index + 1) % 5 === 0) {
+        log(`[replay] ${action.index + 1}/${actions.length} actions replayed...`);
+      }
     }
 
-    // Fire Stop
+    // Stop
     log('[replay] Firing Stop...');
-    const stopStep = session.fireStop();
-    const stopEvents = convertStepToEvents(stopStep, 'Stop', timeOffset);
-    allParsedEvents.push(...stopEvents);
-    trackGates(stopEvents, gatesActivated, gatesCleared);
+    const stopResults = fireHooks(STOP_HOOKS, buildStopEvent(repo.dir), hookOpts);
+    const stopParsed = resultsToEvents(stopResults, 'Stop', timeOffset);
+    allEvents.push(...stopParsed);
+    trackGates(stopParsed, gatesActivated, gatesCleared);
 
   } finally {
-    session.cleanup();
+    repo.cleanup();
   }
 
-  const timeline: HookTimeline = {
-    events: allParsedEvents,
-    gatesActivated,
-    gatesCleared,
-  };
-
-  log(`[replay] Done: ${allParsedEvents.length} hook events, ${Object.keys(gatesActivated).length} gates activated.`);
+  const timeline: HookTimeline = { events: allEvents, gatesActivated, gatesCleared };
+  log(`[replay] Done: ${allEvents.length} hook events, ${Object.keys(gatesActivated).length} gates activated, ${Object.keys(gatesCleared).length} cleared.`);
   return { timeline, steps };
 }
 
@@ -305,79 +505,19 @@ export async function replayFixture(
 
 // ── Helpers ───────────────────────────────────────────────────────
 
-interface StepResult {
-  eventType: string;
-  results: Array<{
-    hookPath: string;
-    stdout: string;
-    stderr: string;
-    exitCode: number;
-    timedOut: boolean;
-  }>;
-}
-
-function firePreToolUse(
-  session: { fireBashPre: (cmd: string) => StepResult; fireWritePre: (path: string) => StepResult },
-  action: ToolAction,
-): StepResult | null {
-  switch (action.tool) {
-    case 'Bash':
-      return session.fireBashPre(String(action.input.command ?? ''));
-    case 'Write':
-    case 'Edit':
-      return session.fireWritePre(String(action.input.file_path ?? ''));
-    default:
-      // Other tools (Read, Glob, Grep) don't have pre-hooks in kaizen
-      return null;
-  }
-}
-
-function firePostToolUse(
-  session: { fireBashPost: (cmd: string, stdout: string, opts?: { exitCode?: string }) => StepResult },
-  action: ToolAction,
-): StepResult | null {
-  if (action.tool === 'Bash' && action.result) {
-    return session.fireBashPost(
-      String(action.input.command ?? ''),
-      action.result.stdout,
-      { exitCode: action.result.exitCode },
-    );
-  }
-  // Only Bash has post-hooks currently
-  return null;
-}
-
-function hasPostHooks(tool: string): boolean {
-  // In kaizen's plugin.json, only Bash has PostToolUse hooks
-  return tool === 'Bash';
-}
-
-/**
- * Convert a SessionSimulator StepResult into ParsedHookEvents.
- *
- * Each hook result becomes one ParsedHookEvent, with the decision
- * parsed from the hook's stdout using the same logic as the stream parser.
- */
-function convertStepToEvents(
-  step: StepResult,
+/** Convert hook results to ParsedHookEvents. */
+function resultsToEvents(
+  results: HookResult[],
   eventType: string,
   baseTimestamp: number,
 ): ParsedHookEvent[] {
-  const events: ParsedHookEvent[] = [];
-
-  for (let i = 0; i < step.results.length; i++) {
-    const r = step.results[i];
-    const { decision, reason } = parseHookDecision(
-      r.stdout,
-      r.stderr,
-      r.exitCode,
-    );
-
-    events.push({
+  return results.map((r, i) => {
+    const { decision, reason } = parseHookDecision(r.stdout, r.stderr, r.exitCode);
+    return {
       timestamp: baseTimestamp + i,
       eventType,
       hookId: `replay-${eventType}-${baseTimestamp}-${i}`,
-      hookName: `${eventType}:replay`,
+      hookName: `${eventType}:${r.hookPath.split('/').pop()?.replace(/\.sh$/, '') ?? 'replay'}`,
       durationMs: 0,
       exitCode: r.exitCode,
       outcome: r.timedOut ? 'timeout' : (r.exitCode === 0 ? 'success' : 'error'),
@@ -385,10 +525,8 @@ function convertStepToEvents(
       reason,
       rawOutput: r.stdout,
       stderr: r.stderr || null,
-    });
-  }
-
-  return events;
+    };
+  });
 }
 
 /** Track gate activations/clears from parsed events. */
@@ -404,7 +542,6 @@ function trackGates(
     if (e.decision === 'clear-gate' && e.reason) {
       cleared[e.reason] = e.timestamp;
     }
-    // Stop blocks imply gates are active
     if (e.decision === 'block' && e.eventType === 'Stop' && e.reason) {
       const gateNames = ['needs_review', 'needs_pr_kaizen', 'needs_post_merge'];
       for (const gate of gateNames) {
