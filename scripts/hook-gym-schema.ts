@@ -84,6 +84,8 @@ export interface HookExpectation {
   eventType: string;
   /** Expected decision */
   expectedDecision: ExpectedDecision;
+  /** For set-gate / clear-gate: which gate? Must match event's reason field. */
+  expectedGate?: string;
   /** 1=advisory, 2=enforcement, 3=gate-critical */
   severity: number;
   /** Human description */

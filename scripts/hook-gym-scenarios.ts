@@ -148,6 +148,7 @@ export const SCENARIOS: Scenario[] = [
         hookPattern: 'PostToolUse',
         eventType: 'PostToolUse',
         expectedDecision: 'set-gate',
+        expectedGate: 'needs_review',
         severity: 3,
         description: 'PostToolUse sets needs_review gate after gh pr create',
       },
@@ -156,6 +157,7 @@ export const SCENARIOS: Scenario[] = [
         hookPattern: 'PostToolUse',
         eventType: 'PostToolUse',
         expectedDecision: 'set-gate',
+        expectedGate: 'needs_pr_kaizen',
         severity: 3,
         description: 'PostToolUse sets needs_pr_kaizen gate after gh pr create',
       },
@@ -172,9 +174,6 @@ export const SCENARIOS: Scenario[] = [
       },
     ],
     expectedGates: [
-      // needs_review: activated on PR create. May or may not be cleared
-      // within the timeout — depends on whether haiku completes the review.
-      // We only assert activation, not clearing state.
       { gate: 'needs_review', shouldActivate: true, shouldClear: true },
       { gate: 'needs_pr_kaizen', shouldActivate: true, shouldClear: false },
     ],

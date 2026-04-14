@@ -141,10 +141,13 @@ function evaluateHookExpectation(
     };
   }
 
-  // At least one candidate must satisfy
-  const satisfying = candidates.find((c) =>
-    decisionSatisfies(expectation.expectedDecision, c.decision),
-  );
+  // At least one candidate must satisfy the decision + optional gate check
+  const satisfying = candidates.find((c) => {
+    if (!decisionSatisfies(expectation.expectedDecision, c.decision)) return false;
+    // For set-gate/clear-gate: also check the specific gate name
+    if (expectation.expectedGate && c.reason !== expectation.expectedGate) return false;
+    return true;
+  });
   if (satisfying) {
     return {
       expected: expectation,
