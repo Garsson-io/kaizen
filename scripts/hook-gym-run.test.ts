@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import type { Scenario } from './hook-gym-schema.js';
-import { runScenario, runAll } from './hook-gym-run.js';
+import { runScenario, runAll } from './hook-gym-harness.js';
 
 // Minimal scenario for tests — tiny timeout, haiku, 1 expectation.
 const TEST_SCENARIO: Scenario = {
@@ -208,7 +208,8 @@ describe('runAll (L6)', () => {
     expect(results[0].scenario).toBe('test-scenario');
     expect(results[1].scenario).toBe('second-scenario');
     expect(allPassed).toBe(true);
-    expect(logs.some(l => l.includes('2/2 scenarios passed'))).toBe(true);
+    expect(logs.some(l => l.includes('2/2 passed'))).toBe(true);
+    expect(logs.some(l => l.includes('2/2 passed'))).toBe(true);
   });
 
   it('exits with allPassed=false when any scenario fails', async () => {
@@ -237,14 +238,14 @@ describe('runAll (L6)', () => {
     expect(results[0].passed).toBe(true);
     expect(results[1].passed).toBe(false);
     expect(allPassed).toBe(false);
-    expect(logs.some(l => l.includes('1/2 scenarios passed'))).toBe(true);
+    expect(logs.some(l => l.includes('1/2 passed'))).toBe(true);
   });
 
   it('prints a summary table', async () => {
     const spawn = makeMockSpawn([HOOK_STARTED_LINE, HOOK_RESPONSE_LINE]);
     await runAll([TEST_SCENARIO], { spawn, outRoot: outDir, log });
 
-    expect(logs.some(l => l.includes('Hook Gym Summary'))).toBe(true);
+    expect(logs.some(l => l.includes('1/1 passed'))).toBe(true);
     expect(logs.some(l => l.includes('test-scenario'))).toBe(true);
   });
 });

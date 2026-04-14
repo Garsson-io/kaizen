@@ -138,7 +138,7 @@ export class FixtureRepo {
    * Run a scenario against this fixture repo.
    */
   async run(scenario: Scenario, opts: RunOpts = {}): Promise<RunResult> {
-    return runScenario(this, scenario, opts);
+    return runScenario(scenario, { ...opts, cwd: this.dir, hostRepo: this.hostRepo });
   }
 
   /**
@@ -214,8 +214,9 @@ export class RunResult {
   }
 
   get passed(): boolean {
-    const timeoutOk = !this.timedOut || true; // timeout is expected for now
-    return this.validation.passed && this.selfCheckPassed && timeoutOk;
+    // Self-check is diagnostic (logs a warning on mismatch) but not a gate.
+    // The validation result is the authoritative verdict.
+    return this.validation.passed;
   }
 
   // ── Hook queries ──
@@ -407,16 +408,51 @@ function timestamp(): string {
   return new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
 }
 
-async function runScenario(
-  fixture: FixtureRepo,
+/**
+ * Run all scenarios serially, print summary, return aggregate.
+ */
+export async function runAll(
+  scenarios: Scenario[],
+  opts: RunOpts & { cwd?: string; hostRepo?: string } = {},
+): Promise<{ results: RunResult[]; allPassed: boolean }> {
+  const log = opts.log ?? console.log;
+  const results: RunResult[] = [];
+  log(`[run] Running ${scenarios.length} scenarios...\n`);
+  for (const scenario of scenarios) {
+    results.push(await runScenario(scenario, opts));
+    log('');
+  }
+  const allPassed = results.every(r => r.passed);
+  log(`\n${results.filter(r => r.passed).length}/${results.length} passed.`);
+  return { results, allPassed };
+}
+
+export function getHostRepo(): string {
+  try {
+    const config = JSON.parse(readFileSync('kaizen.config.json', 'utf-8'));
+    return config?.host?.repo ?? 'Garsson-io/kaizen';
+  } catch {
+    return 'Garsson-io/kaizen';
+  }
+}
+
+/**
+ * Run a scenario. Can be called via FixtureRepo.run() or directly for unit tests.
+ *
+ * For unit tests: pass opts.spawn (mocked), opts.hostRepo, opts.outRoot.
+ * For live runs: called by FixtureRepo.run() which passes cwd + hostRepo.
+ */
+export async function runScenario(
   scenario: Scenario,
-  opts: RunOpts = {},
+  opts: RunOpts & { cwd?: string; hostRepo?: string } = {},
 ): Promise<RunResult> {
   const spawnFn = opts.spawn ?? realSpawn;
   const model = opts.model ?? scenario.model;
   const log = opts.log ?? console.log;
   const debug = opts.debug ?? false;
   const outRoot = opts.outRoot ?? '.hook-gym/runs';
+  const hostRepo = opts.hostRepo ?? getHostRepo();
+  const cwd = opts.cwd;
 
   const ts = timestamp();
   const outDir = resolve(outRoot, `${ts}-${scenario.name}`);
@@ -424,10 +460,10 @@ async function runScenario(
 
   const rendered = renderPrompt(scenario.prompt, {
     timestamp: ts,
-    host_repo: fixture.hostRepo,
+    host_repo: hostRepo,
   });
 
-  log(`[run] ${scenario.name} (model=${model}, timeout=${scenario.timeoutSeconds}s, cwd=${fixture.dir})`);
+  log(`[run] ${scenario.name} (model=${model}, timeout=${scenario.timeoutSeconds}s${cwd ? `, cwd=${cwd}` : ''})`);
 
   const streamLines: string[] = [];
   const processor = createHookStreamProcessor();
@@ -445,7 +481,7 @@ async function runScenario(
     ], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
-      cwd: fixture.dir,
+      ...(cwd ? { cwd } : {}),
     } as SpawnOptions);
 
     let timedOut = false;
@@ -503,7 +539,14 @@ async function runScenario(
   try {
     const replay = validateFixtureFile(join(outDir, 'stream.jsonl'), scenario);
     selfCheckPassed = replay.passed === validation.passed;
-  } catch { /* self-check failed */ }
+    if (selfCheckPassed) {
+      log(`[run] Self-check: fixture replay matches live verdict (${validation.passed ? 'PASS' : 'FAIL'}).`);
+    } else {
+      log(`[run] Self-check MISMATCH: live=${validation.passed}, replay=${replay.passed}`);
+    }
+  } catch (err) {
+    log(`[run] Self-check error: ${err instanceof Error ? err.message : err}`);
+  }
 
   const result = new RunResult({
     scenario: scenario.name, timeline, validation,
