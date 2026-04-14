@@ -218,11 +218,11 @@ Schema: `src/hooks/lib/gate-signal.ts` (Zod-validated `GateSignal` type). Use `f
 
 **Why YAML?** Humans read hook output in the terminal. YAML is readable at a glance — `gate: needs_review` / `action: set` / `reason: ...` tells the whole story. JSON requires mental parsing. Regex on prose is fragile (see #1049: three false-positive bugs from instructional text matching gate keywords).
 
-**Current state:** Hooks currently emit the YAML block prepended to the legacy prose message (backward compat). The YAML `reason` field and the prose are redundant. Future cleanup: replace the prose with the YAML block as the sole output.
+**All gate-transitioning hooks emit YAML as their primary output:** `pr-review-loop.ts` (set/clear needs_review), `kaizen-reflect.ts` (set needs_pr_kaizen), `pr-kaizen-clear.ts` (clear needs_pr_kaizen), `post-merge-clear.ts` (set/clear needs_post_merge).
 
-**All gate-transitioning hooks are wired:** `pr-review-loop.ts` (set/clear needs_review), `kaizen-reflect.ts` (set needs_pr_kaizen), `pr-kaizen-clear.ts` (clear needs_pr_kaizen), `post-merge-clear.ts` (set/clear needs_post_merge).
+Some hooks (e.g. `kaizen-reflect.ts`) append operational context after the YAML block (timing reports, agent instructions). This is not a gate signal — it's context for the agent to act on. The `parseGateSignal` function extracts only the `---`-delimited YAML block.
 
-The Hook Gym stream parser (`scripts/hook-gym-stream.ts`) tries YAML first, falls back to regex for fixtures captured before YAML signals existed.
+The Hook Gym stream parser (`scripts/hook-gym-stream.ts`) tries YAML first, falls back to regex for hooks that don't set/clear gates.
 
 ### 7. Heavy Subprocesses in Accumulating Hooks (#474)
 Never spawn heavy subprocesses (vitest, tsc, npm test, npx) in hooks that can fire multiple times without blocking the AI. Stop hooks retry on exit 2, PostToolUse hooks fire on every tool call, advisory PreToolUse hooks don't block — all of these can accumulate unboundedly.

@@ -65,19 +65,20 @@ export function parseHookDecision(
   exitCode: number,
   extraStdout: string = '',
 ): { decision: ParsedHookEvent['decision']; reason: string | null } {
-  // ── YAML gate signals (preferred path) ──────────────────────────
-  // Hooks that have been upgraded emit a YAML block (---\ngate: ...\n---\n)
-  // at the start of their output. This is unambiguous — no regex needed.
+  // ── YAML hook output (preferred path) ───────────────────────────
+  // All hooks that emit advisory text use the HookOutput YAML schema.
   // Check output first, then combined stdout/stderr.
   const combined = `${stderrOrStdout}\n${extraStdout}`;
   for (const text of [output, combined]) {
     if (!text) continue;
     const signal = parseGateSignal(text);
     if (signal) {
-      return {
-        decision: signal.action === 'set' ? 'set-gate' : 'clear-gate',
-        reason: signal.gate,
-      };
+      if (signal.type === 'gate-set') return { decision: 'set-gate', reason: signal.gate ?? signal.reason };
+      if (signal.type === 'gate-clear') return { decision: 'clear-gate', reason: signal.gate ?? signal.reason };
+      if (signal.type === 'deny') return { decision: 'deny', reason: signal.reason };
+      if (signal.type === 'block') return { decision: 'block', reason: signal.reason };
+      // warn/info — not a gate decision, but the hook fired
+      return { decision: 'none', reason: signal.reason };
     }
   }
 

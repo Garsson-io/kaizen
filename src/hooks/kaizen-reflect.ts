@@ -417,7 +417,7 @@ async function main(): Promise<void> {
 
   const output = processHookInput(input);
   if (output) {
-    const gateYaml = formatGateSignal({ gate: 'needs_pr_kaizen', action: 'set', reason: 'reflection_required' });
+    const gateYaml = formatGateSignal({ hook: 'kaizen-reflect', type: 'gate-set', gate: 'needs_pr_kaizen', reason: 'Kaizen reflection required' });
     writeHookOutput(gateYaml + output);
   }
   process.exit(0);

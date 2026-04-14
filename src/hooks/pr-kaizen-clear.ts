@@ -698,7 +698,7 @@ export function processHookInput(
     output.push(
       `\nPR kaizen gate cleared (${clearReason}). You may proceed with other work.\n`,
     );
-    return formatGateSignal({ gate: 'needs_pr_kaizen', action: 'clear', reason: clearReason }) + output.join('');
+    return formatGateSignal({ hook: 'pr-kaizen-clear', type: 'gate-clear', gate: 'needs_pr_kaizen', reason: clearReason }) + output.join('');
   }
 
   return null;

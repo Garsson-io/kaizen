@@ -343,7 +343,7 @@ export function processHookInput(
 
     const createMsg = `\n\ud83d\udccb PR created: ${prUrl}\n\nMANDATORY SELF-REVIEW LOOP \u2014 you MUST complete this before proceeding.\nROUND 1/${MAX_ROUNDS}: Start your review now.\n${printChecklist(prUrl, '1', MAX_ROUNDS)}\nTrack your round: "ROUND N/${MAX_ROUNDS}: [reviewing|issues found|clean]"\n`;
     return decide('create_gate', 'pr_created', createMsg, { prUrl },
-      { gate: 'needs_review', action: 'set', pr: prUrl, round: 1, reason: 'pr_created' });
+      { hook: 'pr-review-loop', type: 'gate-set', gate: 'needs_review', pr: prUrl, round: 1, reason: 'PR created — run /kaizen-review-pr' });
   }
 
   // ── TRIGGER 2: git push ────────────────────────────────────────
@@ -431,7 +431,7 @@ export function processHookInput(
     return decide('needs_review', 'push_exceeds_threshold',
       `\n\ud83d\udd04 Push detected (${incrementalLines} lines incremental, ${cumulativeLines} cumulative). Starting ROUND ${nextRound}/${MAX_ROUNDS}.\nRun \`gh pr diff ${found.prUrl}\` now.\n`,
       diffContext,
-      { gate: 'needs_review', action: 'set', pr: found.prUrl, round: nextRound, reason: 'push_exceeds_threshold' });
+      { hook: 'pr-review-loop', type: 'gate-set', gate: 'needs_review', pr: found.prUrl, round: nextRound, reason: 'Push detected — new review round' });
   }
 
   // ── TRIGGER 3: gh pr diff ──────────────────────────────────────
@@ -464,7 +464,7 @@ export function processHookInput(
 
     const msg = `\n\ud83d\udccb REVIEW ROUND ${found.round}/${MAX_ROUNDS}\n${printChecklist(found.prUrl, found.round, MAX_ROUNDS)}\n\u2705 REVIEW PASSED (round ${found.round}/${MAX_ROUNDS})\n`;
     return decide('review_passed', 'diff_reviewed', msg, { prUrl: found.prUrl, round: found.round },
-      { gate: 'needs_review', action: 'clear', pr: found.prUrl, round: parseInt(found.round, 10), reason: 'diff_reviewed' });
+      { hook: 'pr-review-loop', type: 'gate-clear', gate: 'needs_review', pr: found.prUrl, round: parseInt(found.round, 10), reason: 'Review passed' });
   }
 
   return decide('ignore', 'unmatched_trigger', null);
