@@ -90,8 +90,7 @@ function formatGateLine(name: string, t: HookTimeline): string {
 }
 
 function escape(s: string): string {
-  // Escape pipe characters so we don't corrupt the table.
-  return s.replace(/\|/g, '\\|');
+  return s.replace(/\|/g, '\\|').replace(/\n/g, ' ').replace(/\r/g, '');
 }
 
 function truncate(s: string, max: number): string {

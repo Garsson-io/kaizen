@@ -727,7 +727,7 @@ function autoCloseKaizenIssues(prUrl: string): void {
   }
 
   const issueNums = new Set<string>();
-  for (const m of prBody.matchAll(/Garsson-io\/kaizen[#/issues]*(\d+)/g))
+  for (const m of prBody.matchAll(/Garsson-io\/kaizen(?:[#/]|\/issues\/)*(\d+)/g))
     issueNums.add(m[1]);
   for (const m of prBody.matchAll(
     /github\.com\/Garsson-io\/kaizen\/issues\/(\d+)/g,

@@ -16,8 +16,8 @@
  *   await fixture.cleanup();
  */
 
-import { spawn as realSpawn, execSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { spawn as realSpawn, execSync, execFileSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -25,7 +25,7 @@ import type { HookTimeline, ParsedHookEvent, Scenario } from './hook-gym-schema.
 import { createHookStreamProcessor } from './hook-gym-stream.js';
 import { renderPrompt } from './hook-gym-scenarios.js';
 import { validateAgainstScenario, validateFixtureFile, formatValidationReport, type ValidationReport } from './hook-gym-validate.js';
-import { formatTimeline, summarizeTimeline } from './hook-gym-format.js';
+import { formatTimeline } from './hook-gym-format.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -52,11 +52,13 @@ export class FixtureRepo {
   ): Promise<FixtureRepo> {
     const kaizenRoot = opts.kaizenRoot ?? resolve(__dirname, '..');
     const log = opts.log ?? console.log;
-    const dir = join(tmpdir(), `hook-gym-${Date.now()}`);
+    // mkdtempSync for unique path (no race), then remove so git clone can create it
+    const dir = mkdtempSync(join(tmpdir(), 'hook-gym-'));
+    rmSync(dir, { recursive: true });
 
     // Clone
     log(`[fixture] Cloning ${hostRepo}...`);
-    execSync(`git clone --depth 1 "https://github.com/${hostRepo}.git" "${dir}"`, {
+    execFileSync('git', ['clone', '--depth', '1', `https://github.com/${hostRepo}.git`, dir], {
       stdio: 'pipe', timeout: 60_000,
     });
 
@@ -64,28 +66,23 @@ export class FixtureRepo {
     // Force marketplace update first to ensure the latest code is picked up
     // (the plugin system caches at install time, not live-links).
     log(`[fixture] Installing kaizen plugin from ${kaizenRoot}...`);
-    execSync(`claude plugins marketplace add "${kaizenRoot}" 2>/dev/null || true`, {
-      stdio: 'pipe', timeout: 15_000, cwd: dir,
-    });
-    execSync(`claude plugins marketplace update kaizen 2>/dev/null || true`, {
-      stdio: 'pipe', timeout: 15_000, cwd: dir,
-    });
-    execSync(`claude plugins install kaizen@kaizen --scope project`, {
+    try { execFileSync('claude', ['plugins', 'marketplace', 'add', kaizenRoot], { stdio: 'pipe', timeout: 15_000, cwd: dir }); } catch { /* may already exist */ }
+    try { execFileSync('claude', ['plugins', 'marketplace', 'update', 'kaizen'], { stdio: 'pipe', timeout: 15_000, cwd: dir }); } catch { /* best effort */ }
+    execFileSync('claude', ['plugins', 'install', 'kaizen@kaizen', '--scope', 'project'], {
       stdio: 'pipe', timeout: 15_000, cwd: dir,
     });
 
     // Run kaizen-setup (config + scaffold)
     const repoName = hostRepo.split('/').pop() ?? 'fixture';
-    execSync(
-      `npx --prefix "${kaizenRoot}" tsx "${kaizenRoot}/src/kaizen-setup.ts" ` +
-      `--step config --name "${repoName}" --repo "${hostRepo}" ` +
-      `--description "Hook Gym test fixture" --kaizen-repo "Garsson-io/kaizen"`,
-      { stdio: 'pipe', timeout: 15_000, cwd: dir },
-    );
-    execSync(
-      `npx --prefix "${kaizenRoot}" tsx "${kaizenRoot}/src/kaizen-setup.ts" --step scaffold`,
-      { stdio: 'pipe', timeout: 15_000, cwd: dir },
-    );
+    execFileSync('npx', [
+      '--prefix', kaizenRoot, 'tsx', `${kaizenRoot}/src/kaizen-setup.ts`,
+      '--step', 'config', '--name', repoName, '--repo', hostRepo,
+      '--description', 'Hook Gym test fixture', '--kaizen-repo', 'Garsson-io/kaizen',
+    ], { stdio: 'pipe', timeout: 15_000, cwd: dir });
+    execFileSync('npx', [
+      '--prefix', kaizenRoot, 'tsx', `${kaizenRoot}/src/kaizen-setup.ts`,
+      '--step', 'scaffold',
+    ], { stdio: 'pipe', timeout: 15_000, cwd: dir });
 
     // Inject CLAUDE.md instructions fragment
     const fragmentPath = join(kaizenRoot, '.agents', 'kaizen', 'instructions-fragment.md');
@@ -107,13 +104,12 @@ export class FixtureRepo {
     }
 
     // Commit setup files so working tree is clean
-    execSync('git add -A && git commit -m "chore: kaizen setup (hook-gym)" --no-verify', {
-      stdio: 'pipe', timeout: 10_000, cwd: dir,
-    });
+    execFileSync('git', ['add', '-A'], { stdio: 'pipe', timeout: 10_000, cwd: dir });
+    execFileSync('git', ['commit', '-m', 'chore: kaizen setup (hook-gym)', '--no-verify'], { stdio: 'pipe', timeout: 10_000, cwd: dir });
 
     // Verify installation: log plugin version + source path
     try {
-      const pluginList = execSync('claude plugins list 2>&1', {
+      const pluginList = execFileSync('claude', ['plugins', 'list'], {
         encoding: 'utf-8', timeout: 10_000, cwd: dir,
       });
       const kaizenLines = pluginList.split('\n').filter(l => l.includes('kaizen') || l.includes('Version') || l.includes('Status') || l.includes('Scope'));
@@ -147,17 +143,19 @@ export class FixtureRepo {
   async cleanup(log: (...args: unknown[]) => void = console.log): Promise<void> {
     // Close hook-gym PRs
     try {
-      const prList = execSync(
-        `gh pr list --repo ${this.hostRepo} --state open --json number,headRefName ` +
-        `--jq '.[] | select(.headRefName | startswith("hook-gym")) | .number'`,
-        { encoding: 'utf-8', timeout: 10_000 },
-      ).trim();
+      const prList = execFileSync('gh', [
+        'pr', 'list', '--repo', this.hostRepo, '--state', 'open',
+        '--json', 'number,headRefName',
+        '--jq', '.[] | select(.headRefName | startswith("hook-gym")) | .number',
+      ], { encoding: 'utf-8', timeout: 10_000 }).trim();
       for (const prNum of prList.split('\n').filter(Boolean)) {
-        execSync(
-          `gh pr close ${prNum} --repo ${this.hostRepo} --comment "Hook Gym — auto-closed." --delete-branch 2>/dev/null || true`,
-          { stdio: 'pipe', timeout: 10_000 },
-        );
-        log(`[fixture] Closed PR #${prNum}`);
+        try {
+          execFileSync('gh', [
+            'pr', 'close', prNum, '--repo', this.hostRepo,
+            '--comment', 'Hook Gym — auto-closed.', '--delete-branch',
+          ], { stdio: 'pipe', timeout: 10_000 });
+          log(`[fixture] Closed PR #${prNum}`);
+        } catch { /* best effort per PR */ }
       }
     } catch { /* best effort */ }
 
