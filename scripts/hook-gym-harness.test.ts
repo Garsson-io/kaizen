@@ -1,15 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import type { HookTimeline, ParsedHookEvent } from './hook-gym-schema.js';
+import type { HookTimeline } from './hook-gym-schema.js';
 import type { ValidationReport } from './hook-gym-validate.js';
 import { RunResult } from './hook-gym-harness.js';
-
-function evt(partial: Partial<ParsedHookEvent>): ParsedHookEvent {
-  return {
-    timestamp: 0, eventType: 'PreToolUse', hookId: 'h1', hookName: 'PreToolUse:Bash',
-    durationMs: 5, exitCode: 0, outcome: 'success', decision: 'none', reason: null,
-    rawOutput: '', stderr: null, ...partial,
-  };
-}
+import { evt } from './hook-gym-test-utils.js';
 
 function makeResult(overrides: {
   events?: ParsedHookEvent[];

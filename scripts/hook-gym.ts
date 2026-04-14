@@ -10,11 +10,10 @@
  *   npx tsx scripts/hook-gym.ts --validate-fixture <path> --scenario <name>
  */
 
-import { readFileSync } from 'node:fs';
 import { SCENARIOS, getScenario, renderPrompt } from './hook-gym-scenarios.js';
 import { SEVERITY_WEIGHT } from './hook-gym-schema.js';
 import { validateFixtureFile, formatValidationReport } from './hook-gym-validate.js';
-import { FixtureRepo, type RunResult } from './hook-gym-harness.js';
+import { FixtureRepo, getHostRepo, type RunResult } from './hook-gym-harness.js';
 
 function getFlag(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
@@ -24,15 +23,6 @@ function getFlag(flag: string): string | undefined {
 
 function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);
-}
-
-function getHostRepo(): string {
-  try {
-    const config = JSON.parse(readFileSync('kaizen.config.json', 'utf-8'));
-    return config?.host?.repo ?? 'Garsson-io/kaizen';
-  } catch {
-    return 'Garsson-io/kaizen';
-  }
 }
 
 function cmdList(): void {
