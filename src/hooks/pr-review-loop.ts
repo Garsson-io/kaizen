@@ -392,8 +392,11 @@ export function processHookInput(
       thresholds: { smallPush: SMALL_PUSH_THRESHOLD, cumulativeCap: CUMULATIVE_CAP },
     };
 
-    // Auto-pass: BOTH incremental AND cumulative must be small
-    if (incrementalLines > 0 && incrementalLines <= SMALL_PUSH_THRESHOLD && cumulativeLines <= CUMULATIVE_CAP) {
+    // Auto-pass: BOTH incremental AND cumulative must be small,
+    // AND no prior review has passed. A push after STATUS=passed is a
+    // review-fix push — it must always require a new review round,
+    // regardless of size. (Bug found via hook-gym TDD, kaizen #1053.)
+    if (found.status !== 'passed' && incrementalLines > 0 && incrementalLines <= SMALL_PUSH_THRESHOLD && cumulativeLines <= CUMULATIVE_CAP) {
       const fp = writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {
         PR_URL: found.prUrl,
         ROUND: String(nextRound),
