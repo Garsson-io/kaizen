@@ -132,12 +132,9 @@ function extractResultText(block: Record<string, unknown>): string {
 }
 
 /** Parse tool result text into stdout/stderr/exitCode. */
-function parseToolResult(text: string, tool: string): ToolAction['result'] {
-  // Bash results often have exit code in the text
-  if (tool === 'Bash') {
-    return { stdout: text, stderr: '', exitCode: '0' };
-  }
-  // Other tools just have content
+function parseToolResult(text: string, _tool: string): ToolAction['result'] {
+  // Stream-json tool_result blocks don't carry structured exit codes —
+  // the text IS the stdout. Default to '0' for replay purposes.
   return { stdout: text, stderr: '', exitCode: '0' };
 }
 
