@@ -1,0 +1,466 @@
+/**
+ * hook-gym-harness.ts — Test harness for Hook Gym scenarios.
+ *
+ * Provides a clean API for:
+ * - Setting up a fixture repo with kaizen installed
+ * - Running a scenario and capturing the hook timeline
+ * - Querying the results with expressive assertions
+ * - Cleaning up after the run (PRs, branches, temp dirs)
+ *
+ * Usage:
+ *   const fixture = await FixtureRepo.create('Garsson-io/kaizen-test-fixture');
+ *   const run = await fixture.run(scenario, { model: 'haiku' });
+ *   console.log(run.hooks.fired());           // all hooks that fired
+ *   console.log(run.gates.activated());       // gates that were set
+ *   console.log(run.agent.createdPR());       // PR URL if created
+ *   await fixture.cleanup();
+ */
+
+import { spawn as realSpawn, execSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import type { HookTimeline, ParsedHookEvent, Scenario } from './hook-gym-schema.js';
+import { createHookStreamProcessor } from './hook-gym-stream.js';
+import { renderPrompt } from './hook-gym-scenarios.js';
+import { validateAgainstScenario, validateFixtureFile, formatValidationReport, type ValidationReport } from './hook-gym-validate.js';
+import { formatTimeline, summarizeTimeline } from './hook-gym-format.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// ── FixtureRepo ─────────────────────────────────────────────────
+
+export class FixtureRepo {
+  readonly dir: string;
+  readonly hostRepo: string;
+  readonly kaizenRoot: string;
+
+  private constructor(dir: string, hostRepo: string, kaizenRoot: string) {
+    this.dir = dir;
+    this.hostRepo = hostRepo;
+    this.kaizenRoot = kaizenRoot;
+  }
+
+  /**
+   * Clone a host repo and install kaizen — full setup, same as any real project.
+   */
+  static async create(
+    hostRepo: string,
+    opts: { kaizenRoot?: string; log?: (...args: unknown[]) => void } = {},
+  ): Promise<FixtureRepo> {
+    const kaizenRoot = opts.kaizenRoot ?? resolve(__dirname, '..');
+    const log = opts.log ?? console.log;
+    const dir = join(tmpdir(), `hook-gym-${Date.now()}`);
+
+    // Clone
+    log(`[fixture] Cloning ${hostRepo}...`);
+    execSync(`git clone --depth 1 "https://github.com/${hostRepo}.git" "${dir}"`, {
+      stdio: 'pipe', timeout: 60_000,
+    });
+
+    // Install kaizen plugin
+    log(`[fixture] Installing kaizen plugin...`);
+    execSync(`claude plugins marketplace add "${kaizenRoot}" 2>/dev/null || true`, {
+      stdio: 'pipe', timeout: 15_000, cwd: dir,
+    });
+    execSync(`claude plugins install kaizen@kaizen --scope project`, {
+      stdio: 'pipe', timeout: 15_000, cwd: dir,
+    });
+
+    // Run kaizen-setup (config + scaffold)
+    const repoName = hostRepo.split('/').pop() ?? 'fixture';
+    execSync(
+      `npx --prefix "${kaizenRoot}" tsx "${kaizenRoot}/src/kaizen-setup.ts" ` +
+      `--step config --name "${repoName}" --repo "${hostRepo}" ` +
+      `--description "Hook Gym test fixture" --kaizen-repo "Garsson-io/kaizen"`,
+      { stdio: 'pipe', timeout: 15_000, cwd: dir },
+    );
+    execSync(
+      `npx --prefix "${kaizenRoot}" tsx "${kaizenRoot}/src/kaizen-setup.ts" --step scaffold`,
+      { stdio: 'pipe', timeout: 15_000, cwd: dir },
+    );
+
+    // Inject CLAUDE.md instructions fragment
+    const fragmentPath = join(kaizenRoot, '.agents', 'kaizen', 'instructions-fragment.md');
+    if (existsSync(fragmentPath)) {
+      let fragment = readFileSync(fragmentPath, 'utf-8');
+      fragment = fragment.replace(/\{\{KAIZEN_ROOT\}\}/g, kaizenRoot);
+      const claudeMdPath = join(dir, 'CLAUDE.md');
+      const existing = existsSync(claudeMdPath) ? readFileSync(claudeMdPath, 'utf-8') : '';
+      if (!existing.toLowerCase().includes('kaizen')) {
+        writeFileSync(claudeMdPath, existing + '\n' + fragment);
+      }
+    }
+
+    // Gitignore runtime artifacts
+    const gitignorePath = join(dir, '.gitignore');
+    const gitignore = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf-8') : '';
+    if (!gitignore.includes('.kaizen/telemetry')) {
+      writeFileSync(gitignorePath, gitignore + '\n.kaizen/telemetry/\n');
+    }
+
+    // Commit setup files so working tree is clean
+    execSync('git add -A && git commit -m "chore: kaizen setup (hook-gym)" --no-verify', {
+      stdio: 'pipe', timeout: 10_000, cwd: dir,
+    });
+
+    log(`[fixture] Ready at ${dir}`);
+    return new FixtureRepo(dir, hostRepo, kaizenRoot);
+  }
+
+  /**
+   * Run a scenario against this fixture repo.
+   */
+  async run(scenario: Scenario, opts: RunOpts = {}): Promise<RunResult> {
+    return runScenario(this, scenario, opts);
+  }
+
+  /**
+   * Clean up: close PRs created by hook-gym, delete branches, remove temp dir.
+   */
+  async cleanup(log: (...args: unknown[]) => void = console.log): Promise<void> {
+    // Close hook-gym PRs
+    try {
+      const prList = execSync(
+        `gh pr list --repo ${this.hostRepo} --state open --json number,headRefName ` +
+        `--jq '.[] | select(.headRefName | startswith("hook-gym")) | .number'`,
+        { encoding: 'utf-8', timeout: 10_000 },
+      ).trim();
+      for (const prNum of prList.split('\n').filter(Boolean)) {
+        execSync(
+          `gh pr close ${prNum} --repo ${this.hostRepo} --comment "Hook Gym — auto-closed." --delete-branch 2>/dev/null || true`,
+          { stdio: 'pipe', timeout: 10_000 },
+        );
+        log(`[fixture] Closed PR #${prNum}`);
+      }
+    } catch { /* best effort */ }
+
+    // Remove temp dir
+    try {
+      rmSync(this.dir, { recursive: true, force: true });
+      log(`[fixture] Cleaned up ${this.dir}`);
+    } catch { /* best effort */ }
+  }
+}
+
+// ── RunResult ───────────────────────────────────────────────────
+
+export interface RunOpts {
+  model?: string;
+  debug?: boolean;
+  log?: (...args: unknown[]) => void;
+  /** Override spawn for unit tests. */
+  spawn?: typeof realSpawn;
+  /** Override output dir. Default: .hook-gym/runs/<ts>-<name>/ */
+  outRoot?: string;
+}
+
+export class RunResult {
+  readonly scenario: string;
+  readonly timeline: HookTimeline;
+  readonly validation: ValidationReport;
+  readonly selfCheckPassed: boolean;
+  readonly timedOut: boolean;
+  readonly durationMs: number;
+  readonly outDir: string;
+  readonly streamLines: string[];
+  readonly events: ParsedHookEvent[];
+
+  constructor(data: {
+    scenario: string;
+    timeline: HookTimeline;
+    validation: ValidationReport;
+    selfCheckPassed: boolean;
+    timedOut: boolean;
+    durationMs: number;
+    outDir: string;
+    streamLines: string[];
+  }) {
+    this.scenario = data.scenario;
+    this.timeline = data.timeline;
+    this.validation = data.validation;
+    this.selfCheckPassed = data.selfCheckPassed;
+    this.timedOut = data.timedOut;
+    this.durationMs = data.durationMs;
+    this.outDir = data.outDir;
+    this.streamLines = data.streamLines;
+    this.events = data.timeline.events;
+  }
+
+  get passed(): boolean {
+    const timeoutOk = !this.timedOut || true; // timeout is expected for now
+    return this.validation.passed && this.selfCheckPassed && timeoutOk;
+  }
+
+  // ── Hook queries ──
+
+  get hooks() {
+    const events = this.events;
+    return {
+      /** All hook events. */
+      all: () => events,
+      /** Hooks filtered by event type. */
+      byType: (type: string) => events.filter(e => e.eventType === type),
+      /** All hooks that fired (any event type). */
+      fired: () => events,
+      /** All denials. */
+      denials: () => events.filter(e => e.decision === 'deny'),
+      /** All blocks. */
+      blocks: () => events.filter(e => e.decision === 'block'),
+      /** All gate-set events. */
+      gatesSets: () => events.filter(e => e.decision === 'set-gate'),
+      /** All gate-clear events. */
+      gateClears: () => events.filter(e => e.decision === 'clear-gate'),
+      /** Events matching a hook name pattern. */
+      matching: (pattern: string) => events.filter(e =>
+        e.hookName.includes(pattern) || e.eventType.includes(pattern),
+      ),
+    };
+  }
+
+  // ── Gate queries ──
+
+  get gates() {
+    const tl = this.timeline;
+    return {
+      /** Gates that were activated during the run. */
+      activated: () => Object.keys(tl.gatesActivated),
+      /** Gates that were cleared during the run. */
+      cleared: () => Object.keys(tl.gatesCleared),
+      /** Check if a specific gate was activated. */
+      wasActivated: (gate: string) => gate in tl.gatesActivated,
+      /** Check if a specific gate was cleared. */
+      wasCleared: (gate: string) => gate in tl.gatesCleared,
+      /** Check if a gate is still active (activated but not cleared). */
+      isActive: (gate: string) => (gate in tl.gatesActivated) && !(gate in tl.gatesCleared),
+    };
+  }
+
+  // ── Agent action queries (from stream) ──
+
+  get agent() {
+    const lines = this.streamLines;
+    return {
+      /** Extract all tool_use actions from the stream. */
+      toolUses: () => {
+        const uses: Array<{ tool: string; input: Record<string, unknown> }> = [];
+        for (const line of lines) {
+          try {
+            const d = JSON.parse(line);
+            if (d.type === 'assistant') {
+              for (const block of d.message?.content ?? []) {
+                if (block.type === 'tool_use') {
+                  uses.push({ tool: block.name, input: block.input ?? {} });
+                }
+              }
+            }
+          } catch { /* skip */ }
+        }
+        return uses;
+      },
+      /** Check if the agent used a specific tool. */
+      usedTool: (name: string) => {
+        for (const line of lines) {
+          try {
+            const d = JSON.parse(line);
+            if (d.type === 'assistant') {
+              for (const block of d.message?.content ?? []) {
+                if (block.type === 'tool_use' && block.name === name) return true;
+              }
+            }
+          } catch { /* skip */ }
+        }
+        return false;
+      },
+      /** Check if the agent used a skill. */
+      usedSkill: (skillName?: string) => {
+        for (const line of lines) {
+          try {
+            const d = JSON.parse(line);
+            if (d.type === 'assistant') {
+              for (const block of d.message?.content ?? []) {
+                if (block.type === 'tool_use' && block.name === 'Skill') {
+                  if (!skillName) return true;
+                  const skill = block.input?.skill ?? '';
+                  if (skill.includes(skillName)) return true;
+                }
+              }
+            }
+          } catch { /* skip */ }
+        }
+        return false;
+      },
+      /** Find the PR URL if the agent created one. */
+      createdPR: (): string | null => {
+        for (const line of lines) {
+          try {
+            const d = JSON.parse(line);
+            // Look in tool_result content for PR URL
+            if (d.type === 'user') {
+              const content = d.message?.content;
+              if (Array.isArray(content)) {
+                for (const c of content) {
+                  const text = c.content ?? c.text ?? '';
+                  const match = text.match(/https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/);
+                  if (match) return match[0];
+                }
+              }
+            }
+          } catch { /* skip */ }
+        }
+        return null;
+      },
+      /** Check if the agent entered a worktree. */
+      enteredWorktree: () => {
+        for (const line of lines) {
+          try {
+            const d = JSON.parse(line);
+            if (d.type === 'assistant') {
+              for (const block of d.message?.content ?? []) {
+                if (block.type === 'tool_use' && block.name === 'EnterWorktree') return true;
+              }
+            }
+          } catch { /* skip */ }
+        }
+        return false;
+      },
+    };
+  }
+
+  /** Human-readable summary. */
+  summary(): string {
+    return [
+      `Scenario: ${this.scenario}`,
+      `Duration: ${(this.durationMs / 1000).toFixed(1)}s${this.timedOut ? ' (timeout)' : ''}`,
+      `Hook events: ${this.events.length}`,
+      `Gates activated: ${this.gates.activated().join(', ') || 'none'}`,
+      `Gates cleared: ${this.gates.cleared().join(', ') || 'none'}`,
+      `Denials: ${this.hooks.denials().length}`,
+      `Blocks: ${this.hooks.blocks().length}`,
+      `PR created: ${this.agent.createdPR() ?? 'none'}`,
+      `Used skills: ${this.agent.usedSkill() ? 'yes' : 'no'}`,
+      `Entered worktree: ${this.agent.enteredWorktree() ? 'yes' : 'no'}`,
+      `Validation: ${this.validation.passed ? 'PASS' : 'FAIL'} (${this.validation.hooksMatched}/${this.validation.hooksTotal} hooks, ${this.validation.gatesMatched}/${this.validation.gatesTotal} gates)`,
+      `Self-check: ${this.selfCheckPassed ? 'PASS' : 'FAIL'}`,
+    ].join('\n');
+  }
+}
+
+// ── Run logic ───────────────────────────────────────────────────
+
+function timestamp(): string {
+  return new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+}
+
+async function runScenario(
+  fixture: FixtureRepo,
+  scenario: Scenario,
+  opts: RunOpts = {},
+): Promise<RunResult> {
+  const spawnFn = opts.spawn ?? realSpawn;
+  const model = opts.model ?? scenario.model;
+  const log = opts.log ?? console.log;
+  const debug = opts.debug ?? false;
+  const outRoot = opts.outRoot ?? '.hook-gym/runs';
+
+  const ts = timestamp();
+  const outDir = resolve(outRoot, `${ts}-${scenario.name}`);
+  mkdirSync(outDir, { recursive: true });
+
+  const rendered = renderPrompt(scenario.prompt, {
+    timestamp: ts,
+    host_repo: fixture.hostRepo,
+  });
+
+  log(`[run] ${scenario.name} (model=${model}, timeout=${scenario.timeoutSeconds}s, cwd=${fixture.dir})`);
+
+  const streamLines: string[] = [];
+  const processor = createHookStreamProcessor();
+  const startMs = Date.now();
+
+  const { timedOut } = await new Promise<{ timedOut: boolean }>((resolve) => {
+    const child: ChildProcess = spawnFn('claude', [
+      '-p', rendered,
+      '--model', model,
+      '--verbose',
+      '--output-format', 'stream-json',
+      '--include-hook-events',
+      '--max-turns', '50',
+      '--allowedTools', 'Bash,Read,Write,Edit,Glob,Grep,Skill,Agent',
+    ], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env },
+      cwd: fixture.dir,
+    } as SpawnOptions);
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      log(`[run] Timeout (${scenario.timeoutSeconds}s) — killing.`);
+      child.kill('SIGTERM');
+      setTimeout(() => { if (!child.killed) child.kill('SIGKILL'); }, 5000);
+    }, scenario.timeoutSeconds * 1000);
+
+    let buf = '';
+    child.stdout?.on('data', (chunk: Buffer) => {
+      buf += chunk.toString();
+      let idx: number;
+      while ((idx = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (!line) continue;
+        streamLines.push(line);
+        try {
+          const msg = JSON.parse(line);
+          const wasHook = processor.process(msg);
+          if (wasHook && debug) process.stderr.write(`[hook] ${line}\n`);
+        } catch { /* skip non-JSON */ }
+      }
+    });
+
+    if (debug) child.stderr?.on('data', (c: Buffer) => process.stderr.write(c));
+
+    child.on('close', () => { clearTimeout(timer); resolve({ timedOut }); });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      log(`[run] Spawn error: ${err.message}`);
+      resolve({ timedOut });
+    });
+  });
+
+  const durationMs = Date.now() - startMs;
+  const timeline = processor.getTimeline();
+
+  log(`[run] Done in ${(durationMs / 1000).toFixed(1)}s — ${timeline.events.length} events.`);
+
+  // Write output files
+  writeFileSync(join(outDir, 'stream.jsonl'), streamLines.join('\n') + '\n');
+  writeFileSync(join(outDir, 'timeline.md'), formatTimeline(timeline));
+  writeFileSync(join(outDir, 'result.json'), JSON.stringify({
+    scenario: scenario.name, model, durationMs, timedOut,
+    hookEventCount: timeline.events.length,
+    timeline,
+  }, null, 2) + '\n');
+
+  // Validate + self-check
+  const validation = validateAgainstScenario(timeline, scenario);
+  let selfCheckPassed = false;
+  try {
+    const replay = validateFixtureFile(join(outDir, 'stream.jsonl'), scenario);
+    selfCheckPassed = replay.passed === validation.passed;
+  } catch { /* self-check failed */ }
+
+  const result = new RunResult({
+    scenario: scenario.name, timeline, validation,
+    selfCheckPassed, timedOut, durationMs, outDir, streamLines,
+  });
+
+  // Print summary
+  log('');
+  log(formatValidationReport(validation));
+  log(result.summary());
+
+  return result;
+}

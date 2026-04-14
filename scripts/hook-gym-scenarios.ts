@@ -16,37 +16,30 @@ import type { Scenario } from './hook-gym-schema.js';
 // ── Prompt templates ───────────────────────────────────────────────
 
 const PROBE_HOOKS_PROMPT = `You are running a hook-gym synthetic test scenario.
-This project has kaizen hooks installed. Work WITH them, not against them.
+This project has kaizen hooks installed. Follow the kaizen workflow exactly as the hooks and CLAUDE.md instruct.
 
-## Task
+## Goal
 
-Create a simple test file, commit it, and create a PR. Follow the kaizen workflow:
+Create a simple test file, commit it, create a PR, and follow through with whatever the hooks require (review, reflection, etc.).
 
-1. Create a new branch for this work:
-   git checkout -b hook-gym-probe-{{timestamp}}
+## What to do
 
-2. Create a file called \`hook-gym-probe.md\` with content:
-   \`\`\`
+1. Create a file called \`hook-gym-probe.md\` with the content:
    # Hook Gym Probe
    Timestamp: {{timestamp}}
-   \`\`\`
 
-3. Stage and commit:
-   git add hook-gym-probe.md
-   git commit -m "test: hook-gym probe {{timestamp}}"
+2. Commit it and create a PR on {{host_repo}}.
 
-4. Push and create PR:
-   git push -u origin hook-gym-probe-{{timestamp}}
-   gh pr create --title "test: hook-gym probe {{timestamp}}" --body "Synthetic hook-gym scenario. Auto-close after capture." --repo {{host_repo}}
+3. After the PR is created, hooks will guide you — follow their instructions.
+   If they tell you to review, review. If they tell you to reflect, reflect.
+   If they block you, do what they say to unblock.
 
-5. After the PR is created, the stop gate will block you (needs_review + needs_pr_kaizen).
-   This is expected. Try to stop — the harness will capture the block and kill the session.
+## Rules
 
-IMPORTANT:
-- Do NOT ask for confirmation. Complete all steps autonomously.
-- Do NOT run /kaizen-review-pr or /kaizen-reflect — the harness captures the gate block.
-- If a hook denies an action, adapt (e.g. if dirty-files blocks PR create, commit first).
-- The timeout will kill this session — that is the expected exit path.
+- Do NOT ask for confirmation. Work autonomously.
+- Follow every hook instruction. If a hook denies an action, fix what it asks and retry.
+- Use skills when instructed (e.g. /kaizen-review-pr, /kaizen-reflect).
+- The harness has a timeout — complete as much of the workflow as you can within it.
 `;
 
 const LIFECYCLE_GATES_PROMPT = `You are running a hook-gym synthetic test scenario that exercises the full gate lifecycle.
@@ -120,11 +113,11 @@ export const SCENARIOS: Scenario[] = [
   {
     name: 'probe-hooks',
     description:
-      'Minimal: create file, commit, PR. Exercises SessionStart, PreToolUse (Write+Bash), PostToolUse (PR create), Stop gate.',
+      'Full workflow: create file, commit, PR, follow hook instructions (review, reflect). Exercises all hook types + gate lifecycle.',
     prompt: PROBE_HOOKS_PROMPT,
     model: 'haiku',
     maxBudget: 0.50,
-    timeoutSeconds: 120,
+    timeoutSeconds: 180,
     expectedHooks: [
       // SessionStart — 3 hooks fire
       {
@@ -166,13 +159,16 @@ export const SCENARIOS: Scenario[] = [
         severity: 3,
         description: 'PostToolUse sets needs_pr_kaizen gate after gh pr create',
       },
-      // Stop — stop-gate blocks with pending gates
+      // Stop — stop-gate blocks IF the agent tries to stop with pending gates.
+      // The agent may not reach the stop gate within the timeout if it's still
+      // actively working on the review. Severity 1 (advisory) because it depends
+      // on agent speed, not hook correctness.
       {
         hookPattern: 'Stop',
         eventType: 'Stop',
-        expectedDecision: 'block',
-        severity: 3,
-        description: 'Stop gate blocks with 2 pending gates (needs_review + needs_pr_kaizen)',
+        expectedDecision: 'fire',
+        severity: 1,
+        description: 'Stop hooks fire if agent attempts to stop (may not happen within timeout)',
       },
     ],
     expectedGates: [

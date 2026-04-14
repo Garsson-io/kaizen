@@ -396,6 +396,25 @@ I1, I2, I3, I4, I7, I8, I17, I18, I19, I20, I21, I22, I23, I26 — **14 invarian
 | I19 (secrets) | — | candidate — file issue for proper secret-scanner integration |
 | I22, I23 (meta) | — | candidates — tooling-fitness PRDs
 
+### I29 — No hand-rolled parsing or regex for structured data. Use schemas (Zod). Prefer YAML, use JSON where needed.
+
+**Why**: Hand-rolled regex parsing is fragile, hard to test, and produces false positives (see Hook Gym smoke runs: 3 gate detection bugs from instructional text matching gate keywords). Zod schemas are self-documenting, composable, and produce actionable error messages on validation failure. YAML is human-readable in terminal output; JSON is used where Claude's protocol requires it (e.g. `hookSpecificOutput` for deny decisions).
+
+**Check point**: Code review — any PR introducing parsing logic
+**Enforcement**:
+- L1: This invariant in AGENTS.md + review dimensions
+- **MISSING**: no automated lint for regex usage on structured data. Candidate for a `review-tooling-fitness` dimension check or a custom ESLint rule.
+
+**Examples**:
+- Hook output: YAML `HookOutput` schema (`src/hooks/lib/gate-signal.ts`) validated by Zod, parsed by `parseHookOutput()`
+- Review findings: `ReviewFindingData` schema (`src/review-finding-contract.ts`) with `validateReviewFindingPayload()`
+- Stream events: `HookResponseEvent` type (`scripts/hook-gym-schema.ts`)
+
+**Anti-patterns**:
+- `output.match(/needs_review/)` → use `parseHookOutput(output)?.gate === 'needs_review'`
+- `JSON.parse(text)` without schema validation → use `Schema.safeParse(JSON.parse(text))`
+- Regex to extract PR URLs from prose → use structured `pr` field in YAML output
+
 ---
 
 ## Hook design principle for kaizen

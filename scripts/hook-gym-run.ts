@@ -237,7 +237,7 @@ export async function runScenario(
       '--output-format', 'stream-json',
       '--include-hook-events',
       '--max-turns', '50',
-      '--allowedTools', 'Bash,Read,Write,Edit,Glob,Grep',
+      '--allowedTools', 'Bash,Read,Write,Edit,Glob,Grep,Skill,Agent',
     ];
 
     const child: ChildProcess = spawnFn('claude', args, {
@@ -296,8 +296,24 @@ export async function runScenario(
 
   log(`[hook-gym] Finished in ${(durationMs / 1000).toFixed(1)}s — ${timeline.events.length} hook events captured.`);
 
-  // Clean up temp clone if we made one
-  if (tempCloneDir) {
+  // Clean up: close any PRs the smoke run created, then remove temp clone
+  if (tempCloneDir && !isSelfDogfood) {
+    try {
+      // Find and close any open PRs created by this run
+      const prList = execSync(
+        `gh pr list --repo ${hostRepo} --state open --json number,headRefName --jq '.[] | select(.headRefName | startswith("hook-gym-probe")) | .number'`,
+        { encoding: 'utf-8', timeout: 10_000 },
+      ).trim();
+      for (const prNum of prList.split('\n').filter(Boolean)) {
+        execSync(
+          `gh pr close ${prNum} --repo ${hostRepo} --comment "Hook Gym probe — auto-closed after capture." --delete-branch 2>/dev/null || true`,
+          { stdio: 'pipe', timeout: 10_000 },
+        );
+        log(`[hook-gym] Closed PR #${prNum} on ${hostRepo}`);
+      }
+    } catch {
+      log(`[hook-gym] Warning: failed to clean up PRs on ${hostRepo}`);
+    }
     try {
       rmSync(tempCloneDir, { recursive: true, force: true });
       log(`[hook-gym] Cleaned up temp clone at ${tempCloneDir}`);
