@@ -8,12 +8,17 @@
  *   npx tsx scripts/hook-gym.ts --run probe-hooks --dry-run
  *   npx tsx scripts/hook-gym.ts --run-all --host-repo Garsson-io/kaizen-test-fixture
  *   npx tsx scripts/hook-gym.ts --validate-fixture <path> --scenario <name>
+ *   npx tsx scripts/hook-gym.ts --replay <fixture> --scenario <name>
+ *   npx tsx scripts/hook-gym.ts --replay-hooks <fixture> --scenario <name>
+ *   npx tsx scripts/hook-gym.ts --extract <log>
  */
 
+import { writeFileSync } from 'node:fs';
 import { SCENARIOS, getScenario, renderPrompt } from './hook-gym-scenarios.js';
 import { SEVERITY_WEIGHT } from './hook-gym-schema.js';
 import { validateFixtureFile, formatValidationReport } from './hook-gym-validate.js';
 import { FixtureRepo, getHostRepo, type RunResult } from './hook-gym-harness.js';
+import { extractToolActionsFromFile, replayFixture, formatFixture } from './hook-gym-replay.js';
 
 function getFlag(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
@@ -138,12 +143,22 @@ Usage:
   npx tsx scripts/hook-gym.ts --run <name> --dry-run
   npx tsx scripts/hook-gym.ts --run-all --host-repo <owner/repo>
   npx tsx scripts/hook-gym.ts --validate-fixture <path> --scenario <name>
+  npx tsx scripts/hook-gym.ts --replay <fixture> --scenario <name>
+  npx tsx scripts/hook-gym.ts --replay-hooks <fixture> --scenario <name>
+  npx tsx scripts/hook-gym.ts --extract <log> [--output <path>]
+
+Replay layers (PR 5):
+  --validate-fixture   Score-only: re-validate fixture against GT ($0, no hooks)
+  --replay             Alias for --validate-fixture (score-only replay)
+  --replay-hooks       Hook replay: extract actions, fire real hooks, validate ($0)
+  --extract            Extract tool actions from stream.jsonl to fixture JSON
 
 Options:
   --model <model>    Override scenario model (haiku, sonnet, opus)
   --host-repo <r>    Target repo (default: kaizen.config.json)
   --debug            Print raw hook event JSON
-  --dry-run          Show prompt without spawning agent`);
+  --dry-run          Show prompt without spawning agent
+  --output <path>    Output path for --extract (default: stdout)`);
     process.exit(0);
   }
 
@@ -158,7 +173,7 @@ Options:
 
   if (hasFlag('--run-all')) { await cmdRunAll(hostRepo, model, debug); return; }
 
-  const fixturePath = getFlag('--validate-fixture');
+  const fixturePath = getFlag('--validate-fixture') ?? getFlag('--replay');
   const scenarioForValidate = getFlag('--scenario');
   if (fixturePath && scenarioForValidate) {
     const scenario = getScenario(scenarioForValidate);
@@ -166,6 +181,38 @@ Options:
     const report = validateFixtureFile(fixturePath, scenario);
     console.log(formatValidationReport(report));
     process.exit(report.passed ? 0 : 1);
+  }
+
+  // --replay-hooks: extract tool actions from fixture, fire real hooks, validate
+  const replayHooksPath = getFlag('--replay-hooks');
+  if (replayHooksPath && scenarioForValidate) {
+    const scenario = getScenario(scenarioForValidate);
+    if (!scenario) { console.error(`Unknown scenario: ${scenarioForValidate}`); process.exit(1); }
+    const result = await replayFixture(replayHooksPath, scenario);
+    console.log(formatValidationReport(result.validation));
+    console.log(`\nTool actions replayed: ${result.actions.length}`);
+    console.log(`Hook events fired: ${result.timeline.events.length}`);
+    console.log(`Replay steps: ${result.steps.length}`);
+    process.exit(result.validation.passed ? 0 : 1);
+  }
+
+  // --extract: extract tool actions from stream.jsonl to compact fixture
+  const extractPath = getFlag('--extract');
+  if (extractPath) {
+    const actions = extractToolActionsFromFile(extractPath);
+    if (actions.length === 0) {
+      console.error('No tool actions found in fixture. Is this a stream-json log?');
+      process.exit(1);
+    }
+    const output = formatFixture(actions);
+    const outputPath = getFlag('--output');
+    if (outputPath) {
+      writeFileSync(outputPath, output);
+      console.log(`Extracted ${actions.length} tool actions to ${outputPath}`);
+    } else {
+      process.stdout.write(output);
+    }
+    return;
   }
 
   console.log('No command specified. Use --help for usage.');
