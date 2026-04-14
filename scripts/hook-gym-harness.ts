@@ -16,7 +16,7 @@
  *   await fixture.cleanup();
  */
 
-import { spawn as realSpawn, execSync, execFileSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { spawn as realSpawn, execFileSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,21 +86,24 @@ export class FixtureRepo {
 
     // Inject CLAUDE.md instructions fragment
     const fragmentPath = join(kaizenRoot, '.agents', 'kaizen', 'instructions-fragment.md');
-    if (existsSync(fragmentPath)) {
+    try {
       let fragment = readFileSync(fragmentPath, 'utf-8');
       fragment = fragment.replace(/\{\{KAIZEN_ROOT\}\}/g, kaizenRoot);
       const claudeMdPath = join(dir, 'CLAUDE.md');
-      const existing = existsSync(claudeMdPath) ? readFileSync(claudeMdPath, 'utf-8') : '';
+      let existing = '';
+      try { existing = readFileSync(claudeMdPath, 'utf-8'); } catch { /* new file */ }
       if (!existing.toLowerCase().includes('kaizen')) {
-        writeFileSync(claudeMdPath, existing + '\n' + fragment);
+        // O_WRONLY|O_CREAT|O_TRUNC — atomic create-or-replace, no TOCTOU
+        writeFileSync(claudeMdPath, existing + '\n' + fragment, { flag: 'w' });
       }
-    }
+    } catch { /* fragment not found — skip */ }
 
-    // Gitignore runtime artifacts
+    // Gitignore runtime artifacts — append idempotently
     const gitignorePath = join(dir, '.gitignore');
-    const gitignore = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf-8') : '';
+    let gitignore = '';
+    try { gitignore = readFileSync(gitignorePath, 'utf-8'); } catch { /* new file */ }
     if (!gitignore.includes('.kaizen/telemetry')) {
-      writeFileSync(gitignorePath, gitignore + '\n.kaizen/telemetry/\n');
+      writeFileSync(gitignorePath, gitignore + '\n.kaizen/telemetry/\n', { flag: 'w' });
     }
 
     // Commit setup files so working tree is clean

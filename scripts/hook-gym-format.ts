@@ -90,7 +90,18 @@ function formatGateLine(name: string, t: HookTimeline): string {
 }
 
 function escape(s: string): string {
-  return s.replace(/\|/g, '\\|').replace(/\n/g, ' ').replace(/\r/g, '');
+  // Replace all characters that could break a Markdown table row in one pass.
+  // CodeQL js/regex/incomplete-sanitization flags chained .replace() calls
+  // that don't cover all members of a meta-character group.
+  return s.replace(/[\|\n\r\\]/g, (ch) => {
+    switch (ch) {
+      case '|': return '\\|';
+      case '\\': return '\\\\';
+      case '\n': return ' ';
+      case '\r': return '';
+      default: return ch;
+    }
+  });
 }
 
 function truncate(s: string, max: number): string {
