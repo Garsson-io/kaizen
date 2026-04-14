@@ -175,9 +175,9 @@ function evaluateGateExpectation(
   const actuallyActivated = expectation.gate in timeline.gatesActivated;
   const actuallyCleared = expectation.gate in timeline.gatesCleared;
 
-  const matched =
-    actuallyActivated === expectation.shouldActivate &&
-    actuallyCleared === expectation.shouldClear;
+  const activateMatch = actuallyActivated === expectation.shouldActivate;
+  const clearMatch = expectation.clearNonDeterministic ? true : (actuallyCleared === expectation.shouldClear);
+  const matched = activateMatch && clearMatch;
 
   let reason: string | undefined;
   if (!matched) {

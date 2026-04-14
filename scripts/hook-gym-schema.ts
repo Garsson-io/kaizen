@@ -95,6 +95,8 @@ export interface HookExpectation {
 export interface GateExpectation {
   gate: string;
   shouldActivate: boolean;
+  /** When true, clearing state is non-deterministic — don't fail on either outcome. */
+  clearNonDeterministic?: boolean;
   shouldClear: boolean;
 }
 

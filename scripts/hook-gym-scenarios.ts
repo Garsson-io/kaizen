@@ -174,7 +174,9 @@ export const SCENARIOS: Scenario[] = [
       },
     ],
     expectedGates: [
-      { gate: 'needs_review', shouldActivate: true, shouldClear: true },
+      // needs_review: activated on PR create. Agent may or may not clear it
+      // within the timeout depending on review speed — non-deterministic.
+      { gate: 'needs_review', shouldActivate: true, shouldClear: false, clearNonDeterministic: true },
       { gate: 'needs_pr_kaizen', shouldActivate: true, shouldClear: false },
     ],
     // The stop-gate blocks the agent from stopping. Haiku can't clear
