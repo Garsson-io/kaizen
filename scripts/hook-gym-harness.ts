@@ -60,9 +60,14 @@ export class FixtureRepo {
       stdio: 'pipe', timeout: 60_000,
     });
 
-    // Install kaizen plugin
-    log(`[fixture] Installing kaizen plugin...`);
+    // Install kaizen plugin from the current worktree.
+    // Force marketplace update first to ensure the latest code is picked up
+    // (the plugin system caches at install time, not live-links).
+    log(`[fixture] Installing kaizen plugin from ${kaizenRoot}...`);
     execSync(`claude plugins marketplace add "${kaizenRoot}" 2>/dev/null || true`, {
+      stdio: 'pipe', timeout: 15_000, cwd: dir,
+    });
+    execSync(`claude plugins marketplace update kaizen 2>/dev/null || true`, {
       stdio: 'pipe', timeout: 15_000, cwd: dir,
     });
     execSync(`claude plugins install kaizen@kaizen --scope project`, {
@@ -105,6 +110,25 @@ export class FixtureRepo {
     execSync('git add -A && git commit -m "chore: kaizen setup (hook-gym)" --no-verify', {
       stdio: 'pipe', timeout: 10_000, cwd: dir,
     });
+
+    // Verify installation: log plugin version + source path
+    try {
+      const pluginList = execSync('claude plugins list 2>&1', {
+        encoding: 'utf-8', timeout: 10_000, cwd: dir,
+      });
+      const kaizenLines = pluginList.split('\n').filter(l => l.includes('kaizen') || l.includes('Version') || l.includes('Status') || l.includes('Scope'));
+      log(`[fixture] Plugin state:\n${kaizenLines.map(l => `  ${l.trim()}`).join('\n')}`);
+    } catch { /* best effort */ }
+
+    // Verify hooks exist by checking what settings.json contains
+    try {
+      const settingsPath = join(dir, '.claude', 'settings.json');
+      if (existsSync(settingsPath)) {
+        const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+        const plugins = settings.enabledPlugins ?? {};
+        log(`[fixture] Enabled plugins: ${JSON.stringify(plugins)}`);
+      }
+    } catch { /* best effort */ }
 
     log(`[fixture] Ready at ${dir}`);
     return new FixtureRepo(dir, hostRepo, kaizenRoot);
@@ -327,6 +351,35 @@ export class RunResult {
         return false;
       },
     };
+  }
+
+  /** Diagnose hook behavior — which hooks produced output, which were silent. */
+  diagnose(): string {
+    const lines: string[] = ['=== Hook Diagnosis ==='];
+    const byType: Record<string, { total: number; withOutput: number; decisions: string[] }> = {};
+    for (const e of this.events) {
+      if (!byType[e.eventType]) byType[e.eventType] = { total: 0, withOutput: 0, decisions: [] };
+      byType[e.eventType].total++;
+      if (e.rawOutput) byType[e.eventType].withOutput++;
+      if (e.decision && e.decision !== 'none') {
+        byType[e.eventType].decisions.push(`${e.decision}:${e.reason ?? '?'}`);
+      }
+    }
+    for (const [type, stats] of Object.entries(byType)) {
+      lines.push(`  ${type}: ${stats.total} events, ${stats.withOutput} with output`);
+      if (stats.decisions.length > 0) {
+        lines.push(`    decisions: ${stats.decisions.join(', ')}`);
+      }
+    }
+    // Check for YAML gate signals specifically
+    const yamlSignals = this.events.filter(e =>
+      e.rawOutput.includes('---\nhook:') || e.rawOutput.includes('---\ngate:'),
+    );
+    lines.push(`  YAML gate signals found: ${yamlSignals.length}`);
+    if (yamlSignals.length === 0) {
+      lines.push(`  ⚠ No YAML signals — plugin may be running stale hooks without YAML output`);
+    }
+    return lines.join('\n');
   }
 
   /** Human-readable summary. */
