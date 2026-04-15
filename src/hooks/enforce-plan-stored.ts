@@ -132,11 +132,10 @@ export function checkPlanBeforeEdit(
       missing: [!gate.hasPlan ? 'plan' : 'testplan'],
       reason: `BLOCKED: No plan stored for issue #${issueNum}. You MUST run /kaizen-write-plan before writing any code.
 
-DO THIS NOW — run this skill by calling the Skill tool:
+DO THIS NOW:
   Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })
 
-This creates an independent plan on the issue. After it completes, retry your edit.
-Do NOT write a plan yourself — it must come from /kaizen-write-plan.`,
+The skill knows how to create and store the plan correctly. After it completes, retry your edit.`,
     };
   }
 
@@ -181,8 +180,8 @@ This hook enforces I3 (stored test plan) and I8 (plan before implementation).`,
 
 ${gate.reason}
 
-Run: Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })
-Then retry gh pr create.`,
+Run /kaizen-write-plan — the skill knows how to create and store the plan correctly.
+  Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })`,
     };
   }
 
