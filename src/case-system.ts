@@ -141,6 +141,16 @@ export class CaseSystem {
     };
   }
 
+  /** Retrieve raw plan text (for substance checks). */
+  retrievePlan(issueNumber: number, repo: string): string | null {
+    return this.backend.retrievePlan(issueNumber, repo);
+  }
+
+  /** Retrieve raw test plan text (for substance checks). */
+  retrieveTestPlan(issueNumber: number, repo: string): string | null {
+    return this.backend.retrieveTestPlan(issueNumber, repo);
+  }
+
   /**
    * Get the issue data for a case's linked issue.
    */

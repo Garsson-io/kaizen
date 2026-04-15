@@ -16,6 +16,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-command.js';
 import { CaseSystem, type PlanGateResult } from '../case-system.js';
@@ -267,6 +268,35 @@ Run /kaizen-write-plan — the skill knows how to create and store the plan corr
     };
   }
 
+  // Substance check: plan must be substantive (not a rubber stamp).
+  // This catches agents that store a trivial plan to satisfy the existence gate.
+  const plan = deps.caseSystem.retrievePlan(parseInt(issueNum, 10), repo);
+  const testPlan = deps.caseSystem.retrieveTestPlan(parseInt(issueNum, 10), repo);
+
+  const planIssues = plan ? checkPlanSubstance(plan) : [];
+  const testPlanIssues = testPlan ? checkTestPlanSubstance(testPlan) : [];
+
+  if (planIssues.length > 0 || testPlanIssues.length > 0) {
+    const parts: string[] = [];
+    if (planIssues.length > 0) {
+      parts.push(`Plan substance failures:\n${planIssues.map(i => `  - ${i}`).join('\n')}`);
+    }
+    if (testPlanIssues.length > 0) {
+      parts.push(`Test plan substance failures:\n${testPlanIssues.map(i => `  - ${i}`).join('\n')}`);
+    }
+    return {
+      allowed: false,
+      missing: ['substance'],
+      reason: `BLOCKED: Plan exists but is not substantive (rubber-stamp check).
+
+${parts.join('\n\n')}
+
+Run /kaizen-write-plan to produce a proper plan with Success Criteria,
+Design Alternatives, and a Seam Map & Test Plan with test levels.
+  Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })`,
+    };
+  }
+
   return { allowed: true };
 }
 
@@ -284,8 +314,7 @@ function logEscapeHatchUse(context: string): void {
       cwd: process.cwd(),
     }) + '\n';
     // Append-only; never throw
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    require('node:fs').appendFileSync(logPath, entry);
+    appendFileSync(logPath, entry);
   } catch { /* never fail on log */ }
 }
 

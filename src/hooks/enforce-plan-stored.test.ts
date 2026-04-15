@@ -199,6 +199,25 @@ describe('checkPlanBeforePr', () => {
     );
     expect(result.allowed).toBe(true);
   });
+
+  it('DENIES when plan exists but is rubber-stamp (substance check)', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Closes #1055'),
+      makeDeps({ retrievePlan: () => '## Plan\n\nDo the thing.' }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('substance');
+    expect(result.reason).toContain('not substantive');
+  });
+
+  it('DENIES when test plan is rubber-stamp (no table, no levels)', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Closes #1055'),
+      makeDeps({ retrieveTestPlan: () => '## Test Plan\n\nAll good.' }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('substance');
+  });
 });
 
 // ── Substance checks ────────────────────────────────────────────────

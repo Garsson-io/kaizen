@@ -128,12 +128,12 @@ Compact in-context summary (one-line per invariant):
 |:-:|----------|:--:|
 | **I1** | Every PR has `Closes #<N>` with `#N` adjacent to the closing keyword | ⚠️ |
 | **I2** | Closed `#N` is scope-matched (not an epic; no open sub-issues) | ⚠️ |
-| **I3** | Closed `#N` has a stored test plan (`retrieve-testplan` ≠ null) | ⚠️ |
+| **I3** | Closed `#N` has a stored test plan (`retrieve-testplan` ≠ null) | ✅ |
 | **I4** | PR body includes behaviors × levels table (Unit/Integration/System/Agentic/Workflow) | ⚠️ |
 | **I5** | Review round has structured findings stored | ✅ |
 | **I6** | Gates cleared by mechanism, never by `rm` of state files | ✅ |
 | **I7** | No push to a branch whose most-recent PR merged with no newer open PR | ⚠️ |
-| **I8** | Implementation begins only after plan is stored on the issue | ⚠️ |
+| **I8** | Implementation begins only after plan is stored on the issue | ✅ |
 | **I9** | No source edits on main branch outside a worktree | ✅ |
 | **I10** | No source edits in worktree without a kaizen case | ✅ |
 | **I11** | No dirty/uncommitted files at `gh pr create` | ✅ |
