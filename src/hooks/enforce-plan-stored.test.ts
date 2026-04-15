@@ -39,6 +39,8 @@ function makeDeps(backendOverrides: Partial<CaseBackend> = {}, depsOverrides: Pa
     getCurrentBranch: () => 'k1055-enforce-plan',
     detectRepo: () => 'Garsson-io/kaizen',
     isInWorktree: () => true,
+    getWorktreeRoot: () => '/repo/.claude/worktrees/wt',
+    getMainCheckout: () => '/repo',
     ...depsOverrides,
   };
 }
@@ -116,6 +118,25 @@ describe('checkPlanBeforeEdit', () => {
   it('escape hatch works', () => {
     process.env.KAIZEN_SKIP_PLAN_CHECK = '1';
     expect(checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => null })).allowed).toBe(true);
+  });
+
+  it('suggests correct worktree path when agent writes to main checkout', () => {
+    // Agent in worktree tries absolute path in main checkout
+    const result = checkPlanBeforeEdit('/repo/src/thing.ts', makeDeps({ retrievePlan: () => null }));
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('main checkout');
+    expect(result.reason).toContain('/repo/.claude/worktrees/wt/src/thing.ts');
+  });
+
+  it('does NOT add path hint when writing to worktree path correctly', () => {
+    const result = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/src/thing.ts', makeDeps({ retrievePlan: () => null }));
+    expect(result.allowed).toBe(false);
+    expect(result.reason).not.toContain('main checkout');
+  });
+
+  it('tells agent to wait for skill to complete', () => {
+    const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => null }));
+    expect(result.reason).toContain('Wait for the skill to COMPLETE');
   });
 });
 

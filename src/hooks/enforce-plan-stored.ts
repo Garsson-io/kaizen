@@ -34,6 +34,10 @@ export interface PlanCheckDeps {
   getCurrentBranch: () => string;
   detectRepo: () => string;
   isInWorktree: () => boolean;
+  /** Absolute path of the current worktree root (or empty if not in one). */
+  getWorktreeRoot: () => string;
+  /** Absolute path of the main checkout. */
+  getMainCheckout: () => string;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -58,6 +62,13 @@ const DEFAULT_DEPS: PlanCheckDeps = {
     const gitDir = exec('git rev-parse --git-dir 2>/dev/null');
     const gitCommon = exec('git rev-parse --git-common-dir 2>/dev/null');
     return !!gitDir && !!gitCommon && gitDir !== gitCommon;
+  },
+  getWorktreeRoot: () => exec('git rev-parse --show-toplevel 2>/dev/null'),
+  getMainCheckout: () => {
+    const gitCommon = exec('git rev-parse --git-common-dir 2>/dev/null');
+    if (!gitCommon) return '';
+    // git-common-dir is typically <main>/.git, so parent is main checkout
+    return gitCommon.replace(/\/\.git$/, '').replace(/\/\.git\/.*$/, '');
   },
 };
 
@@ -127,6 +138,20 @@ export function checkPlanBeforeEdit(
 
   const gate = deps.caseSystem.checkPlanGate(parseInt(issueNum, 10), repo);
   if (!gate.passed) {
+    // Detect if the agent is writing to main checkout while in a worktree.
+    // If so, include path correction — the agent has BOTH a plan problem AND a path problem.
+    const worktreeRoot = deps.getWorktreeRoot();
+    const mainCheckout = deps.getMainCheckout();
+    const wrongPath = !!mainCheckout && !!worktreeRoot && worktreeRoot !== mainCheckout
+      && filePath.startsWith(mainCheckout + '/') && !filePath.startsWith(worktreeRoot + '/');
+    const suggestedPath = wrongPath && worktreeRoot
+      ? filePath.replace(mainCheckout, worktreeRoot)
+      : null;
+
+    const pathHint = suggestedPath
+      ? `\n\n⚠ Also: you wrote to the main checkout. Your worktree is ${worktreeRoot}.\nUse this path instead: ${suggestedPath}`
+      : '';
+
     return {
       allowed: false,
       missing: [!gate.hasPlan ? 'plan' : 'testplan'],
@@ -135,7 +160,8 @@ export function checkPlanBeforeEdit(
 DO THIS NOW:
   Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })
 
-The skill knows how to create and store the plan correctly. After it completes, retry your edit.`,
+The skill knows how to create and store the plan correctly.
+IMPORTANT: Wait for the skill to COMPLETE. Do not retry Write until the skill is done — intermediate retries will be denied again.${pathHint}`,
     };
   }
 
