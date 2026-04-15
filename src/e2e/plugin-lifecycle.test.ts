@@ -191,12 +191,12 @@ describe("Part 2: All hooks are registered and executable", () => {
     expect(events).toContain("Stop");
   });
 
-  it("PreToolUse covers Bash, Edit|Write, and Agent matchers", () => {
+  it("PreToolUse covers Bash, Edit|Write(|NotebookEdit), and Agent matchers", () => {
     const matchers = (pluginJson.hooks.PreToolUse as any[]).map(
       (e: any) => e.matcher ?? "*",
     );
     expect(matchers).toContain("Bash");
-    expect(matchers).toContain("Edit|Write");
+    expect(matchers.some(m => m.includes("Edit") && m.includes("Write"))).toBe(true);
     expect(matchers).toContain("Agent");
   });
 

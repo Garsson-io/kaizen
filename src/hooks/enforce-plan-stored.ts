@@ -38,6 +38,8 @@ export interface PlanCheckDeps {
   getWorktreeRoot: () => string;
   /** Absolute path of the main checkout. */
   getMainCheckout: () => string;
+  /** Explicitly-declared issue for this worktree via `git config kaizen.issue`. */
+  getDeclaredIssue: () => string | null;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -70,6 +72,10 @@ const DEFAULT_DEPS: PlanCheckDeps = {
     // git-common-dir is typically <main>/.git, so parent is main checkout
     return gitCommon.replace(/\/\.git$/, '').replace(/\/\.git\/.*$/, '');
   },
+  getDeclaredIssue: () => {
+    const v = exec('git config --get kaizen.issue 2>/dev/null');
+    return v && /^\d+$/.test(v) ? v : null;
+  },
 };
 
 // ── Issue extraction ────────────────────────────────────────────────
@@ -79,38 +85,50 @@ export function extractIssueNumber(fullCommand: string): string | null {
   return match ? match[1] : null;
 }
 
-export function extractIssueFromBranch(branch: string): string | null {
-  // Try patterns in priority order:
-  // 1. kNNN (k-prefix: k40-add, worktree-feat+k1055-desc)
-  // 2. issue-NNN
-  // 3. /NNN- (feat/NNN-desc)
-  // 4. #NNN (explicit issue ref)
-  // 5. -NNN$ (trailing number, common in worktree branch names)
-  const patterns = [
-    /(?:^|[^a-z\d])k(\d+)/i,
-    /issue-(\d+)/i,
-    /(?:^|\/)(\d+)-/,
-    /#(\d+)/,
-    /-(\d+)$/,
-  ];
-  for (const re of patterns) {
-    const match = branch.match(re);
-    if (match) return match[1];
-  }
-  return null;
-}
+// NOTE: Branch-name parsing was intentionally removed.
+// The issue binding is EXPLICIT via `git config kaizen.issue <N>` (set by the
+// /kaizen-implement skill or the user). For PR creation, the canonical
+// `Closes #N` syntax in the PR body is the fallback. Parsing branch names
+// was fragile — every naming convention we didn't anticipate was a bypass.
 
 // ── Source file detection ───────────────────────────────────────────
+//
+// Design: allowlist known NON-source (docs, config, assets). Everything
+// else is treated as source. New languages then require no update — the
+// default is "this is code" unless proven otherwise.
 
-const SOURCE_EXTENSIONS = /\.(ts|js|tsx|jsx|py|go|rs|java|c|cpp|h|rb|sh)$/;
+const NON_SOURCE_EXTENSIONS = new RegExp(
+  '\\.(md|mdx|rst|txt|json|yml|yaml|toml|xml|html|htm|css|scss|sass|less|' +
+  'svg|png|jpg|jpeg|gif|webp|ico|pdf|lock|lockb|sum|mod|csv|tsv)$',
+  'i',
+);
 
+// Filenames (not extensions) that are considered docs/config, not source.
+const NON_SOURCE_FILENAMES = new Set([
+  'LICENSE', 'NOTICE', 'AUTHORS', 'CONTRIBUTORS', 'CHANGELOG', 'VERSION',
+  '.gitignore', '.gitattributes', '.editorconfig', '.dockerignore',
+  '.env.example', '.nvmrc', '.node-version',
+]);
+
+/** True if the file is source code (default: yes, unless it's known docs/config). */
 export function isSourceFile(filePath: string): boolean {
-  return SOURCE_EXTENSIONS.test(filePath);
+  const basename = filePath.replace(/^.*\//, '');
+  if (NON_SOURCE_FILENAMES.has(basename)) return false;
+  if (NON_SOURCE_EXTENSIONS.test(filePath)) return false;
+  // Everything else: treat as source. Covers .ts, .py, .go, .rs, Makefile,
+  // Dockerfile, .sh, unknown extensions, and anything future.
+  return true;
 }
 
 export function isDocsOnly(changedFiles: string[]): boolean {
   return changedFiles.length > 0 && changedFiles.every(f => !isSourceFile(f));
 }
+
+// NOTE: Bash-command inspection to detect source writes (`cat > file.ts`, `sed -i`,
+// `tee`, etc.) was intentionally removed. Regex-based command parsing is fragile:
+// agents can bypass by using any shell variant we didn't anticipate. The
+// Edit/Write + NotebookEdit gate covers the natural path. A motivated bypass via
+// raw shell is out of scope for this L2 hook — tracked as a follow-up if needed.
 
 // ── Substance checks (PR backstop only) ─────────────────────────────
 
@@ -145,25 +163,23 @@ export function checkPlanBeforeEdit(
   if (!deps.isInWorktree()) return { allowed: true };
   if (!isSourceFile(filePath)) return { allowed: true };
 
-  const branch = deps.getCurrentBranch();
-  const issueNum = extractIssueFromBranch(branch);
+  // Issue must be EXPLICITLY declared via `git config kaizen.issue <N>`.
+  // This is the agent's binding contract: "I am working on #N".
+  // No branch-name parsing, no guessing.
+  const issueNum = deps.getDeclaredIssue();
   if (!issueNum) {
-    // Can't determine issue from branch — deny to close the loophole.
-    // An agent in a worktree editing source MUST be working on an issue.
     return {
       allowed: false,
       missing: ['issue-link'],
-      reason: `BLOCKED: Cannot determine which issue you are working on (branch: ${branch || '?'}).
+      reason: `BLOCKED: You have not declared which issue you are working on.
 
-Your branch name must include the issue number. Accepted patterns:
-  - k{N}-description        (e.g., k40-add-hello)
-  - feat/{N}-description    (e.g., feat/40-add-hello)
-  - issue-{N}               (e.g., fix/issue-40)
+Every source-code edit must be tied to an issue. Declare it explicitly:
 
-Rename the branch with:
-  git branch -m k${'<N>'}-<description>
+  git config kaizen.issue <N>
 
-Or use /kaizen-implement which creates a correctly-named worktree.
+(where <N> is the issue number, e.g. 1055)
+
+Or use /kaizen-implement, which sets this for you.
 This hook enforces I8: implementation must be tied to a planned issue.`,
     };
   }
@@ -219,14 +235,19 @@ export function checkPlanBeforePr(
   const changedFiles = deps.getChangedFiles();
   if (isDocsOnly(changedFiles)) return { allowed: true };
 
-  const issueNum = extractIssueNumber(fullCommand) ?? extractIssueFromBranch(deps.getCurrentBranch());
+  // Priority: declared issue > PR body "Closes #N" (canonical GitHub syntax).
+  // No branch-name parsing — too fragile.
+  const issueNum = deps.getDeclaredIssue() ?? extractIssueNumber(fullCommand);
   if (!issueNum) {
     return {
       allowed: false,
       missing: ['issue-link'],
-      reason: `BLOCKED: Cannot verify plan — no issue number found.
+      reason: `BLOCKED: Cannot verify plan — no issue declared.
 
-PR must link an issue with \`Closes #N\` in the body.
+Declare the issue explicitly:
+  git config kaizen.issue <N>
+
+Or include \`Closes #N\` in the PR body.
 This hook enforces I3 (stored test plan) and I8 (plan before implementation).`,
     };
   }
@@ -249,6 +270,25 @@ Run /kaizen-write-plan — the skill knows how to create and store the plan corr
   return { allowed: true };
 }
 
+// ── Accountability: log escape-hatch use ────────────────────────────
+
+function logEscapeHatchUse(context: string): void {
+  if (process.env.KAIZEN_SKIP_PLAN_CHECK !== '1') return;
+  try {
+    const logPath = process.env.KAIZEN_ESCAPE_LOG ?? '/tmp/.kaizen-escape-hatch.jsonl';
+    const entry = JSON.stringify({
+      ts: new Date().toISOString(),
+      hook: 'enforce-plan-stored',
+      context,
+      branch: (() => { try { return exec('git rev-parse --abbrev-ref HEAD 2>/dev/null'); } catch { return ''; } })(),
+      cwd: process.cwd(),
+    }) + '\n';
+    // Append-only; never throw
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require('node:fs').appendFileSync(logPath, entry);
+  } catch { /* never fail on log */ }
+}
+
 // ── main ────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -258,12 +298,21 @@ async function main(): Promise<void> {
   const toolName = input.tool_name ?? '';
   let result: PlanCheckResult;
 
-  if (toolName === 'Edit' || toolName === 'Write') {
-    const filePath = (input.tool_input?.file_path as string) ?? '';
+  if (toolName === 'Edit' || toolName === 'Write' || toolName === 'NotebookEdit') {
+    const filePath = (input.tool_input?.file_path as string)
+      ?? (input.tool_input?.notebook_path as string)
+      ?? '';
     result = checkPlanBeforeEdit(filePath);
-  } else {
+  } else if (toolName === 'Bash') {
     const command = (input.tool_input?.command as string) ?? '';
     result = checkPlanBeforePr(command);
+  } else {
+    result = { allowed: true };
+  }
+
+  // Accountability: log when escape hatch is set (regardless of outcome)
+  if (process.env.KAIZEN_SKIP_PLAN_CHECK === '1') {
+    logEscapeHatchUse(`tool=${toolName}`);
   }
 
   if (!result.allowed) {

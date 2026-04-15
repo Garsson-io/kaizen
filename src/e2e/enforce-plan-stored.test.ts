@@ -79,6 +79,10 @@ fi
 if echo "$@" | grep -q "log main..HEAD"; then
   exit 0
 fi
+if echo "$@" | grep -q "config --get kaizen.issue"; then
+  # No declared issue — forces fallback path in the hook
+  exit 1
+fi
 /usr/bin/git "$@" 2>/dev/null
 `;
   writeFileSync(join(mockDir.path, "git"), script);
@@ -169,6 +173,6 @@ describe("E2E: enforce-plan-stored hook — adversarial scenario", () => {
     );
 
     expect(denies(result), `Hook should deny no-issue PR: stdout='${result.stdout}'`).toBe(true);
-    expect(denyReason(result)).toContain("issue number");
+    expect(denyReason(result)).toContain("no issue declared");
   });
 });

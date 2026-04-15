@@ -10,7 +10,6 @@ import {
   checkPlanBeforePr,
   checkPlanBeforeEdit,
   extractIssueNumber,
-  extractIssueFromBranch,
   isDocsOnly,
   isSourceFile,
   checkPlanSubstance,
@@ -41,6 +40,7 @@ function makeDeps(backendOverrides: Partial<CaseBackend> = {}, depsOverrides: Pa
     isInWorktree: () => true,
     getWorktreeRoot: () => '/repo/.claude/worktrees/wt',
     getMainCheckout: () => '/repo',
+    getDeclaredIssue: () => '1055',
     ...depsOverrides,
   };
 }
@@ -83,11 +83,6 @@ describe('extractIssueNumber', () => {
   it('null when absent', () => expect(extractIssueNumber('no ref')).toBeNull());
 });
 
-describe('extractIssueFromBranch', () => {
-  it('kNNN', () => expect(extractIssueFromBranch('k1055-plan')).toBe('1055'));
-  it('feat/NNN', () => expect(extractIssueFromBranch('feat/123-x')).toBe('123'));
-  it('null for main', () => expect(extractIssueFromBranch('main')).toBeNull());
-});
 
 // ── Gate 1: Edit/Write ──────────────────────────────────────────────
 
@@ -111,11 +106,35 @@ describe('checkPlanBeforeEdit', () => {
     expect(checkPlanBeforeEdit('src/thing.ts', makeDeps({}, { isInWorktree: () => false })).allowed).toBe(true);
   });
 
-  it('DENIES when no issue in branch name (closes loophole)', () => {
-    const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({}, { getCurrentBranch: () => 'random-branch' }));
+  it('DENIES when no issue declared and not in branch (closes loophole)', () => {
+    const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({}, {
+      getCurrentBranch: () => 'random-branch',
+      getDeclaredIssue: () => null,
+    }));
     expect(result.allowed).toBe(false);
     expect(result.missing).toContain('issue-link');
-    expect(result.reason).toContain('Cannot determine which issue');
+    expect(result.reason).toContain('git config kaizen.issue');
+  });
+
+  it('uses declared issue when branch name is ambiguous', () => {
+    // Declared: 1055, branch has no issue marker
+    const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({}, {
+      getCurrentBranch: () => 'random-branch',
+      getDeclaredIssue: () => '1055',
+    }));
+    expect(result.allowed).toBe(true);
+  });
+
+  it('uses only declared issue (no branch parsing)', () => {
+    let checkedIssue = 0;
+    const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({
+      retrievePlan: (issue) => { checkedIssue = issue as unknown as number; return GOOD_PLAN; },
+    }, {
+      getCurrentBranch: () => 'k40-something', // branch has k40 — should be IGNORED
+      getDeclaredIssue: () => '1055',
+    }));
+    expect(result.allowed).toBe(true);
+    expect(checkedIssue).toBe(1055);
   });
 
   it('escape hatch works', () => {
@@ -164,10 +183,10 @@ describe('checkPlanBeforePr', () => {
     expect(result.allowed).toBe(false);
   });
 
-  it('DENIES without issue link', () => {
+  it('DENIES without issue link (no declaration, no Closes #N)', () => {
     const result = checkPlanBeforePr(
       'gh pr create --title "x" --body "no issue"',
-      makeDeps({}, { getCurrentBranch: () => 'random' }),
+      makeDeps({}, { getDeclaredIssue: () => null }),
     );
     expect(result.allowed).toBe(false);
     expect(result.missing).toContain('issue-link');
@@ -192,6 +211,25 @@ describe('checkPlanSubstance', () => {
 describe('checkTestPlanSubstance', () => {
   it('passes good testplan', () => expect(checkTestPlanSubstance(GOOD_TEST_PLAN)).toEqual([]));
   it('fails without table', () => expect(checkTestPlanSubstance('## Test Plan\nno table').length).toBeGreaterThan(0));
+});
+
+// ── Source file detection (allowlist-based) ────────────────────────
+
+describe('isSourceFile — allowlist design', () => {
+  it('known docs/config are NOT source', () => {
+    for (const f of ['README.md', 'config.yaml', 'package.json', 'docs/guide.md', 'data.csv', '.gitignore', 'LICENSE']) {
+      expect(isSourceFile(f), f).toBe(false);
+    }
+  });
+  it('unknown extensions are TREATED as source (robust to new languages)', () => {
+    for (const f of ['main.ts', 'app.py', 'Main.kt', 'widget.vue', 'tool.ps1', 'script.lua', 'new.rs', 'lib.mjs', 'unknown.xyz']) {
+      expect(isSourceFile(f), f).toBe(true);
+    }
+  });
+  it('files with no extension default to source', () => {
+    expect(isSourceFile('Makefile')).toBe(true);
+    expect(isSourceFile('Dockerfile')).toBe(true);
+  });
 });
 
 // ── Regression: #1054 ───────────────────────────────────────────────

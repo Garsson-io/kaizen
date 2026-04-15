@@ -23,15 +23,20 @@ description: Take a spec from PRD to working code. Re-examines the spec against 
 
 ## Plan Gate — MANDATORY before writing any code
 
-Before anything else, verify an implementation plan exists on the linked issue.
+Before anything else:
 
-**Check:**
+**Step 1: Declare the issue you're working on.** (Skip if already set.)
+```bash
+git config kaizen.issue {N}
+```
+
+**Step 2: Verify a plan exists on the issue.**
 ```bash
 npx tsx src/cli-structured-data.ts retrieve-plan --issue {N} --repo "$ISSUES_REPO" | head -5
 npx tsx src/cli-structured-data.ts retrieve-testplan --issue {N} --repo "$ISSUES_REPO" | head -5
 ```
 
-**If EITHER is empty, run `/kaizen-write-plan`:**
+**Step 3: If EITHER is empty, run `/kaizen-write-plan`:**
 ```
 Skill({ skill: "kaizen-write-plan", args: "#{N}" })
 ```
@@ -40,7 +45,7 @@ The skill knows how to ground, formulate, and store the plan. Do NOT write the p
 
 After the skill completes, re-check with `retrieve-plan`. If still empty, STOP and report to admin.
 
-**The `enforce-plan-stored` hook (L2) will block Edit/Write of source files and `gh pr create` if no plan exists.** This catches the problem early so you don't waste a session coding without a plan.
+**Enforcement**: The `enforce-plan-stored` hook (L2) blocks Edit/Write/NotebookEdit of source files when no plan exists on the declared issue, and blocks `gh pr create` when the PR has no plan. The hook reads `git config kaizen.issue` — if unset, it denies with instructions to declare the issue.
 
 ---
 
