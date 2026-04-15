@@ -23,39 +23,24 @@ description: Take a spec from PRD to working code. Re-examines the spec against 
 
 ## Plan Gate — MANDATORY before writing any code
 
-Before anything else, verify an implementation plan exists on the linked issue. The plan must come from an **independent planning agent**, not from you.
+Before anything else, verify an implementation plan exists on the linked issue.
 
-**Step 1: Check for existing plan.**
+**Check:**
 ```bash
 npx tsx src/cli-structured-data.ts retrieve-plan --issue {N} --repo "$ISSUES_REPO" | head -5
 npx tsx src/cli-structured-data.ts retrieve-testplan --issue {N} --repo "$ISSUES_REPO" | head -5
 ```
 
-**Step 2: If EITHER returns empty/error → spawn an independent planning subagent.**
-
-Use the Agent tool to spawn a subagent that runs `/kaizen-write-plan`:
-
+**If EITHER is empty, run `/kaizen-write-plan`:**
 ```
-Agent({
-  description: "Independent planning agent for issue #{N}",
-  prompt: "Run /kaizen-write-plan for issue #{N}. Store the plan on the issue. Do not implement anything — only plan.",
-  subagent_type: "general-purpose"
-})
+Skill({ skill: "kaizen-write-plan", args: "#{N}" })
 ```
 
-**Step 3: After the subagent completes, verify the plan was stored.**
-```bash
-npx tsx src/cli-structured-data.ts retrieve-plan --issue {N} --repo "$ISSUES_REPO" | head -5
-npx tsx src/cli-structured-data.ts retrieve-testplan --issue {N} --repo "$ISSUES_REPO" | head -5
-```
+The skill knows how to ground, formulate, and store the plan. Do NOT write the plan yourself — your job is implementation, not planning. A self-authored plan makes review self-referential (#1054).
 
-If still empty, STOP and report to admin. Do NOT proceed without a stored plan.
+After the skill completes, re-check with `retrieve-plan`. If still empty, STOP and report to admin.
 
-**Why a subagent?** The planning agent is structurally independent — it has its own context, reasoning, and judgment. It produces the plan based on the issue, not on your implementation ideas. This prevents self-referential planning where the implementing agent writes a plan that justifies whatever it was already going to build.
-
-**Why not write the plan yourself?** You are the implementing agent. Your job is execution, not planning. If you write your own plan, the review cycle becomes self-referential — the review subagents evaluate your implementation against a plan you wrote to match your implementation. The independent planning agent breaks this circularity.
-
-**The `enforce-plan-stored` hook (L2) will block `gh pr create` if no plan exists.** This gate catches you early so you don't waste a session coding without a plan.
+**The `enforce-plan-stored` hook (L2) will block Edit/Write of source files and `gh pr create` if no plan exists.** This catches the problem early so you don't waste a session coding without a plan.
 
 ---
 
