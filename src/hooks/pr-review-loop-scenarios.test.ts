@@ -76,11 +76,22 @@ describe('Scenario: cumulative diff cap prevents auto-pass bypass', () => {
     expect(decision.reason).toBe('push_exceeds_threshold');
   });
 
-  it('small incremental AND small cumulative auto-passes', () => {
+  it('small push after review (STATUS=passed) requires review, not auto-pass', () => {
     processHookInput(input('gh pr create --title "test"', PR_URL), opts());
-    processHookInput(input('gh pr diff 42'), opts());
+    processHookInput(input('gh pr diff 42'), opts()); // → STATUS=passed
 
     const pushOpts = opts(() => 8); // both incremental and cumulative = 8
+    const { decision } = runAndReadState(input('git push'), pushOpts);
+    // After review passes, even small pushes are review-fix pushes
+    // and must require a new review round.
+    expect(decision.action).toBe('needs_review');
+  });
+
+  it('small push before review (STATUS=needs_review) auto-passes', () => {
+    processHookInput(input('gh pr create --title "test"', PR_URL), opts());
+    // Don't run gh pr diff — status stays needs_review
+
+    const pushOpts = opts(() => 8);
     const { decision } = runAndReadState(input('git push'), pushOpts);
     expect(decision.action).toBe('auto_pass');
   });
@@ -101,9 +112,9 @@ describe('Scenario: LAST_FULL_REVIEW_SHA lifecycle', () => {
     expect(state?.LAST_FULL_REVIEW_SHA).toBeTruthy();
   });
 
-  it('auto-pass preserves LAST_FULL_REVIEW_SHA from previous review', () => {
+  it('auto-pass preserves LAST_FULL_REVIEW_SHA (needs_review → small push)', () => {
     processHookInput(input('gh pr create --title "test"', PR_URL), opts());
-    processHookInput(input('gh pr diff 42'), opts());
+    // Don't run gh pr diff — stays needs_review, auto-pass eligible
 
     // Read the full-review SHA before auto-pass
     let files = require('fs').readdirSync(TEST_DIR) as string[];
@@ -111,7 +122,7 @@ describe('Scenario: LAST_FULL_REVIEW_SHA lifecycle', () => {
     const beforeContent = readFileSync(`${TEST_DIR}/${sf}`, 'utf8');
     const fullReviewSha = beforeContent.match(/LAST_FULL_REVIEW_SHA=(.+)/)?.[1];
 
-    // Auto-pass (small push)
+    // Auto-pass (small push while STATUS=needs_review)
     processHookInput(input('git push'), opts(() => 5));
 
     // LAST_FULL_REVIEW_SHA should be unchanged
@@ -181,9 +192,9 @@ describe('Scenario: escalation after max rounds', () => {
 });
 
 describe('Scenario: HookDecision context is complete for debugging', () => {
-  it('auto_pass includes all context fields', () => {
+  it('auto_pass includes all context fields (needs_review → small push)', () => {
     processHookInput(input('gh pr create --title "test"', PR_URL), opts());
-    processHookInput(input('gh pr diff 42'), opts());
+    // Don't run gh pr diff — stays needs_review, auto-pass eligible
 
     const { decision } = runAndReadState(input('git push'), opts(() => 8));
     expect(decision.action).toBe('auto_pass');
