@@ -27,6 +27,7 @@ import {
   type MockDir,
   type StateDir,
 } from "./hook-runner.js";
+import { isDocsOnly } from "../hooks/enforce-plan-stored.js";
 
 const KAIZEN_ROOT = resolve(__dirname, "../..");
 const HOOKS_DIR = join(KAIZEN_ROOT, ".claude", "hooks");
@@ -174,5 +175,48 @@ describe("E2E: enforce-plan-stored hook — adversarial scenario", () => {
 
     expect(denies(result), `Hook should deny no-issue PR: stdout='${result.stdout}'`).toBe(true);
     expect(denyReason(result)).toContain("no issue declared");
+  });
+});
+
+// ── Negative control: removing the hook must break the enforcement guarantee ──
+// This test codifies the PR-body claim "removing the hook makes tests fail".
+// If the hook shim is disabled, the tests above would pass through — which is
+// exactly the failure mode I8 exists to prevent. This test ensures the hook is
+// LOAD-BEARING, not decorative.
+
+describe("E2E: negative control — the hook IS the enforcement", () => {
+  it("without the hook shim, gh pr create is NOT denied (proves hook is load-bearing)", () => {
+    addGitMockForPlan(mockDir, "k1055-enforce-plan");
+    addGhMockNoPlan(mockDir);
+
+    const event = bashPre(
+      'gh pr create --title "x" --body "Closes #1055"',
+    );
+
+    // Run a no-op shim (empty script). This simulates "hook removed".
+    const noopShim = `${mockDir.path}/noop-hook.sh`;
+    require("node:fs").writeFileSync(noopShim, "#!/bin/bash\nexit 0\n");
+    require("node:fs").chmodSync(noopShim, 0o755);
+
+    const noopResult = runHook(noopShim, event, { env: hookEnv() });
+    expect(allows(noopResult)).toBe(true);
+
+    // Now run the real hook against the same event → DENY.
+    const realResult = runHook(hookPath("kaizen-enforce-plan-stored-ts.sh"), event, { env: hookEnv() });
+    expect(denies(realResult), `real hook should deny: stdout='${realResult.stdout}'`).toBe(true);
+  });
+});
+
+// ── Loophole: single-source-file + docs is NOT docs-only ──
+// Regression test for the claim: `isDocsOnly` returns false when ANY source
+// file is in the changeset, even if docs are present.
+
+describe("E2E: single source + docs bypass attempt", () => {
+  it("mixed changeset (1 source + many docs) is NOT exempt from plan gate", () => {
+    // We unit-test this property directly — E2E repro would require running
+    // with a real diff, but the unit-level invariant is what closes the loophole.
+    expect(isDocsOnly(["README.md", "docs/a.md", "src/just-one.ts"])).toBe(false);
+    expect(isDocsOnly(["README.md", "docs/a.md"])).toBe(true);
+    expect(isDocsOnly([])).toBe(false); // empty → not docs-only (conservative)
   });
 });

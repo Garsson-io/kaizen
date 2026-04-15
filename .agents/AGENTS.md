@@ -56,6 +56,8 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `src/structured-data.ts` | **Structured data API**: reviews, plans, metadata, connected issues, PR sections, iteration state |
 | `src/cli-structured-data.ts` | CLI for structured data — the primary interface for skills |
 | `src/section-editor.ts` | Low-level: sections (## in bodies) + attachments (marker comments) — CRUD primitives |
+| `src/case-system.ts` | **Case FE** — single gateway for plan gate (I3, I8). Pluggable `CaseBackend`: `GitHubCaseBackend` today, Linear/custom tomorrow. Hooks and skills go through this, never call BE directly |
+| `src/hooks/enforce-plan-stored.ts` | PreToolUse hook enforcing I3/I8: Edit/Write/NotebookEdit require a stored plan on `git config kaizen.issue`; `gh pr create` adds a substance check |
 | `src/plan-store.ts` | Plan-specific helpers (extractPlanText, re-exports from structured-data) |
 
 ## Skills

@@ -19,7 +19,7 @@ import { execSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-command.js';
-import { CaseSystem, type PlanGateResult } from '../case-system.js';
+import { CaseSystem } from '../case-system.js';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -269,12 +269,9 @@ Run /kaizen-write-plan — the skill knows how to create and store the plan corr
   }
 
   // Substance check: plan must be substantive (not a rubber stamp).
-  // This catches agents that store a trivial plan to satisfy the existence gate.
-  const plan = deps.caseSystem.retrievePlan(parseInt(issueNum, 10), repo);
-  const testPlan = deps.caseSystem.retrieveTestPlan(parseInt(issueNum, 10), repo);
-
-  const planIssues = plan ? checkPlanSubstance(plan) : [];
-  const testPlanIssues = testPlan ? checkTestPlanSubstance(testPlan) : [];
+  // Reuse text from gate (PlanGateResult carries it — no refetch).
+  const planIssues = gate.planText ? checkPlanSubstance(gate.planText) : [];
+  const testPlanIssues = gate.testPlanText ? checkTestPlanSubstance(gate.testPlanText) : [];
 
   if (planIssues.length > 0 || testPlanIssues.length > 0) {
     const parts: string[] = [];
