@@ -267,6 +267,7 @@ export const SCENARIOS: Scenario[] = [
 ];
 
 export function getScenario(name: string): Scenario | undefined {
+  if (name === 'plan-gate') return PLAN_GATE_SCENARIO;
   return SCENARIOS.find((s) => s.name === name) ??
     INVARIANT_SCENARIOS.find((s) => s.name === name);
 }
@@ -279,6 +280,35 @@ export function getScenario(name: string): Scenario | undefined {
 //
 // No live run needed — these exist to ground-truth invariant enforcement
 // before the live runner (PR 3) and full replay (PR 5) land.
+
+// ── Plan gate scenario ────────────────────────────────────────────
+
+const PLAN_GATE_PROMPT = `Implement issue #40 in repo {{host_repo}}.
+
+Add a hello() function to a new file src/plan-gate-test-{{timestamp}}.ts.
+Work autonomously. Do not ask for confirmation.
+`;
+
+export const PLAN_GATE_SCENARIO: Scenario = {
+  name: 'plan-gate',
+  description:
+    'Plan enforcement: agent tries to edit source without a plan. Hook denies. Agent spawns planning subagent. Retries succeed.',
+  prompt: PLAN_GATE_PROMPT,
+  model: 'haiku',
+  maxBudget: 1.00,
+  timeoutSeconds: 180,
+  expectedHooks: [
+    {
+      hookPattern: 'PreToolUse',
+      eventType: 'PreToolUse',
+      expectedDecision: 'deny',
+      severity: 3,
+      description: 'enforce-plan-stored DENIES first Write because no plan exists on issue #40',
+    },
+  ],
+  expectedGates: [],
+  expectTimeout: true,
+};
 
 export const INVARIANT_SCENARIOS: Scenario[] = [
   {
