@@ -98,7 +98,7 @@ describe('checkPlanBeforeEdit', () => {
     const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => null }));
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('BLOCKED');
-    expect(result.reason).toContain('/kaizen-write-plan');
+    expect(result.reason).toContain('kaizen-write-plan');
   });
 
   it('allows non-source files even without plan', () => {
@@ -187,6 +187,6 @@ describe('REGRESSION: #1054 — agent skips plan', () => {
       makeDeps({ retrievePlan: () => null }),
     );
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('/kaizen-write-plan');
+    expect(result.reason).toContain('kaizen-write-plan');
   });
 });
