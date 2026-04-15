@@ -80,8 +80,24 @@ export function extractIssueNumber(fullCommand: string): string | null {
 }
 
 export function extractIssueFromBranch(branch: string): string | null {
-  const match = branch.match(/(?:^k|\/|issue-)(\d+)/);
-  return match ? match[1] : null;
+  // Try patterns in priority order:
+  // 1. kNNN (k-prefix: k40-add, worktree-feat+k1055-desc)
+  // 2. issue-NNN
+  // 3. /NNN- (feat/NNN-desc)
+  // 4. #NNN (explicit issue ref)
+  // 5. -NNN$ (trailing number, common in worktree branch names)
+  const patterns = [
+    /(?:^|[^a-z\d])k(\d+)/i,
+    /issue-(\d+)/i,
+    /(?:^|\/)(\d+)-/,
+    /#(\d+)/,
+    /-(\d+)$/,
+  ];
+  for (const re of patterns) {
+    const match = branch.match(re);
+    if (match) return match[1];
+  }
+  return null;
 }
 
 // ── Source file detection ───────────────────────────────────────────
@@ -131,7 +147,26 @@ export function checkPlanBeforeEdit(
 
   const branch = deps.getCurrentBranch();
   const issueNum = extractIssueFromBranch(branch);
-  if (!issueNum) return { allowed: true }; // can't determine issue — fail open
+  if (!issueNum) {
+    // Can't determine issue from branch — deny to close the loophole.
+    // An agent in a worktree editing source MUST be working on an issue.
+    return {
+      allowed: false,
+      missing: ['issue-link'],
+      reason: `BLOCKED: Cannot determine which issue you are working on (branch: ${branch || '?'}).
+
+Your branch name must include the issue number. Accepted patterns:
+  - k{N}-description        (e.g., k40-add-hello)
+  - feat/{N}-description    (e.g., feat/40-add-hello)
+  - issue-{N}               (e.g., fix/issue-40)
+
+Rename the branch with:
+  git branch -m k${'<N>'}-<description>
+
+Or use /kaizen-implement which creates a correctly-named worktree.
+This hook enforces I8: implementation must be tied to a planned issue.`,
+    };
+  }
 
   const repo = deps.detectRepo();
   if (!repo) return { allowed: true };

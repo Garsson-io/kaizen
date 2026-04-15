@@ -111,8 +111,11 @@ describe('checkPlanBeforeEdit', () => {
     expect(checkPlanBeforeEdit('src/thing.ts', makeDeps({}, { isInWorktree: () => false })).allowed).toBe(true);
   });
 
-  it('allows when no issue in branch name', () => {
-    expect(checkPlanBeforeEdit('src/thing.ts', makeDeps({}, { getCurrentBranch: () => 'random-branch' })).allowed).toBe(true);
+  it('DENIES when no issue in branch name (closes loophole)', () => {
+    const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({}, { getCurrentBranch: () => 'random-branch' }));
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('issue-link');
+    expect(result.reason).toContain('Cannot determine which issue');
   });
 
   it('escape hatch works', () => {
