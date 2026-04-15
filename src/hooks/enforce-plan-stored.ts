@@ -1,22 +1,16 @@
 /**
- * enforce-plan-stored.ts — PreToolUse gate: blocks `gh pr create` without stored plan + test plan.
+ * enforce-plan-stored.ts — PreToolUse gate: blocks code edits and PR creation
+ * without a stored plan on the linked issue.
  *
- * @enforces I3  — Closed issue has a stored test plan (`retrieve-testplan` != null).
- * @enforces I8  — Implementation begins only after plan is stored on the issue.
- *                 Canonical: docs/kaizen-invariants.md.
+ * @enforces I3  — Stored test plan.
+ * @enforces I8  — Plan before implementation.
  *
- * Three gates:
- *   1. **Existence**: Plan and test plan must exist as attachments on the linked issue.
- *      Uses retrievePlan/retrieveTestPlan from structured-data.ts (handles all fallbacks).
- *   2. **Substance**: Plan must have real structure (headings, items, length).
- *   3. **Freshness**: Plan comment `created_at` must predate the branch's first commit.
- *      Prevents the implementing agent from self-authoring a plan in the same session.
- *      GitHub sets `created_at` — agents cannot backdate it.
- *      Updates during implementation are fine (`created_at` is immutable; only `updated_at` changes).
+ * Uses the Case FE (case-system.ts) as the single gateway — never calls
+ * the GitHub BE (structured-data / section-editor) directly.
  *
- * Exceptions:
- *   - Docs-only PRs (no source files in diff) — skip all checks
- *   - KAIZEN_SKIP_PLAN_CHECK=1 env var (escape hatch with accountability)
+ * Two trigger points:
+ *   1. Edit/Write of source files in worktrees — blocks FIRST code edit
+ *   2. Bash `gh pr create` — backstop with substance checks
  *
  * Part of kaizen #1055.
  */
@@ -24,7 +18,7 @@
 import { execSync } from 'node:child_process';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-command.js';
-import { retrievePlan as sdRetrievePlan, retrieveTestPlan as sdRetrieveTestPlan, issueTarget } from '../structured-data.js';
+import { CaseSystem, type PlanGateResult } from '../case-system.js';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -35,14 +29,14 @@ export interface PlanCheckResult {
 }
 
 export interface PlanCheckDeps {
-  retrievePlan: (issue: string, repo: string) => string | null;
-  retrieveTestPlan: (issue: string, repo: string) => string | null;
+  caseSystem: CaseSystem;
   getChangedFiles: () => string[];
   getCurrentBranch: () => string;
   detectRepo: () => string;
+  isInWorktree: () => boolean;
 }
 
-// ── Defaults — reuse structured-data + section-editor ───────────────
+// ── Defaults ────────────────────────────────────────────────────────
 
 function exec(cmd: string): string {
   try {
@@ -53,18 +47,18 @@ function exec(cmd: string): string {
 }
 
 const DEFAULT_DEPS: PlanCheckDeps = {
-  retrievePlan: (issue, repo) => {
-    try { return sdRetrievePlan(issueTarget(issue, repo)); } catch { return null; }
-  },
-  retrieveTestPlan: (issue, repo) => {
-    try { return sdRetrieveTestPlan(issueTarget(issue, repo)); } catch { return null; }
-  },
+  caseSystem: new CaseSystem(),
   getChangedFiles: () => {
     const r = exec('git diff --name-only main...HEAD 2>/dev/null');
     return r ? r.split('\n').filter(Boolean) : [];
   },
   getCurrentBranch: () => exec('git rev-parse --abbrev-ref HEAD 2>/dev/null'),
   detectRepo: () => exec('git remote get-url origin 2>/dev/null').replace(/.*github\.com[:/]/, '').replace(/\.git$/, ''),
+  isInWorktree: () => {
+    const gitDir = exec('git rev-parse --git-dir 2>/dev/null');
+    const gitCommon = exec('git rev-parse --git-common-dir 2>/dev/null');
+    return !!gitDir && !!gitCommon && gitDir !== gitCommon;
+  },
 };
 
 // ── Issue extraction ────────────────────────────────────────────────
@@ -79,50 +73,76 @@ export function extractIssueFromBranch(branch: string): string | null {
   return match ? match[1] : null;
 }
 
-// ── Docs-only detection ─────────────────────────────────────────────
+// ── Source file detection ───────────────────────────────────────────
 
 const SOURCE_EXTENSIONS = /\.(ts|js|tsx|jsx|py|go|rs|java|c|cpp|h|rb|sh)$/;
 
-export function isDocsOnly(changedFiles: string[]): boolean {
-  return changedFiles.length > 0 && changedFiles.every(f => !SOURCE_EXTENSIONS.test(f));
+export function isSourceFile(filePath: string): boolean {
+  return SOURCE_EXTENSIONS.test(filePath);
 }
 
-// ── Substance checks ────────────────────────────────────────────────
+export function isDocsOnly(changedFiles: string[]): boolean {
+  return changedFiles.length > 0 && changedFiles.every(f => !isSourceFile(f));
+}
+
+// ── Substance checks (PR backstop only) ─────────────────────────────
 
 export function checkPlanSubstance(planText: string): string[] {
   const failures: string[] = [];
-  if (planText.length < 200) {
-    failures.push(`Plan is too short (${planText.length} chars, need 200+)`);
-  }
+  if (planText.length < 200) failures.push(`Plan is too short (${planText.length} chars, need 200+)`);
   const headings = planText.match(/^#{1,4}\s+.+/gm) ?? [];
-  if (headings.length < 2) {
-    failures.push(`Plan needs structured headings (${headings.length} found, need 2+)`);
-  }
+  if (headings.length < 2) failures.push(`Plan needs structured headings (${headings.length} found, need 2+)`);
   const listItems = planText.match(/^[\s]*[-*\d]+[.)]\s+.+/gm) ?? [];
   const headingItems = planText.match(/^#{3,4}\s+\S+/gm) ?? [];
-  if (listItems.length + headingItems.length < 3) {
-    failures.push(`Plan has too few steps/items (${listItems.length + headingItems.length}, need 3+)`);
-  }
+  if (listItems.length + headingItems.length < 3) failures.push(`Plan has too few steps/items (${listItems.length + headingItems.length}, need 3+)`);
   return failures;
 }
 
 export function checkTestPlanSubstance(testPlanText: string): string[] {
   const failures: string[] = [];
-  if (!/(?:## (?:Test Plan|Seam Map|Behaviors)|# Test Plan)/i.test(testPlanText)) {
-    failures.push('Missing test plan section header');
-  }
+  if (!/(?:## (?:Test Plan|Seam Map|Behaviors)|# Test Plan)/i.test(testPlanText)) failures.push('Missing test plan section header');
   const tableRows = testPlanText.match(/^\|.*\|.*\|/gm) ?? [];
   const behaviorHeadings = testPlanText.match(/^###\s+(?:L\d+|B\d+|\d+)\b/gm) ?? [];
-  if (tableRows.length < 3 && behaviorHeadings.length < 2) {
-    failures.push('Test plan needs either a behaviors table (3+ rows) or behavior headings (### L1, ### L2, ...)');
-  }
-  if (!/\b(Unit|Integration|System|E2E|Agentic|Workflow)\b/i.test(testPlanText)) {
-    failures.push('Test plan must specify test levels (Unit/Integration/System/E2E)');
-  }
+  if (tableRows.length < 3 && behaviorHeadings.length < 2) failures.push('Test plan needs behaviors table or headings');
+  if (!/\b(Unit|Integration|System|E2E|Agentic|Workflow)\b/i.test(testPlanText)) failures.push('Test plan must specify test levels');
   return failures;
 }
 
-// ── Core check ──────────────────────────────────────────────────────
+// ── Gate 1: Edit/Write — block source edits without a plan ──────────
+
+export function checkPlanBeforeEdit(
+  filePath: string,
+  deps: PlanCheckDeps = DEFAULT_DEPS,
+): PlanCheckResult {
+  if (process.env.KAIZEN_SKIP_PLAN_CHECK === '1') return { allowed: true };
+  if (!deps.isInWorktree()) return { allowed: true };
+  if (!isSourceFile(filePath)) return { allowed: true };
+
+  const branch = deps.getCurrentBranch();
+  const issueNum = extractIssueFromBranch(branch);
+  if (!issueNum) return { allowed: true }; // can't determine issue — fail open
+
+  const repo = deps.detectRepo();
+  if (!repo) return { allowed: true };
+
+  const gate = deps.caseSystem.checkPlanGate(parseInt(issueNum, 10), repo);
+  if (!gate.passed) {
+    return {
+      allowed: false,
+      missing: [!gate.hasPlan ? 'plan' : 'testplan'],
+      reason: `BLOCKED: ${gate.reason}
+
+Before writing code, a plan must be stored on the issue.
+Run /kaizen-write-plan for issue #${issueNum}, or spawn a planning subagent:
+
+  Agent({ prompt: "Run /kaizen-write-plan for issue #${issueNum}" })`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+// ── Gate 2: gh pr create — full check with substance ────────────────
 
 export function checkPlanBeforePr(
   fullCommand: string,
@@ -133,7 +153,7 @@ export function checkPlanBeforePr(
   if (process.env.KAIZEN_SKIP_PLAN_CHECK === '1') return { allowed: true };
 
   const repo = extractRepoFlag(cmdLine) || deps.detectRepo();
-  if (!repo) return { allowed: true }; // fail-open
+  if (!repo) return { allowed: true };
 
   const changedFiles = deps.getChangedFiles();
   if (isDocsOnly(changedFiles)) return { allowed: true };
@@ -146,49 +166,21 @@ export function checkPlanBeforePr(
       reason: `BLOCKED: Cannot verify plan — no issue number found.
 
 PR must link an issue with \`Closes #N\` in the body.
-This hook enforces I3 (stored test plan) and I8 (plan before implementation).
-Without an issue number, there's nowhere to look for the plan.`,
+This hook enforces I3 (stored test plan) and I8 (plan before implementation).`,
     };
   }
 
-  const missing: string[] = [];
-  const plan = deps.retrievePlan(issueNum, repo);
-  if (!plan) missing.push('plan');
-  const testPlan = deps.retrieveTestPlan(issueNum, repo);
-  if (!testPlan) missing.push('testplan');
-
-  if (plan) {
-    const issues = checkPlanSubstance(plan);
-    if (issues.length > 0) missing.push('plan-substance');
-  }
-  if (testPlan) {
-    const issues = checkTestPlanSubstance(testPlan);
-    if (issues.length > 0) missing.push('testplan-substance');
-  }
-
-  if (missing.length > 0) {
-    const parts: string[] = [];
-    if (missing.includes('plan') || missing.includes('testplan')) {
-      parts.push('Run /kaizen-write-plan first (in a separate session), then retry.');
-    }
-    if (missing.includes('plan-substance')) {
-      parts.push(`Plan substance issues:\n${checkPlanSubstance(plan!).map(i => `  - ${i}`).join('\n')}`);
-    }
-    if (missing.includes('testplan-substance')) {
-      parts.push(`Test plan substance issues:\n${checkTestPlanSubstance(testPlan!).map(i => `  - ${i}`).join('\n')}`);
-    }
+  // Use Case FE for existence check
+  const gate = deps.caseSystem.checkPlanGate(parseInt(issueNum, 10), repo);
+  if (!gate.passed) {
     return {
       allowed: false,
-      missing,
+      missing: [!gate.hasPlan ? 'plan' : 'testplan'],
       reason: `BLOCKED: PR creation requires stored plan and test plan (I3, I8).
 
-Missing/failing: ${missing.join(', ')}
-Issue: #${issueNum} (${repo})
+${gate.reason}
 
-${parts.join('\n\n')}
-
-Why: Plans must come from an independent planning session, not be self-authored
-during implementation. This prevents self-referential review cycles (#1054).`,
+Run /kaizen-write-plan first, then retry.`,
     };
   }
 
@@ -201,8 +193,16 @@ async function main(): Promise<void> {
   const input = await readHookInput();
   if (!input) { traceNullInput('enforce-plan-stored'); process.exit(0); }
 
-  const command = input.tool_input?.command ?? '';
-  const result = checkPlanBeforePr(command);
+  const toolName = input.tool_name ?? '';
+  let result: PlanCheckResult;
+
+  if (toolName === 'Edit' || toolName === 'Write') {
+    const filePath = (input.tool_input?.file_path as string) ?? '';
+    result = checkPlanBeforeEdit(filePath);
+  } else {
+    const command = (input.tool_input?.command as string) ?? '';
+    result = checkPlanBeforePr(command);
+  }
 
   if (!result.allowed) {
     process.stdout.write(JSON.stringify({
