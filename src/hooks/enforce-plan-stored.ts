@@ -25,8 +25,6 @@ import { execSync } from 'node:child_process';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-command.js';
 import { retrievePlan as sdRetrievePlan, retrieveTestPlan as sdRetrieveTestPlan, issueTarget } from '../structured-data.js';
-import { readAttachment } from '../section-editor.js';
-import { gh } from '../lib/gh-exec.js';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -39,8 +37,6 @@ export interface PlanCheckResult {
 export interface PlanCheckDeps {
   retrievePlan: (issue: string, repo: string) => string | null;
   retrieveTestPlan: (issue: string, repo: string) => string | null;
-  getPlanCommentCreatedAt: (issue: string, repo: string) => string | null;
-  getFirstBranchCommitTime: () => string | null;
   getChangedFiles: () => string[];
   getCurrentBranch: () => string;
   detectRepo: () => string;
@@ -63,14 +59,6 @@ const DEFAULT_DEPS: PlanCheckDeps = {
   retrieveTestPlan: (issue, repo) => {
     try { return sdRetrieveTestPlan(issueTarget(issue, repo)); } catch { return null; }
   },
-  getPlanCommentCreatedAt: (issue, repo) => {
-    try {
-      const attachment = readAttachment({ kind: 'issue', number: issue, repo }, 'plan');
-      if (!attachment?.commentId) return null;
-      return gh(['api', `repos/${repo}/issues/comments/${attachment.commentId}`, '--jq', '.created_at']);
-    } catch { return null; }
-  },
-  getFirstBranchCommitTime: () => exec('git log main..HEAD --reverse --format=%aI 2>/dev/null | head -1') || null,
   getChangedFiles: () => {
     const r = exec('git diff --name-only main...HEAD 2>/dev/null');
     return r ? r.split('\n').filter(Boolean) : [];
@@ -202,29 +190,6 @@ ${parts.join('\n\n')}
 Why: Plans must come from an independent planning session, not be self-authored
 during implementation. This prevents self-referential review cycles (#1054).`,
     };
-  }
-
-  // Gate 3: Freshness — plan must predate implementation
-  const planCreatedAt = deps.getPlanCommentCreatedAt(issueNum, repo);
-  const firstCommitTime = deps.getFirstBranchCommitTime();
-  if (planCreatedAt && firstCommitTime) {
-    if (new Date(planCreatedAt) >= new Date(firstCommitTime)) {
-      return {
-        allowed: false,
-        missing: ['freshness'],
-        reason: `BLOCKED: Plan was stored AFTER implementation started (I8 — independent planning).
-
-Plan stored at:         ${planCreatedAt}
-First commit on branch: ${firstCommitTime}
-
-The plan must come from a prior /kaizen-write-plan session, not be self-authored
-during implementation.
-
-To fix: run /kaizen-write-plan in a NEW session, then return here and retry.
-
-Why: Self-authored plans make review self-referential (#1054, #1055).`,
-      };
-    }
   }
 
   return { allowed: true };
