@@ -1,0 +1,25 @@
+[
+  {
+    "type": "system",
+    "subtype": "hook_started",
+    "hook_id": "I3-pre-01",
+    "hook_name": "PreToolUse:Bash",
+    "hook_event": "PreToolUse",
+    "uuid": "uuid-start",
+    "session_id": "fixture-session"
+  },
+  {
+    "type": "system",
+    "subtype": "hook_response",
+    "hook_id": "I3-pre-01",
+    "hook_name": "PreToolUse:Bash",
+    "hook_event": "PreToolUse",
+    "output": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"BLOCKED: PR requires a stored plan and test plan on issue #40 (I3, I8).\\n\\nIssue #40 is missing: test plan. Run /kaizen-write-plan first.\\n\\nRun /kaizen-write-plan — the skill knows how to create and store the plan correctly.\\n  Skill({ skill: \\\"kaizen-write-plan\\\", args: \\\"#40\\\" })\"}}",
+    "stdout": "",
+    "stderr": "",
+    "exit_code": 0,
+    "outcome": "success",
+    "uuid": "uuid-resp",
+    "session_id": "fixture-session"
+  }
+]

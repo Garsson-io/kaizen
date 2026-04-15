@@ -371,4 +371,44 @@ export const INVARIANT_SCENARIOS: Scenario[] = [
     ],
     expectedGates: [],
   },
+  {
+    name: 'invariant-i3-deny-no-testplan',
+    description:
+      'I3: `gh pr create` must be denied when the linked issue has no stored test plan (enforced by PR #1056).',
+    prompt: '',
+    model: 'haiku',
+    maxBudget: 0,
+    timeoutSeconds: 0,
+    expectedHooks: [
+      {
+        hookPattern: 'PreToolUse',
+        eventType: 'PreToolUse',
+        expectedDecision: 'deny',
+        severity: 3,
+        description:
+          'enforce-plan-stored must DENY gh pr create when issue has no test plan attachment',
+      },
+    ],
+    expectedGates: [],
+  },
+  {
+    name: 'invariant-i8-deny-no-plan',
+    description:
+      'I8: Edit/Write of source files must be denied when the linked issue has no stored implementation plan (enforced by PR #1056).',
+    prompt: '',
+    model: 'haiku',
+    maxBudget: 0,
+    timeoutSeconds: 0,
+    expectedHooks: [
+      {
+        hookPattern: 'PreToolUse',
+        eventType: 'PreToolUse',
+        expectedDecision: 'deny',
+        severity: 3,
+        description:
+          'enforce-plan-stored must DENY first source-file Edit/Write when issue has no plan attachment',
+      },
+    ],
+    expectedGates: [],
+  },
 ];
