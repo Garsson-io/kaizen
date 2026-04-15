@@ -21,6 +21,44 @@ description: Take a spec from PRD to working code. Re-examines the spec against 
 
 **The key insight:** Specs rot. The codebase has changed. Understanding has deepened. Things that seemed important when the spec was written may be irrelevant now. Things the spec didn't anticipate may be obvious now. The spec's value is the *problem taxonomy and direction*, not the specific solutions it proposed.
 
+## Plan Gate — MANDATORY before writing any code
+
+Before anything else, verify an implementation plan exists on the linked issue. The plan must come from an **independent planning agent**, not from you.
+
+**Step 1: Check for existing plan.**
+```bash
+npx tsx src/cli-structured-data.ts retrieve-plan --issue {N} --repo "$ISSUES_REPO" | head -5
+npx tsx src/cli-structured-data.ts retrieve-testplan --issue {N} --repo "$ISSUES_REPO" | head -5
+```
+
+**Step 2: If EITHER returns empty/error → spawn an independent planning subagent.**
+
+Use the Agent tool to spawn a subagent that runs `/kaizen-write-plan`:
+
+```
+Agent({
+  description: "Independent planning agent for issue #{N}",
+  prompt: "Run /kaizen-write-plan for issue #{N}. Store the plan on the issue. Do not implement anything — only plan.",
+  subagent_type: "general-purpose"
+})
+```
+
+**Step 3: After the subagent completes, verify the plan was stored.**
+```bash
+npx tsx src/cli-structured-data.ts retrieve-plan --issue {N} --repo "$ISSUES_REPO" | head -5
+npx tsx src/cli-structured-data.ts retrieve-testplan --issue {N} --repo "$ISSUES_REPO" | head -5
+```
+
+If still empty, STOP and report to admin. Do NOT proceed without a stored plan.
+
+**Why a subagent?** The planning agent is structurally independent — it has its own context, reasoning, and judgment. It produces the plan based on the issue, not on your implementation ideas. This prevents self-referential planning where the implementing agent writes a plan that justifies whatever it was already going to build.
+
+**Why not write the plan yourself?** You are the implementing agent. Your job is execution, not planning. If you write your own plan, the review cycle becomes self-referential — the review subagents evaluate your implementation against a plan you wrote to match your implementation. The independent planning agent breaks this circularity.
+
+**The `enforce-plan-stored` hook (L2) will block `gh pr create` if no plan exists.** This gate catches you early so you don't waste a session coding without a plan.
+
+---
+
 ## Case Gate — MANDATORY before writing any code
 
 Before touching any source code, verify a case exists. The `enforce-case-exists.sh` hook (Level 2) will block edits in worktrees without a case, but you should create the case proactively rather than being blocked.
@@ -65,37 +103,13 @@ npx tsx src/cli-dimensions.ts list
 ```
 These are not aspirational — they are the adversarial rubric. Read the `high_when` signals for each dimension against your issue to understand which dimensions matter most.
 
-**Step 0b: Create the plan.** Post it as an **issue comment** on the linked issue:
+**Step 0b: Read the plan.** The plan was stored by the Plan Gate (above) or by a prior `/kaizen-write-plan` session. Read it now:
 
 ```bash
-gh issue comment N --repo "$ISSUES_REPO" --body "$(cat <<'PLAN'
-## Implementation Plan
-
-**Approach**: What to build and how. Key architectural decisions. Why this approach over alternatives.
-
-**Testing Strategy**:
-- Pyramid levels: [unit | integration | E2E] — which and why
-- SUT: what component is the focus of testing
-- Invariants: what must ALWAYS be true (not just "this bug is fixed")
-- For bug fixes: what category of bug does this prevent?
-
-**Scope**:
-- In this PR: [concrete list]
-- Deferred: [with mechanism — follow-up issue #N]
-
-**Risk Assessment**:
-- High-priority review dimensions for this PR (from high_when signals)
-- Suggested subagent grouping for review
-PLAN
-)"
+npx tsx src/cli-structured-data.ts retrieve-plan --issue {N} --repo "$ISSUES_REPO"
 ```
 
-**The plan is mandatory.** It must be posted before you write any code. Use `npx tsx src/cli-structured-data.ts store-plan` to persist it on the issue:
-
-```bash
-npx tsx src/cli-structured-data.ts store-plan --issue {N} --repo "$ISSUES_REPO" --file plan.md
-npx tsx src/cli-structured-data.ts store-testplan --issue {N} --repo "$ISSUES_REPO" --file testplan.md
-```
+**Do NOT write your own plan.** The plan comes from an independent planning agent (see Plan Gate above). Your job is to implement the plan, not write it. If the plan needs updating based on what you find during re-examination (Phase below), update it — but the original plan must come from the independent agent.
 
 The plan lives in three places:
 1. **Issue comment via plan-store** (primary — persistent, discoverable, cross-session, auto-loaded by `reviewBattery()`)
