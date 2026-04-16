@@ -25,8 +25,9 @@
  *   I-F: --force-with-lease push option → allow even on merged branch
  */
 
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { join } from 'node:path';
 import { DEFAULT_STATE_DIR, ensureStateDir, prUrlToStateKey, writeStateFile } from './state-utils.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 
@@ -307,6 +308,16 @@ export function applyDecision(
   const stateDir = options.stateDir ?? DEFAULT_STATE_DIR;
   ensureStateDir(stateDir);
   const filename = prUrlToStateKey(decision.gateSignal.pr);
+  const filepath = join(stateDir, filename);
+
+  // Coexistence with pr-review-loop.ts PostToolUse (I-C):
+  // If a gate already exists for this PR (created by TRIGGER 1 pr-create or
+  // bumped by TRIGGER 2 subsequent-push), do NOT overwrite — pr-review-loop
+  // handles round bumping, escalation, and auto-pass on subsequent pushes.
+  // Pre-push's role is to create the initial gate mechanistically when the
+  // PostToolUse path fails (#909, #1057), not to replace round logic.
+  if (existsSync(filepath)) return;
+
   writeStateFile(stateDir, filename, {
     PR_URL: decision.gateSignal.pr,
     STATUS: 'needs_review',

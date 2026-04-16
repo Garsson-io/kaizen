@@ -19,6 +19,7 @@ import { execSync } from "child_process";
 import { join } from "path";
 import { parseArgs } from "util";
 import { loadAllSkillMetadata, validateSkillDependencies, validateSkillVersions } from "./skill-metadata.js";
+import { installGitHooks, type InstallResult } from "./setup-git-hooks.js";
 
 // ── Types ──
 
@@ -399,6 +400,7 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       method: { type: "string" },
       cwd: { type: "string" },
       "plugin-root": { type: "string" },
+      "run-post-install": { type: "string" },
     },
     strict: false,
   }) as { values: Record<string, string | undefined> };
@@ -437,9 +439,37 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       break;
     }
 
+    case "install-git-hooks": {
+      // Epic #1059: install kaizen's pre-push hook into host project.
+      // Option C: detect host framework; inject into theirs; raw fallback if none.
+      const pluginRoot = values["plugin-root"] ?? process.env.CLAUDE_PLUGIN_ROOT;
+      const entryTemplatePath = pluginRoot
+        ? join(pluginRoot, "src/hooks/kaizen-host-entry.sh")
+        : null;
+
+      if (!entryTemplatePath || !existsSync(entryTemplatePath)) {
+        console.log(JSON.stringify({
+          step: "install-git-hooks",
+          status: "error",
+          error: `entry template not found: ${entryTemplatePath ?? "(plugin-root not set)"}`,
+        }));
+        process.exit(1);
+      }
+
+      const template = readFileSync(entryTemplatePath, "utf-8");
+      // Substitute plugin root so the entry script can locate kaizen at runtime.
+      // See src/hooks/kaizen-host-entry.sh: __KAIZEN_PLUGIN_ROOT__ is the placeholder.
+      const entryContent = template.replace(/__KAIZEN_PLUGIN_ROOT__/g, pluginRoot ?? "");
+      const runPostInstall = values["run-post-install"] === "true";
+
+      const result: InstallResult = installGitHooks({ cwd, entryScriptContent: entryContent, runPostInstall });
+      console.log(JSON.stringify({ step: "install-git-hooks", status: "ok", ...result }));
+      break;
+    }
+
     default:
       console.error(`Unknown step: ${values.step}`);
-      console.error("Steps: detect, config, scaffold, verify, post-update-validate");
+      console.error("Steps: detect, config, scaffold, verify, post-update-validate, install-git-hooks");
       process.exit(1);
   }
 }

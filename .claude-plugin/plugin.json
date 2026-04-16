@@ -88,6 +88,11 @@
           },
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-prehook-no-verify.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-search-before-file.sh",
             "timeout": 10
           }

@@ -292,6 +292,22 @@ describe('applyDecision — idempotent gate write', () => {
     expect(fs.readdirSync(stateDir)).toHaveLength(0);
   });
 
+  it('coexistence: does NOT overwrite existing state file (pr-review-loop owns round logic)', () => {
+    // Simulate pr-review-loop having already written state with ROUND=3
+    const decision = decide(emptyInput(), openQuery());
+    const filename = 'owner_repo_42';
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, filename),
+      'PR_URL=https://github.com/owner/repo/pull/42\nSTATUS=needs_review\nBRANCH=feat/foo\nROUND=3\n',
+    );
+
+    applyDecision(decision, 'feat/foo', { stateDir });
+
+    const content = fs.readFileSync(path.join(stateDir, filename), 'utf-8');
+    expect(content).toContain('ROUND=3'); // preserved, not reset to 1
+  });
+
   it('I-C: idempotent — two applies produce same final state', () => {
     const decision = decide(emptyInput(), openQuery());
     applyDecision(decision, 'feat/foo', { stateDir });
