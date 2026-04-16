@@ -18,6 +18,7 @@ import {
   AGENT_ENV_VARS,
   applyDecision,
   decide,
+  defaultQueryPrState,
   detectAgentEnv,
   parseStdin,
   processPrePush,
@@ -379,6 +380,47 @@ describe('trace — JSONL emission', () => {
 
     const lines = fs.readFileSync(traceFile, 'utf-8').trim().split('\n');
     expect(lines).toHaveLength(2);
+  });
+});
+
+// ── defaultQueryPrState (error paths) ─────────────────────────────────
+
+describe('defaultQueryPrState — error handling', () => {
+  it('returns empty on missing repo', () => {
+    const result = defaultQueryPrState('', 'feat/foo');
+    expect(result.mostRecent).toBeNull();
+    expect(result.hasOpen).toBe(false);
+  });
+
+  it('returns empty on missing branch', () => {
+    const result = defaultQueryPrState('owner/repo', '');
+    expect(result.mostRecent).toBeNull();
+    expect(result.hasOpen).toBe(false);
+  });
+
+  it('returns empty when gh binary is not available on PATH', () => {
+    // Force failure by pointing to a non-existent binary via PATH override
+    const origPath = process.env.PATH;
+    process.env.PATH = '/nonexistent';
+    try {
+      const result = defaultQueryPrState('owner/repo', 'feat/foo');
+      expect(result.mostRecent).toBeNull();
+      expect(result.hasOpen).toBe(false);
+    } finally {
+      process.env.PATH = origPath;
+    }
+  });
+
+  it('security: does NOT execute shell metacharacters in branch name', () => {
+    // Branch name containing $() would execute if interpolated into a shell.
+    // With execFileSync + args array, the metacharacters are passed verbatim
+    // to gh as a literal arg — gh returns an empty PR list or error.
+    const maliciousBranch = 'feat/$(touch /tmp/.kaizen-pre-push-injection-test)';
+    const result = defaultQueryPrState('owner/repo', maliciousBranch);
+    // Assertion: function returns cleanly (no exception, empty result — gh either
+    // reports no match or errors out). Crucially the touch file MUST NOT exist.
+    expect(result.mostRecent).toBeNull();
+    expect(fs.existsSync('/tmp/.kaizen-pre-push-injection-test')).toBe(false);
   });
 });
 

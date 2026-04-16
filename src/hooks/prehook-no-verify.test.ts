@@ -60,6 +60,35 @@ describe('analyzeCommand', () => {
     expect(analyzeCommand('EDITOR=vim git push --no-verify').allow).toBe(false);
   });
 
+  // Prefix-bypass hardening (review round 1 finding)
+  it('denies sudo git push --no-verify', () => {
+    expect(analyzeCommand('sudo git push --no-verify').allow).toBe(false);
+  });
+
+  it('denies time git push --no-verify', () => {
+    expect(analyzeCommand('time git push --no-verify').allow).toBe(false);
+  });
+
+  it('denies nice git push --no-verify', () => {
+    expect(analyzeCommand('nice git push --no-verify').allow).toBe(false);
+  });
+
+  it('denies ionice -c 3 git push --no-verify (flagged wrapper)', () => {
+    expect(analyzeCommand('ionice -c 3 git push --no-verify').allow).toBe(false);
+  });
+
+  it('denies absolute-path git binary', () => {
+    expect(analyzeCommand('/usr/bin/git push --no-verify').allow).toBe(false);
+  });
+
+  it('denies env KEY=val git push --no-verify', () => {
+    expect(analyzeCommand('env CLAUDECODE=1 git push --no-verify').allow).toBe(false);
+  });
+
+  it('denies stacked wrappers sudo time git push --no-verify', () => {
+    expect(analyzeCommand('sudo time git push --no-verify').allow).toBe(false);
+  });
+
   it('denies in chained command (&&)', () => {
     expect(analyzeCommand('echo hi && git push --no-verify').allow).toBe(false);
   });

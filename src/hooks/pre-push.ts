@@ -26,7 +26,7 @@
  */
 
 import { appendFileSync, existsSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { DEFAULT_STATE_DIR, ensureStateDir, prUrlToStateKey, writeStateFile } from './state-utils.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
@@ -226,19 +226,38 @@ function git(args: string, fallback = ''): string {
 
 export function detectRepo(): string {
   const url = git('remote get-url origin');
-  return url.match(/github\.com[:/]([^/]+\/[^/.]+)/)?.[1] ?? '';
+  // GitHub repo names may contain dots (owner/site.github.io, owner/foo.bar).
+  // Match "owner/repo" stopping at whitespace, .git suffix, or slash.
+  const match = url.match(/github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?(?:\/|\s|$)/);
+  return match?.[1] ?? '';
 }
 
 export function getCurrentBranch(): string {
   return git('rev-parse --abbrev-ref HEAD', '');
 }
 
-/** Default PR-state query via `gh`. Returns empty result on any failure. */
+/**
+ * Default PR-state query via `gh`. Returns empty result on any failure.
+ *
+ * Uses execFileSync with explicit arg array (not shell interpolation) so
+ * branch names containing shell metacharacters (`$`, backticks, `$()`)
+ * cannot trigger command injection. Git refname rules forbid space/colon/
+ * tilde/caret/backslash/glob but permit `$` and backticks — so the attack
+ * surface via a maliciously-named branch is real without this guard.
+ */
 export function defaultQueryPrState(repo: string, branch: string): PrQueryResult {
   if (!repo || !branch) return { mostRecent: null, hasOpen: false };
   try {
-    const out = execSync(
-      `gh pr list --repo "${repo}" --head "${branch}" --state all --json number,state,url --limit 5`,
+    const out = execFileSync(
+      'gh',
+      [
+        'pr', 'list',
+        '--repo', repo,
+        '--head', branch,
+        '--state', 'all',
+        '--json', 'number,state,url',
+        '--limit', '5',
+      ],
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     ).trim();
     const prs = JSON.parse(out) as Array<{ number: number; state: string; url: string }>;

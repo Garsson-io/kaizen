@@ -50,12 +50,29 @@ export function analyzeCommand(command: string): NoVerifyDecision {
   // is considered separately.
   const segments = command.split(/;|\|\||\&\&|\||\n/);
 
+  // Within each chained segment, look for both:
+  //   1. `git push` (possibly path-prefixed or preceded by wrappers/env)
+  //   2. `--no-verify` flag (at a word boundary, not inside a quoted string)
+  //
+  // If both appear in the same segment, deny. This is a deliberately loose
+  // match — we accept that `echo 'git push --no-verify'` in a segment that
+  // doesn't actually push would be flagged, but that's a degenerate case
+  // (the agent isn't trying to push) and the deny is advisory.
+  //
+  // Handles prefixes that bypass a strict-start regex:
+  //   KEY=val git push --no-verify
+  //   sudo git push --no-verify
+  //   time git push --no-verify
+  //   ionice -c 3 git push --no-verify
+  //   /usr/bin/git push --no-verify
+  //   env KEY=val git push --no-verify
+
+  const GIT_PUSH_ANYWHERE = /(^|\s)(?:\S+\/)?git\s+push\b/;
+  const NO_VERIFY_FLAG = /(^|\s)--no-verify\b/;
+
   for (const seg of segments) {
-    const trimmed = seg.trim();
-    // Only care about git push invocations
-    if (!/^(\s*\S+=\S+\s+)*git\s+push\b/.test(trimmed)) continue;
-    // Detect --no-verify (full flag, may be embedded between other args)
-    if (/\s--no-verify\b/.test(trimmed)) {
+    if (!GIT_PUSH_ANYWHERE.test(seg)) continue;
+    if (NO_VERIFY_FLAG.test(seg)) {
       return {
         allow: false,
         reason: 'no_verify_flag',

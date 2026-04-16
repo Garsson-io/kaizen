@@ -354,9 +354,11 @@ export function installStandalone(cwd: string): InstallResult {
     chmodSync(hookPath, 0o755);
   }
 
-  // Set core.hooksPath (idempotent — git config is a no-op if value is already set)
+  // Set core.hooksPath (idempotent — git config is a no-op if value is already set).
+  // Use cwd option instead of -C interpolation to avoid shell injection on
+  // directory names with shell metacharacters.
   try {
-    execSync(`git -C "${cwd}" config core.hooksPath .githooks`, { stdio: 'pipe' });
+    execSync('git config core.hooksPath .githooks', { cwd, stdio: 'pipe' });
   } catch {
     // Not a git repo or config failed — log but don't throw
   }
