@@ -25,10 +25,10 @@
  *   I-F: --force-with-lease push option → allow even on merged branch
  */
 
-import { appendFileSync, existsSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { execFileSync, execSync } from 'node:child_process';
 import { join } from 'node:path';
-import { DEFAULT_STATE_DIR, ensureStateDir, prUrlToStateKey, writeStateFile } from './state-utils.js';
+import { DEFAULT_STATE_DIR, ensureStateDir, parseStateFile, prUrlToStateKey, writeStateFile } from './state-utils.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -47,6 +47,13 @@ export interface PrePushInput {
   branch: string;
   repo: string;
   pushOptions: string[];
+  /**
+   * The round number of the existing state for this branch's PR, if any.
+   * When present, pre-push emits `round: existingRound + 1` in its gate signal
+   * to reflect what the next review round will be. `undefined` means no state
+   * yet (first gate), which is signaled as round 1.
+   */
+  existingRound?: number;
 }
 
 /** Outputs of the decision function (pure — no I/O). */
@@ -161,6 +168,11 @@ export function decide(input: PrePushInput, query: PrQueryResult): PrePushDecisi
   }
 
   if (query.hasOpen && query.openUrl) {
+    // Signal the round that will be reviewed: existingRound + 1 if state
+    // exists (pr-review-loop TRIGGER 2 will bump from existingRound → next),
+    // or 1 if no state yet. This keeps the YAML signal informative — a
+    // stale `round: 1` on later pushes was misleading.
+    const nextRound = input.existingRound != null ? input.existingRound + 1 : 1;
     return {
       action: 'allow_gate',
       reason: 'open_pr_push',
@@ -170,10 +182,10 @@ export function decide(input: PrePushInput, query: PrQueryResult): PrePushDecisi
         type: 'gate-set',
         gate: 'needs_review',
         pr: query.openUrl,
-        round: 1,
+        round: nextRound,
         reason: 'Push to open PR — review round triggered',
       },
-      context: { branch, prUrl: query.openUrl },
+      context: { branch, prUrl: query.openUrl, nextRound },
     };
   }
 
@@ -369,11 +381,29 @@ export function processPrePush(
   const branch = getCurrentBranch();
   const repo = detectRepo();
   const pushOptions = readPushOptions(env);
+  const stateDir = options.stateDir ?? DEFAULT_STATE_DIR;
 
   const query = (options.queryPrState ?? defaultQueryPrState)(repo, branch);
-  const decision = decide({ refs, branch, repo, pushOptions }, query);
+  const existingRound = query.openUrl ? readExistingRound(stateDir, query.openUrl) : undefined;
+  const decision = decide({ refs, branch, repo, pushOptions, existingRound }, query);
 
   return { decision, envDetection };
+}
+
+/**
+ * Read the ROUND field from the existing state file for this PR, if any.
+ * Returns undefined when no state exists (first gate → signal round 1).
+ */
+export function readExistingRound(stateDir: string, prUrl: string): number | undefined {
+  const filepath = join(stateDir, prUrlToStateKey(prUrl));
+  if (!existsSync(filepath)) return undefined;
+  try {
+    const state = parseStateFile(readFileSync(filepath, 'utf-8'));
+    const r = parseInt(state.ROUND ?? '', 10);
+    return Number.isFinite(r) && r > 0 ? r : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ── CLI entry ─────────────────────────────────────────────────────────

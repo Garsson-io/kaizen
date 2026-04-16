@@ -22,6 +22,7 @@ import {
   detectAgentEnv,
   parseStdin,
   processPrePush,
+  readExistingRound,
   readPushOptions,
   trace,
   type PrQueryResult,
@@ -254,6 +255,65 @@ describe('decide — core decision matrix', () => {
     };
     const result = decide(emptyInput(), query);
     expect(result.action).toBe('allow_gate');
+  });
+
+  // Gate signal round reflects existing state (not hardcoded 1)
+  it('gateSignal.round is 1 when no existing state (first gate)', () => {
+    const result = decide(emptyInput(), openQuery());
+    expect(result.gateSignal?.round).toBe(1);
+  });
+
+  it('gateSignal.round is existingRound + 1 when state exists (predicts pr-review-loop bump)', () => {
+    const result = decide(emptyInput({ existingRound: 3 }), openQuery());
+    expect(result.gateSignal?.round).toBe(4);
+    expect(result.context?.nextRound).toBe(4);
+  });
+
+  it('gateSignal.round is 2 when existingRound=1', () => {
+    const result = decide(emptyInput({ existingRound: 1 }), openQuery());
+    expect(result.gateSignal?.round).toBe(2);
+  });
+});
+
+// ── readExistingRound ─────────────────────────────────────────────────
+
+describe('readExistingRound', () => {
+  let stateDir: string;
+
+  beforeEach(() => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-push-round-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  it('returns undefined when no state file exists', () => {
+    expect(readExistingRound(stateDir, 'https://github.com/owner/repo/pull/42')).toBeUndefined();
+  });
+
+  it('returns the ROUND value from an existing state file', () => {
+    fs.writeFileSync(
+      path.join(stateDir, 'owner_repo_42'),
+      'PR_URL=https://github.com/owner/repo/pull/42\nSTATUS=needs_review\nBRANCH=feat/foo\nROUND=3\n',
+    );
+    expect(readExistingRound(stateDir, 'https://github.com/owner/repo/pull/42')).toBe(3);
+  });
+
+  it('returns undefined for malformed/missing ROUND', () => {
+    fs.writeFileSync(
+      path.join(stateDir, 'owner_repo_42'),
+      'PR_URL=https://github.com/owner/repo/pull/42\nSTATUS=needs_review\nBRANCH=feat/foo\n',
+    );
+    expect(readExistingRound(stateDir, 'https://github.com/owner/repo/pull/42')).toBeUndefined();
+  });
+
+  it('returns undefined for non-numeric ROUND', () => {
+    fs.writeFileSync(
+      path.join(stateDir, 'owner_repo_42'),
+      'PR_URL=https://github.com/owner/repo/pull/42\nROUND=abc\n',
+    );
+    expect(readExistingRound(stateDir, 'https://github.com/owner/repo/pull/42')).toBeUndefined();
   });
 });
 
