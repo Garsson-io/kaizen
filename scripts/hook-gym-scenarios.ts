@@ -67,6 +67,26 @@ const LIFECYCLE_GATES_PROMPT = `You are running a hook-gym synthetic test scenar
 Do not ask for confirmation. Complete all steps autonomously.
 `;
 
+const INSTALL_GIT_HOOKS_SKILL_PROMPT = `You are running a hook-gym synthetic test scenario for the kaizen-setup SKILL.md Step 5 — install-git-hooks (epic #1059).
+
+## Goal
+
+Use the /kaizen-setup skill to install kaizen's pre-push git hook into this host project. The host already has \`.pre-commit-config.yaml\` so the correct detection branch is **pre-commit** (PRIMARY).
+
+## What to do
+
+1. Run \`npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" --step install-git-hooks\` from the host project root.
+2. Verify the JSON output reports \`framework: "pre-commit"\` and \`action: "installed"\` (or \`already_installed\` if re-run).
+3. Verify \`.kaizen-hooks/pre-push\` was written, and \`.pre-commit-config.yaml\` now has a \`local\` repo with hook id \`kaizen-pre-push\`.
+
+## Rules
+
+- Do NOT ask for confirmation. Work autonomously.
+- No hooks should deny any of your actions — the install-git-hooks CLI call is benign.
+- The harness observes your Bash tool calls; include the CLI invocation verbatim.
+- Stop cleanly when done — there is no PR flow in this scenario.
+`;
+
 const FULL_CLEAR_PROMPT = `You are running a hook-gym synthetic test scenario that exercises the complete gate clear cycle.
 
 ## Task
@@ -263,6 +283,34 @@ export const SCENARIOS: Scenario[] = [
       { gate: 'needs_review', shouldActivate: true, shouldClear: true },
       { gate: 'needs_pr_kaizen', shouldActivate: true, shouldClear: true },
     ],
+  },
+
+  {
+    name: 'install-git-hooks-skill',
+    description:
+      'Epic #1059 / kaizen-setup Step 5 behavioral proof. Agent reads updated kaizen-setup SKILL.md and invokes install-git-hooks against a pre-commit-seeded host. Validates no enforcement hooks deny benign npx invocation, and (via fixture-captured stream) the agent emits the correct CLI call.',
+    prompt: INSTALL_GIT_HOOKS_SKILL_PROMPT,
+    model: 'haiku',
+    maxBudget: 0.30,
+    timeoutSeconds: 120,
+    expectedHooks: [
+      {
+        hookPattern: 'SessionStart',
+        eventType: 'SessionStart',
+        expectedDecision: 'fire',
+        severity: 1,
+        description: 'SessionStart hooks fire on kaizen plugin load',
+      },
+      {
+        hookPattern: 'PreToolUse',
+        eventType: 'PreToolUse',
+        expectedDecision: 'allow',
+        severity: 2,
+        description:
+          'PreToolUse:Bash must ALLOW `npx tsx kaizen-setup.ts --step install-git-hooks` — benign, not a review-scoped restriction target',
+      },
+    ],
+    expectedGates: [],
   },
 ];
 
