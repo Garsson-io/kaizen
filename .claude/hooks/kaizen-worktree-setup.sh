@@ -42,4 +42,23 @@ for artifact in node_modules dist; do
   fi
 done
 
+# Verify .githooks/pre-push presence (epic #1059, I-G).
+# When a worktree is on a branch that doesn't have .githooks/ committed, git
+# silently finds no hook and runs nothing. Surface the gap at session start.
+if [ -f ".githooks/pre-push" ]; then
+  if [ ! -x ".githooks/pre-push" ]; then
+    echo "kaizen-worktree-setup: warning: .githooks/pre-push is not executable — review gate will not fire" >&2
+  fi
+else
+  echo "kaizen-worktree-setup: warning: .githooks/pre-push not present on this branch — review gate will not fire (merge main or branch from origin/main)" >&2
+fi
+
+# Verify core.hooksPath is pointing at .githooks (epic #1059).
+# The prepare script sets this on npm install, but worktrees may inherit an
+# older value or have nothing set.
+HOOKS_PATH=$(git config --get core.hooksPath 2>/dev/null || true)
+if [ -z "$HOOKS_PATH" ] || [ "$HOOKS_PATH" != ".githooks" ]; then
+  echo "kaizen-worktree-setup: hint: set 'git config core.hooksPath .githooks' (or 'npm install' to run prepare script)" >&2
+fi
+
 exit 0
