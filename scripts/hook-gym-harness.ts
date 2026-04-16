@@ -141,7 +141,56 @@ export class FixtureRepo {
    * Run a scenario against this fixture repo.
    */
   async run(scenario: Scenario, opts: RunOpts = {}): Promise<RunResult> {
+    if (scenario.setupFiles) {
+      this.seedSetupFiles(scenario.name, scenario.setupFiles, opts.log ?? console.log);
+    }
     return runScenario(scenario, { ...opts, cwd: this.dir, hostRepo: this.hostRepo });
+  }
+
+  /**
+   * Write per-scenario setup files and commit them.
+   *
+   * Idempotent within a single fixture: if the file content matches what's
+   * already on disk (e.g. this is the second scenario touching the same
+   * fixture), skip the write.
+   *
+   * All writes happen BEFORE the agent spawns so the scenario prompt's
+   * assumptions about the host state (e.g. ".pre-commit-config.yaml exists")
+   * are true from turn zero.
+   */
+  private seedSetupFiles(
+    scenarioName: string,
+    files: Record<string, string>,
+    log: (...args: unknown[]) => void,
+  ): void {
+    let wrote = 0;
+    for (const [relPath, content] of Object.entries(files)) {
+      const target = join(this.dir, relPath);
+      // Refuse paths that escape the fixture dir
+      if (!target.startsWith(this.dir + '/') && target !== this.dir) {
+        log(`[fixture] refusing setupFile escape: ${relPath}`);
+        continue;
+      }
+      mkdirSync(dirname(target), { recursive: true });
+      let existing: string | null = null;
+      try { existing = readFileSync(target, 'utf-8'); } catch { /* new file */ }
+      if (existing === content) continue;
+      writeFileSync(target, content, { flag: 'w' });
+      wrote++;
+    }
+    if (wrote === 0) {
+      log(`[fixture] setupFiles for ${scenarioName}: no changes`);
+      return;
+    }
+    log(`[fixture] Seeded ${wrote} file(s) for ${scenarioName}`);
+    execFileSync('git', ['add', '-A'], { stdio: 'pipe', timeout: 10_000, cwd: this.dir });
+    try {
+      execFileSync('git', [
+        'commit', '-m', `chore: seed files for ${scenarioName} (hook-gym)`, '--no-verify',
+      ], { stdio: 'pipe', timeout: 10_000, cwd: this.dir });
+    } catch {
+      // Nothing staged (files unchanged after idempotency check somehow) — fine
+    }
   }
 
   /**
