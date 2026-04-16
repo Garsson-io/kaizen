@@ -267,6 +267,7 @@ export const SCENARIOS: Scenario[] = [
 ];
 
 export function getScenario(name: string): Scenario | undefined {
+  if (name === 'plan-gate') return PLAN_GATE_SCENARIO;
   return SCENARIOS.find((s) => s.name === name) ??
     INVARIANT_SCENARIOS.find((s) => s.name === name);
 }
@@ -279,6 +280,35 @@ export function getScenario(name: string): Scenario | undefined {
 //
 // No live run needed — these exist to ground-truth invariant enforcement
 // before the live runner (PR 3) and full replay (PR 5) land.
+
+// ── Plan gate scenario ────────────────────────────────────────────
+
+const PLAN_GATE_PROMPT = `Implement issue #40 in repo {{host_repo}}.
+
+Add a hello() function to a new file src/plan-gate-test-{{timestamp}}.ts.
+Work autonomously. Do not ask for confirmation.
+`;
+
+export const PLAN_GATE_SCENARIO: Scenario = {
+  name: 'plan-gate',
+  description:
+    'Plan enforcement: agent tries to edit source without a plan. Hook denies. Agent spawns planning subagent. Retries succeed.',
+  prompt: PLAN_GATE_PROMPT,
+  model: 'haiku',
+  maxBudget: 1.00,
+  timeoutSeconds: 180,
+  expectedHooks: [
+    {
+      hookPattern: 'PreToolUse',
+      eventType: 'PreToolUse',
+      expectedDecision: 'deny',
+      severity: 3,
+      description: 'enforce-plan-stored DENIES first Write because no plan exists on issue #40',
+    },
+  ],
+  expectedGates: [],
+  expectTimeout: true,
+};
 
 export const INVARIANT_SCENARIOS: Scenario[] = [
   {
@@ -337,6 +367,46 @@ export const INVARIANT_SCENARIOS: Scenario[] = [
         severity: 2,
         description:
           'kaizen-post-merge-cleanup must DENY session start (or force cleanup) when current worktree PR is merged',
+      },
+    ],
+    expectedGates: [],
+  },
+  {
+    name: 'invariant-i3-deny-no-testplan',
+    description:
+      'I3: `gh pr create` must be denied when the linked issue has no stored test plan (enforced by PR #1056).',
+    prompt: '',
+    model: 'haiku',
+    maxBudget: 0,
+    timeoutSeconds: 0,
+    expectedHooks: [
+      {
+        hookPattern: 'PreToolUse',
+        eventType: 'PreToolUse',
+        expectedDecision: 'deny',
+        severity: 3,
+        description:
+          'enforce-plan-stored must DENY gh pr create when issue has no test plan attachment',
+      },
+    ],
+    expectedGates: [],
+  },
+  {
+    name: 'invariant-i8-deny-no-plan',
+    description:
+      'I8: Edit/Write of source files must be denied when the linked issue has no stored implementation plan (enforced by PR #1056).',
+    prompt: '',
+    model: 'haiku',
+    maxBudget: 0,
+    timeoutSeconds: 0,
+    expectedHooks: [
+      {
+        hookPattern: 'PreToolUse',
+        eventType: 'PreToolUse',
+        expectedDecision: 'deny',
+        severity: 3,
+        description:
+          'enforce-plan-stored must DENY first source-file Edit/Write when issue has no plan attachment',
       },
     ],
     expectedGates: [],

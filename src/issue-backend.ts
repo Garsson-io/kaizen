@@ -91,6 +91,7 @@ interface IssueBackend {
   edit(opts: EditIssueOpts): void;
   comment(opts: CommentOpts): void;
   close(number: number, repo?: string): void;
+  reopen(number: number, repo?: string): void;
 }
 
 // ── Shared helpers ──
@@ -188,6 +189,12 @@ export class GitHubBackend implements IssueBackend {
     if (repo) args.push("--repo", repo);
     this.gh(args);
   }
+
+  reopen(number: number, repo?: string): void {
+    const args = ["issue", "reopen", String(number)];
+    if (repo) args.push("--repo", repo);
+    this.gh(args);
+  }
 }
 
 // ── Custom CLI Backend ──
@@ -253,6 +260,12 @@ export class CustomCliBackend implements IssueBackend {
 
   close(number: number, repo?: string): void {
     const args = ["close", String(number)];
+    if (repo) args.push("--repo", repo);
+    this.run(args);
+  }
+
+  reopen(number: number, repo?: string): void {
+    const args = ["reopen", String(number)];
     if (repo) args.push("--repo", repo);
     this.run(args);
   }

@@ -52,6 +52,11 @@
           },
           {
             "type": "command",
+            "command": "./.claude/hooks/kaizen-enforce-plan-stored-ts.sh",
+            "timeout": 15
+          },
+          {
+            "type": "command",
             "command": "./.claude/hooks/kaizen-enforce-pr-reflect-ts.sh",
             "timeout": 10
           },
@@ -68,7 +73,7 @@
         ]
       },
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
@@ -79,6 +84,11 @@
             "type": "command",
             "command": "./.claude/hooks/kaizen-enforce-case-exists.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "./.claude/hooks/kaizen-enforce-plan-stored-ts.sh",
+            "timeout": 15
           },
           {
             "type": "command",

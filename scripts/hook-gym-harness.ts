@@ -106,9 +106,13 @@ export class FixtureRepo {
       writeFileSync(gitignorePath, gitignore + '\n.kaizen/telemetry/\n', { flag: 'w' });
     }
 
-    // Commit setup files so working tree is clean
+    // Commit setup files so working tree is clean (skip if nothing to commit)
     execFileSync('git', ['add', '-A'], { stdio: 'pipe', timeout: 10_000, cwd: dir });
-    execFileSync('git', ['commit', '-m', 'chore: kaizen setup (hook-gym)', '--no-verify'], { stdio: 'pipe', timeout: 10_000, cwd: dir });
+    try {
+      execFileSync('git', ['commit', '-m', 'chore: kaizen setup (hook-gym)', '--no-verify'], { stdio: 'pipe', timeout: 10_000, cwd: dir });
+    } catch {
+      log('[fixture] Nothing to commit (setup already committed)');
+    }
 
     // Verify installation: log plugin version + source path
     try {

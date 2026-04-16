@@ -1,0 +1,25 @@
+[
+  {
+    "type": "system",
+    "subtype": "hook_started",
+    "hook_id": "I8-pre-01",
+    "hook_name": "PreToolUse:Write",
+    "hook_event": "PreToolUse",
+    "uuid": "uuid-start",
+    "session_id": "fixture-session"
+  },
+  {
+    "type": "system",
+    "subtype": "hook_response",
+    "hook_id": "I8-pre-01",
+    "hook_name": "PreToolUse:Write",
+    "hook_event": "PreToolUse",
+    "output": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"BLOCKED: No plan stored for issue #40. You MUST run /kaizen-write-plan before writing any code.\\n\\nDO THIS NOW:\\n  Skill({ skill: \\\"kaizen-write-plan\\\", args: \\\"#40\\\" })\\n\\nThe skill knows how to create and store the plan correctly.\\nIMPORTANT: Wait for the skill to COMPLETE. Do not retry Write until the skill is done — intermediate retries will be denied again.\"}}",
+    "stdout": "",
+    "stderr": "",
+    "exit_code": 0,
+    "outcome": "success",
+    "uuid": "uuid-resp",
+    "session_id": "fixture-session"
+  }
+]

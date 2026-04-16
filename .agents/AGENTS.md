@@ -56,6 +56,8 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `src/structured-data.ts` | **Structured data API**: reviews, plans, metadata, connected issues, PR sections, iteration state |
 | `src/cli-structured-data.ts` | CLI for structured data — the primary interface for skills |
 | `src/section-editor.ts` | Low-level: sections (## in bodies) + attachments (marker comments) — CRUD primitives |
+| `src/case-system.ts` | **Case FE** — single gateway for plan gate (I3, I8). Pluggable `CaseBackend`: `GitHubCaseBackend` today, Linear/custom tomorrow. Hooks and skills go through this, never call BE directly |
+| `src/hooks/enforce-plan-stored.ts` | PreToolUse hook enforcing I3/I8: Edit/Write/NotebookEdit require a stored plan on `git config kaizen.issue`; `gh pr create` adds a substance check |
 | `src/plan-store.ts` | Plan-specific helpers (extractPlanText, re-exports from structured-data) |
 
 ## Skills
@@ -128,12 +130,12 @@ Compact in-context summary (one-line per invariant):
 |:-:|----------|:--:|
 | **I1** | Every PR has `Closes #<N>` with `#N` adjacent to the closing keyword | ⚠️ |
 | **I2** | Closed `#N` is scope-matched (not an epic; no open sub-issues) | ⚠️ |
-| **I3** | Closed `#N` has a stored test plan (`retrieve-testplan` ≠ null) | ⚠️ |
+| **I3** | Closed `#N` has a stored test plan (`retrieve-testplan` ≠ null) | ✅ |
 | **I4** | PR body includes behaviors × levels table (Unit/Integration/System/Agentic/Workflow) | ⚠️ |
 | **I5** | Review round has structured findings stored | ✅ |
 | **I6** | Gates cleared by mechanism, never by `rm` of state files | ✅ |
 | **I7** | No push to a branch whose most-recent PR merged with no newer open PR | ⚠️ |
-| **I8** | Implementation begins only after plan is stored on the issue | ⚠️ |
+| **I8** | Implementation begins only after plan is stored on the issue | ✅ |
 | **I9** | No source edits on main branch outside a worktree | ✅ |
 | **I10** | No source edits in worktree without a kaizen case | ✅ |
 | **I11** | No dirty/uncommitted files at `gh pr create` | ✅ |

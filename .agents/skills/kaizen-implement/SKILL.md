@@ -21,6 +21,34 @@ description: Take a spec from PRD to working code. Re-examines the spec against 
 
 **The key insight:** Specs rot. The codebase has changed. Understanding has deepened. Things that seemed important when the spec was written may be irrelevant now. Things the spec didn't anticipate may be obvious now. The spec's value is the *problem taxonomy and direction*, not the specific solutions it proposed.
 
+## Plan Gate — MANDATORY before writing any code
+
+Before anything else:
+
+**Step 1: Declare the issue you're working on.** (Skip if already set.)
+```bash
+git config kaizen.issue {N}
+```
+
+**Step 2: Verify a plan exists on the issue.**
+```bash
+npx tsx src/cli-structured-data.ts retrieve-plan --issue {N} --repo "$ISSUES_REPO" | head -5
+npx tsx src/cli-structured-data.ts retrieve-testplan --issue {N} --repo "$ISSUES_REPO" | head -5
+```
+
+**Step 3: If EITHER is empty, run `/kaizen-write-plan`:**
+```
+Skill({ skill: "kaizen-write-plan", args: "#{N}" })
+```
+
+The skill knows how to ground, formulate, and store the plan. Do NOT write the plan yourself — your job is implementation, not planning. A self-authored plan makes review self-referential (#1054).
+
+After the skill completes, re-check with `retrieve-plan`. If still empty, STOP and report to admin.
+
+**Enforcement**: The `enforce-plan-stored` hook (L2) blocks Edit/Write/NotebookEdit of source files when no plan exists on the declared issue, and blocks `gh pr create` when the PR has no plan. The hook reads `git config kaizen.issue` — if unset, it denies with instructions to declare the issue.
+
+---
+
 ## Case Gate — MANDATORY before writing any code
 
 Before touching any source code, verify a case exists. The `enforce-case-exists.sh` hook (Level 2) will block edits in worktrees without a case, but you should create the case proactively rather than being blocked.
@@ -65,37 +93,13 @@ npx tsx src/cli-dimensions.ts list
 ```
 These are not aspirational — they are the adversarial rubric. Read the `high_when` signals for each dimension against your issue to understand which dimensions matter most.
 
-**Step 0b: Create the plan.** Post it as an **issue comment** on the linked issue:
+**Step 0b: Read the plan.** The plan was stored by the Plan Gate (above) or by a prior `/kaizen-write-plan` session. Read it now:
 
 ```bash
-gh issue comment N --repo "$ISSUES_REPO" --body "$(cat <<'PLAN'
-## Implementation Plan
-
-**Approach**: What to build and how. Key architectural decisions. Why this approach over alternatives.
-
-**Testing Strategy**:
-- Pyramid levels: [unit | integration | E2E] — which and why
-- SUT: what component is the focus of testing
-- Invariants: what must ALWAYS be true (not just "this bug is fixed")
-- For bug fixes: what category of bug does this prevent?
-
-**Scope**:
-- In this PR: [concrete list]
-- Deferred: [with mechanism — follow-up issue #N]
-
-**Risk Assessment**:
-- High-priority review dimensions for this PR (from high_when signals)
-- Suggested subagent grouping for review
-PLAN
-)"
+npx tsx src/cli-structured-data.ts retrieve-plan --issue {N} --repo "$ISSUES_REPO"
 ```
 
-**The plan is mandatory.** It must be posted before you write any code. Use `npx tsx src/cli-structured-data.ts store-plan` to persist it on the issue:
-
-```bash
-npx tsx src/cli-structured-data.ts store-plan --issue {N} --repo "$ISSUES_REPO" --file plan.md
-npx tsx src/cli-structured-data.ts store-testplan --issue {N} --repo "$ISSUES_REPO" --file testplan.md
-```
+**Do NOT write your own plan.** The plan comes from an independent planning agent (see Plan Gate above). Your job is to implement the plan, not write it. If the plan needs updating based on what you find during re-examination (Phase below), update it — but the original plan must come from the independent agent.
 
 The plan lives in three places:
 1. **Issue comment via plan-store** (primary — persistent, discoverable, cross-session, auto-loaded by `reviewBattery()`)

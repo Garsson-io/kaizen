@@ -26,6 +26,8 @@ describe('invariant fixture regression', () => {
   // Map fixture files to their scenario names
   const fixtureMap: Array<{ fixture: string; scenario: string }> = [
     { fixture: 'i1-deny-missing-closes.json', scenario: 'invariant-i1-deny-missing-closes' },
+    { fixture: 'i3-deny-no-testplan.json', scenario: 'invariant-i3-deny-no-testplan' },
+    { fixture: 'i8-deny-no-plan.json', scenario: 'invariant-i8-deny-no-plan' },
     { fixture: 'i26-deny-branch-from-feature.json', scenario: 'invariant-i26-deny-branch-from-feature' },
   ];
 
