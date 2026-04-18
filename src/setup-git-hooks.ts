@@ -12,10 +12,43 @@
  * All injection is idempotent: running twice does not duplicate entries.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import YAML from 'yaml';
+
+/**
+ * Read a file, returning null if it doesn't exist. Replaces the
+ * `existsSync(p) ? readFileSync(p) : fallback` pattern, which CodeQL flags
+ * as `js/file-system-race` — the check and the read are two separate
+ * syscalls with a TOCTOU window between them. A single `readFileSync`
+ * inside try/catch collapses that to one syscall.
+ */
+function tryReadFileSync(p: string): string | null {
+  try {
+    return readFileSync(p, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+/**
+ * Atomically write a file by staging to `<path>.tmp-<pid>` and renaming.
+ * `rename(2)` is atomic on POSIX, so concurrent readers never observe a
+ * partially-written file and a crash mid-write cannot corrupt the target.
+ * CodeQL's `js/file-system-race` rule accepts this pattern.
+ */
+function atomicWriteFileSync(targetPath: string, content: string, opts: { mode: number }): void {
+  const tmp = `${targetPath}.tmp-${process.pid}`;
+  try {
+    writeFileSync(tmp, content, { mode: opts.mode, flag: 'w' });
+    renameSync(tmp, targetPath);
+  } catch (err) {
+    try { unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+    throw err;
+  }
+}
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -209,12 +242,7 @@ export function injectIntoHusky(cwd: string): InstallResult {
   const huskyDir = join(cwd, '.husky');
   const hookPath = join(huskyDir, 'pre-push');
 
-  let existing = '';
-  if (existsSync(hookPath)) {
-    existing = readFileSync(hookPath, 'utf-8');
-  } else {
-    existing = '#!/usr/bin/env bash\n';
-  }
+  const existing = tryReadFileSync(hookPath) ?? '#!/usr/bin/env bash\n';
 
   // Idempotency
   if (existing.includes(KAIZEN_CHAIN_MARKER)) {
@@ -229,7 +257,7 @@ export function injectIntoHusky(cwd: string): InstallResult {
 
   const chainBlock = buildChainBlock(`$(dirname "$0")/../${KAIZEN_ENTRY_PATH}`);
 
-  writeFileSync(hookPath, existing.trimEnd() + '\n' + chainBlock, { mode: 0o755 });
+  atomicWriteFileSync(hookPath, existing.trimEnd() + '\n' + chainBlock, { mode: 0o755 });
   chmodSync(hookPath, 0o755);
 
   return {
@@ -284,12 +312,7 @@ export function injectIntoLefthook(cwd: string): InstallResult {
  */
 export function injectIntoRaw(cwd: string): InstallResult {
   const hookPath = join(cwd, '.git', 'hooks', 'pre-push');
-  let existing = '';
-  if (existsSync(hookPath)) {
-    existing = readFileSync(hookPath, 'utf-8');
-  } else {
-    existing = '#!/usr/bin/env bash\n';
-  }
+  const existing = tryReadFileSync(hookPath) ?? '#!/usr/bin/env bash\n';
 
   if (existing.includes(KAIZEN_CHAIN_MARKER)) {
     return {
@@ -303,7 +326,7 @@ export function injectIntoRaw(cwd: string): InstallResult {
 
   const chainBlock = buildChainBlock(`$(git rev-parse --show-toplevel)/${KAIZEN_ENTRY_PATH}`);
 
-  writeFileSync(hookPath, existing.trimEnd() + '\n' + chainBlock, { mode: 0o755 });
+  atomicWriteFileSync(hookPath, existing.trimEnd() + '\n' + chainBlock, { mode: 0o755 });
   chmodSync(hookPath, 0o755);
 
   return {
@@ -324,9 +347,8 @@ export function installStandalone(cwd: string): InstallResult {
   if (!existsSync(hooksDir)) mkdirSync(hooksDir, { recursive: true });
 
   const hookPath = join(hooksDir, 'pre-push');
-  // If it already exists and already chains, don't touch
-  if (existsSync(hookPath)) {
-    const existing = readFileSync(hookPath, 'utf-8');
+  const existing = tryReadFileSync(hookPath);
+  if (existing !== null) {
     if (existing.includes(KAIZEN_CHAIN_MARKER)) {
       return {
         framework: 'none',
@@ -342,7 +364,7 @@ export function installStandalone(cwd: string): InstallResult {
       `$(git rev-parse --show-toplevel)/${KAIZEN_ENTRY_PATH}`,
       false,
     );
-    writeFileSync(hookPath, existing.trimEnd() + '\n' + chainBlock, { mode: 0o755 });
+    atomicWriteFileSync(hookPath, existing.trimEnd() + '\n' + chainBlock, { mode: 0o755 });
     chmodSync(hookPath, 0o755);
   } else {
     const content = [
@@ -357,7 +379,7 @@ export function installStandalone(cwd: string): InstallResult {
       KAIZEN_CHAIN_END_MARKER,
       '',
     ].join('\n');
-    writeFileSync(hookPath, content, { mode: 0o755 });
+    atomicWriteFileSync(hookPath, content, { mode: 0o755 });
     chmodSync(hookPath, 0o755);
   }
 

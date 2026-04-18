@@ -199,11 +199,15 @@ describe('E2E: human push without agent env (I-A)', () => {
       { number: 42, state: 'OPEN', url: 'https://github.com/testowner/testrepo/pull/42' },
     ]);
 
-    // Strip CLAUDECODE and all agent env vars
+    // Strip CLAUDECODE and all agent env vars. PATH retains
+    // process.env.PATH so `tsx`'s node shebang can resolve — on CI runners
+    // node lives outside /usr/bin, and restricting PATH to `/usr/bin:/bin`
+    // causes exit 127 (command not found) rather than exercising the
+    // agent-env detection branch under test.
     const result = spawnSync(TSX_BIN, [HOOK_TS], {
       cwd: tmpDir,
       env: {
-        PATH: `${mockBin}:/usr/bin:/bin`,
+        PATH: `${mockBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
         HOME: process.env.HOME ?? '/tmp',
         STATE_DIR: stateDir,
         KAIZEN_HOOK_TRACE: traceFile,
