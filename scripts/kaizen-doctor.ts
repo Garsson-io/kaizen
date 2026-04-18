@@ -143,20 +143,18 @@ export function checkPluginDoubleInstall(opts: DoctorOpts): CheckResult {
     return {
       name: 'plugin-double-install',
       status: 'FAIL',
-      detail: `"${plugin}" is in enabledPlugins AND project settings.json registers its own hooks — duplicate registration will flood every tool call with errors. Remove enabledPlugins["${plugin}"] from .claude/settings.json.`,
+      detail: `"${plugin}" is in enabledPlugins AND settings.json registers the same hooks directly — duplicate registration will flood every tool call with errors. Delete the hooks block from .claude/settings.json (see #1063).`,
     };
   }
-  if (isEnabled) {
-    return {
-      name: 'plugin-double-install',
-      status: 'WARN',
-      detail: `"${plugin}" is in enabledPlugins but project hooks not duplicated — unusual but not broken.`,
-    };
-  }
+  // enabledPlugins set with no duplicate hooks is the #1063 target state for
+  // kaizen-on-kaizen and host projects alike — plugin loads hooks, settings.json
+  // owns activation and non-hook config only.
   return {
     name: 'plugin-double-install',
     status: 'PASS',
-    detail: `no double-install of "${plugin}".`,
+    detail: isEnabled
+      ? `"${plugin}" activated via enabledPlugins; no duplicate hooks in settings.json.`
+      : `"${plugin}" not in enabledPlugins.`,
   };
 }
 
@@ -334,6 +332,42 @@ export function checkRestartNeeded(opts: DoctorOpts): CheckResult {
   };
 }
 
+/** Check: exactly one source registers hooks. Enforces #1063's
+ *  single-source-of-truth invariant — when settings.json AND plugin.json
+ *  both have `hooks` entries for the same project, every hook fires twice
+ *  and any mid-session plugin-state change silently breaks one source.
+ *
+ *  FAIL when both sources are non-empty.
+ *  PASS when ≤1 source is non-empty (or neither — host project with no hooks).
+ */
+export function checkSingleRegistrationPath(opts: DoctorOpts): CheckResult {
+  const settings = safeReadJson(join(opts.projectRoot, '.claude/settings.json'));
+  const plugin = safeReadJson(join(opts.projectRoot, '.claude-plugin/plugin.json'));
+  const settingsHooks = collectHookCommands(
+    (settings as { hooks?: unknown } | null)?.hooks,
+  );
+  const pluginHooks = collectHookCommands(
+    (plugin as { hooks?: unknown } | null)?.hooks,
+  );
+  if (settingsHooks.length > 0 && pluginHooks.length > 0) {
+    return {
+      name: 'single-registration-path',
+      status: 'FAIL',
+      detail: `both sources register hooks — settings.json: ${settingsHooks.length}, plugin.json: ${pluginHooks.length}. Delete the hooks block from one. See https://github.com/Garsson-io/kaizen/issues/1063`,
+    };
+  }
+  return {
+    name: 'single-registration-path',
+    status: 'PASS',
+    detail:
+      pluginHooks.length > 0
+        ? `single source: plugin.json (${pluginHooks.length} entries)`
+        : settingsHooks.length > 0
+          ? `single source: settings.json (${settingsHooks.length} entries)`
+          : 'no hook registrations (host project without kaizen active)',
+  };
+}
+
 /** Check 5: every referenced hook file is executable. */
 export function checkHookExecSmoke(opts: DoctorOpts): CheckResult {
   const cfgs = [
@@ -379,6 +413,7 @@ export function checkHookExecSmoke(opts: DoctorOpts): CheckResult {
 
 export function runAllChecks(opts: DoctorOpts): CheckResult[] {
   return [
+    checkSingleRegistrationPath(opts),
     checkPluginDoubleInstall(opts),
     checkDanglingHookPaths(opts),
     checkStalePluginCache(opts),

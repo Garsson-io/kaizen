@@ -8,6 +8,7 @@ import {
   checkStalePluginCache,
   checkRestartNeeded,
   checkHookExecSmoke,
+  checkSingleRegistrationPath,
   runAllChecks,
   exitCodeFor,
   buildSnapshot,
@@ -77,10 +78,11 @@ describe('checkPluginDoubleInstall', () => {
     expect(r.detail).toContain('duplicate registration');
   });
 
-  it('WARN when enabledPlugins set but no own hooks', () => {
+  it('PASS when enabledPlugins set with no duplicate hooks (the #1063 target)', () => {
     writeSettings(proj, { enabledPlugins: { 'kaizen@kaizen': true } });
     const r = checkPluginDoubleInstall({ projectRoot: proj, homeDir: home });
-    expect(r.status).toBe('WARN');
+    expect(r.status).toBe('PASS');
+    expect(r.detail).toContain('activated via enabledPlugins');
   });
 
   it('PASS when enabledPlugins absent', () => {
@@ -261,14 +263,50 @@ describe('checkHookExecSmoke', () => {
   });
 });
 
+describe('checkSingleRegistrationPath (#1063)', () => {
+  let proj: string, home: string;
+  beforeEach(() => { proj = makeProject(); home = makeHome(); });
+  afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+
+  it('FAIL when BOTH settings.json and plugin.json have hook entries', () => {
+    writeSettings(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './foo.sh' }] }] } });
+    writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './bar.sh' }] }] } });
+    const r = checkSingleRegistrationPath({ projectRoot: proj, homeDir: home });
+    expect(r.status).toBe('FAIL');
+    expect(r.detail).toContain('both sources register hooks');
+  });
+
+  it('PASS when only plugin.json has hooks (the #1063 target state)', () => {
+    writeSettings(proj, { enabledPlugins: { 'kaizen@kaizen': true } });
+    writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './bar.sh' }] }] } });
+    const r = checkSingleRegistrationPath({ projectRoot: proj, homeDir: home });
+    expect(r.status).toBe('PASS');
+    expect(r.detail).toContain('plugin.json');
+  });
+
+  it('PASS when only settings.json has hooks (valid for non-kaizen direct registration)', () => {
+    writeSettings(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './foo.sh' }] }] } });
+    const r = checkSingleRegistrationPath({ projectRoot: proj, homeDir: home });
+    expect(r.status).toBe('PASS');
+    expect(r.detail).toContain('settings.json');
+  });
+
+  it('PASS when neither source has hooks', () => {
+    const r = checkSingleRegistrationPath({ projectRoot: proj, homeDir: home });
+    expect(r.status).toBe('PASS');
+    expect(r.detail).toContain('no hook registrations');
+  });
+});
+
 describe('runAllChecks + exitCodeFor', () => {
   let proj: string, home: string;
   beforeEach(() => { proj = makeProject(); home = makeHome(); });
   afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
 
-  it('returns 5 checks in defined order', () => {
+  it('returns 6 checks in defined order', () => {
     const results = runAllChecks({ projectRoot: proj, homeDir: home });
     expect(results.map(r => r.name)).toEqual([
+      'single-registration-path',
       'plugin-double-install',
       'dangling-hook-paths',
       'stale-plugin-cache',

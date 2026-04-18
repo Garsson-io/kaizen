@@ -2,7 +2,17 @@
 
 Claude Code loads plugin hook registrations into an **in-memory registry at session start**. Some kinds of on-disk changes are picked up on the next tool call; others only take effect after you restart Claude Code. Knowing the difference is load-bearing — the common symptom of the stale-registry bug is every `Bash` tool call emitting `PreToolUse/PostToolUse:Bash hook error — Failed with non-blocking status code: No stderr output`, with no indication which hook failed.
 
-Canonical incident: [#1061](https://github.com/Garsson-io/kaizen/issues/1061).
+Canonical incident: [#1061](https://github.com/Garsson-io/kaizen/issues/1061). Structural fix: [#1063](https://github.com/Garsson-io/kaizen/issues/1063).
+
+## Single source of truth
+
+Kaizen distributes hooks **exclusively** via `.claude-plugin/plugin.json`. A project's `.claude/settings.json` is the **activation switch** (`enabledPlugins["kaizen@kaizen"]: true`), never a hook registry. This applies to host projects and to the kaizen repo itself — kaizen-on-kaizen runs the exact same load path a host project does.
+
+If `.claude/settings.json` in any project has both `enabledPlugins["kaizen@kaizen"]=true` AND a `hooks` block registering kaizen's hooks, every hook fires twice and any mid-session plugin-state change silently breaks one source. That's the #1061 dual-load state — now guarded structurally:
+
+- `kaizen-doctor`'s `single-registration-path` check FAILs when both sources have hook entries.
+- `kaizen-block-self-plugin-enable.sh` blocks `git commit` of that combined state.
+- `scripts/kaizen-self-invariants.test.ts` keeps kaizen's own repo from re-growing a hooks block.
 
 ## Hot-reload safe (no restart needed)
 

@@ -130,7 +130,7 @@ Plugin hook registrations are loaded into memory at session start. Mid-session c
 
 Diagnose with `npx tsx scripts/kaizen-doctor.ts`. Fix stale-registry state with `scripts/kaizen-uninstall-plugin.sh`, then restart.
 
-**Self-dogfood rule:** `.claude/settings.json` in this repo must NEVER contain `enabledPlugins["kaizen@kaizen"]` — a pre-commit hook blocks it. kaizen is both a plugin and a project; enabling the self-plugin double-registers every hook and triggers the #1061 failure mode.
+**Self-dogfood rule (#1063):** kaizen hooks ship from ONE place — `.claude-plugin/plugin.json`. The kaizen repo's own `.claude/settings.json` has `enabledPlugins["kaizen@kaizen"]=true` (activation switch) but NO `hooks` block. A pre-commit hook + `kaizen-doctor`'s `single-registration-path` check + `scripts/kaizen-self-invariants.test.ts` keep this state enforced. Dual-load (enabledPlugins + duplicate hooks block) is the #1061 failure mode; all three guards prevent it from returning.
 
 ## Kaizen Invariants
 

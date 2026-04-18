@@ -22,6 +22,19 @@ If `CLAUDE_PLUGIN_ROOT` is empty, the plugin isn't installed. Tell the user:
 ```
 Then restart Claude Code and re-run `/kaizen-setup`.
 
+## Step 0.5: Enable at project scope (#1063)
+
+After install, the plugin is downloaded but dormant until the host project **activates** it. Activation lives in the host project's `.claude/settings.json`, never user-scope:
+
+```jsonc
+// <host-project>/.claude/settings.json
+{
+  "enabledPlugins": { "kaizen@kaizen": true }
+}
+```
+
+This is the sole hook source. Never add a `hooks` block here — that re-creates the #1061 dual-load state. kaizen-on-kaizen follows the same pattern: the kaizen repo's own settings.json activates via `enabledPlugins` only.
+
 ## Step 1: Create kaizen.config.json
 
 Ask the user for project name, repo (org/repo), and description. Then run:
