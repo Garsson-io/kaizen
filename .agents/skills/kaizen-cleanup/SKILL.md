@@ -7,6 +7,18 @@ description: Worktree disk usage analysis and safe cleanup. Shows worktrees, bra
 
 Analyze and clean up Kaizen worktrees, branches, Docker images, and stale cases. Two modes: analysis (default) and cleanup.
 
+## Preflight: plugin/hook health check (#1061)
+
+**Always run first** (unless the user passes `--no-preflight`):
+
+```bash
+npx tsx scripts/kaizen-doctor.ts --quiet
+```
+
+This surfaces stale plugin hook registrations, dangling hook paths, and mid-session config drift that requires a Claude Code restart. If `restart-needed` is FAIL, tell the user to restart Claude Code **before** continuing cleanup — otherwise any worktree removal that touches hook files will fail silently.
+
+If preflight reports any FAIL, surface the exact output to the user, pause, and ask them to fix (typically: run `scripts/kaizen-uninstall-plugin.sh` and restart Claude Code) before running cleanup.
+
 ## Safety Invariant
 
 **A lock file — even a stale one — MUST block automated removal.** The 30-minute heartbeat threshold is for IPC, not for "safe to delete." Claude sessions can be suspended for hours and resumed. Only the complete absence of a lock file means no agent is attached.

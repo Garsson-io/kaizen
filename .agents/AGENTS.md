@@ -120,6 +120,18 @@ Memory-only retention means the next session on a different machine repeats the 
 - **If you accidentally pushed to a merged branch:** create a fresh branch from `main` (or from the merge commit), cherry-pick your new commits there, and open a new PR from the new branch.
 - **Review round bumps on push within an open PR are intended.** Each push is new code and deserves fresh review; the previous round's pass is stale. Complete the new round before proceeding.
 
+### When Claude Code requires restart
+
+Plugin hook registrations are loaded into memory at session start. Mid-session changes to plugin state leave the registry stale and produce silent `Failed with non-blocking status code: No stderr output` errors on every tool call until you restart. See [`docs/plugin-lifecycle.md`](../docs/plugin-lifecycle.md) for the full matrix.
+
+**Requires restart:** edits to `enabledPlugins`, `installed_plugins.json`, the plugin cache dir (`~/.claude/plugins/cache/*`), marketplace state, or renaming/deleting a hook file that is still referenced in a loaded config.
+
+**Hot-reloads (no restart needed):** editing hook script bodies, adding/removing hook entries in `.claude/settings.json`, skill files, permissions, CLAUDE.md.
+
+Diagnose with `npx tsx scripts/kaizen-doctor.ts`. Fix stale-registry state with `scripts/kaizen-uninstall-plugin.sh`, then restart.
+
+**Self-dogfood rule:** `.claude/settings.json` in this repo must NEVER contain `enabledPlugins["kaizen@kaizen"]` — a pre-commit hook blocks it. kaizen is both a plugin and a project; enabling the self-plugin double-registers every hook and triggers the #1061 failure mode.
+
 ## Kaizen Invariants
 
 **Canonical source**: [`docs/kaizen-invariants.md`](../docs/kaizen-invariants.md) — full text (why/check-point/enforcement) for every invariant. Reference invariants by ID (`I1`, `I2`, …); do NOT restate their rules here or in skill docs.
