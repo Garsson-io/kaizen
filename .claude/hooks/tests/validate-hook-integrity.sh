@@ -144,31 +144,29 @@ if [ -d "$HOOKS_DIR" ]; then
 fi
 
 echo ""
-echo "--- Sync: settings.json <-> plugin.json hook parity (kaizen #793) ---"
-# Both files should declare the same set of hooks (normalized).
-# settings.json uses ./ prefix, plugin.json uses ${CLAUDE_PLUGIN_ROOT}/.
+echo "--- Single source of truth: settings.json AND plugin.json must not BOTH have hooks (kaizen #1063) ---"
+# Previous rule (kaizen #793) required settings.json and plugin.json to declare
+# the SAME hooks. That was the dual-load state #1063 identified as the root
+# cause of #1061: every hook fired twice, and any mid-session cache drift
+# silently broke one source. The new rule inverts it: hooks live in EXACTLY
+# ONE of the two files. settings.json is the activation switch
+# (`enabledPlugins`), plugin.json is the hook source.
 SETTINGS_JSON="$PROJECT_ROOT/.claude/settings.json"
 PLUGIN_JSON="$PROJECT_ROOT/.claude-plugin/plugin.json"
 if [ -f "$SETTINGS_JSON" ] && [ -f "$PLUGIN_JSON" ]; then
-  # Extract and normalize: strip prefix to get relative path
-  settings_hooks=$(jq -r '.. | .command? // empty' "$SETTINGS_JSON" | sed 's|^\./||' | sort -u)
-  plugin_hooks=$(jq -r '.. | .command? // empty' "$PLUGIN_JSON" | sed 's|${CLAUDE_PLUGIN_ROOT}/||; s|^\./||' | sort -u)
+  settings_count=$(jq -r '[.. | objects | select(.type? == "command")] | length' "$SETTINGS_JSON")
+  plugin_count=$(jq -r '[.. | objects | select(.type? == "command")] | length' "$PLUGIN_JSON")
 
-  only_settings=$(comm -23 <(echo "$settings_hooks") <(echo "$plugin_hooks"))
-  only_plugin=$(comm -13 <(echo "$settings_hooks") <(echo "$plugin_hooks"))
-
-  if [ -n "$only_settings" ]; then
-    echo "::error::[sync] Hooks in settings.json but NOT in plugin.json:"
-    echo "$only_settings"
+  if [ "$settings_count" -gt 0 ] && [ "$plugin_count" -gt 0 ]; then
+    echo "::error::[dual-load] Hooks registered in BOTH settings.json ($settings_count) AND plugin.json ($plugin_count)."
+    echo "                 This is the #1063 forbidden state. Delete the hooks block from settings.json."
     ((ERRORS++))
-  fi
-  if [ -n "$only_plugin" ]; then
-    echo "::error::[sync] Hooks in plugin.json but NOT in settings.json:"
-    echo "$only_plugin"
-    ((ERRORS++))
-  fi
-  if [ -z "$only_settings" ] && [ -z "$only_plugin" ]; then
-    echo "  OK: settings.json and plugin.json hooks are in sync"
+  elif [ "$settings_count" -gt 0 ]; then
+    echo "  OK: single source = settings.json ($settings_count hooks; no plugin.json hooks)"
+  elif [ "$plugin_count" -gt 0 ]; then
+    echo "  OK: single source = plugin.json ($plugin_count hooks; no settings.json hooks)"
+  else
+    echo "  OK: no hook registrations in either source"
   fi
 else
   echo "  Skipped: one or both config files not found"
