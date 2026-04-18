@@ -17,6 +17,11 @@
             "type": "command",
             "command": "./.claude/hooks/kaizen-worktree-setup.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "./.claude/hooks/kaizen-session-snapshot.sh",
+            "timeout": 5
           }
         ]
       }
@@ -64,6 +69,11 @@
             "type": "command",
             "command": "./.claude/hooks/kaizen-block-git-rebase.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "./.claude/hooks/kaizen-block-self-plugin-enable.sh",
+            "timeout": 5
           },
           {
             "type": "command",
@@ -176,8 +186,5 @@
         ]
       }
     ]
-  },
-  "enabledPlugins": {
-    "kaizen@kaizen": true
   }
 }
