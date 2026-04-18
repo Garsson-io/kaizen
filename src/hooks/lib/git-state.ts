@@ -79,13 +79,19 @@ export function createDefaultGitExec(): GitExec {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-      return { stdout: stdout.trim(), exitCode: 0 };
+      // IMPORTANT: do NOT .trim() — porcelain output has significant leading
+      // whitespace (` M file` vs `M  file` distinguishes unstaged-modified
+      // from staged-modified). Trimming corrupted the parse for unstaged
+      // files; caught by the live fixture test for #1073. Callers that
+      // want single-line trimmed output (e.g., rev-parse) should trim
+      // themselves.
+      return { stdout, exitCode: 0 };
     } catch (e) {
       const err = e as { status?: number; stdout?: string | Buffer };
       const out = typeof err.stdout === 'string'
         ? err.stdout
         : err.stdout?.toString('utf-8') ?? '';
-      return { stdout: out.trim(), exitCode: err.status ?? 1 };
+      return { stdout: out, exitCode: err.status ?? 1 };
     }
   };
 }
@@ -122,12 +128,13 @@ export function readDirtyFiles(
   const runner = options.runner ?? createDefaultGitExec();
   const prefix = targetDir ? `-C ${targetDir} ` : '';
 
-  const gitDir = runner(`${prefix}rev-parse --absolute-git-dir`).stdout;
+  const gitDir = runner(`${prefix}rev-parse --absolute-git-dir`).stdout.trim();
 
   // Refresh the index to clear stat-only drift (retained as belt-and-suspenders
   // alongside the content-level check below; observed as the #871 partial fix).
   runner(`${prefix}update-index -q --refresh`);
 
+  // Do NOT trim: porcelain's leading whitespace is significant.
   const porcelain = runner(`${prefix}status --porcelain`).stdout;
   const rawReport = parsePorcelain(porcelain);
 

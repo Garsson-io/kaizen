@@ -261,6 +261,36 @@ The rule: **if a hook detects a state that needs fixing, fix it — don't just d
 
 **Also applies to lint rules:** Code quality checks (detecting anti-patterns in source files) belong in **ESLint / `npm run lint` / CI**, never in a PreToolUse(Bash) hook. A hook fires on every tool call; a lint rule fires only when source files change. Wrong tool for the job produces noise and latency without benefit.
 
+## State-reading discipline (#1073 / #240)
+
+Hooks that inspect git working-tree state MUST route through
+`src/hooks/lib/git-state.ts`. Historical false-positives (#232, #721, #871,
+#1073) share two root causes — cwd drift and stat-vs-content disagreement —
+both neutralised by the primitive:
+
+- **`resolveTargetWorktree(cmdLine, fallbackCwd)`** — extracts the directory
+  the *gated command* will run in from `git -C <path>`, `cd <path> && …`,
+  `(cd <path> …)`, and quoted variants. Falls back to the passed-in cwd.
+  Anchors every subsequent git call via `-C <target>`.
+- **`readDirtyFiles(targetDir)`** — runs `git status --porcelain` then
+  verifies each flagged tracked file with `git diff --quiet HEAD -- <file>`.
+  Files whose content matches HEAD are filtered out (content truth overrides
+  stat-only porcelain claims).
+- **`formatDiagnostic(ctx)`** — stable diagnostic block in every deny
+  message: `[cwd]`, `[target]`, `[target-source]`, `[git-dir]`,
+  `[porcelain]`, per-file `[diff-index]`. Failure modes are debuggable from
+  the transcript alone.
+- **`isBypassRequested(env)`** — documented escape hatch. Agents that
+  believe the hook is wrong set `KAIZEN_ALLOW_DIRTY_FILES=1`; the bypass
+  is logged to stderr and must be followed by a kaizen issue pasting the
+  diagnostic block.
+
+A CI invariant in `src/hooks/lib/git-state-invariant.test.ts` fails the
+build if a new hook file calls `execSync('git …')` without importing from
+`./lib/git-state.js`. Hooks whose migration is pending live in the
+`OPT_OUT` set in that test; removing an entry without migrating the hook
+re-introduces the anti-pattern and breaks CI.
+
 ## Lessons Learned
 
 | Incident | Lesson | Kaizen |
@@ -272,4 +302,5 @@ The rule: **if a hook detects a state that needs fixing, fix it — don't just d
 | Cross-worktree gate clearing failed | Active declarations need `_any_branch` lookup | #239 |
 | `npm build && echo KAIZEN_IMPEDIMENTS:` bypassed gate | Segment-split before matching | #172 |
 | Hook tests flaky due to real state files | Always override `STATE_DIR` in tests | #309 |
+| `.claude-plugin/plugin.json` phantom-staged, blocked PR create | Hooks must resolve the gated command's target worktree and verify porcelain with content-level diff (not stat) — see § State-reading discipline | #1073 |
 | scope-guard blocked ALL tools → 10-message deadlock | Auto-fix bad state; warn don't block; lint ≠ hook | #758 |

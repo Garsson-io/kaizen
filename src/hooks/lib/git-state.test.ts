@@ -81,6 +81,27 @@ describe('resolveTargetWorktree', () => {
   });
 });
 
+describe('readDirtyFiles — porcelain whitespace invariant (live-fixture regression)', () => {
+  // Porcelain v1 distinguishes ` M file` (unstaged-modified) from `M  file`
+  // (staged-modified) by the leading space. Dropping that whitespace caused
+  // the hook to misbucket unstaged files as staged and to corrupt the file
+  // path via slice(3). Regression guard for the first iteration of #1073.
+  it('preserves leading whitespace when classifying unstaged-modified entries', () => {
+    const runner = (args: string) => {
+      if (args.includes('rev-parse --absolute-git-dir')) return { stdout: '/r/.git', exitCode: 0 };
+      if (args.includes('status --porcelain')) {
+        return { stdout: ' M .claude-plugin/plugin.json\n', exitCode: 0 };
+      }
+      if (args.includes('diff --quiet HEAD -- ')) return { stdout: '', exitCode: 1 };
+      return { stdout: '', exitCode: 0 };
+    };
+    const r = readDirtyFiles('/r', { runner });
+    expect(r.verified.modified).toHaveLength(1);
+    expect(r.verified.staged).toHaveLength(0);
+    expect(r.perFileDiff[0]?.file).toBe('.claude-plugin/plugin.json');
+  });
+});
+
 describe('readDirtyFiles', () => {
   type Runner = (args: string) => { stdout: string; exitCode: number };
 
