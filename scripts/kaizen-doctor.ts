@@ -276,12 +276,18 @@ export interface SessionSnapshot {
  *  Intentionally excludes `.claude/settings.json`: inline hook entries in
  *  settings.json hot-reload, and `enabledPlugins` changes are already caught
  *  by `plugin-double-install` and `stale-plugin-cache`. Hashing settings.json
- *  would false-positive on every inline hook edit. */
+ *  would false-positive on every inline hook edit.
+ *
+ *  Intentionally excludes `known_marketplaces.json` (#1065): Claude Code
+ *  rewrites it on its own cadence to refresh marketplace metadata (observed
+ *  mid-session, with no user action). Marketplace state does not affect
+ *  hook-registry loading — `installed_plugins.json` is the load signal.
+ *  Including it produced loud false-FAILs that trained users to ignore the
+ *  check — the exact failure mode restart-needed was added to prevent (#1061). */
 export function restartSensitiveFiles(opts: DoctorOpts): Array<{ label: string; path: string }> {
   return [
     { label: 'project-plugin-manifest', path: join(opts.projectRoot, '.claude-plugin/plugin.json') },
     { label: 'installed-plugins', path: join(opts.homeDir, '.claude/plugins/installed_plugins.json') },
-    { label: 'known-marketplaces', path: join(opts.homeDir, '.claude/plugins/known_marketplaces.json') },
   ];
 }
 
@@ -314,8 +320,12 @@ export function checkRestartNeeded(opts: DoctorOpts): CheckResult {
   }
   const current = buildSnapshot(opts);
   const drifted: string[] = [];
-  for (const [label, prev] of Object.entries(snap.hashes)) {
-    const now = current.hashes[label];
+  // Iterate over the CURRENT label set, not the snapshot's. Labels that
+  // existed in older snapshots but have since been removed (e.g. the
+  // `known-marketplaces` label retired in #1065) would otherwise drift
+  // forever against stale on-disk snapshot files.
+  for (const [label, now] of Object.entries(current.hashes)) {
+    const prev = snap.hashes[label];
     if (prev !== now) drifted.push(label);
   }
   if (drifted.length > 0) {

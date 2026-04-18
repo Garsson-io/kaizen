@@ -241,6 +241,47 @@ describe('checkRestartNeeded + buildSnapshot', () => {
     const snap = buildSnapshot(opts);
     for (const l of labels) expect(snap.hashes).toHaveProperty(l);
   });
+
+  it('#1065: PASS when only known_marketplaces.json drifts (Claude refreshes it mid-session)', () => {
+    const opts: DoctorOpts = { projectRoot: proj, homeDir: home };
+    mkdirSync(join(home, '.claude/plugins'), { recursive: true });
+    writeFileSync(
+      join(home, '.claude/plugins/known_marketplaces.json'),
+      JSON.stringify({ kaizen: { refreshedAt: 't0' } }),
+    );
+    const snap = buildSnapshot(opts);
+    mkdirSync(join(home, '.claude/kaizen-snapshots'), { recursive: true });
+    writeFileSync(snapshotPath(opts), JSON.stringify(snap));
+    // Claude rewrites the marketplace file mid-session — no user action.
+    writeFileSync(
+      join(home, '.claude/plugins/known_marketplaces.json'),
+      JSON.stringify({ kaizen: { refreshedAt: 't1' } }),
+    );
+    const r = checkRestartNeeded(opts);
+    expect(r.status).toBe('PASS');
+  });
+
+  it('#1065: known-marketplaces label is not in the snapshot set', () => {
+    const opts: DoctorOpts = { projectRoot: proj, homeDir: home };
+    const labels = restartSensitiveFiles(opts).map(f => f.label);
+    expect(labels).not.toContain('known-marketplaces');
+  });
+
+  it('#1065: stale snapshots with retired labels do not drift forever', () => {
+    // A pre-#1065 snapshot contains the retired `known-marketplaces` label.
+    // The check must iterate over the current label set, not the snapshot's,
+    // so retired labels are ignored rather than compared to `undefined`.
+    const opts: DoctorOpts = { projectRoot: proj, homeDir: home };
+    const current = buildSnapshot(opts);
+    const staleSnap = {
+      ...current,
+      hashes: { ...current.hashes, 'known-marketplaces': 'deadbeef-old-hash' },
+    };
+    mkdirSync(join(home, '.claude/kaizen-snapshots'), { recursive: true });
+    writeFileSync(snapshotPath(opts), JSON.stringify(staleSnap));
+    const r = checkRestartNeeded(opts);
+    expect(r.status).toBe('PASS');
+  });
 });
 
 describe('checkHookExecSmoke', () => {
