@@ -101,6 +101,26 @@ describe('analyzeCommand', () => {
     expect(analyzeCommand('cd /tmp\ngit push --no-verify').allow).toBe(false);
   });
 
+  it('denies $(git push --no-verify) subshell wrapper', () => {
+    expect(analyzeCommand('echo "pushed: $(git push --no-verify)"').allow).toBe(false);
+  });
+
+  it('denies `git push --no-verify` backtick subshell', () => {
+    expect(analyzeCommand('echo "result: `git push --no-verify`"').allow).toBe(false);
+  });
+
+  it('denies bash -c with quoted git push --no-verify', () => {
+    expect(analyzeCommand(`bash -c 'git push --no-verify'`).allow).toBe(false);
+  });
+
+  it('denies sh -c with double-quoted git push --no-verify', () => {
+    expect(analyzeCommand('sh -c "git push --no-verify"').allow).toBe(false);
+  });
+
+  it('denies nested subshell: $( ... $(git push --no-verify) ... )', () => {
+    expect(analyzeCommand('x=$(echo $(git push --no-verify))').allow).toBe(false);
+  });
+
   it('does not deny --no-verify in unrelated commands', () => {
     // --no-verify used in another context isn't a git push concern
     expect(analyzeCommand('some-other-tool --no-verify').allow).toBe(true);

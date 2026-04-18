@@ -53,6 +53,35 @@ export const KAIZEN_HOOK_ID = 'kaizen-pre-push';
 export const KAIZEN_CHAIN_MARKER = '# KAIZEN_CHAIN_START';
 export const KAIZEN_CHAIN_END_MARKER = '# KAIZEN_CHAIN_END';
 
+/**
+ * Build the marker-bracketed shell block that hook frameworks chain to
+ * `.kaizen-hooks/pre-push`. The only thing that varies across frameworks is
+ * how the entry script is located — husky's `.husky/pre-push` runs in the
+ * hooks dir so it uses `$(dirname "$0")/../`, while raw `.git/hooks/pre-push`
+ * and `.githooks/pre-push` run without guaranteed cwd and use
+ * `$(git rev-parse --show-toplevel)`. Centralizing the block keeps the
+ * comment, marker pair, guard, and execution semantics identical across all
+ * three injectors (previously three hand-maintained copies — dry/tooling
+ * finding, round 5).
+ */
+function buildChainBlock(entryExpr: string, includeHeaderComment = true): string {
+  const lines = [
+    '',
+    KAIZEN_CHAIN_MARKER,
+  ];
+  if (includeHeaderComment) {
+    lines.push(`# Added by kaizen /kaizen-setup (see epic #1059)`);
+  }
+  lines.push(
+    `if [ -x "${entryExpr}" ]; then`,
+    `  "${entryExpr}" "$@" || exit $?`,
+    'fi',
+    KAIZEN_CHAIN_END_MARKER,
+    '',
+  );
+  return lines.join('\n');
+}
+
 // ── Detection ─────────────────────────────────────────────────────────
 
 /**
@@ -198,16 +227,7 @@ export function injectIntoHusky(cwd: string): InstallResult {
     };
   }
 
-  const chainBlock = [
-    '',
-    KAIZEN_CHAIN_MARKER,
-    `# Added by kaizen /kaizen-setup (see epic #1059)`,
-    `if [ -x "$(dirname "$0")/../${KAIZEN_ENTRY_PATH}" ]; then`,
-    `  "$(dirname "$0")/../${KAIZEN_ENTRY_PATH}" "$@" || exit $?`,
-    'fi',
-    KAIZEN_CHAIN_END_MARKER,
-    '',
-  ].join('\n');
+  const chainBlock = buildChainBlock(`$(dirname "$0")/../${KAIZEN_ENTRY_PATH}`);
 
   writeFileSync(hookPath, existing.trimEnd() + '\n' + chainBlock, { mode: 0o755 });
   chmodSync(hookPath, 0o755);
@@ -281,16 +301,7 @@ export function injectIntoRaw(cwd: string): InstallResult {
     };
   }
 
-  const chainBlock = [
-    '',
-    KAIZEN_CHAIN_MARKER,
-    `# Added by kaizen /kaizen-setup (see epic #1059)`,
-    `if [ -x "$(git rev-parse --show-toplevel)/${KAIZEN_ENTRY_PATH}" ]; then`,
-    `  "$(git rev-parse --show-toplevel)/${KAIZEN_ENTRY_PATH}" "$@" || exit $?`,
-    'fi',
-    KAIZEN_CHAIN_END_MARKER,
-    '',
-  ].join('\n');
+  const chainBlock = buildChainBlock(`$(git rev-parse --show-toplevel)/${KAIZEN_ENTRY_PATH}`);
 
   writeFileSync(hookPath, existing.trimEnd() + '\n' + chainBlock, { mode: 0o755 });
   chmodSync(hookPath, 0o755);
@@ -325,16 +336,12 @@ export function installStandalone(cwd: string): InstallResult {
         logMessage: `standalone: kaizen chain already present in ${hookPath} — no change`,
       };
     }
-    // Exists but doesn't chain — append a chain block
-    const chainBlock = [
-      '',
-      KAIZEN_CHAIN_MARKER,
-      `if [ -x "$(git rev-parse --show-toplevel)/${KAIZEN_ENTRY_PATH}" ]; then`,
-      `  "$(git rev-parse --show-toplevel)/${KAIZEN_ENTRY_PATH}" "$@" || exit $?`,
-      'fi',
-      KAIZEN_CHAIN_END_MARKER,
-      '',
-    ].join('\n');
+    // Exists but doesn't chain — append a chain block (no header comment,
+    // matching the pre-existing standalone style).
+    const chainBlock = buildChainBlock(
+      `$(git rev-parse --show-toplevel)/${KAIZEN_ENTRY_PATH}`,
+      false,
+    );
     writeFileSync(hookPath, existing.trimEnd() + '\n' + chainBlock, { mode: 0o755 });
     chmodSync(hookPath, 0o755);
   } else {

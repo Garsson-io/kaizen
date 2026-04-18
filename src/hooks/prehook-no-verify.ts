@@ -46,9 +46,11 @@ export function analyzeCommand(command: string): NoVerifyDecision {
     return { allow: true, reason: 'empty_command' };
   }
 
-  // Split into segments on `;`, `|`, `&&`, `||`, newline so each segment
-  // is considered separately.
-  const segments = command.split(/;|\|\||\&\&|\||\n/);
+  // Split into segments on `;`, `|`, `&&`, `||`, newline, AND subshell
+  // punctuation (`$(`, `)`, backticks) so wrappers like `$(git push
+  // --no-verify)` and `` `git push --no-verify` `` land in their own
+  // segment rather than hiding the git-push token behind `$`/`(`/`` ` ``.
+  const segments = command.split(/;|\|\||\&\&|\||\n|\$\(|\)|`/);
 
   // Within each chained segment, look for both:
   //   1. `git push` (possibly path-prefixed or preceded by wrappers/env)
@@ -67,8 +69,11 @@ export function analyzeCommand(command: string): NoVerifyDecision {
   //   /usr/bin/git push --no-verify
   //   env KEY=val git push --no-verify
 
-  const GIT_PUSH_ANYWHERE = /(^|\s)(?:\S+\/)?git\s+push\b/;
-  const NO_VERIFY_FLAG = /(^|\s)--no-verify\b/;
+  // Leading boundary must include quotes (`'`, `"`) so `bash -c 'git push
+  // --no-verify'` is caught — the `'` is non-space but non-word so we widen
+  // `\s` to "any non-identifier char". Same for the flag check.
+  const GIT_PUSH_ANYWHERE = /(^|[^A-Za-z0-9_])(?:\S+\/)?git\s+push\b/;
+  const NO_VERIFY_FLAG = /(^|[^A-Za-z0-9_])--no-verify\b/;
 
   for (const seg of segments) {
     if (!GIT_PUSH_ANYWHERE.test(seg)) continue;
