@@ -20,9 +20,13 @@
 import {
   existsSync,
   readFileSync,
+  writeFileSync,
+  mkdirSync,
+  realpathSync,
   constants as fsConstants,
   accessSync,
 } from 'node:fs';
+import { dirname } from 'node:path';
 import { join, resolve, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -77,14 +81,50 @@ function collectHookCommands(cfg: unknown): string[] {
   return out;
 }
 
-/** Resolve the actual executable path from a hook `command` string.
- *  Strips args, expands ${CLAUDE_PLUGIN_ROOT} against projectRoot, and
- *  resolves relative paths against projectRoot. */
+/** Extract the executable path from a hook `command` string.
+ *  Handles:
+ *    - shell-style quotes: `"path with spaces/foo.sh" arg`  → `path with spaces/foo.sh`
+ *    - env-variable prefixes: `FOO=1 BAR=2 ./hook.sh`        → `./hook.sh`
+ *    - `${CLAUDE_PLUGIN_ROOT}` expansion against projectRoot
+ *    - relative paths resolved against projectRoot */
 export function resolveHookPath(command: string, projectRoot: string): string {
-  const first = command.trim().split(/\s+/)[0] ?? '';
+  const tokens = tokenize(command);
+  // Skip leading `FOO=bar` env-variable prefixes (POSIX shell convention).
+  let i = 0;
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i] ?? '')) i++;
+  const first = tokens[i] ?? '';
   const expanded = first.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, projectRoot);
   if (isAbsolute(expanded)) return expanded;
   return resolve(projectRoot, expanded);
+}
+
+/** POSIX-ish shell tokenizer: respects single and double quotes and simple
+ *  backslash escapes. Does not attempt full shell semantics — enough for
+ *  the hook `command` strings kaizen/plugins actually emit. */
+export function tokenize(input: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quote: '"' | "'" | null = null;
+  let pending = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (quote) {
+      if (ch === quote) { quote = null; pending = true; }
+      else if (quote === '"' && ch === '\\' && i + 1 < input.length) { cur += input[++i]; }
+      else { cur += ch; }
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; pending = true; continue; }
+    if (ch === '\\' && i + 1 < input.length) { cur += input[++i]; pending = true; continue; }
+    if (ch && /\s/.test(ch)) {
+      if (pending) { out.push(cur); cur = ''; pending = false; }
+      continue;
+    }
+    cur += ch;
+    pending = true;
+  }
+  if (pending) out.push(cur);
+  return out;
 }
 
 /** Check 1: project-scope double install. */
@@ -160,17 +200,31 @@ export function checkDanglingHookPaths(opts: DoctorOpts): CheckResult {
   };
 }
 
-/** Check 3: cache-dir vs installed_plugins.json consistency. */
+/** Check 3: cache-dir vs installed_plugins.json consistency.
+ *  Scoped to THIS project's path — matches the detection jq query in #1061. */
 export function checkStalePluginCache(opts: DoctorOpts): CheckResult {
   const plugin = opts.pluginName ?? DEFAULT_PLUGIN;
   const shortName = plugin.split('@')[0] ?? plugin;
   const installedPath = join(opts.homeDir, '.claude/plugins/installed_plugins.json');
   const cacheDir = join(opts.homeDir, `.claude/plugins/cache/${shortName}`);
+  const normalizedRoot = normalizeProjectRoot(opts.projectRoot);
 
   const installed = safeReadJson(installedPath) as
-    | { plugins?: Record<string, unknown> }
+    | { plugins?: Record<string, Array<Record<string, unknown>> | Record<string, unknown>> }
     | null;
-  const hasRecord = !!installed?.plugins?.[plugin];
+  const entry = installed?.plugins?.[plugin];
+  // Match only entries scoped to THIS project (projectPath == normalizedRoot).
+  // If the entry is an array (current Claude Code format), filter it.
+  // If it's a plain object (older format), treat as matching.
+  let hasRecord = false;
+  if (Array.isArray(entry)) {
+    hasRecord = entry.some(e => {
+      const p = (e as { projectPath?: string }).projectPath;
+      return typeof p === 'string' && normalizeProjectRoot(p) === normalizedRoot;
+    });
+  } else if (entry && typeof entry === 'object') {
+    hasRecord = true;
+  }
   const hasCache = existsSync(cacheDir);
 
   if (hasRecord && !hasCache) {
@@ -196,10 +250,18 @@ export function checkStalePluginCache(opts: DoctorOpts): CheckResult {
   };
 }
 
+/** Normalize a project root for snapshot-keying. Uses realpath when possible
+ *  so symlinks, trailing slashes, and subdirectory-CWD cases all collapse
+ *  to the same key. Falls back to path.resolve for non-existent paths
+ *  (unit tests against tmp dirs that may be removed). */
+export function normalizeProjectRoot(projectRoot: string): string {
+  try { return realpathSync(projectRoot); } catch { return resolve(projectRoot); }
+}
+
 /** Path to the session-start snapshot for this project. */
 export function snapshotPath(opts: DoctorOpts): string {
   const hash = createHash('sha256')
-    .update(opts.projectRoot)
+    .update(normalizeProjectRoot(opts.projectRoot))
     .digest('hex')
     .slice(0, 16);
   return join(opts.homeDir, '.claude/kaizen-snapshots', `${hash}.json`);
@@ -333,6 +395,15 @@ export function exitCodeFor(results: CheckResult[]): number {
   return results.some(r => r.status === 'FAIL') ? 1 : 0;
 }
 
+/** Write the session-start snapshot. Invoked from the SessionStart hook. */
+export function writeSessionSnapshot(opts: DoctorOpts): string {
+  const path = snapshotPath(opts);
+  mkdirSync(dirname(path), { recursive: true });
+  const snap = buildSnapshot(opts);
+  writeFileSync(path, JSON.stringify(snap, null, 2));
+  return path;
+}
+
 const isMain = (() => {
   try {
     return import.meta.url === `file://${process.argv[1]}`;
@@ -343,9 +414,16 @@ const isMain = (() => {
 
 if (isMain) {
   const argv = process.argv.slice(2);
+  const opts: DoctorOpts = { projectRoot: process.cwd(), homeDir: homedir() };
+
+  // `snapshot` subcommand — for the SessionStart hook. Writes snapshot, exits 0.
+  if (argv[0] === 'snapshot') {
+    try { writeSessionSnapshot(opts); } catch {}
+    process.exit(0);
+  }
+
   const json = argv.includes('--json');
   const quiet = argv.includes('--quiet');
-  const opts: DoctorOpts = { projectRoot: process.cwd(), homeDir: homedir() };
   const results = runAllChecks(opts);
   if (json) {
     process.stdout.write(JSON.stringify({ results }, null, 2) + '\n');

@@ -132,12 +132,19 @@ describe('checkStalePluginCache', () => {
   beforeEach(() => { proj = makeProject(); home = makeHome(); });
   afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
 
-  it('FAIL when record present but cache missing', () => {
+  it('FAIL when record for THIS project present but cache missing', () => {
     writeFileSync(join(home, '.claude/plugins/installed_plugins.json'),
-      JSON.stringify({ plugins: { 'kaizen@kaizen': [{ installPath: '/nope' }] } }));
+      JSON.stringify({ plugins: { 'kaizen@kaizen': [{ installPath: '/nope', projectPath: proj }] } }));
     const r = checkStalePluginCache({ projectRoot: proj, homeDir: home });
     expect(r.status).toBe('FAIL');
     expect(r.detail).toContain('cache dir missing');
+  });
+
+  it('PASS when record scoped to OTHER project (#1061 detection-parity)', () => {
+    writeFileSync(join(home, '.claude/plugins/installed_plugins.json'),
+      JSON.stringify({ plugins: { 'kaizen@kaizen': [{ installPath: '/nope', projectPath: '/some/other/project' }] } }));
+    const r = checkStalePluginCache({ projectRoot: proj, homeDir: home });
+    expect(r.status).toBe('PASS');
   });
 
   it('WARN when cache present but no record', () => {
@@ -151,6 +158,32 @@ describe('checkStalePluginCache', () => {
     writeFileSync(join(home, '.claude/plugins/installed_plugins.json'), JSON.stringify({ plugins: {} }));
     const r = checkStalePluginCache({ projectRoot: proj, homeDir: home });
     expect(r.status).toBe('PASS');
+  });
+});
+
+describe('tokenize + resolveHookPath edge cases (#1062 review)', () => {
+  it('tokenize handles double-quoted paths with spaces', () => {
+    const r = resolveHookPath('"/path with spaces/foo.sh" arg', '/proj');
+    expect(r).toBe('/path with spaces/foo.sh');
+  });
+  it('resolveHookPath skips env-var prefixes', () => {
+    const r = resolveHookPath('FOO=1 BAR=baz ./hook.sh', '/proj');
+    expect(r).toBe('/proj/hook.sh');
+  });
+  it('resolveHookPath expands ${CLAUDE_PLUGIN_ROOT} even with env prefix', () => {
+    const r = resolveHookPath('X=1 ${CLAUDE_PLUGIN_ROOT}/hooks/foo.sh', '/proj');
+    expect(r).toBe('/proj/hooks/foo.sh');
+  });
+});
+
+describe('normalizeProjectRoot snapshot-key collision fixes', () => {
+  it('snapshotPath is stable across trailing-slash differences', async () => {
+    const { snapshotPath, normalizeProjectRoot } = await import('./kaizen-doctor.ts');
+    const a = snapshotPath({ projectRoot: '/usr', homeDir: '/tmp/h' });
+    const b = snapshotPath({ projectRoot: '/usr/', homeDir: '/tmp/h' });
+    // /usr exists — normalize via realpath which strips trailing slash
+    expect(normalizeProjectRoot('/usr/')).toBe('/usr');
+    expect(a).toBe(b);
   });
 });
 
