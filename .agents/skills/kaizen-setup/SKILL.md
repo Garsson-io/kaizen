@@ -24,16 +24,15 @@ Then restart Claude Code and re-run `/kaizen-setup`.
 
 ## Step 0.5: Enable at project scope (#1063)
 
-After install, the plugin is downloaded but dormant until the host project **activates** it. Activation lives in the host project's `.claude/settings.json`, never user-scope:
+After install, the plugin is downloaded but dormant until the host project **activates** it. Run:
 
-```jsonc
-// <host-project>/.claude/settings.json
-{
-  "enabledPlugins": { "kaizen@kaizen": true }
-}
+```bash
+npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" --step enable
 ```
 
-This is the sole hook source. Never add a `hooks` block here — that re-creates the #1061 dual-load state. kaizen-on-kaizen follows the same pattern: the kaizen repo's own settings.json activates via `enabledPlugins` only.
+This idempotently writes `enabledPlugins["kaizen@kaizen"] = true` into the host project's `.claude/settings.json`, preserving all other keys. Safe to re-run.
+
+Activation lives ONLY in the project's `.claude/settings.json`, never in user-scope, and never alongside a `hooks` block — either of those re-creates the #1061 dual-load state (guarded by `scripts/kaizen-self-invariants.test.ts` and the `kaizen-block-self-plugin-enable.sh` PreToolUse hook). kaizen-on-kaizen follows the same pattern: the kaizen repo's own settings.json activates via `enabledPlugins` only.
 
 ## Step 1: Create kaizen.config.json
 

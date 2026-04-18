@@ -11,6 +11,7 @@ import {
   verifySetup,
   verifyPluginContract,
   postUpdateValidate,
+  enablePlugin,
 } from "./kaizen-setup.js";
 
 let tempDir: string;
@@ -437,5 +438,60 @@ min_version: "2.0.0"
     expect(versionCheck).toBeDefined();
     expect(versionCheck!.ok).toBe(false);
     expect(versionCheck!.detail).toContain("2.0.0");
+  });
+});
+
+describe("enablePlugin (#1063 — --step enable)", () => {
+  it("creates .claude/settings.json with enabledPlugins when missing", () => {
+    const r = enablePlugin(tempDir);
+    expect(r).toEqual({ step: "enable", status: "ok", path: join(tempDir, ".claude/settings.json"), changed: true });
+    const parsed = JSON.parse(readFileSync(r.path!, "utf-8"));
+    expect(parsed.enabledPlugins["kaizen@kaizen"]).toBe(true);
+  });
+
+  it("adds enabledPlugins to an existing settings.json without clobbering other keys", () => {
+    mkdirSync(join(tempDir, ".claude"), { recursive: true });
+    writeFileSync(
+      join(tempDir, ".claude/settings.json"),
+      JSON.stringify({ env: { FOO: "bar" }, permissions: { allow: ["Bash(git status)"] } }),
+    );
+    const r = enablePlugin(tempDir);
+    expect(r.changed).toBe(true);
+    const parsed = JSON.parse(readFileSync(r.path!, "utf-8"));
+    expect(parsed.env).toEqual({ FOO: "bar" });
+    expect(parsed.permissions.allow).toEqual(["Bash(git status)"]);
+    expect(parsed.enabledPlugins["kaizen@kaizen"]).toBe(true);
+  });
+
+  it("is idempotent — second call returns changed:false", () => {
+    enablePlugin(tempDir);
+    const r = enablePlugin(tempDir);
+    expect(r.changed).toBe(false);
+    expect(r.status).toBe("ok");
+  });
+
+  it("preserves other enabledPlugins entries", () => {
+    mkdirSync(join(tempDir, ".claude"), { recursive: true });
+    writeFileSync(
+      join(tempDir, ".claude/settings.json"),
+      JSON.stringify({ enabledPlugins: { "other@x": true } }),
+    );
+    enablePlugin(tempDir);
+    const parsed = JSON.parse(readFileSync(join(tempDir, ".claude/settings.json"), "utf-8"));
+    expect(parsed.enabledPlugins).toEqual({ "other@x": true, "kaizen@kaizen": true });
+  });
+
+  it("accepts a custom plugin name", () => {
+    const r = enablePlugin(tempDir, "my-plugin@foo");
+    const parsed = JSON.parse(readFileSync(r.path!, "utf-8"));
+    expect(parsed.enabledPlugins["my-plugin@foo"]).toBe(true);
+  });
+
+  it("returns error on malformed settings.json instead of overwriting", () => {
+    mkdirSync(join(tempDir, ".claude"), { recursive: true });
+    writeFileSync(join(tempDir, ".claude/settings.json"), "{{{ not json");
+    const r = enablePlugin(tempDir);
+    expect(r.status).toBe("error");
+    expect(r.error).toContain("parse error");
   });
 });
