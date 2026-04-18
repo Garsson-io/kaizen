@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# .githooks/pre-push — kaizen mechanistic push-time gate (epic #1059).
+#
+# Agent-only: exits 0 silently for manual (non-agent) git operations.
+# When CLAUDECODE / CLAUDE_PROJECT_DIR / CODEX_SESSION / KAIZEN_SESSION is set,
+# delegates to src/hooks/pre-push.ts which:
+#   - blocks push to branch whose most-recent PR is MERGED with no newer OPEN (#1032)
+#   - opens needs_review gate on push to an open-PR branch (#909, #1057)
+#   - traces every invocation to $KAIZEN_HOOK_TRACE
+#
+# Bypass: `git push -o kaizen-force ...` is recognized by the TS handler
+# as an explicit override for merged-branch correction.
+
+set -eu
+
+# ── Agent-env gate ─────────────────────────────────────────────────────
+if [ -z "${CLAUDECODE:-}" ] && [ -z "${CLAUDE_PROJECT_DIR:-}" ] \
+   && [ -z "${CODEX_SESSION:-}" ] && [ -z "${KAIZEN_SESSION:-}" ]; then
+  exit 0
+fi
+
+# ── Locate the TS entry point ──────────────────────────────────────────
+# We resolve the repo root via git (works in worktrees — git pre-push is
+# always invoked with CWD = current worktree root).
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [ -z "$REPO_ROOT" ]; then
+  exit 0  # not a git repo → nothing for us to do
+fi
+
+HOOK_TS="$REPO_ROOT/src/hooks/pre-push.ts"
+if [ ! -f "$HOOK_TS" ]; then
+  # Kaizen hooks not present on this worktree's branch — silently allow.
+  # kaizen-worktree-setup.sh surfaces this at session start.
+  exit 0
+fi
+
+# ── Dispatch ───────────────────────────────────────────────────────────
+# Pass stdin (git's pre-push refs) straight through; forward exit code.
+# PATH may not include tsx on first run — fall back to node_modules/.bin.
+if command -v npx >/dev/null 2>&1; then
+  exec npx --no-install tsx "$HOOK_TS" "$@"
+fi
+
+if [ -x "$REPO_ROOT/node_modules/.bin/tsx" ]; then
+  exec "$REPO_ROOT/node_modules/.bin/tsx" "$HOOK_TS" "$@"
+fi
+
+# No tsx available — fail-open rather than block legitimate pushes.
+exit 0

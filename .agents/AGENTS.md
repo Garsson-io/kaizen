@@ -58,6 +58,11 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `src/section-editor.ts` | Low-level: sections (## in bodies) + attachments (marker comments) — CRUD primitives |
 | `src/case-system.ts` | **Case FE** — single gateway for plan gate (I3, I8). Pluggable `CaseBackend`: `GitHubCaseBackend` today, Linear/custom tomorrow. Hooks and skills go through this, never call BE directly |
 | `src/hooks/enforce-plan-stored.ts` | PreToolUse hook enforcing I3/I8: Edit/Write/NotebookEdit require a stored plan on `git config kaizen.issue`; `gh pr create` adds a substance check |
+| `src/hooks/pre-push.ts` | **Git pre-push hook** (epic #1059) — mechanistic L3 gate: agent-env gate + merged-branch block (I7) + needs_review gate creation. Replaces fragile Bash parsing path for push detection (#909, #1057). See `docs/git-hooks-design.md`. |
+| `src/hooks/prehook-no-verify.ts` | PreToolUse hook blocking `git push --no-verify` — prevents agents from bypassing the pre-push gate |
+| `src/setup-git-hooks.ts` | `/kaizen-setup install-git-hooks` implementation — detects host framework (pre-commit/husky/lefthook/raw/none) and injects kaizen's pre-push hook idempotently |
+| `.githooks/pre-push` | Shell dispatcher — agent-env shortcut then `npx tsx src/hooks/pre-push.ts`; `core.hooksPath=.githooks` set by `prepare` script |
+| `docs/git-hooks-design.md` | Architecture + decision record for the pre-push git hook layer |
 | `src/plan-store.ts` | Plan-specific helpers (extractPlanText, re-exports from structured-data) |
 
 ## Skills

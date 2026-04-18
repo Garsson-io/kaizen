@@ -1,6 +1,6 @@
 {
   "name": "kaizen",
-  "version": "1.0.97",
+  "version": "1.0.98",
   "description": "Continuous improvement plugin for Claude Code — enforcement hooks, reflection workflows, dev workflow skills, and recursive self-improvement",
   "author": {
     "name": "Garsson-io",
@@ -89,6 +89,11 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-block-git-rebase.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-prehook-no-verify.sh",
             "timeout": 10
           },
           {

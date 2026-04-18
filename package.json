@@ -4,6 +4,7 @@
   "description": "Kaizen — continuous improvement plugin for Claude Code",
   "type": "module",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "build": "tsc",
     "test": "timeout --kill-after=10 120 vitest run",
     "test:ci": "timeout --kill-after=10 180 vitest run --coverage --reporter=default --reporter=junit --outputFile.junit=artifacts/junit.xml",

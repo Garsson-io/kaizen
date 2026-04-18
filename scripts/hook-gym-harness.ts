@@ -30,6 +30,55 @@ import { formatTimeline } from './hook-gym-format.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// ── Scenario setup-file seeding ─────────────────────────────────
+
+/**
+ * Write per-scenario setup files into a fixture repo and commit them.
+ *
+ * Idempotent: files whose on-disk content already matches are skipped, so
+ * running twice against the same fixture produces no spurious commits.
+ * Paths that would escape the fixture dir (via `..` or absolute paths) are
+ * refused. Writes happen BEFORE the agent spawns so the scenario prompt's
+ * assumptions about host state (e.g. ".pre-commit-config.yaml exists") are
+ * true from turn zero. Extracted as a standalone function so scenarios that
+ * need seeded host state can be tested without spinning up a full FixtureRepo.
+ */
+export function seedSetupFiles(
+  fixtureDir: string,
+  scenarioName: string,
+  files: Record<string, string>,
+  log: (...args: unknown[]) => void = () => {},
+): { wrote: number; committed: boolean } {
+  let wrote = 0;
+  for (const [relPath, content] of Object.entries(files)) {
+    const target = resolve(fixtureDir, relPath);
+    if (!target.startsWith(fixtureDir + '/') && target !== fixtureDir) {
+      log(`[fixture] refusing setupFile escape: ${relPath}`);
+      continue;
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    let existing: string | null = null;
+    try { existing = readFileSync(target, 'utf-8'); } catch { /* new file */ }
+    if (existing === content) continue;
+    writeFileSync(target, content, { flag: 'w' });
+    wrote++;
+  }
+  if (wrote === 0) {
+    log(`[fixture] setupFiles for ${scenarioName}: no changes`);
+    return { wrote: 0, committed: false };
+  }
+  log(`[fixture] Seeded ${wrote} file(s) for ${scenarioName}`);
+  execFileSync('git', ['add', '-A'], { stdio: 'pipe', timeout: 10_000, cwd: fixtureDir });
+  try {
+    execFileSync('git', [
+      'commit', '-m', `chore: seed files for ${scenarioName} (hook-gym)`, '--no-verify',
+    ], { stdio: 'pipe', timeout: 10_000, cwd: fixtureDir });
+    return { wrote, committed: true };
+  } catch {
+    return { wrote, committed: false };
+  }
+}
+
 // ── FixtureRepo ─────────────────────────────────────────────────
 
 export class FixtureRepo {
@@ -141,6 +190,9 @@ export class FixtureRepo {
    * Run a scenario against this fixture repo.
    */
   async run(scenario: Scenario, opts: RunOpts = {}): Promise<RunResult> {
+    if (scenario.setupFiles) {
+      seedSetupFiles(this.dir, scenario.name, scenario.setupFiles, opts.log ?? console.log);
+    }
     return runScenario(scenario, { ...opts, cwd: this.dir, hostRepo: this.hostRepo });
   }
 

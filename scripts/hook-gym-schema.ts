@@ -116,6 +116,20 @@ export interface Scenario {
    * events were captured before the timeout killed the subprocess.
    */
   expectTimeout?: boolean;
+  /**
+   * Per-scenario file seeding. Files are written to the fixture repo after
+   * the common FixtureRepo setup but before the agent spawns. Path keys are
+   * relative to the fixture repo root; content is the literal UTF-8 payload.
+   *
+   * Use case: a scenario that asserts framework detection (pre-commit,
+   * husky, lefthook) needs the host repo to look like that framework is
+   * in use. kaizen-test-fixture is a bare repo — seeding lives with the
+   * scenario, not the fixture repo. Added in epic #1059.
+   *
+   * Files are committed with message `chore: seed files for <scenario>
+   * (hook-gym)` so the pre-run working tree is clean.
+   */
+  setupFiles?: Record<string, string>;
 }
 
 // ── Scoring ────────────────────────────────────────────────────────

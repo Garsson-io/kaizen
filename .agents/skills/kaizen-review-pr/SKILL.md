@@ -132,25 +132,30 @@ Send **one message with all Agent tool calls** (parallel launch). For each group
 - **Instruct each agent to store its own findings immediately** (see storage instruction below)
 
 **Storage instruction to include in every subagent prompt** (substitute actual PR number, repo, round):
-> After outputting your JSON findings blocks, for EACH dimension you reviewed:
+> After outputting your JSON findings blocks, for EACH dimension you reviewed,
+> pipe the JSON payload directly to `store-review-finding` via `--stdin`:
 >
-> 1. Write the JSON payload to a temp file (shell-quoting on `--text` is brittle for
->    payloads with quotes/newlines — #1039 showed this silently degrades to a
->    fail-with-empty-findings sentinel that satisfies the review gate but loses
->    every actual finding):
->    ```bash
->    cat > /tmp/finding-<dim>.json <<'JSON'
->    {"dimension":"<dim>","verdict":"pass|fail","summary":"...","findings":[...]}
->    JSON
->    ```
-> 2. Store it via `--payload-file`:
->    ```bash
->    npx tsx src/cli-structured-data.ts store-review-finding \
->      --pr <PR_NUMBER> --repo <owner/repo> --round <ROUND> \
->      --dimension <dim> --payload-file /tmp/finding-<dim>.json
->    ```
+> ```bash
+> npx tsx src/cli-structured-data.ts store-review-finding \
+>   --pr <PR_NUMBER> --repo <owner/repo> --round <ROUND> \
+>   --dimension <dim> --stdin <<'JSON'
+> {"dimension":"<dim>","verdict":"pass|fail","summary":"...","findings":[...]}
+> JSON
+> ```
 >
-> The CLI now validates the payload strictly: it exits non-zero with an actionable
+> **Use heredoc-to-stdin, not `--text`** — shell-quoting `--text` with JSON that
+> contains quotes or newlines is fragile (#1039 silently degraded to a
+> fail-with-empty-findings sentinel that satisfied the review gate but lost
+> every actual finding). Heredoc-to-stdin passes the payload through a pipe —
+> no shell quoting, multi-line-safe.
+>
+> **Do NOT write to `/tmp/finding-<dim>.json` first** — the review gate
+> (`enforce-pr-review.ts`) blocks the `Write` tool and most Bash commands
+> during active review; `cat > /tmp/...` heredoc redirects are among the
+> blocked operations. `npx tsx ... --stdin <<'JSON'` is on the allowed
+> path (`npx` + Bash heredoc into the process's stdin). See epic #1059.
+>
+> The CLI validates the payload strictly: it exits non-zero with an actionable
 > error if the JSON doesn't parse, required fields are missing, or `verdict=fail`
 > has empty findings. If you see a non-zero exit, FIX the payload and re-run —
 > do not ignore it, or the review gate will clear on empty findings.

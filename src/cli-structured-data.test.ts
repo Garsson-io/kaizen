@@ -101,6 +101,42 @@ describe('resolveContent', () => {
   it('returns empty string when no source given', () => {
     expect(resolveContent({} as CliArgs)).toBe('');
   });
+
+  it('reads from fd 0 when --stdin is passed (epic #1059 review-gate fix)', () => {
+    // When --stdin is present, resolveContent calls readFileSync(0, 'utf8').
+    // The node:fs mock returns 'file-content' for any readFileSync call,
+    // which is enough to verify the code path is taken without duplicating
+    // the mock registry.
+    expect(resolveContent({ stdin: 'true' } as CliArgs)).toBe('file-content');
+    expect(vi.mocked(readFileSync)).toHaveBeenCalledWith(0, 'utf8');
+  });
+});
+
+describe('parseArgs — boolean flag handling', () => {
+  it('treats --stdin as a boolean at end of args', () => {
+    const a = parseArgs(['store-review-finding', '--pr', '1', '--stdin']);
+    expect(a.stdin).toBe('true');
+    expect(a.pr).toBe('1');
+  });
+
+  it('treats --stdin as boolean when followed by another flag', () => {
+    const a = parseArgs(['store-review-finding', '--stdin', '--pr', '1', '--round', '2']);
+    expect(a.stdin).toBe('true');
+    expect(a.pr).toBe('1');
+    expect(a.round).toBe('2');
+  });
+
+  it('does not eat the next arg as --stdin value', () => {
+    const a = parseArgs(['store-review-finding', '--stdin', '--dimension', 'correctness']);
+    expect(a.stdin).toBe('true');
+    expect(a.dimension).toBe('correctness'); // regression: would be missing if --stdin ate --dimension
+  });
+
+  it('still parses value-bearing flags normally', () => {
+    const a = parseArgs(['store-review-finding', '--pr', '1060', '--round', '2']);
+    expect(a.pr).toBe('1060');
+    expect(a.round).toBe('2');
+  });
 });
 
 describe('resolveRound', () => {

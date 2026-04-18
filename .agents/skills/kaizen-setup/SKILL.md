@@ -70,6 +70,28 @@ npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts"
 
 Reports which checks pass/fail. Fix any failures.
 
+## Step 5: Install git hooks (epic #1059)
+
+Installs kaizen's `pre-push` git hook into the host project. Detects the host's hook framework (pre-commit, husky, lefthook, raw `.git/hooks`, or none) and injects kaizen non-destructively. Idempotent — safe to re-run.
+
+```bash
+npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" \
+  --step install-git-hooks --run-post-install true
+```
+
+Result reports the detected framework, modified files, and any post-install commands (e.g., for pre-commit hosts: `pre-commit install --hook-type pre-push`). With `--run-post-install true`, those commands run automatically.
+
+**What gets installed:**
+- `.kaizen-hooks/pre-push` — entry script (agent-env gate + dispatch to kaizen plugin)
+- Framework-specific injection (one of):
+  - pre-commit: adds `local` repo hook `kaizen-pre-push` to `.pre-commit-config.yaml`
+  - husky: appends chain block to `.husky/pre-push`
+  - lefthook: adds `pre-push.commands.kaizen-pre-push` to `lefthook.yml`
+  - raw `.git/hooks/pre-push`: appends chain block
+  - none: creates `.githooks/pre-push` and sets `git config core.hooksPath .githooks`
+
+See `docs/git-hooks-design.md` for architecture and decision rationale.
+
 ## Workflow Tasks
 
 | # | Task | Description |
@@ -77,7 +99,8 @@ Reports which checks pass/fail. Fix any failures.
 | 1 | Check installation | Verify CLAUDE_PLUGIN_ROOT is set |
 | 2 | Create config and policies | Run CLI for config + scaffold steps |
 | 3 | Inject CLAUDE.md and verify | Append kaizen section, run verify |
+| 4 | Install git hooks | Run `install-git-hooks` step (epic #1059) |
 
 ## Idempotency
 
-Safe to re-run — config overwrites, scaffold skips if exists, verify re-checks.
+Safe to re-run — config overwrites, scaffold skips if exists, verify re-checks, install-git-hooks detects existing kaizen chain markers and skips.

@@ -42,7 +42,7 @@ describe('hook-gym CLI — --list (B8)', () => {
 
   it('shows total count', () => {
     const { stdout } = runCli(['--list']);
-    expect(stdout).toContain('Total: 3 scenarios');
+    expect(stdout).toMatch(/Total: \d+ scenarios/);
   });
 
   it('includes model, budget, and timeout columns', () => {

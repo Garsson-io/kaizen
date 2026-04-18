@@ -34,7 +34,6 @@
  */
 
 import { readFileSync, mkdirSync, appendFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import YAML from 'yaml';
 import {
   prTarget,
@@ -66,26 +65,54 @@ import { normalizeReviewFindingData, validateReviewFindingPayload, summarizeFind
 export type CliArgs = Record<string, string> & { command: string };
 type Handler = (a: CliArgs) => Promise<void>;
 
+/**
+ * Flags that are booleans — no value follows, presence means true.
+ * Keeps `--stdin` usable without the trap of consuming the next arg.
+ */
+const BOOLEAN_FLAGS = new Set(['stdin']);
+
 export function parseArgs(argv?: string[]): CliArgs {
   const args = argv ?? process.argv.slice(2);
   const command = args[0] ?? '';
   const flags: Record<string, string> = {};
   for (let i = 1; i < args.length; i++) {
-    if (args[i].startsWith('--') && args[i + 1]) {
-      flags[args[i].slice(2)] = args[++i];
+    if (!args[i].startsWith('--')) continue;
+    const name = args[i].slice(2);
+    const nextIsFlag = args[i + 1]?.startsWith('--');
+    const atEnd = i + 1 >= args.length;
+    if (BOOLEAN_FLAGS.has(name) || nextIsFlag || atEnd) {
+      flags[name] = 'true';
+      continue;
     }
+    flags[name] = args[++i];
   }
   return { command, ...flags } as CliArgs;
 }
 
-/** Read content from --file / --payload-file, --text / --payload, or stdin (--stdin flag). */
+/**
+ * Read content from --file / --payload-file, --text / --payload, or stdin.
+ *
+ * Precedence: file → text → stdin (when `--stdin` is explicitly passed).
+ *
+ * Heredoc-to-stdin is the canonical pattern for multi-line JSON payloads during
+ * PR review (epic #1059 review-gate fix): the review gate blocks Write and most
+ * Bash commands, but `npx tsx ... --stdin <<'JSON' ... JSON` is permitted and
+ * the CLI reads the heredoc content directly — no intermediate /tmp file.
+ */
 export function resolveContent(a: CliArgs): string {
   const file = a.file ?? a['payload-file'];
   if (file) return readFileSync(file, 'utf8');
   const text = a.text ?? a.payload;
   if (text) return text;
-  if (a.stdin === 'true' || a.stdin === '') {
-    try { return execSync('cat', { encoding: 'utf8', timeout: 5000 }); } catch { return ''; }
+
+  if ('stdin' in a) {
+    // readFileSync(0) reads from fd 0 (stdin) synchronously. Caller must pipe
+    // or heredoc something in; if stdin is a TTY this will block indefinitely.
+    try {
+      return readFileSync(0, 'utf8');
+    } catch {
+      return '';
+    }
   }
   return '';
 }
