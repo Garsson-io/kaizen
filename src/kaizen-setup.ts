@@ -47,6 +47,15 @@ export interface ConfigResult {
   error?: string;
 }
 
+export interface EnableResult {
+  step: "enable";
+  status: "ok" | "error";
+  path?: string;
+  /** True if we wrote the entry; false if it was already present. */
+  changed?: boolean;
+  error?: string;
+}
+
 export interface ScaffoldResult {
   step: "scaffold";
   status: "ok" | "skipped";
@@ -115,6 +124,43 @@ export function generateConfig(input: ConfigInput, cwd: string): ConfigResult {
   const path = join(cwd, "kaizen.config.json");
   writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
   return { step: "config", status: "ok", path };
+}
+
+/**
+ * Activate the kaizen plugin for this project by setting
+ * `enabledPlugins["kaizen@kaizen"] = true` in the project's
+ * `.claude/settings.json`. Idempotent. Preserves all other keys.
+ *
+ * This is the ONE step that actually turns hooks on (#1063). Without
+ * it, `/plugin install` only downloads the plugin — it stays dormant
+ * until the host project activates it. Previously this was documented
+ * prose in SKILL.md; now it's mechanical, so a missed manual edit
+ * doesn't produce a silently-broken install.
+ */
+export function enablePlugin(cwd: string, pluginName = "kaizen@kaizen"): EnableResult {
+  const dir = join(cwd, ".claude");
+  const path = join(dir, "settings.json");
+
+  let data: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    try {
+      data = JSON.parse(readFileSync(path, "utf-8"));
+      if (!data || typeof data !== "object") data = {};
+    } catch (e) {
+      return { step: "enable", status: "error", path, error: `settings.json parse error: ${String(e)}` };
+    }
+  } else {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  const enabled = (data.enabledPlugins ?? {}) as Record<string, unknown>;
+  if (enabled[pluginName] === true) {
+    return { step: "enable", status: "ok", path, changed: false };
+  }
+  enabled[pluginName] = true;
+  data.enabledPlugins = enabled;
+  writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
+  return { step: "enable", status: "ok", path, changed: true };
 }
 
 export function scaffoldPolicies(cwd: string): ScaffoldResult {
@@ -401,6 +447,7 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       cwd: { type: "string" },
       "plugin-root": { type: "string" },
       "run-post-install": { type: "string" },
+      "plugin": { type: "string" },
     },
     strict: false,
   }) as { values: Record<string, string | undefined> };
@@ -425,6 +472,10 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
 
     case "scaffold":
       console.log(JSON.stringify(scaffoldPolicies(cwd)));
+      break;
+
+    case "enable":
+      console.log(JSON.stringify(enablePlugin(cwd, values["plugin"] ?? "kaizen@kaizen")));
       break;
 
     case "verify": {
@@ -469,7 +520,7 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
 
     default:
       console.error(`Unknown step: ${values.step}`);
-      console.error("Steps: detect, config, scaffold, verify, post-update-validate, install-git-hooks");
+      console.error("Steps: detect, config, scaffold, enable, verify, post-update-validate, install-git-hooks");
       process.exit(1);
   }
 }
