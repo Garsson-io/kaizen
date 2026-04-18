@@ -311,6 +311,14 @@ export const SCENARIOS: Scenario[] = [
       },
     ],
     expectedGates: [],
+    setupFiles: {
+      // Seed a minimal pre-commit config so install-git-hooks detects the
+      // pre-commit framework (PRIMARY branch) rather than falling back to raw
+      // .git/hooks installation. The install step injects a `local` repo with
+      // hook id `kaizen-pre-push` into this file.
+      '.pre-commit-config.yaml':
+        'repos:\n  - repo: meta\n    hooks:\n      - id: check-hooks-apply\n',
+    },
   },
 ];
 
