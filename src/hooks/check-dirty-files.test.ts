@@ -220,3 +220,171 @@ describe('checkDirtyFiles', () => {
     mockedExistsSync.mockRestore();
   });
 });
+
+/**
+ * Categorical fix — #1073 and the cwd/stat-drift family.
+ *
+ * Closes #1073 (plugin.json phantom staged). Regression-guards #871 (MM
+ * false-positive), #232 (cross-worktree cwd drift). Uses the gitExec
+ * option (new-style runner with exit codes) to exercise the code path
+ * that verifies porcelain claims with `git diff --quiet HEAD -- <file>`.
+ */
+describe('checkDirtyFiles — categorical (#1073)', () => {
+  type ExecResult = { stdout: string; exitCode: number };
+  type ExecRunner = (args: string) => ExecResult;
+
+  function makeExec(handlers: Array<[string, ExecResult]>): ExecRunner {
+    return (args: string) => {
+      for (const [pattern, out] of handlers) {
+        if (args.includes(pattern)) return out;
+      }
+      return { stdout: '', exitCode: 0 };
+    };
+  }
+
+  afterEach(() => {
+    vi.mocked(existsSync).mockRestore();
+  });
+
+  describe('cwd-drift: cd X && gh pr create (#1073, #232)', () => {
+    it('resolves to cd target and anchors every git call via -C <target>', () => {
+      vi.mocked(existsSync).mockImplementation(() => false);
+
+      const calls: string[] = [];
+      const exec: ExecRunner = (args) => {
+        calls.push(args);
+        if (args.includes('rev-parse --absolute-git-dir')) {
+          return { stdout: '/clean-wt/.git', exitCode: 0 };
+        }
+        if (args.includes('status --porcelain')) {
+          return { stdout: '', exitCode: 0 };
+        }
+        return { stdout: '', exitCode: 0 };
+      };
+
+      const result = checkDirtyFiles('cd /clean-wt && gh pr create --title t', {
+        gitExec: exec,
+      });
+
+      expect(result.action).toBe('allow');
+      const anchored = calls.filter((c) => c.includes('status --porcelain'));
+      expect(anchored.length).toBeGreaterThan(0);
+      for (const c of anchored) {
+        expect(c).toContain('-C /clean-wt');
+      }
+    });
+  });
+
+  describe('stat-vs-content: content-clean files are filtered (#871)', () => {
+    it('allows pr create when porcelain reports MM but diff HEAD says clean', () => {
+      vi.mocked(existsSync).mockImplementation(() => false);
+
+      const exec = makeExec([
+        ['rev-parse --absolute-git-dir', { stdout: '/r/.git', exitCode: 0 }],
+        ['status --porcelain', { stdout: 'MM .claude-plugin/plugin.json\n', exitCode: 0 }],
+        ['diff --quiet HEAD --', { stdout: '', exitCode: 0 }],
+      ]);
+
+      const result = checkDirtyFiles('gh pr create --title t', { gitExec: exec });
+      expect(result.action).toBe('allow');
+    });
+
+    it('still denies when a tracked file actually differs from HEAD', () => {
+      vi.mocked(existsSync).mockImplementation(() => false);
+
+      const exec = makeExec([
+        ['rev-parse --absolute-git-dir', { stdout: '/r/.git', exitCode: 0 }],
+        ['status --porcelain', { stdout: ' M src/real.ts\n', exitCode: 0 }],
+        ['diff --quiet HEAD --', { stdout: '', exitCode: 1 }],
+      ]);
+
+      const result = checkDirtyFiles('gh pr create --title t', { gitExec: exec });
+      expect(result.action).toBe('deny');
+    });
+  });
+
+  describe('observability: deny message diagnostic block (#1073 comment:2)', () => {
+    it('includes [cwd], [target], [target-source], [git-dir], [porcelain] markers', () => {
+      vi.mocked(existsSync).mockImplementation(() => false);
+
+      const exec = makeExec([
+        ['rev-parse --absolute-git-dir', { stdout: '/r/.git', exitCode: 0 }],
+        ['status --porcelain', { stdout: ' M real.ts\n', exitCode: 0 }],
+        ['diff --quiet HEAD --', { stdout: '', exitCode: 1 }],
+      ]);
+
+      const result = checkDirtyFiles('gh pr create --title t', { gitExec: exec });
+      expect(result.action).toBe('deny');
+      expect(result.message).toContain('[cwd]');
+      expect(result.message).toContain('[target]');
+      expect(result.message).toContain('[target-source]');
+      expect(result.message).toContain('[git-dir]');
+      expect(result.message).toContain('[porcelain]');
+    });
+  });
+
+  describe('escape hatch: KAIZEN_ALLOW_DIRTY_FILES', () => {
+    it('bypasses hook when env var is "1"', () => {
+      vi.mocked(existsSync).mockImplementation(() => false);
+
+      const exec = makeExec([
+        ['rev-parse --absolute-git-dir', { stdout: '/r/.git', exitCode: 0 }],
+        ['status --porcelain', { stdout: ' M real.ts\n', exitCode: 0 }],
+        ['diff --quiet HEAD --', { stdout: '', exitCode: 1 }],
+      ]);
+
+      const result = checkDirtyFiles('gh pr create --title t', {
+        gitExec: exec,
+        env: { KAIZEN_ALLOW_DIRTY_FILES: '1' },
+      });
+      expect(result.action).toBe('allow');
+      expect(result.bypassed).toBe(true);
+    });
+
+    it('does not bypass when env var is "0"', () => {
+      vi.mocked(existsSync).mockImplementation(() => false);
+
+      const exec = makeExec([
+        ['rev-parse --absolute-git-dir', { stdout: '/r/.git', exitCode: 0 }],
+        ['status --porcelain', { stdout: ' M real.ts\n', exitCode: 0 }],
+        ['diff --quiet HEAD --', { stdout: '', exitCode: 1 }],
+      ]);
+
+      const result = checkDirtyFiles('gh pr create --title t', {
+        gitExec: exec,
+        env: { KAIZEN_ALLOW_DIRTY_FILES: '0' },
+      });
+      expect(result.action).toBe('deny');
+    });
+  });
+
+  describe('regression guards (labeled param rows)', () => {
+    it('#721: compound commit+push stays allowed even when dirty', () => {
+      vi.mocked(existsSync).mockImplementation(() => false);
+      const exec = makeExec([
+        ['status --porcelain', { stdout: ' M anything.ts\n', exitCode: 0 }],
+      ]);
+      const result = checkDirtyFiles('git add -A && git commit -m fix && git push', {
+        gitExec: exec,
+      });
+      expect(result.action).toBe('allow');
+    });
+
+    it('#232: git -C <other-wt> push anchors every git call to that worktree', () => {
+      vi.mocked(existsSync).mockImplementation(() => false);
+      const calls: string[] = [];
+      const exec: ExecRunner = (args) => {
+        calls.push(args);
+        if (args.includes('rev-parse --absolute-git-dir')) {
+          return { stdout: '/other-wt/.git', exitCode: 0 };
+        }
+        if (args.includes('status --porcelain')) return { stdout: '', exitCode: 0 };
+        return { stdout: '', exitCode: 0 };
+      };
+      checkDirtyFiles('git -C /other-wt push origin feat', { gitExec: exec });
+      const anchored = calls.filter((c) => c.includes('status --porcelain'));
+      expect(anchored.length).toBeGreaterThan(0);
+      for (const c of anchored) expect(c).toContain('-C /other-wt');
+    });
+  });
+});

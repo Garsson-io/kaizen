@@ -94,6 +94,31 @@ export function extractGitCPath(cmdLine: string): string | undefined {
 }
 
 /**
+ * Extract the target of a leading `cd <dir>` in a compound command.
+ * Returns the directory a following command will execute in, or undefined
+ * when the command has no `cd`, uses `cd -` / bare `cd`, or the path is
+ * unrecognised.
+ *
+ * Category prevention for #1073 / #240: hooks resolve the *gated command's*
+ * target worktree before running git queries, instead of inheriting the
+ * agent's `process.cwd()`.
+ */
+export function extractCdTarget(cmdLine: string): string | undefined {
+  const stripped = cmdLine.trim().replace(/^\(\s*/, '');
+  const segments = splitCommandSegments(stripped);
+  for (const seg of segments) {
+    // `cd <arg>` with word boundary (so `cdlock` is ignored).
+    // Arg is one of: "quoted", 'quoted', or a bare \S+.
+    const m = seg.match(/^cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))\s*$/);
+    if (!m) continue;
+    const target = m[1] ?? m[2] ?? m[3];
+    if (!target || target === '-') return undefined;
+    return target;
+  }
+  return undefined;
+}
+
+/**
  * Extract --repo flag value from a command line.
  */
 export function extractRepoFlag(cmdLine: string): string | undefined {
