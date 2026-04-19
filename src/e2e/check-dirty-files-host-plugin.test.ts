@@ -155,6 +155,45 @@ describe('check-dirty-files live fixture — host repo with own .claude-plugin/p
     expect(res.stderr).toContain('BYPASS');
   });
 
+  it('allows when agent cwd is a DIFFERENT git repo with staged drift (#1073 field scenario)', () => {
+    // Strongest end-to-end proof. The field bug: the agent process's cwd
+    // was a git repo (e.g. the main kaizen checkout) with a phantom
+    // `M  .claude-plugin/plugin.json` entry left by kaizen-bump-plugin-
+    // version. When `cd <host-repo> && gh pr create` ran, PreToolUse
+    // fired before the shell cd, so `git status --porcelain` inherited
+    // the drifted cwd and denied. We reproduce that exact topology here:
+    // `driftedCwd` is a real git repo with a real staged change, the
+    // target `hostRepo` is clean, and the hook must allow.
+    const driftedCwd = path.join(tmpRoot, 'drifted-agent-repo');
+    fs.mkdirSync(driftedCwd, { recursive: true });
+    execSync('git init -q -b main', { cwd: driftedCwd });
+    execSync('git config user.email t@e', { cwd: driftedCwd });
+    execSync('git config user.name t', { cwd: driftedCwd });
+    fs.mkdirSync(path.join(driftedCwd, '.claude-plugin'));
+    fs.writeFileSync(
+      path.join(driftedCwd, '.claude-plugin/plugin.json'),
+      JSON.stringify({ name: 'drifted', version: '0.1.0' }) + '\n',
+    );
+    execSync('git add -A && git commit -q -m init', { cwd: driftedCwd });
+    // Stage a change without committing — the exact shape of the #1073
+    // phantom.
+    fs.writeFileSync(
+      path.join(driftedCwd, '.claude-plugin/plugin.json'),
+      JSON.stringify({ name: 'drifted', version: '0.2.0' }) + '\n',
+    );
+    execSync('git add .claude-plugin/plugin.json', { cwd: driftedCwd });
+    // Sanity: drift is real in driftedCwd, hostRepo stays clean.
+    expect(execSync('git status --porcelain', { cwd: driftedCwd, encoding: 'utf-8' })).toContain(
+      '.claude-plugin/plugin.json',
+    );
+    expect(execSync('git status --porcelain', { cwd: hostRepo, encoding: 'utf-8' })).toBe('');
+
+    const res = runHook(`cd ${hostRepo} && gh pr create --title t`, driftedCwd);
+
+    expect(isDeny(res)).toBe(false);
+    expect(res.exitCode).toBe(0);
+  });
+
   it('allows gh pr create when porcelain is stat-dirty but content matches HEAD (#871)', () => {
     // Induce stat-dirty-but-content-clean: touch the file without changing
     // content. On most filesystems this bumps mtime enough to make git's
