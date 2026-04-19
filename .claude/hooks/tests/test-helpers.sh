@@ -177,10 +177,22 @@ MOCK
 # Usage: setup_git_status_mock " M src/dirty.ts"
 setup_git_status_mock() {
   local status_output="$1"
+  # `diff --quiet HEAD --` must agree with status_output for the #1073
+  # categorical fix's content-level verification to deny. If status is
+  # non-empty we return exit 1 (content differs); if empty, exit 0.
+  local diff_exit="0"
+  [ -n "$(echo "$status_output" | tr -d '[:space:]')" ] && diff_exit="1"
   cat > "$MOCK_DIR/git" << MOCK
 #!/bin/bash
 if echo "\$@" | grep -q "status --porcelain"; then
   printf '%s' "$status_output"
+  exit 0
+fi
+if echo "\$@" | grep -q "diff --quiet HEAD"; then
+  exit $diff_exit
+fi
+if echo "\$@" | grep -q "rev-parse --absolute-git-dir"; then
+  echo "\$PWD/.git"
   exit 0
 fi
 /usr/bin/git "\$@"

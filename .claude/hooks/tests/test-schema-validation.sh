@@ -47,7 +47,9 @@ exit 0
 MOCK
 chmod +x "$MOCK_DIR/gh"
 
-# Mock git for deny tests to return main branch
+# Mock git for deny tests to return main branch. When status_output is
+# non-empty, `diff --quiet HEAD --` must also report dirt (exit 1) so the
+# content-level check in check-dirty-files (#1073 categorical fix) agrees.
 cat > "$MOCK_DIR/git" << 'MOCK'
 #!/bin/bash
 if echo "$@" | grep -q "status --porcelain"; then
@@ -56,6 +58,13 @@ if echo "$@" | grep -q "status --porcelain"; then
 fi
 if echo "$@" | grep -q "rev-parse --abbrev-ref"; then
   echo "main"
+  exit 0
+fi
+if echo "$@" | grep -q "diff --quiet HEAD"; then
+  exit 1
+fi
+if echo "$@" | grep -q "rev-parse --absolute-git-dir"; then
+  echo "$PWD/.git"
   exit 0
 fi
 if echo "$@" | grep -q "diff --name-only"; then

@@ -37,6 +37,7 @@ import {
   createDefaultGitExec,
   formatDiagnostic,
   isBypassRequested,
+  parsePorcelain,
   readDirtyFiles,
   resolveTargetWorktree,
   type DirtyFileReport,
@@ -66,21 +67,12 @@ export function detectTrigger(cmdLine: string): TriggerType {
   return 'none';
 }
 
-export function parseDirtyFiles(porcelainOutput: string): DirtyFileReport {
-  const lines = porcelainOutput.split('\n').filter(Boolean);
-  const staged: string[] = [];
-  const modified: string[] = [];
-  const untracked: string[] = [];
-
-  for (const line of lines) {
-    if (/^\?\?/.test(line)) untracked.push(line);
-    else if (/^[MARCD][MARCD]/.test(line)) staged.push(line);
-    else if (/^[MARCD] /.test(line)) staged.push(line);
-    else if (/^ [M]/.test(line)) modified.push(line);
-  }
-
-  return { staged, modified, untracked, total: lines.length };
-}
+/**
+ * Re-export of the shared parser. Kept as `parseDirtyFiles` for backward
+ * compatibility with existing test imports; the canonical implementation
+ * lives in `lib/git-state.ts` (DRY — single source of porcelain parsing).
+ */
+export const parseDirtyFiles = parsePorcelain;
 
 export function formatFileList(report: DirtyFileReport): string {
   const parts: string[] = [];

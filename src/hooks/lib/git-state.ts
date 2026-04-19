@@ -17,9 +17,17 @@
  *      false-positive is debuggable from the failure transcript alone
  *      (#1073 comment:2 explicit request).
  *   4. isBypassRequested — read the documented escape-hatch env var.
+ *
+ * Security posture: every git invocation goes through `spawnSync('git',
+ * argv)` — a fixed binary with an explicit argv array. No shell, no
+ * interpolation. Nothing in the resolved target path, porcelain filename,
+ * or any other user-influenced value reaches a shell interpreter. The
+ * original `execSync(\`git ${args}\`)` form was flagged in the #1073
+ * review as the very shell-injection anti-pattern the PR claims to
+ * neutralise; fixing it is part of the categorical fix.
  */
 
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
 import { extractCdTarget, extractGitCPath, stripHeredocBody } from '../parse-command.js';
 
@@ -68,40 +76,37 @@ export interface DirtyState {
 
 export interface GitExecResult {
   stdout: string;
+  stderr: string;
   exitCode: number;
 }
-export type GitExec = (args: string) => GitExecResult;
+
+/**
+ * Runner contract: takes an argv array (no shell), returns stdout + stderr
+ * + exitCode. All internal uses build the argv programmatically — user
+ * input (paths, porcelain-reported filenames) is always a dedicated array
+ * element and never concatenated into a shell-interpreted string.
+ */
+export type GitExec = (args: readonly string[]) => GitExecResult;
 
 export function createDefaultGitExec(): GitExec {
   return (args) => {
-    try {
-      const stdout = execSync(`git ${args}`, {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      // IMPORTANT: do NOT .trim() — porcelain output has significant leading
-      // whitespace (` M file` vs `M  file` distinguishes unstaged-modified
-      // from staged-modified). Trimming corrupted the parse for unstaged
-      // files; caught by the live fixture test for #1073. Callers that
-      // want single-line trimmed output (e.g., rev-parse) should trim
-      // themselves.
-      return { stdout, exitCode: 0 };
-    } catch (e) {
-      const err = e as { status?: number; stdout?: string | Buffer };
-      const out = typeof err.stdout === 'string'
-        ? err.stdout
-        : err.stdout?.toString('utf-8') ?? '';
-      return { stdout: out, exitCode: err.status ?? 1 };
-    }
+    const r = spawnSync('git', [...args], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return {
+      stdout: r.stdout ?? '',
+      stderr: r.stderr ?? '',
+      exitCode: r.status ?? 1,
+    };
   };
 }
 
-function extractFilePath(porcelainLine: string): string {
-  // porcelain v1 format: XY <path>  (XY = 2 status chars, then space)
-  return porcelainLine.slice(3).trim();
-}
-
-function parsePorcelain(output: string): DirtyFileReport {
+/**
+ * Parse porcelain v1 output into staged/modified/untracked buckets.
+ * Exported so check-dirty-files.ts can reuse the single parser.
+ */
+export function parsePorcelain(output: string): DirtyFileReport {
   const lines = output.split('\n').filter(Boolean);
   const staged: string[] = [];
   const modified: string[] = [];
@@ -116,6 +121,21 @@ function parsePorcelain(output: string): DirtyFileReport {
 }
 
 /**
+ * Extract the destination file path from a porcelain v1 line.
+ *
+ * Porcelain format: `XY path` where X/Y are status chars. Rename/copy
+ * entries take the form `R  orig -> new` (or `C  orig -> new`); we want
+ * the destination, because that's the file whose working-tree content
+ * we content-verify. Dropping the ` -> ` arrow into the git argv would
+ * cause git to treat `->` as an operand — caught by the #1073 review.
+ */
+export function extractFilePath(porcelainLine: string): string {
+  const tail = porcelainLine.slice(3);
+  const arrow = tail.indexOf(' -> ');
+  return (arrow >= 0 ? tail.slice(arrow + 4) : tail).trim();
+}
+
+/**
  * Read the git state of `targetDir` and verify every tracked-file claim
  * with `git diff --quiet HEAD -- <file>`. Files where porcelain says
  * "modified" but diff says "content matches HEAD" are filtered out —
@@ -126,16 +146,16 @@ export function readDirtyFiles(
   options: { runner?: GitExec } = {},
 ): DirtyState {
   const runner = options.runner ?? createDefaultGitExec();
-  const prefix = targetDir ? `-C ${targetDir} ` : '';
+  const anchor: readonly string[] = targetDir ? ['-C', targetDir] : [];
 
-  const gitDir = runner(`${prefix}rev-parse --absolute-git-dir`).stdout.trim();
+  const gitDir = runner([...anchor, 'rev-parse', '--absolute-git-dir']).stdout.trim();
 
-  // Refresh the index to clear stat-only drift (retained as belt-and-suspenders
-  // alongside the content-level check below; observed as the #871 partial fix).
-  runner(`${prefix}update-index -q --refresh`);
+  // Refresh the index to clear stat-only drift (belt-and-suspenders alongside
+  // the content-level check below; observed as the #871 partial fix).
+  runner([...anchor, 'update-index', '-q', '--refresh']);
 
   // Do NOT trim: porcelain's leading whitespace is significant.
-  const porcelain = runner(`${prefix}status --porcelain`).stdout;
+  const porcelain = runner([...anchor, 'status', '--porcelain']).stdout;
   const rawReport = parsePorcelain(porcelain);
 
   const verifiedStaged: string[] = [];
@@ -145,7 +165,7 @@ export function readDirtyFiles(
   const checkFile = (line: string, bucket: string[]): void => {
     const file = extractFilePath(line);
     if (!file) return;
-    const r = runner(`${prefix}diff --quiet HEAD -- ${file}`);
+    const r = runner([...anchor, 'diff', '--quiet', 'HEAD', '--', file]);
     const blobMatch = r.exitCode === 0;
     perFileDiff.push({ file, diffIndexExitCode: r.exitCode, blobMatch });
     if (!blobMatch) bucket.push(line);
@@ -157,7 +177,7 @@ export function readDirtyFiles(
   const verified: DirtyFileReport = {
     staged: verifiedStaged,
     modified: verifiedModified,
-    untracked: rawReport.untracked, // untracked is unambiguous — no HEAD to diff
+    untracked: rawReport.untracked, // untracked has no HEAD to diff against
     total: verifiedStaged.length + verifiedModified.length + rawReport.untracked.length,
   };
 

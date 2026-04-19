@@ -30,6 +30,8 @@ const OPT_OUT = new Set<string>([
   'pre-push.ts',
   'prehook-no-verify.ts',
   'post-merge-clear.ts',
+  'enforce-plan-stored.ts',
+  'pr-quality-checks.ts',
 ]);
 
 function isHookSource(name: string): boolean {
@@ -39,12 +41,26 @@ function isHookSource(name: string): boolean {
 }
 
 function readsGitState(content: string): boolean {
-  // Naive but sufficient: any execSync call whose args start with `git `
-  // (with template literal or string literal). Excludes comments.
+  // Widened from the initial `execSync('git ...')` pattern to catch the
+  // full family of subprocess-invoking APIs flagged in the #1073 review:
+  // execSync, execFileSync, exec, spawnSync, spawn — with git as the
+  // binary or first argument. We strip comments first so commented-out
+  // examples don't trip the lint.
   const withoutComments = content
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/\/\/.*$/gm, '');
-  return /execSync\(\s*[`'"][^`'"]*git\s/.test(withoutComments);
+
+  // Case 1: `execSync(\`git ...\`)` or `execSync('git ...')` — binary name
+  // embedded in a shell-interpreted string. This IS the shell-injection
+  // anti-pattern the primitive exists to eliminate.
+  if (/exec(File)?(Sync)?\s*\(\s*[`'"][^`'"]*\bgit\b/.test(withoutComments)) return true;
+
+  // Case 2: `spawnSync('git', argv)` / `execFileSync('git', argv)` —
+  // argv-safe but still cwd-drift-prone unless the argv is built by
+  // git-state.ts (which pins `-C <resolved-target>` as the first args).
+  if (/(?:spawn|execFile)(?:Sync)?\s*\(\s*[`'"]git[`'"]/.test(withoutComments)) return true;
+
+  return false;
 }
 
 function importsGitState(content: string): boolean {

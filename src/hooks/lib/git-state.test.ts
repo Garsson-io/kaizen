@@ -87,13 +87,14 @@ describe('readDirtyFiles — porcelain whitespace invariant (live-fixture regres
   // the hook to misbucket unstaged files as staged and to corrupt the file
   // path via slice(3). Regression guard for the first iteration of #1073.
   it('preserves leading whitespace when classifying unstaged-modified entries', () => {
-    const runner = (args: string) => {
-      if (args.includes('rev-parse --absolute-git-dir')) return { stdout: '/r/.git', exitCode: 0 };
-      if (args.includes('status --porcelain')) {
-        return { stdout: ' M .claude-plugin/plugin.json\n', exitCode: 0 };
-      }
-      if (args.includes('diff --quiet HEAD -- ')) return { stdout: '', exitCode: 1 };
-      return { stdout: '', exitCode: 0 };
+    const runner = (args: readonly string[]) => {
+      const joined = args.join(' ');
+      if (joined.includes('rev-parse --absolute-git-dir'))
+        return { stdout: '/r/.git', stderr: '', exitCode: 0 };
+      if (joined.includes('status --porcelain'))
+        return { stdout: ' M .claude-plugin/plugin.json\n', stderr: '', exitCode: 0 };
+      if (joined.includes('diff --quiet HEAD')) return { stdout: '', stderr: '', exitCode: 1 };
+      return { stdout: '', stderr: '', exitCode: 0 };
     };
     const r = readDirtyFiles('/r', { runner });
     expect(r.verified.modified).toHaveLength(1);
@@ -103,16 +104,19 @@ describe('readDirtyFiles — porcelain whitespace invariant (live-fixture regres
 });
 
 describe('readDirtyFiles', () => {
-  type Runner = (args: string) => { stdout: string; exitCode: number };
+  // Tests exercise the argv-based runner contract. Helper joins argv with
+  // a space so existing pattern-based specs stay readable.
+  type Runner = (args: readonly string[]) => { stdout: string; stderr: string; exitCode: number };
 
   function makeRunner(handlers: Record<string, { stdout?: string; exitCode?: number }>): Runner {
-    return (args: string) => {
+    return (args) => {
+      const joined = args.join(' ');
       for (const [pattern, out] of Object.entries(handlers)) {
-        if (args.includes(pattern)) {
-          return { stdout: out.stdout ?? '', exitCode: out.exitCode ?? 0 };
+        if (joined.includes(pattern)) {
+          return { stdout: out.stdout ?? '', stderr: '', exitCode: out.exitCode ?? 0 };
         }
       }
-      return { stdout: '', exitCode: 0 };
+      return { stdout: '', stderr: '', exitCode: 0 };
     };
   }
 

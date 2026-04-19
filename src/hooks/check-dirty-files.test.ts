@@ -230,15 +230,18 @@ describe('checkDirtyFiles', () => {
  * that verifies porcelain claims with `git diff --quiet HEAD -- <file>`.
  */
 describe('checkDirtyFiles — categorical (#1073)', () => {
-  type ExecResult = { stdout: string; exitCode: number };
-  type ExecRunner = (args: string) => ExecResult;
+  type ExecResult = { stdout: string; stderr: string; exitCode: number };
+  type ExecRunner = (args: readonly string[]) => ExecResult;
 
-  function makeExec(handlers: Array<[string, ExecResult]>): ExecRunner {
-    return (args: string) => {
+  function makeExec(handlers: Array<[string, Partial<ExecResult>]>): ExecRunner {
+    return (args) => {
+      const joined = args.join(' ');
       for (const [pattern, out] of handlers) {
-        if (args.includes(pattern)) return out;
+        if (joined.includes(pattern)) {
+          return { stdout: out.stdout ?? '', stderr: out.stderr ?? '', exitCode: out.exitCode ?? 0 };
+        }
       }
-      return { stdout: '', exitCode: 0 };
+      return { stdout: '', stderr: '', exitCode: 0 };
     };
   }
 
@@ -252,14 +255,15 @@ describe('checkDirtyFiles — categorical (#1073)', () => {
 
       const calls: string[] = [];
       const exec: ExecRunner = (args) => {
-        calls.push(args);
-        if (args.includes('rev-parse --absolute-git-dir')) {
-          return { stdout: '/clean-wt/.git', exitCode: 0 };
+        const joined = args.join(' ');
+        calls.push(joined);
+        if (joined.includes('rev-parse --absolute-git-dir')) {
+          return { stdout: '/clean-wt/.git', stderr: '', exitCode: 0 };
         }
-        if (args.includes('status --porcelain')) {
-          return { stdout: '', exitCode: 0 };
+        if (joined.includes('status --porcelain')) {
+          return { stdout: '', stderr: '', exitCode: 0 };
         }
-        return { stdout: '', exitCode: 0 };
+        return { stdout: '', stderr: '', exitCode: 0 };
       };
 
       const result = checkDirtyFiles('cd /clean-wt && gh pr create --title t', {
@@ -270,6 +274,8 @@ describe('checkDirtyFiles — categorical (#1073)', () => {
       const anchored = calls.filter((c) => c.includes('status --porcelain'));
       expect(anchored.length).toBeGreaterThan(0);
       for (const c of anchored) {
+        // Argv form joined: "-C /clean-wt status --porcelain" — target appears as
+        // a separate argv element, never concatenated into a shell string.
         expect(c).toContain('-C /clean-wt');
       }
     });
@@ -374,12 +380,13 @@ describe('checkDirtyFiles — categorical (#1073)', () => {
       vi.mocked(existsSync).mockImplementation(() => false);
       const calls: string[] = [];
       const exec: ExecRunner = (args) => {
-        calls.push(args);
-        if (args.includes('rev-parse --absolute-git-dir')) {
-          return { stdout: '/other-wt/.git', exitCode: 0 };
+        const joined = args.join(' ');
+        calls.push(joined);
+        if (joined.includes('rev-parse --absolute-git-dir')) {
+          return { stdout: '/other-wt/.git', stderr: '', exitCode: 0 };
         }
-        if (args.includes('status --porcelain')) return { stdout: '', exitCode: 0 };
-        return { stdout: '', exitCode: 0 };
+        if (joined.includes('status --porcelain')) return { stdout: '', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: '', exitCode: 0 };
       };
       checkDirtyFiles('git -C /other-wt push origin feat', { gitExec: exec });
       const anchored = calls.filter((c) => c.includes('status --porcelain'));
