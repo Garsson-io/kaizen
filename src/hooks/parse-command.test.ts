@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   detectGhRepo,
+  extractCdTarget,
   extractGitCPath,
   extractPrNumber,
   extractPrUrl,
@@ -161,6 +162,48 @@ describe('extractGitCPath', () => {
 
   it('handles piped commands', () => {
     expect(extractGitCPath('echo test | git -C /foo status')).toBe('/foo');
+  });
+});
+
+describe('extractCdTarget', () => {
+  it('extracts target from cd X && <cmd>', () => {
+    expect(extractCdTarget('cd /wt && gh pr create')).toBe('/wt');
+  });
+
+  it('extracts target from cd X ; <cmd>', () => {
+    expect(extractCdTarget('cd /a ; gh pr create')).toBe('/a');
+  });
+
+  it('extracts target from (cd X && <cmd>) subshell', () => {
+    expect(extractCdTarget('(cd /b && gh pr create)')).toBe('/b');
+  });
+
+  it('extracts target from double-quoted path', () => {
+    expect(extractCdTarget('cd "/q path" && gh pr create')).toBe('/q path');
+  });
+
+  it('extracts target from single-quoted path', () => {
+    expect(extractCdTarget("cd '/sq path' && gh pr create")).toBe('/sq path');
+  });
+
+  it('returns undefined for commands with no cd prefix', () => {
+    expect(extractCdTarget('gh pr create')).toBeUndefined();
+  });
+
+  it('does not match cdlock or other word prefixes', () => {
+    expect(extractCdTarget('cdlock /x && gh pr create')).toBeUndefined();
+  });
+
+  it('ignores cd - (previous dir, not a path target)', () => {
+    expect(extractCdTarget('cd - && gh pr create')).toBeUndefined();
+  });
+
+  it('ignores bare cd (HOME, not explicit)', () => {
+    expect(extractCdTarget('cd && gh pr create')).toBeUndefined();
+  });
+
+  it('returns first cd target when multiple present', () => {
+    expect(extractCdTarget('cd /a && cd /b && gh pr create')).toBe('/a');
   });
 });
 

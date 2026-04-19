@@ -64,6 +64,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `.githooks/pre-push` | Shell dispatcher — agent-env shortcut then `npx tsx src/hooks/pre-push.ts`; `core.hooksPath=.githooks` set by `prepare` script |
 | `docs/git-hooks-design.md` | Architecture + decision record for the pre-push git hook layer |
 | `src/plan-store.ts` | Plan-specific helpers (extractPlanText, re-exports from structured-data) |
+| `src/hooks/lib/git-state.ts` | **Shared primitive** for hooks that read git state — `resolveTargetWorktree`, `readDirtyFiles` (content-level verified), `formatDiagnostic`, `isBypassRequested`. Categorical fix for #1073 / #240; sibling-hook migration is gated by the CI invariant in `git-state-invariant.test.ts` (pending work tracked in #1074). See `docs/hooks-design.md` § State-reading discipline. |
 
 ## Skills
 

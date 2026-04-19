@@ -403,6 +403,12 @@ if echo "$@" | grep -q "rev-parse --git-dir"; then
   echo ".git"
   exit 0
 fi"""
+        # content_dirty: when status_output claims a file is modified, the
+        # new content-level check (`git diff --quiet HEAD -- <file>`) must
+        # agree (exit 1 = differs) or check-dirty-files will filter it out
+        # as stat-only drift. See docs/hooks-design.md § State-reading
+        # discipline, and the #1073 categorical fix.
+        content_dirty = "1" if status_output.strip() else "0"
         script = f"""#!/bin/bash
 if echo "$@" | grep -q "status --porcelain"; then
   printf '%s' '{status_output}'
@@ -411,6 +417,9 @@ fi
 if echo "$@" | grep -q "rev-parse --abbrev-ref"; then
   echo "{branch}"
   exit 0
+fi
+if echo "$@" | grep -q "diff --quiet HEAD"; then
+  exit {content_dirty}
 fi
 if echo "$@" | grep -q "diff --name-only"; then
   printf '%s' '{diff_output}'
@@ -422,6 +431,10 @@ if echo "$@" | grep -q "remote get-url"; then
 fi
 if echo "$@" | grep -q "rev-parse --git-common-dir"; then
   echo ".git"
+  exit 0
+fi
+if echo "$@" | grep -q "rev-parse --absolute-git-dir"; then
+  echo "$PWD/.git"
   exit 0
 fi{git_dir_handler}
 /usr/bin/git "$@" 2>/dev/null

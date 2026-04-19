@@ -29,6 +29,12 @@ const EXCLUSIONS: Record<string, string> = {
   // TS splits extractPrUrl from reconstructPrUrl; bash inlines the grep
   extractPrUrl:
     'ts-only: extracted helper, bash inlines grep in reconstruct_pr_url',
+
+  // Added in the #1073 categorical fix. The sibling .claude/hooks/*.sh layer
+  // is being phased out (#762) — all new hook logic is TS-only, and the
+  // check-dirty-files bash wrapper just dispatches to the TS hook.
+  extractCdTarget:
+    'ts-only: cwd-drift fix landed in TS hook (#1073); bash wrapper only dispatches',
 };
 
 /** Extract function names from a bash script (matches `function_name() {`). */

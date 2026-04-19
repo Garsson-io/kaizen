@@ -5,8 +5,6 @@
  * @enforces I25 — No dirty files between ops (currently advisory on push/merge; escalation tracked in #1037).
  *                 Canonical: docs/kaizen-invariants.md.
  *
- * TypeScript port of .claude/hooks/kaizen-check-dirty-files.sh (kaizen #775).
- *
  * Triggers:
  *   gh pr create — BLOCK (agent is declaring "work is done")
  *   git push     — WARN  (push is intermediate, PR create is the gate — kaizen #775)
@@ -14,10 +12,16 @@
  *
  * Skips entirely when MERGE_HEAD exists (merge resolution in progress — kaizen #775).
  *
- * Part of kAIzen Agent Control Flow — kaizen #775
+ * Part of kAIzen Agent Control Flow — kaizen #775.
+ *
+ * Categorical fix (#1073) — every git invocation is anchored to the
+ * resolved target worktree (see lib/git-state.ts), every porcelain entry
+ * is verified at content-level, every deny includes a diagnostic block,
+ * and KAIZEN_ALLOW_DIRTY_FILES=1 is a documented escape. The shared
+ * primitive closes the category for this hook and stages the same
+ * discipline for sibling hooks via the git-state invariant test.
  */
 
-import { execSync, type ExecSyncOptions } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
@@ -28,17 +32,21 @@ import {
   splitCommandSegments,
   stripHeredocBody,
 } from './parse-command.js';
-
-const EXEC_OPTS: ExecSyncOptions = { encoding: 'utf-8' as const, stdio: ['pipe', 'pipe', 'pipe'] };
+import {
+  BYPASS_ENV,
+  createDefaultGitExec,
+  formatDiagnostic,
+  isBypassRequested,
+  parsePorcelain,
+  readDirtyFiles,
+  resolveTargetWorktree,
+  type DirtyFileReport,
+  type DirtyState,
+  type GitExec,
+} from './lib/git-state.js';
 
 type TriggerType = 'pr_create' | 'git_push' | 'pr_merge' | 'none';
 
-/**
- * Check if a compound command has `git commit` before `git push`.
- * When the user runs `git add -A && git commit -m '...' && git push`,
- * dirty files will be committed before push runs — so the dirty-files
- * check would be a false positive (kaizen #721).
- */
 export function hasCommitBeforePush(cmdLine: string): boolean {
   const segments = splitCommandSegments(cmdLine);
   let foundCommit = false;
@@ -52,7 +60,6 @@ export function hasCommitBeforePush(cmdLine: string): boolean {
 export function detectTrigger(cmdLine: string): TriggerType {
   if (isGhPrCommand(cmdLine, 'create')) return 'pr_create';
   if (isGitCommand(cmdLine, 'push')) {
-    // Skip false positive when commit precedes push in compound command (kaizen #721)
     if (hasCommitBeforePush(cmdLine)) return 'none';
     return 'git_push';
   }
@@ -60,34 +67,12 @@ export function detectTrigger(cmdLine: string): TriggerType {
   return 'none';
 }
 
-interface DirtyFileReport {
-  staged: string[];
-  modified: string[];
-  untracked: string[];
-  total: number;
-}
-
-export function parseDirtyFiles(porcelainOutput: string): DirtyFileReport {
-  const lines = porcelainOutput.split('\n').filter(Boolean);
-  const staged: string[] = [];
-  const modified: string[] = [];
-  const untracked: string[] = [];
-
-  for (const line of lines) {
-    if (/^\?\?/.test(line)) {
-      untracked.push(line);
-    } else if (/^[MARCD][MARCD]/.test(line)) {
-      // Both staged and modified (e.g. MM) — count as staged (the primary state)
-      staged.push(line);
-    } else if (/^[MARCD] /.test(line)) {
-      staged.push(line);
-    } else if (/^ [M]/.test(line)) {
-      modified.push(line);
-    }
-  }
-
-  return { staged, modified, untracked, total: lines.length };
-}
+/**
+ * Re-export of the shared parser. Kept as `parseDirtyFiles` for backward
+ * compatibility with existing test imports; the canonical implementation
+ * lives in `lib/git-state.ts` (DRY — single source of porcelain parsing).
+ */
+export const parseDirtyFiles = parsePorcelain;
 
 export function formatFileList(report: DirtyFileReport): string {
   const parts: string[] = [];
@@ -103,40 +88,128 @@ export function formatFileList(report: DirtyFileReport): string {
   return parts.join('\n');
 }
 
+export interface CheckDirtyFilesOptions {
+  /**
+   * Legacy runner: string → string. When provided (and `gitExec` is not),
+   * the hook uses the pre-#1073 code path that trusts porcelain directly —
+   * this preserves the semantics of every historical unit test. New tests
+   * should use `gitExec` to exercise the content-level verification path.
+   */
+  gitRunner?: (args: string) => string;
+  /**
+   * Post-#1073 runner: string → { stdout, exitCode }. Enables
+   * content-level verification via `git diff --quiet HEAD -- <file>` and
+   * the full diagnostic block.
+   */
+  gitExec?: GitExec;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+  stderr?: { write: (s: string) => void };
+}
+
+export interface CheckDirtyFilesResult {
+  action: 'allow' | 'warn' | 'deny';
+  message?: string;
+  bypassed?: boolean;
+}
+
 export function checkDirtyFiles(
   command: string,
-  options: { gitRunner?: (args: string) => string } = {},
-): { action: 'allow' | 'warn' | 'deny'; message?: string } {
+  options: CheckDirtyFilesOptions = {},
+): CheckDirtyFilesResult {
   const cmdLine = stripHeredocBody(command);
   const trigger = detectTrigger(cmdLine);
 
   if (trigger === 'none') return { action: 'allow' };
 
-  const git = options.gitRunner ?? ((args: string) => {
-    try {
-      return execSync(`git ${args}`, EXEC_OPTS as { encoding: 'utf-8' }).trim();
-    } catch {
-      return '';
-    }
-  });
+  if (options.gitRunner && !options.gitExec) {
+    return legacyCheckDirtyFiles(cmdLine, trigger, options.gitRunner);
+  }
 
-  // Skip during merge resolution (kaizen #773, #775)
-  // Use --git-dir instead of .git/MERGE_HEAD — in worktrees, .git is a file,
-  // not a directory, so the naive path doesn't work.
-  const gitDir = git('rev-parse --git-dir');
-  if (gitDir && existsSync(join(gitDir, 'MERGE_HEAD'))) {
+  const env = options.env ?? process.env;
+  const cwd = options.cwd ?? process.cwd();
+
+  if (isBypassRequested(env)) {
+    options.stderr?.write(
+      `[check-dirty-files] BYPASS: ${BYPASS_ENV} is set — skipping dirty check\n`,
+    );
+    return { action: 'allow', bypassed: true };
+  }
+
+  const exec: GitExec = options.gitExec ?? createDefaultGitExec();
+  const target = resolveTargetWorktree(cmdLine, cwd);
+  const state: DirtyState = readDirtyFiles(target.dir, { runner: exec });
+
+  if (state.gitDir && existsSync(join(state.gitDir, 'MERGE_HEAD'))) {
     return { action: 'allow' };
   }
 
-  // Handle git -C <path> push (cross-worktree — kaizen #232)
+  if (state.verified.total === 0) return { action: 'allow' };
+
+  const fileList = formatFileList(state.verified);
+  const diagnostic = formatDiagnostic({
+    cwd,
+    target: target.dir,
+    targetSource: target.source,
+    gitDir: state.gitDir,
+    rawPorcelain: state.raw,
+    perFileDiff: state.perFileDiff,
+  });
+
+  if (trigger === 'pr_merge' || trigger === 'git_push') {
+    const actionLabel = trigger === 'pr_merge' ? 'merging a PR' : 'pushing code';
+    return {
+      action: 'warn',
+      message: `DIRTY FILES DETECTED — ${state.verified.total} file(s) with uncommitted changes:
+
+${fileList}You're ${actionLabel}, so this is advisory only.
+But dirty files suggest unfinished or forgotten work.
+Consider committing or discarding before proceeding.
+
+${diagnostic}`,
+    };
+  }
+
+  return {
+    action: 'deny',
+    message: `DIRTY FILES — ${state.verified.total} file(s) with uncommitted changes while creating a PR.
+
+${fileList}You MUST handle each file before proceeding:
+
+FOR USEFUL FILES (part of this work):
+  git add <file> && git commit -m 'meaningful message about what and why'
+
+FOR ARTIFACTS/DEBUG/LEFTOVER FILES (not part of this work):
+  git checkout -- <file>    (for modified tracked files)
+  rm <file>                 (for untracked files)
+
+If you believe the hook is wrong (content-clean file flagged as dirty, or
+stale stat), set ${BYPASS_ENV}=1 to bypass — please include the diagnostic
+block below in the follow-up kaizen issue.
+
+${diagnostic}`,
+  };
+}
+
+/**
+ * Legacy code path preserving pre-#1073 behavior for tests that pass
+ * `gitRunner: (args: string) => string`. No content-level verification
+ * (legacy runner can't signal exit code), no diagnostic block.
+ */
+function legacyCheckDirtyFiles(
+  cmdLine: string,
+  trigger: Exclude<TriggerType, 'none'>,
+  gitRunner: (args: string) => string,
+): CheckDirtyFilesResult {
+  const git = gitRunner;
+
+  const gitDir = git('rev-parse --git-dir');
+  if (gitDir && existsSync(join(gitDir, 'MERGE_HEAD'))) return { action: 'allow' };
+
   const targetDir = extractGitCPath(cmdLine);
   const gitPrefix = targetDir ? `-C ${targetDir}` : '';
 
-  // Refresh the index to clear stale stat info — prevents false positives
-  // when a file was modified and restored (content matches HEAD but stat differs).
-  // Observed: MM status for .claude-plugin/plugin.json with no actual changes (kaizen #871).
   git(`${gitPrefix} update-index -q --refresh`);
-
   const porcelain = git(`${gitPrefix} status --porcelain`);
   if (!porcelain) return { action: 'allow' };
 
@@ -146,7 +219,6 @@ export function checkDirtyFiles(
   const fileList = formatFileList(report);
 
   if (trigger === 'pr_merge' || trigger === 'git_push') {
-    // Advisory for merge and push (kaizen #775: push downgraded to warn)
     const actionLabel = trigger === 'pr_merge' ? 'merging a PR' : 'pushing code';
     return {
       action: 'warn',
@@ -158,7 +230,6 @@ Consider committing or discarding before proceeding.`,
     };
   }
 
-  // For pr create — BLOCK
   return {
     action: 'deny',
     message: `DIRTY FILES — ${report.total} file(s) with uncommitted changes while creating a PR.
@@ -179,7 +250,7 @@ async function main(): Promise<void> {
   if (!input) { traceNullInput("check-dirty-files"); process.exit(0); }
 
   const command = input.tool_input?.command ?? '';
-  const result = checkDirtyFiles(command);
+  const result = checkDirtyFiles(command, { stderr: process.stderr });
 
   if (result.action === 'deny') {
     const output = JSON.stringify({
