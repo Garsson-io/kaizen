@@ -167,13 +167,13 @@ describe('check-dirty-files #1073 — differential proof (legacy vs fixed)', () 
   // #225 — `.worktree-lock.json` false positive. Plan Success Criterion 6
   // enumerated #225 as a row the regression-guards table must cover. The
   // prior fix (#144) added this file to `.gitignore`, so today it cannot
-  // show up in porcelain anyway — but an adjacent class of kaizen-specific
-  // state files in the worktree can: if any future state file slips the
-  // ignore list, the hook must not deny on it. This row exercises that
-  // class by creating an UNTRACKED kaizen state file in the target and
-  // asserting the hook allows (untracked files are not part of "uncommitted
-  // changes to tracked files" semantics for pr_create — by design).
-  it('#225: untracked kaizen state file in target does not cause deny', () => {
+  // show up in porcelain anyway. The regression class is not the deny
+  // itself (current semantics: a lone untracked file does deny — see
+  // inline comment below) but the *classification* the hook emits: a
+  // stat-cache bug that routed untracked entries into the Staged or
+  // Modified bucket was the #225 category. The assertions below lock
+  // that classification boundary in place.
+  it('#225: untracked kaizen state file classified as Untracked (not Staged/Modified)', () => {
     // Write an untracked .worktree-lock.json-shaped file in hostRepo.
     fs.writeFileSync(
       path.join(hostRepo, '.worktree-lock.json'),
@@ -186,15 +186,16 @@ describe('check-dirty-files #1073 — differential proof (legacy vs fixed)', () 
     });
     expect(porcelain).toContain('?? .worktree-lock.json');
 
-    // The hook currently treats untracked as part of `report.total` when
-    // tracked files also differ — but in this scenario there are no
-    // tracked changes, only the untracked lock file. Assert that a lone
-    // untracked kaizen state file, on its own, is enough to deny (this
-    // documents the current semantics). The load-bearing part of the
-    // row is the *next* assertion: the deny message must NOT be about
-    // tracked-file drift — it must be reported as Untracked, so
-    // `.gitignore`-ing the file closes it cleanly (the #144 resolution
-    // of #225).
+    // Current semantics: `verified.total` counts untracked entries, so
+    // a lone untracked file is enough to deny. That's the behaviour
+    // today — #144 closed the motivating #225 case by adding
+    // `.worktree-lock.json` to `.gitignore` so it never reaches
+    // porcelain. The load-bearing assertion for this regression guard
+    // is not the deny itself but the *classification* (the `not.toMatch`
+    // lines below): the category bug was stat-cache confusion routing
+    // untracked entries into the Staged/Modified buckets. If the hook
+    // ever regresses to misclassifying untracked as tracked drift,
+    // this row catches it.
     const result = checkDirtyFiles(`cd ${hostRepo} && gh pr create --title t`, {
       gitExec: createDefaultGitExec(),
       cwd: agentCwd,
