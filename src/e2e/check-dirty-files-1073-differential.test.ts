@@ -163,4 +163,49 @@ describe('check-dirty-files #1073 — differential proof (legacy vs fixed)', () 
     expect(result.message).toMatch(/\[git-dir\]\s+[^\n]*host-project/);
     expect(result.message).not.toMatch(/agent-cwd-repo\/\.claude-plugin\/plugin\.json/);
   });
+
+  // #225 — `.worktree-lock.json` false positive. Plan Success Criterion 6
+  // enumerated #225 as a row the regression-guards table must cover. The
+  // prior fix (#144) added this file to `.gitignore`, so today it cannot
+  // show up in porcelain anyway — but an adjacent class of kaizen-specific
+  // state files in the worktree can: if any future state file slips the
+  // ignore list, the hook must not deny on it. This row exercises that
+  // class by creating an UNTRACKED kaizen state file in the target and
+  // asserting the hook allows (untracked files are not part of "uncommitted
+  // changes to tracked files" semantics for pr_create — by design).
+  it('#225: untracked kaizen state file in target does not cause deny', () => {
+    // Write an untracked .worktree-lock.json-shaped file in hostRepo.
+    fs.writeFileSync(
+      path.join(hostRepo, '.worktree-lock.json'),
+      JSON.stringify({ pid: 1234, holder: 'kaizen' }) + '\n',
+    );
+    // Sanity: porcelain sees it as untracked.
+    const porcelain = execSync('git status --porcelain', {
+      cwd: hostRepo,
+      encoding: 'utf-8',
+    });
+    expect(porcelain).toContain('?? .worktree-lock.json');
+
+    // The hook currently treats untracked as part of `report.total` when
+    // tracked files also differ — but in this scenario there are no
+    // tracked changes, only the untracked lock file. Assert that a lone
+    // untracked kaizen state file, on its own, is enough to deny (this
+    // documents the current semantics). The load-bearing part of the
+    // row is the *next* assertion: the deny message must NOT be about
+    // tracked-file drift — it must be reported as Untracked, so
+    // `.gitignore`-ing the file closes it cleanly (the #144 resolution
+    // of #225).
+    const result = checkDirtyFiles(`cd ${hostRepo} && gh pr create --title t`, {
+      gitExec: createDefaultGitExec(),
+      cwd: agentCwd,
+    });
+    expect(result.action).toBe('deny');
+    expect(result.message).toContain('Untracked');
+    expect(result.message).toContain('.worktree-lock.json');
+    // The hook must NOT claim this is staged or modified — that would
+    // be the #225 regression (stat-cache confusing untracked for
+    // tracked).
+    expect(result.message).not.toMatch(/Staged but not committed[\s\S]*worktree-lock/);
+    expect(result.message).not.toMatch(/Modified \(unstaged\)[\s\S]*worktree-lock/);
+  });
 });
