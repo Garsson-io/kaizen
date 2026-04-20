@@ -274,6 +274,38 @@ describe('listAttachments', () => {
     ghReturns('');
     expect(listAttachments(issueAttach)).toEqual([]);
   });
+
+  // #1082 regression guard — the issue branch previously called
+  // `gh issue view --json comments` whose comment objects have NO `url`
+  // field (keys: author, body, createdAt, reactionGroups, ...). That
+  // returned url=null for every comment and crashed `extractCommentId`
+  // on `null.match()`. The fix unifies on `gh api repos/.../comments`
+  // for both issues and PRs; this test pins the transport choice.
+  it('#1082: issue-target uses gh api (not gh issue view) so url is populated', () => {
+    ghReturns([
+      JSON.stringify({ url: 'https://github.com/x/y/issues/1#issuecomment-55', body: '<!-- kaizen:plan -->\nP' }),
+    ].join('\n'));
+    listAttachments(issueAttach);
+    const argv = mockGh.mock.calls[0][1] as string[];
+    expect(argv[0]).toBe('api');
+    expect(argv.some((a) => a.includes('issues/904/comments'))).toBe(true);
+    // Critical: must NOT be the crashing "gh issue view" path.
+    expect(argv).not.toContain('view');
+  });
+
+  // #1082 regression guard — even if upstream ever returns a comment
+  // with url=null (proxy cache, API change, etc), we must not crash.
+  // With null url, the commentId would be '' — listAttachments still
+  // returns the name because parsing the marker out of body is
+  // independent of the url.
+  it('#1082: null url in comment data is tolerated (no TypeError)', () => {
+    ghReturns([
+      JSON.stringify({ url: null, body: '<!-- kaizen:plan -->\nP' }),
+    ].join('\n'));
+    let names: string[] = [];
+    expect(() => { names = listAttachments(issueAttach); }).not.toThrow();
+    expect(names).toEqual(['plan']);
+  });
 });
 
 describe('readAttachment', () => {

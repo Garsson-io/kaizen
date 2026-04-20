@@ -20,34 +20,54 @@ A process improvement methodology implemented as a Claude Code plugin. Kaizen pr
 
 ## Installation
 
-The simplest way — tell Claude:
+Installing kaizen is a **four-command sequence that must run to completion.** Stopping part-way leaves the plugin enabled but unconfigured — hooks fire without the project config they expect. Any agent doing the install must perform all four steps in the same session.
 
-> Claude, install kaizen https://github.com/Garsson-io/kaizen in my project
+### Quick install (recommended — agents, read this)
 
-Claude will install the plugin and tell you to restart. After restarting, run `/kaizen-setup`.
+Run these four commands, in order, from a Claude Code session inside your host repo:
 
-### Manual installation
-
-**Step 1:** Install the plugin (in Claude Code):
 ```
-/plugin marketplace add Garsson-io/kaizen
-/plugin install kaizen@kaizen
+/plugin marketplace add Garsson-io/kaizen --scope project
+/plugin install kaizen@kaizen --scope project
+/reload-plugins
+/kaizen-setup
 ```
 
-**Step 2:** Exit and restart Claude Code. Skills only load on startup.
+> **`--scope project` is the right default for teams.** It writes marketplace + enabled-plugin entries into `.claude/settings.json`, which is checked into git, so every collaborator picks up kaizen on their next `git pull`. Use `--scope user` (the CLI default) only when you want kaizen just for yourself across many repos.
 
-**Step 3:** Run `/kaizen-setup` to configure your project. This creates:
-- `kaizen.config.json` — project configuration
-- `.agents/kaizen/local/policies-local.md` — project-specific policies
-- Kaizen section in `CLAUDE.md`
+> **`/reload-plugins` is equivalent to restarting Claude Code** — it loads the skills registered by the plugin you just installed. Without it (or a restart), `/kaizen-setup` below will not be available. **Agents**: do not hand the remaining steps to the human. Run `/reload-plugins` yourself, then run `/kaizen-setup` yourself, in the same session.
 
-**No Node.js required in your host project.** Kaizen runs from its own plugin directory.
+> **`/kaizen-setup` is mandatory, not optional.** It creates `kaizen.config.json`, scaffolds `.agents/kaizen/local/policies-local.md`, and injects a kaizen section into `CLAUDE.md`. Without it, kaizen's hooks run but have no config to read — you get warnings and fallbacks instead of enforcement. **The install is not complete until `/kaizen-setup` has finished.**
+
+### You are done when
+
+All four files exist in the host repo:
+
+- `.claude/settings.json` — contains `"enabledPlugins": { "kaizen@kaizen": true }` (and a `marketplaces` block pointing at `Garsson-io/kaizen`)
+- `kaizen.config.json` — project config (host name, repo, kaizen repo, taxonomy)
+- `.agents/kaizen/local/policies-local.md` — project-specific policies scaffold
+- `CLAUDE.md` — has a kaizen section injected
+
+If any of those is missing, go back and run whichever of the four commands above was skipped.
+
+### Install via the CLI (outside a Claude Code session)
+
+If you're installing from a shell and not already inside `claude`:
+
+```bash
+claude plugin marketplace add Garsson-io/kaizen --scope project
+claude plugin install kaizen@kaizen --scope project
+```
+
+Then open a Claude Code session in the repo and run `/kaizen-setup` (a restart or `/reload-plugins` is needed between install and setup so the skill loads).
 
 ### For local development
 
 ```bash
 claude --plugin-dir /path/to/kaizen
 ```
+
+**No Node.js required in your host project.** Kaizen runs from its own plugin directory.
 
 ## Updating
 

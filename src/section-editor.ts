@@ -208,8 +208,15 @@ export interface Attachment {
 
 const MARKER_RE = /^<!-- kaizen:(\S+) -->/;
 
-/** Extract comment ID from GitHub URL (#issuecomment-123 or #discussion_r123 → ID) */
-function extractCommentId(url: string): string {
+/**
+ * Extract comment ID from GitHub URL (#issuecomment-123 or #discussion_r123 → ID).
+ * Returns '' for missing/unparseable input. #1082: prior to the
+ * fetchComments unification, issue comments came back with url=null and
+ * this function crashed on `null.match()` — the null-guard here is a
+ * belt-and-suspenders for the same class of upstream regression.
+ */
+function extractCommentId(url: string | null | undefined): string {
+  if (!url) return '';
   return url.match(/#issuecomment-(\d+)/)?.[1]
     ?? url.match(/comments\/(\d+)/)?.[1]
     ?? '';
@@ -245,20 +252,18 @@ function fetchComments(target: AttachmentTarget): Array<{ url: string; body: str
     if (cached) return cached;
   }
   try {
-    let raw: string;
-    if (target.kind === 'issue') {
-      raw = gh([
-        'issue', 'view', target.number, '--repo', target.repo,
-        '--json', 'comments',
-        '--jq', '.comments[] | {url: .url, body: .body} | @json',
-      ]);
-    } else {
-      // PR comments via the issues API (PRs are issues in GitHub's model)
-      raw = gh([
-        'api', `repos/${target.repo}/issues/${target.number}/comments`,
-        '--jq', '.[] | {url: .html_url, body: .body} | @json',
-      ]);
-    }
+    // #1082 — always go through `gh api repos/<repo>/issues/<N>/comments`.
+    // The previous `gh issue view --json comments` branch returned objects
+    // with no `url` field (keys are: author, authorAssociation, body,
+    // createdAt, includesCreatedEdit, isMinimized, minimizedReason,
+    // reactionGroups), so every comment got `url: null`, and the
+    // downstream `extractCommentId` crashed on `null.match()`. The PR
+    // branch already used the correct REST endpoint (PRs are issues in
+    // GitHub's comments model); we now unify on it for both target kinds.
+    const raw = gh([
+      'api', `repos/${target.repo}/issues/${target.number}/comments`,
+      '--jq', '.[] | {url: .html_url, body: .body} | @json',
+    ]);
     if (!raw) return [];
     const results: Array<{ url: string; body: string }> = [];
     for (const line of raw.split('\n')) {
