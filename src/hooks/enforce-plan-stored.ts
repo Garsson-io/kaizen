@@ -263,8 +263,29 @@ This hook enforces I3 (stored test plan) and I8 (plan before implementation).`,
 
 ${gate.reason}
 
-Run /kaizen-write-plan — the skill knows how to create and store the plan correctly.
-  Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })`,
+Two ways to clear this gate (#1085 item 9):
+
+  RECOMMENDED — use the skill (does the reasoning + stores the plan):
+    Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })
+
+  MANUAL — if you already have plan + testplan text written:
+    npx tsx "\${CLAUDE_PLUGIN_ROOT}/src/cli-structured-data.ts" store-plan \\
+      --issue ${issueNum} --repo ${repo} --stdin <<'PLAN'
+    # Plan — <title>
+    ## Success Criteria ...
+    ## Information Retrieved ...
+    ## Tasks ...
+    PLAN
+    npx tsx "\${CLAUDE_PLUGIN_ROOT}/src/cli-structured-data.ts" store-testplan \\
+      --issue ${issueNum} --repo ${repo} --stdin <<'TESTPLAN'
+    # Test Plan
+    ## Behaviors × Levels
+    | Behavior | Unit | Integration | System |
+    ...
+    TESTPLAN
+
+The content is the discipline — a one-sentence stub passes the gate
+but fails substance checks on \`gh pr create\`. Write a real plan.`,
     };
   }
 

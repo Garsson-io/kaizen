@@ -86,7 +86,107 @@ export function detectInstall(opts: { cwd: string; env?: Record<string, string |
     const needsInstall = !existsSync(join(env.CLAUDE_PLUGIN_ROOT, "node_modules"));
     return { step: "detect", status: "ok", method: "plugin", root: env.CLAUDE_PLUGIN_ROOT, needsInstall };
   }
+
+  // Fallback (#1085): `CLAUDE_PLUGIN_ROOT` is only set when Claude Code
+  // invokes hooks; it is NOT set in ad-hoc Bash calls an agent makes
+  // while running a skill. That produced a false-negative "plugin not
+  // installed" for every agent-driven install. Resolve via the
+  // `claude` CLI, which is a stable public surface and reports the
+  // plugin cache path alongside enablement state.
+  const cliRoot = detectViaClaudeCli();
+  if (cliRoot) {
+    const needsInstall = !existsSync(join(cliRoot, "node_modules"));
+    return { step: "detect", status: "ok", method: "plugin", root: cliRoot, needsInstall };
+  }
+
   return { step: "detect", status: "ok", method: "none", root: "" };
+}
+
+/**
+ * Resolve kaizen's plugin cache path via `claude plugin list --json`.
+ * Returns the empty string if:
+ *   - the `claude` CLI is absent,
+ *   - the CLI does not support `--json` (older gh-style; we swallow
+ *     and return "" so the caller falls through to `method: "none"`),
+ *   - no plugin matching `kaizen@kaizen` is reported.
+ *
+ * Used as the Step-0 fallback when `CLAUDE_PLUGIN_ROOT` is unset.
+ */
+function detectViaClaudeCli(): string {
+  try {
+    const stdout = execSync("claude plugin list --json", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10000,
+    });
+    const parsed = JSON.parse(stdout.trim());
+    const list = Array.isArray(parsed) ? parsed : (parsed?.plugins ?? []);
+    for (const entry of list) {
+      // Schema (claude 2.90.0): {id: "kaizen@kaizen", installPath: "...", ...}
+      // Be permissive — accept `name`/`plugin`/`id` and `installPath`/`path`/
+      // `root`/`cachePath` since the CLI's JSON shape is not a frozen contract.
+      const name = entry?.id ?? entry?.name ?? entry?.plugin ?? "";
+      if (name === "kaizen@kaizen" || name === "kaizen") {
+        const p = entry?.installPath ?? entry?.path ?? entry?.root ?? entry?.cachePath ?? "";
+        if (p && typeof p === "string") return p;
+      }
+    }
+  } catch {
+    /* no-op — caller returns method: "none" */
+  }
+  return "";
+}
+
+export interface PreconditionResult {
+  step: "precondition";
+  status: "ok" | "warn";
+  warnings: string[];
+}
+
+/**
+ * Step 0.5 — check preconditions that commonly produce silent failures.
+ *
+ * Today this catches one thing (#1085 item 2): the host repo has
+ * `.claude/` in `.gitignore`, which silently defeats project-scope
+ * plugin install. `enabledPlugins["kaizen@kaizen"]` writes to
+ * `.claude/settings.json` and nothing propagates to collaborators.
+ * Scaffolding kaizen-session-local dirs is fine and expected, but
+ * gitignoring the whole `.claude/` directory hides the team-shared
+ * settings too.
+ *
+ * Advisory only — returns warnings for the skill to display, never
+ * blocks. Idempotent.
+ */
+export function checkPreconditions(cwd: string): PreconditionResult {
+  const warnings: string[] = [];
+  const gitignorePath = join(cwd, ".gitignore");
+  if (existsSync(gitignorePath)) {
+    const body = readFileSync(gitignorePath, "utf-8");
+    const lines = body.split(/\r?\n/);
+    const broadIgnore = lines.some((raw) => {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) return false;
+      // Matches `.claude/`, `.claude`, `/.claude/`, `/.claude` (without
+      // a trailing more-specific path segment). Does NOT flag
+      // `.claude/review-fix/`, `.claude/audit/`, `.claude/worktrees/`,
+      // etc — those are intentionally session-local.
+      return /^\/?\.claude\/?$/.test(line);
+    });
+    if (broadIgnore) {
+      warnings.push(
+        ".claude/ is gitignored in this host repo. Project-scope plugin " +
+          "install writes enabledPlugins to .claude/settings.json, but with " +
+          "the whole directory gitignored, nothing propagates to collaborators. " +
+          "Replace `.claude/` with the narrower session-local entries: " +
+          ".claude/review-fix/, .claude/audit/, .claude/worktrees/, .claude/settings.local.json.",
+      );
+    }
+  }
+  return {
+    step: "precondition",
+    status: warnings.length > 0 ? "warn" : "ok",
+    warnings,
+  };
 }
 
 export function generateConfig(input: ConfigInput, cwd: string): ConfigResult {
@@ -193,6 +293,7 @@ Add project-specific enforcement rules here.
     ".claude/audit/",
     ".agents/kaizen/local/audit/",
     ".claude/worktrees/",
+    "data/telemetry/",
   ];
   const existing = existsSync(gitignorePath)
     ? readFileSync(gitignorePath, "utf-8")
@@ -206,6 +307,228 @@ Add project-specific enforcement rules here.
   }
 
   return { step: "scaffold", status: "ok", path };
+}
+
+export interface CeremonyResult {
+  step: "ceremony";
+  status: "ok" | "skipped" | "error";
+  /** Existing issue found by search (idempotent) or newly created. */
+  issueNumber?: number;
+  issueUrl?: string;
+  /** URL of the stored plan attachment comment. */
+  planUrl?: string;
+  reason?: string;
+  error?: string;
+}
+
+/**
+ * Step 7 of `/kaizen-setup` — file the tracking issue that the setup
+ * PR will close.
+ *
+ * Rationale (#1085 items 5, 8): kaizen is a big change. Adopting it
+ * deserves an issue, a plan, and a PR — and the setup skill should
+ * lead the admin through that ceremony rather than hand them a
+ * configured repo that's immediately about to be blocked by kaizen's
+ * own enforcement hooks (plan-stored on `gh pr create`, worktree
+ * writes, etc.).
+ *
+ * Behavior: idempotent. Searches for an existing "configure kaizen
+ * plugin" issue first; creates one only if none is found. Stores a
+ * templated plan as a marker attachment on the issue so
+ * `enforce-plan-stored` passes when the PR is opened.
+ *
+ * Best-effort — if `gh` is not authenticated or the user lacks
+ * issue-creation permission, returns status=`error` without
+ * aborting the overall install. The admin is then told to file the
+ * issue manually (SKILL.md step 8).
+ */
+export function registerCeremony(opts: {
+  cwd: string;
+  hostRepo: string;
+  hostName: string;
+  pluginRoot?: string;
+}): CeremonyResult {
+  const { cwd, hostRepo, hostName } = opts;
+  const title = `chore(kaizen): configure kaizen plugin for ${hostName}`;
+
+  // Idempotency check: look for an existing open issue with the same
+  // title or a clear kaizen-setup marker. We only search open issues;
+  // if the admin closed a prior one and is re-running, we'll create a
+  // fresh one (they probably want a fresh PR too).
+  try {
+    const searchOut = execSync(
+      `gh issue list --repo "${hostRepo}" --state open --search "chore(kaizen): configure kaizen plugin" --json number,title,url --limit 5`,
+      { encoding: "utf-8", timeout: 30000 },
+    );
+    const results = JSON.parse(searchOut.trim()) as Array<{ number: number; title: string; url: string }>;
+    const existing = results.find((r) => r.title === title);
+    if (existing) {
+      return {
+        step: "ceremony",
+        status: "skipped",
+        issueNumber: existing.number,
+        issueUrl: existing.url,
+        reason: "tracking issue already exists",
+      };
+    }
+  } catch (e) {
+    // gh not authed or not installed — bail cleanly, do not block setup.
+    return {
+      step: "ceremony",
+      status: "error",
+      error: `gh issue list failed (is gh authenticated?): ${(e as Error).message}`,
+    };
+  }
+
+  const issueBody = renderCeremonyIssueBody({ hostRepo, hostName });
+  let issueUrl = "";
+  let issueNumber = 0;
+  try {
+    const createOut = execSync(
+      `gh issue create --repo "${hostRepo}" --title ${JSON.stringify(title)} --body-file -`,
+      { encoding: "utf-8", input: issueBody, timeout: 30000 },
+    );
+    issueUrl = createOut.trim().split("\n").pop() ?? "";
+    const match = issueUrl.match(/\/issues\/(\d+)/);
+    if (match) issueNumber = parseInt(match[1], 10);
+  } catch (e) {
+    return {
+      step: "ceremony",
+      status: "error",
+      error: `gh issue create failed: ${(e as Error).message}`,
+    };
+  }
+
+  if (!issueNumber) {
+    return {
+      step: "ceremony",
+      status: "error",
+      issueUrl,
+      error: `could not parse issue number from: ${issueUrl}`,
+    };
+  }
+
+  // Store the plan attachment. This is best-effort — if it fails,
+  // the admin still has an issue filed; they can attach the plan
+  // manually via `/kaizen-write-plan`.
+  const planUrl = storeCeremonyPlan({
+    cwd,
+    hostRepo,
+    issueNumber,
+    hostName,
+    pluginRoot: opts.pluginRoot,
+  });
+
+  return {
+    step: "ceremony",
+    status: "ok",
+    issueNumber,
+    issueUrl,
+    planUrl: planUrl || undefined,
+    reason: planUrl ? undefined : "issue filed but plan attachment failed (file with /kaizen-write-plan)",
+  };
+}
+
+function renderCeremonyIssueBody(opts: { hostRepo: string; hostName: string }): string {
+  return `## Problem
+
+The **${opts.hostName}** repo needs kaizen's enforcement hooks, reflection workflows, and dev workflow skills, but today has no \`kaizen.config.json\`, no \`.agents/kaizen/local/policies-local.md\`, no kaizen section in \`CLAUDE.md\`, and no kaizen pre-push git hook. kaizen is installed as a Claude Code plugin at project scope, so the plugin is active for every collaborator once they pull — but without this configuration, kaizen's hooks fire without context they expect.
+
+## Scope
+
+Close the setup gap by landing the artifacts \`/kaizen-setup\` produces:
+
+- \`kaizen.config.json\` — host metadata + pointer to \`Garsson-io/kaizen\`
+- \`.agents/kaizen/local/policies-local.md\` — scaffold for project-specific policies
+- \`CLAUDE.md\` — appended kaizen plugin section (uses skill names + GitHub URLs; no local-path dependencies)
+- \`.gitignore\` — kaizen session-local state entries
+- Git pre-push hook — detected host framework (pre-commit / husky / lefthook / raw / none) + kaizen's pre-push dispatcher injected non-destructively
+
+## Why this issue exists
+
+This issue is filed by \`/kaizen-setup\` itself — kaizen adopts its own discipline from step one. The setup work will ship as a PR that closes this issue, giving every collaborator the same visibility into when and how kaizen was turned on.
+
+## Acceptance
+
+- [ ] \`npx kaizen-setup --step verify\` — all checks pass
+- [ ] PR opened with \`Closes #<this-issue>\` and a stored plan (this issue carries the plan as a \`kaizen:plan\` attachment)
+- [ ] After merge, a second collaborator clones fresh and \`/kaizen-setup --step verify\` reports clean
+
+## Context
+
+- Host: \`${opts.hostRepo}\`
+- Plugin: \`Garsson-io/kaizen\` at project scope (\`--scope project\`)
+- Filed by: \`/kaizen-setup\` ceremony step
+`;
+}
+
+function storeCeremonyPlan(opts: {
+  cwd: string;
+  hostRepo: string;
+  issueNumber: number;
+  hostName: string;
+  pluginRoot?: string;
+}): string {
+  const pluginRoot = opts.pluginRoot ?? process.env.CLAUDE_PLUGIN_ROOT ?? "";
+  if (!pluginRoot) return "";
+
+  const planMd = renderCeremonyPlan({ hostRepo: opts.hostRepo, hostName: opts.hostName });
+  try {
+    const out = execSync(
+      `npx --prefix "${pluginRoot}" tsx "${pluginRoot}/src/cli-structured-data.ts" store-plan --issue ${opts.issueNumber} --repo "${opts.hostRepo}" --stdin`,
+      { encoding: "utf-8", input: planMd, timeout: 30000 },
+    );
+    const m = out.match(/https?:\/\/\S+/);
+    return m ? m[0] : "";
+  } catch {
+    return "";
+  }
+}
+
+function renderCeremonyPlan(opts: { hostRepo: string; hostName: string }): string {
+  return `# Plan — configure kaizen plugin for ${opts.hostName}
+
+**Path**: ceremony — setup ships as a PR, per #1085.
+
+## Success Criteria
+
+**GOAL**: \`${opts.hostRepo}\` is a kaizen host with the four setup artifacts on-disk, the pre-push hook active for every collaborator, and \`verify\` green.
+
+**DONE WHEN**:
+
+1. \`kaizen.config.json\` exists at repo root, points to \`Garsson-io/kaizen\`.
+2. \`.agents/kaizen/local/policies-local.md\` scaffolded (empty OK — ready for project-specific rules).
+3. \`CLAUDE.md\` contains a kaizen section (uses skill names + GitHub URLs; no local absolute paths).
+4. \`.gitignore\` includes kaizen session-local entries.
+5. Pre-push hook installed via detected framework; \`git push --dry-run\` exercises the dispatcher and does not fail-closed.
+6. \`npx kaizen-setup --step verify\` reports all checks pass.
+
+## Information Retrieved
+
+- Host repo: ${opts.hostRepo}
+- Plugin source: \`Garsson-io/kaizen\` (Claude Code plugin at project scope)
+- Setup steps that already ran before this issue was filed: detect, precondition, enable, config, scaffold, claude-md-inject, install-git-hooks
+- This plan is filed by \`/kaizen-setup\` itself so that \`enforce-plan-stored\` lets the setup PR through
+
+## Design Alternatives Considered
+
+### Alt A: Ship setup without an issue/plan — REJECTED
+Rejected because: kaizen's enforcement hooks (\`enforce-plan-stored\`, worktree writes) will block the setup PR on its own. A setup that lands you in a state where your next action is blocked is hostile. Filing this tracking issue in the same \`/kaizen-setup\` invocation makes the install self-describing.
+
+### Alt B: File issue but skip plan attachment — REJECTED
+Rejected because: \`enforce-plan-stored\` specifically requires a stored plan attachment, not just an issue. Skipping the plan would leave the admin one step from being blocked.
+
+## Tasks
+
+1. Commit the on-disk artifacts from steps 2–6 above.
+2. Open a PR with \`Closes #<issue>\`. PR body should include \`npx kaizen-setup --step verify\` output as evidence.
+3. After merge, a teammate runs \`verify\` on a fresh clone to confirm the install propagates.
+
+## Non-goals
+
+- Tuning kaizen's policies beyond the scaffold — that's for a follow-up PR after the team sees kaizen in action for a sprint.
+- Backfilling kaizen's issue-label taxonomy into existing issues.
+`;
 }
 
 interface PluginContractCheck {
@@ -474,6 +797,34 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       console.log(JSON.stringify(scaffoldPolicies(cwd)));
       break;
 
+    case "precondition":
+      console.log(JSON.stringify(checkPreconditions(cwd)));
+      break;
+
+    case "ceremony": {
+      const configPath = join(cwd, "kaizen.config.json");
+      if (!existsSync(configPath)) {
+        console.log(
+          JSON.stringify({
+            step: "ceremony",
+            status: "error",
+            error: "kaizen.config.json not found — run --step config first",
+          }),
+        );
+        process.exit(1);
+      }
+      const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
+      const pluginRoot = values["plugin-root"] ?? process.env.CLAUDE_PLUGIN_ROOT;
+      const out = registerCeremony({
+        cwd,
+        hostRepo: cfg.host?.repo ?? cfg.issues?.repo ?? "",
+        hostName: cfg.host?.name ?? "host-project",
+        pluginRoot,
+      });
+      console.log(JSON.stringify(out));
+      break;
+    }
+
     case "enable":
       console.log(JSON.stringify(enablePlugin(cwd, values["plugin"] ?? "kaizen@kaizen")));
       break;
@@ -520,7 +871,7 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
 
     default:
       console.error(`Unknown step: ${values.step}`);
-      console.error("Steps: detect, config, scaffold, enable, verify, post-update-validate, install-git-hooks");
+      console.error("Steps: detect, precondition, config, scaffold, enable, ceremony, verify, post-update-validate, install-git-hooks");
       process.exit(1);
   }
 }

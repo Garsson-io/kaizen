@@ -12,6 +12,7 @@ import {
   verifyPluginContract,
   postUpdateValidate,
   enablePlugin,
+  checkPreconditions,
 } from "./kaizen-setup.js";
 
 let tempDir: string;
@@ -37,9 +38,55 @@ describe("detectInstall", () => {
     expect(result.needsInstall).toBe(false);
   });
 
-  it("returns none when CLAUDE_PLUGIN_ROOT is not set", () => {
-    const result = detectInstall({ cwd: tempDir, env: {} });
+  it("returns none when CLAUDE_PLUGIN_ROOT is not set AND `claude` CLI is absent", () => {
+    // The `claude plugin list --json` fallback (#1085) invokes the
+    // `claude` CLI. In the unit test we pass env: {} which doesn't
+    // include a PATH capable of finding `claude`; the fallback's
+    // try/catch swallows the error and returns `method: "none"`.
+    const result = detectInstall({ cwd: tempDir, env: { PATH: "" } });
     expect(result).toEqual({ step: "detect", status: "ok", method: "none", root: "" });
+  });
+});
+
+describe("checkPreconditions (#1085 item 2 — gitignored .claude/ silently defeats project-scope)", () => {
+  it("returns ok when no .gitignore exists", () => {
+    const result = checkPreconditions(tempDir);
+    expect(result.status).toBe("ok");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("returns ok when .gitignore narrowly ignores session-local paths only", () => {
+    writeFileSync(
+      join(tempDir, ".gitignore"),
+      ".claude/review-fix/\n.claude/audit/\n.claude/worktrees/\n.claude/settings.local.json\n",
+    );
+    const result = checkPreconditions(tempDir);
+    expect(result.status).toBe("ok");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("warns when .gitignore broadly ignores `.claude/`", () => {
+    writeFileSync(join(tempDir, ".gitignore"), ".claude/\n");
+    const result = checkPreconditions(tempDir);
+    expect(result.status).toBe("warn");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain(".claude/settings.json");
+    expect(result.warnings[0]).toContain("Replace `.claude/`");
+  });
+
+  it("warns for `.claude` without trailing slash", () => {
+    writeFileSync(join(tempDir, ".gitignore"), ".claude\n");
+    expect(checkPreconditions(tempDir).status).toBe("warn");
+  });
+
+  it("warns for leading-slash variant `/.claude/`", () => {
+    writeFileSync(join(tempDir, ".gitignore"), "/.claude/\n");
+    expect(checkPreconditions(tempDir).status).toBe("warn");
+  });
+
+  it("ignores commented lines", () => {
+    writeFileSync(join(tempDir, ".gitignore"), "# .claude/\n");
+    expect(checkPreconditions(tempDir).status).toBe("ok");
   });
 });
 

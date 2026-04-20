@@ -26,13 +26,35 @@ import { findStateWithStatus } from './state-utils.js';
 const BLOCKED_TOOLS = new Set(['Edit', 'Write']);
 
 function buildDenyMessage(toolLabel: string, prUrl: string, round: string): string {
+  // Extract PR number from URL for the remediation snippet.
+  const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '<N>';
+  const repoMatch = prUrl.match(/github\.com\/([^/]+\/[^/]+)/);
+  const repo = repoMatch ? repoMatch[1] : '<owner/repo>';
+
   return `BLOCKED: ${toolLabel} is not allowed during PR review.
 
 You have an active PR review that must be completed first:
   PR: ${prUrl} (round ${round})
 
-Run \`gh pr diff ${prUrl}\` to review the diff, then work through the
-self-review checklist. Only after reviewing can you proceed with other work.
+Clearing this gate is a TWO-step mechanism (#1085 item 6):
+
+  STEP 1 — read the diff and write a real summary:
+    gh pr diff ${prUrl}
+    # … then produce a meaningful review summary text …
+
+  STEP 2 — store the summary, then re-run \`gh pr diff\` so the
+           PostToolUse hook transitions the gate to "passed":
+    npx tsx "\${CLAUDE_PLUGIN_ROOT}/src/cli-structured-data.ts" \\
+      store-review-summary \\
+      --pr ${prNum} --repo ${repo} --round ${round} \\
+      --text "REVIEW: <your real review summary here>"
+    gh pr diff ${prUrl}
+
+The \`--text\` is the discipline. Writing "passed" there defeats the
+point of the gate; the summary content is what the next reviewer reads.
+
+For a full multi-dimension review, use \`/kaizen-review-pr ${prNum}\` —
+it spawns dimension subagents and stores findings + summary for you.
 
 Allowed commands during review:
   gh pr diff, gh pr view, gh pr comment, gh pr edit

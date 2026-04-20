@@ -20,24 +20,26 @@ A process improvement methodology implemented as a Claude Code plugin. Kaizen pr
 
 ## Installation
 
-Installing kaizen is a **four-command sequence that must run to completion.** Stopping part-way leaves the plugin enabled but unconfigured — hooks fire without the project config they expect. Any agent doing the install must perform all four steps in the same session.
+Installing kaizen is a **four-step sequence that must run to completion.** Stopping part-way leaves the plugin enabled but unconfigured — hooks fire without the project config they expect. Any agent doing the install must perform all four steps in the same session.
 
 ### Quick install (recommended — agents, read this)
 
-Run these four commands, in order, from a Claude Code session inside your host repo:
+Run these four commands, in order, from an interactive Claude Code session inside your host repo:
 
 ```
-/plugin marketplace add Garsson-io/kaizen --scope project
-/plugin install kaizen@kaizen --scope project
-/reload-plugins
-/kaizen-setup
+1. /plugin marketplace add Garsson-io/kaizen --scope project
+2. /plugin install kaizen@kaizen --scope project
+3. /reload-plugins
+4. /kaizen-setup
 ```
 
 > **`--scope project` is the right default for teams.** It writes marketplace + enabled-plugin entries into `.claude/settings.json`, which is checked into git, so every collaborator picks up kaizen on their next `git pull`. Use `--scope user` (the CLI default) only when you want kaizen just for yourself across many repos.
 
-> **`/reload-plugins` is equivalent to restarting Claude Code** — it loads the skills registered by the plugin you just installed. Without it (or a restart), `/kaizen-setup` below will not be available. **Agents**: do not hand the remaining steps to the human. Run `/reload-plugins` yourself, then run `/kaizen-setup` yourself, in the same session.
+> **`/reload-plugins` is equivalent to restarting Claude Code** — it loads the skills registered by the plugin you just installed. Without it (or a restart), `/kaizen-setup` will not be available. **Agents**: do not hand the remaining steps to the human. Run `/reload-plugins` yourself, then run `/kaizen-setup` yourself, in the same session.
 
 > **`/kaizen-setup` is mandatory, not optional.** It creates `kaizen.config.json`, scaffolds `.agents/kaizen/local/policies-local.md`, and injects a kaizen section into `CLAUDE.md`. Without it, kaizen's hooks run but have no config to read — you get warnings and fallbacks instead of enforcement. **The install is not complete until `/kaizen-setup` has finished.**
+
+> **Headless mode (`claude -p`) is different.** `/reload-plugins` is an interactive-only slash command — a `claude -p` agent cannot invoke it and will correctly stop after step 2. Headless callers must start a second `claude -p` session after the install completes (the skill will be loaded in the fresh session) and run `/kaizen-setup` there. Interactive agents have no such restriction.
 
 ### You are done when
 
@@ -55,8 +57,8 @@ If any of those is missing, go back and run whichever of the four commands above
 If you're installing from a shell and not already inside `claude`:
 
 ```bash
-claude plugin marketplace add Garsson-io/kaizen --scope project
-claude plugin install kaizen@kaizen --scope project
+1. claude plugin marketplace add Garsson-io/kaizen --scope project
+2. claude plugin install kaizen@kaizen --scope project
 ```
 
 Then open a Claude Code session in the repo and run `/kaizen-setup` (a restart or `/reload-plugins` is needed between install and setup so the skill loads).

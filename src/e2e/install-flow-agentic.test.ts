@@ -1,30 +1,57 @@
 /**
  * install-flow-agentic.test.ts — end-to-end proof of #1081.
  *
- * Drives the single forcing function for the kaizen install flow:
+ * Two-phase test that mirrors the real interactive install flow:
  *
- *   Given a brand-new host repo and the prompt
- *     "install Garsson-io/kaizen into this repo"
- *   (no other instructions), a Claude Code agent must end up with a
- *   fully-configured install by reading the README alone.
+ *   Phase 1 — install. One `claude -p` session installs the plugin.
+ *     Asserts `.claude/settings.json` with `enabledPlugins["kaizen@kaizen"]: true`
+ *     and a marketplaces entry. Verifies #1080 (project scope is the default).
+ *
+ *   Phase 2 — setup. A SECOND `claude -p` session simulates "fresh session
+ *     after /reload-plugins" — the kaizen skills are now loaded in the
+ *     conversation's skill list, so the agent can actually invoke
+ *     `/kaizen-setup`. Asserts `kaizen.config.json`, `policies-local.md`,
+ *     and a kaizen section in `CLAUDE.md`. Verifies #1081.
+ *
+ * Why two phases: `/reload-plugins` is a Claude Code CLI built-in, not a
+ * plugin skill, so agents in `claude -p` headless mode cannot invoke it
+ * (probed and confirmed — agent explicitly reports "I can't invoke it
+ * from here"). The second `claude -p` invocation starts with the plugin
+ * already loaded, which is the effect `/reload-plugins` produces
+ * interactively. README was updated to document this distinction.
  *
  * Gated on KAIZEN_LIVE_TEST=1 because `claude -p` spends real tokens.
- * Costs ~$1-$2 per run (sonnet, maxTurns=20). Not wired into the fast
- * suite; intended for CI nightly and manual "did I regress the README?"
- * runs.
+ * Costs ~$1-$3 per run (sonnet, two maxTurns~25 calls). Not wired into
+ * the fast suite; intended for CI nightly and manual "did I regress the
+ * install flow?" runs.
  *
- * The test is the forcing function. Every time it fails, the failure
- * mode should point at the README section that misled the agent.
+ * Every time the test fails, the failure assertion points at the README
+ * section / skill step that misled the agent.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execSync, spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir } from "node:os";
 
 const KAIZEN_ROOT = resolve(__dirname, "../..");
 const isLive = process.env.KAIZEN_LIVE_TEST === "1";
+
+/**
+ * What the agent is told to install. Two modes:
+ *
+ *   - Default (PR iteration, unset env var): the **current worktree** —
+ *     `claude plugin marketplace add` accepts a local path, so we point
+ *     the agent at this checkout. README-edit → test-run is immediate;
+ *     no network, no push, no rebuild.
+ *
+ *   - Override (`KAIZEN_E2E_PLUGIN_SOURCE=Garsson-io/kaizen`): a remote
+ *     GitHub source, which is what real users give Claude. Used for CI
+ *     nightly post-merge runs — validates that the *deployed* README
+ *     still leads agents correctly after merge.
+ */
+const PLUGIN_SOURCE = process.env.KAIZEN_E2E_PLUGIN_SOURCE ?? KAIZEN_ROOT;
 
 interface ClaudeResult {
   result: string;
@@ -39,7 +66,7 @@ function runClaude(prompt: string, cwd: string, opts: { maxTurns?: number; maxBu
     "--output-format", "json",
     "--model", "sonnet",
     "--dangerously-skip-permissions",
-    "--max-turns", String(opts.maxTurns ?? 20),
+    "--max-turns", String(opts.maxTurns ?? 25),
     "--max-budget-usd", String(opts.maxBudget ?? 2.5),
     prompt,
   ];
@@ -61,7 +88,9 @@ function runClaude(prompt: string, cwd: string, opts: { maxTurns?: number; maxBu
 
 /**
  * Simulate a fresh user: uninstall kaizen at user scope if present.
- * Safe to run when nothing is installed.
+ * Safe to run when nothing is installed. Project-scope installs live in
+ * the host repo's .claude/settings.json and are removed when the temp
+ * host dir is deleted.
  */
 function resetKaizenInstall(): void {
   spawnSync("claude", ["plugin", "uninstall", "kaizen@kaizen"], {
@@ -85,7 +114,7 @@ function makeBareHostRepo(name: string): string {
 
 describe("install-flow agentic E2E (#1081) — README must lead the agent to a configured install", () => {
   if (!isLive) {
-    it.skip("set KAIZEN_LIVE_TEST=1 to run the live agentic test (~$1-2/run)", () => {});
+    it.skip("set KAIZEN_LIVE_TEST=1 to run the live agentic test (~$1-3/run)", () => {});
     return;
   }
 
@@ -102,32 +131,33 @@ describe("install-flow agentic E2E (#1081) — README must lead the agent to a c
   });
 
   it(
-    "single minimal prompt → fully configured install",
+    "phase 1: install prompt → plugin enabled at project scope (#1080)",
     { timeout: 15 * 60 * 1000 },
     () => {
-      // The prompt is deliberately minimal — no hints, no step list, no
-      // mention of /kaizen-setup or /reload-plugins. The agent must
-      // derive the full flow from the README alone.
+      // Minimal install prompt. The agent must:
+      //   - find the README at PLUGIN_SOURCE,
+      //   - run the correct marketplace-add + install commands,
+      //   - pick --scope project (per the README's recommendation — #1080),
+      //   - correctly recognize that /reload-plugins and /kaizen-setup
+      //     cannot execute in this headless session and stop.
       const result = runClaude(
-        "install https://github.com/Garsson-io/kaizen into this repo",
+        `install the Claude Code plugin at ${PLUGIN_SOURCE} into this repo`,
         hostRepo,
         { maxTurns: 25, maxBudget: 2.5 },
       );
 
-      // Attach transcript to failure messages so when this test breaks,
-      // the failure mode itself tells us which README section was weak.
       const tail = (result.result ?? "").slice(-800);
 
       expect(
         result.is_error,
-        `claude -p returned is_error=true. transcript tail:\n${tail}`,
+        `claude -p returned is_error=true. Transcript tail:\n${tail}`,
       ).toBe(false);
 
-      // 1. Plugin settings file present at project scope (team-shared).
+      // Plugin settings file present at project scope (team-shared).
       const settingsPath = join(hostRepo, ".claude", "settings.json");
       expect(
         existsSync(settingsPath),
-        `.claude/settings.json not created. #1080 regression — agent used user scope. Transcript tail:\n${tail}`,
+        `.claude/settings.json not created. #1080 regression — agent used user scope or failed install. Transcript tail:\n${tail}`,
       ).toBe(true);
 
       const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
@@ -135,25 +165,67 @@ describe("install-flow agentic E2E (#1081) — README must lead the agent to a c
         settings.enabledPlugins?.["kaizen@kaizen"],
         `kaizen@kaizen not enabled in project settings. Got:\n${JSON.stringify(settings, null, 2)}`,
       ).toBe(true);
+    },
+  );
 
-      // 2. Kaizen config file present (the /kaizen-setup side of the flow).
+  it(
+    "phase 2: setup prompt in a fresh session → config + policies + CLAUDE.md (#1081)",
+    { timeout: 15 * 60 * 1000 },
+    () => {
+      // Phase 2 assumes phase 1 has already populated .claude/settings.json.
+      // To keep the test independent and fast, inline the equivalent of
+      // `claude plugin marketplace add + install --scope project` here
+      // by running those CLI commands directly, then invoke a fresh
+      // `claude -p` which will pick up the plugin on session start.
+      execSync(
+        `claude plugin marketplace add "${PLUGIN_SOURCE}" --scope project`,
+        { cwd: hostRepo, encoding: "utf-8", timeout: 60000 },
+      );
+      execSync(
+        `claude plugin install kaizen@kaizen --scope project`,
+        { cwd: hostRepo, encoding: "utf-8", timeout: 60000 },
+      );
+
+      // Sanity: phase-1-equivalent state is in place.
+      const settingsPath = join(hostRepo, ".claude", "settings.json");
+      expect(existsSync(settingsPath)).toBe(true);
+
+      // Now the "fresh interactive session post-reload" effect: a brand
+      // new `claude -p` invocation reads the project settings on startup
+      // and loads the kaizen plugin, so /kaizen-setup is in its skill
+      // list. The prompt still asks only for the user's intent, not the
+      // specific sequence.
+      const result = runClaude(
+        `configure this repo to use the kaizen plugin that's already installed`,
+        hostRepo,
+        { maxTurns: 25, maxBudget: 2.5 },
+      );
+
+      const tail = (result.result ?? "").slice(-800);
+
+      expect(
+        result.is_error,
+        `claude -p returned is_error=true. Transcript tail:\n${tail}`,
+      ).toBe(false);
+
+      // Kaizen config file present.
       const configPath = join(hostRepo, "kaizen.config.json");
       expect(
         existsSync(configPath),
-        `kaizen.config.json not created. #1081 regression — agent stopped at /plugin install without running /kaizen-setup. Transcript tail:\n${tail}`,
+        `kaizen.config.json not created. #1081 regression — /kaizen-setup was not invoked or did not complete. Transcript tail:\n${tail}`,
       ).toBe(true);
 
       const config = JSON.parse(readFileSync(configPath, "utf-8"));
       expect(config.host?.repo).toBeTruthy();
       expect(config.kaizen?.repo).toBe("Garsson-io/kaizen");
 
-      // 3. policies-local.md scaffolded.
+      // policies-local.md scaffolded.
       expect(
         existsSync(join(hostRepo, ".agents", "kaizen", "local", "policies-local.md")),
         `.agents/kaizen/local/policies-local.md not scaffolded. Transcript tail:\n${tail}`,
       ).toBe(true);
 
-      // 4. CLAUDE.md contains a kaizen section (injection happened).
+      // CLAUDE.md contains a kaizen section.
       const claudeMd = existsSync(join(hostRepo, "CLAUDE.md"))
         ? readFileSync(join(hostRepo, "CLAUDE.md"), "utf-8")
         : "";
@@ -161,6 +233,15 @@ describe("install-flow agentic E2E (#1081) — README must lead the agent to a c
         claudeMd.toLowerCase().includes("kaizen"),
         `CLAUDE.md does not mention kaizen (injection skipped). Content:\n${claudeMd.slice(0, 400)}`,
       ).toBe(true);
+
+      // #1085 fragment fix: CLAUDE.md must NOT contain the literal
+      // placeholder `{{KAIZEN_ROOT}}`. The fragment was rewritten to use
+      // GitHub URLs and skill names — if someone reintroduces the
+      // placeholder, this asserts.
+      expect(
+        claudeMd,
+        `CLAUDE.md contains literal {{KAIZEN_ROOT}} placeholder — fragment regressed. Content:\n${claudeMd.slice(0, 800)}`,
+      ).not.toContain("{{KAIZEN_ROOT}}");
     },
   );
 });

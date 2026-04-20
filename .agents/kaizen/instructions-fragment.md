@@ -2,7 +2,7 @@
 
 ## Kaizen — Continuous Improvement
 
-Kaizen is installed at `{{KAIZEN_ROOT}}`. It provides enforcement hooks, reflection workflows, and dev workflow skills. Configuration in `kaizen.config.json`.
+Kaizen is installed as a Claude Code plugin and provides enforcement hooks, reflection workflows, and dev workflow skills. Project configuration is in `kaizen.config.json`. Everything below is reachable via skill names — you don't need to know where kaizen's source lives on disk.
 
 ### Kaizen Skills
 
@@ -13,10 +13,16 @@ Kaizen is installed at `{{KAIZEN_ROOT}}`. It provides enforcement hooks, reflect
 | `/kaizen-gaps` | Strategic analysis — tooling/testing gaps, horizon concentration, unnamed dimensions |
 | `/kaizen-deep-dive` | Autonomous deep-dive — fix root cause category behind repeated issues |
 | `/kaizen-audit-issues` | Periodic issue taxonomy audit — label coverage, epic health, incidents |
+| `/kaizen-zen` | Print the Zen of Kaizen — the philosophical principles |
+| `/kaizen-write-plan` | Plan an issue before implementation (produces grounded plan + admin approval) |
+| `/kaizen-implement` | Execute a plan — spec to working code |
+| `/kaizen-review-pr` | Self-review checklist for your own PRs |
+| `/kaizen-write-pr` | Compose a PR description using the Story Spine narrative |
+| `/kaizen-sections` | Read/write structured sections in PR + issue bodies |
 
 ### Dev work skill chain — MUST follow this workflow
 
-**Full workflow docs:** [`{{KAIZEN_ROOT}}/.agents/kaizen/workflow.md`]({{KAIZEN_ROOT}}/.agents/kaizen/workflow.md)
+Full workflow documentation: [workflow.md](https://github.com/Garsson-io/kaizen/blob/main/.agents/kaizen/workflow.md).
 
 Key triggers — activate the right skill for the user's intent:
 
@@ -28,20 +34,20 @@ Key triggers — activate the right skill for the user's intent:
 
 ### The Zen of Kaizen
 
-Run `/kaizen-zen` to see the full commentary ([`{{KAIZEN_ROOT}}/.agents/kaizen/zen.md`]({{KAIZEN_ROOT}}/.agents/kaizen/zen.md)).
+Run `/kaizen-zen` to see the full commentary. Source: [zen.md](https://github.com/Garsson-io/kaizen/blob/main/.agents/kaizen/zen.md).
 
 ### Kaizen Policies
 
-**Generic policies:** [`{{KAIZEN_ROOT}}/.agents/kaizen/policies.md`]({{KAIZEN_ROOT}}/.agents/kaizen/policies.md) — recursive kaizen, hooks infrastructure, worktree isolation, co-commit tests, smoke tests ship with feature.
+Generic policies (recursive kaizen, hooks infrastructure, worktree isolation, co-commit tests, smoke tests ship with feature): [policies.md](https://github.com/Garsson-io/kaizen/blob/main/.agents/kaizen/policies.md).
 
-**Host-specific policies:** [`.agents/kaizen/local/policies-local.md`](.agents/kaizen/local/policies-local.md) — project-specific enforcement rules.
+Host-specific policies: [.agents/kaizen/local/policies-local.md](.agents/kaizen/local/policies-local.md) — add your project's own enforcement rules here.
 
 ### Verification Discipline
 
-**Read [`{{KAIZEN_ROOT}}/.agents/kaizen/verification.md`]({{KAIZEN_ROOT}}/.agents/kaizen/verification.md)** before writing fixes or tests. Covers: path tracing, invariant statements, runtime artifact verification, smoke tests.
+Read [verification.md](https://github.com/Garsson-io/kaizen/blob/main/.agents/kaizen/verification.md) before writing fixes or tests. Covers: path tracing, invariant statements, runtime artifact verification, smoke tests.
 
 ### Kaizen Backlog
 
-Future work tracked as GitHub Issues. Issue taxonomy in [`{{KAIZEN_ROOT}}/docs/issue-taxonomy.md`]({{KAIZEN_ROOT}}/docs/issue-taxonomy.md). Every issue MUST have: `kaizen` + level (`level-1`/`level-2`/`level-3`) + area label.
+Future work tracked as GitHub Issues. Issue taxonomy: [docs/issue-taxonomy.md](https://github.com/Garsson-io/kaizen/blob/main/docs/issue-taxonomy.md). Every issue MUST have: `kaizen` + level (`level-1`/`level-2`/`level-3`) + area label.
 
 <!-- END KAIZEN PLUGIN -->
