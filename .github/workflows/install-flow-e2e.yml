@@ -27,6 +27,7 @@ on:
       - 'src/kaizen-setup.ts'
       - 'src/kaizen-setup.test.ts'
       - 'src/e2e/install-flow-agentic.test.ts'
+      - 'src/e2e/install-ceremony-agentic.test.ts'
       - 'src/hooks/**'
       - '.claude/hooks/**'
       - '.claude-plugin/plugin.json'
@@ -80,9 +81,33 @@ jobs:
         if: steps.guard.outputs.has_key == 'true'
         run: npm run build
 
-      - name: Run agentic E2E
+      - name: Run agentic E2E — local-repo install-flow (#1081)
         if: steps.guard.outputs.has_key == 'true'
         env:
           KAIZEN_LIVE_TEST: '1'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: npx vitest run src/e2e/install-flow-agentic.test.ts --reporter=verbose
+
+      - name: Guard on KAIZEN_FIXTURE_GH_TOKEN secret
+        id: guard_ceremony
+        if: steps.guard.outputs.has_key == 'true'
+        env:
+          FIXTURE_TOKEN: ${{ secrets.KAIZEN_FIXTURE_GH_TOKEN }}
+        run: |
+          if [ -z "${FIXTURE_TOKEN}" ]; then
+            echo "::warning::KAIZEN_FIXTURE_GH_TOKEN is not set — ceremony E2E against kaizen-test-fixture cannot run. Skipping the #1093 job."
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run agentic E2E — full ceremony against kaizen-test-fixture (#1093)
+        if: steps.guard_ceremony.outputs.has_key == 'true'
+        env:
+          KAIZEN_LIVE_TEST: '1'
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # gh CLI reads GH_TOKEN for auth; this token must have `repo`
+          # scope on Garsson-io/kaizen-test-fixture (destructive test —
+          # creates + closes issues and PRs).
+          GH_TOKEN: ${{ secrets.KAIZEN_FIXTURE_GH_TOKEN }}
+        run: npx vitest run src/e2e/install-ceremony-agentic.test.ts --reporter=verbose
