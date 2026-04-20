@@ -1,0 +1,81 @@
+name: Install-flow agentic E2E
+
+# The agentic install-flow test (`src/e2e/install-flow-agentic.test.ts`)
+# spawns `claude -p "install …"` against a fresh temp repo and asserts
+# the four on-disk artifacts. It's expensive (~$2–4 per run, ~3 min),
+# so we only run it when the pieces it actually guards change:
+#
+#   - README.md          — the install instructions the agent follows
+#   - kaizen-setup.*     — the skill + its hooks + ceremony / inject steps
+#   - instructions-fragment.md — what gets injected into CLAUDE.md
+#   - install-flow-agentic.test.ts — the test itself
+#   - .github/workflows/install-flow-e2e.yml — so workflow edits test
+#
+# Gated on the `ANTHROPIC_API_KEY` repo secret — if it isn't present
+# (e.g. in a forked-PR context) the job short-circuits with a warning
+# rather than failing. Maintainers of the canonical repo must set this
+# secret for the gate to actually run.
+
+on:
+  pull_request:
+    paths:
+      - 'README.md'
+      - 'src/kaizen-setup.ts'
+      - 'src/kaizen-setup.test.ts'
+      - 'src/e2e/install-flow-agentic.test.ts'
+      - '.agents/kaizen/instructions-fragment.md'
+      - '.agents/skills/kaizen-setup/SKILL.md'
+      - '.github/workflows/install-flow-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-flow-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agentic-e2e:
+    name: Agentic install-flow E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard on ANTHROPIC_API_KEY secret
+        id: guard
+        env:
+          API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${API_KEY}" ]; then
+            echo "::warning::ANTHROPIC_API_KEY is not set — agentic E2E cannot run. Skipping."
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.has_key == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        if: steps.guard.outputs.has_key == 'true'
+        run: npm ci
+
+      - name: Install claude CLI
+        if: steps.guard.outputs.has_key == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Build
+        if: steps.guard.outputs.has_key == 'true'
+        run: npm run build
+
+      - name: Run agentic E2E
+        if: steps.guard.outputs.has_key == 'true'
+        env:
+          KAIZEN_LIVE_TEST: '1'
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npx vitest run src/e2e/install-flow-agentic.test.ts --reporter=verbose

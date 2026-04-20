@@ -93,7 +93,7 @@ export function detectInstall(opts: { cwd: string; env?: Record<string, string |
   // installed" for every agent-driven install. Resolve via the
   // `claude` CLI, which is a stable public surface and reports the
   // plugin cache path alongside enablement state.
-  const cliRoot = detectViaClaudeCli();
+  const cliRoot = detectViaClaudeCli(env);
   if (cliRoot) {
     const needsInstall = !existsSync(join(cliRoot, "node_modules"));
     return { step: "detect", status: "ok", method: "plugin", root: cliRoot, needsInstall };
@@ -112,12 +112,16 @@ export function detectInstall(opts: { cwd: string; env?: Record<string, string |
  *
  * Used as the Step-0 fallback when `CLAUDE_PLUGIN_ROOT` is unset.
  */
-function detectViaClaudeCli(): string {
+function detectViaClaudeCli(env: Record<string, string | undefined>): string {
   try {
     const stdout = execSync("claude plugin list --json", {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 10000,
+      // Thread the caller's env — tests pass `PATH: ""` to ensure the
+      // fallback can't silently succeed via a stale plugin cache that
+      // happens to live in the real HOME (#1084 round 4).
+      env: env as NodeJS.ProcessEnv,
     });
     const parsed = JSON.parse(stdout.trim());
     const list = Array.isArray(parsed) ? parsed : (parsed?.plugins ?? []);
@@ -418,13 +422,28 @@ export interface CeremonyResult {
  * aborting the overall install. The admin is then told to file the
  * issue manually (SKILL.md step 8).
  */
+/**
+ * Subprocess injection point for unit tests. Real callers never set
+ * this — it defaults to `execFileSync`. Tests pass a stub so they can
+ * assert the arg-array shape (the whole point of the CodeQL fix is to
+ * control that shape) without needing `gh` on PATH.
+ */
+export type ExecFileSyncLike = (
+  file: string,
+  args: string[],
+  opts: { encoding?: "utf-8"; timeout?: number; input?: string },
+) => string;
+
 export function registerCeremony(opts: {
   cwd: string;
   hostRepo: string;
   hostName: string;
   pluginRoot?: string;
+  /** @internal — test injection; defaults to `execFileSync` */
+  exec?: ExecFileSyncLike;
 }): CeremonyResult {
   const { cwd, hostRepo, hostName } = opts;
+  const exec: ExecFileSyncLike = opts.exec ?? (execFileSync as ExecFileSyncLike);
   const title = `chore(kaizen): configure kaizen plugin for ${hostName}`;
 
   // Idempotency check: look for an existing open issue with the same
@@ -434,7 +453,7 @@ export function registerCeremony(opts: {
   try {
     // execFileSync + arg array keeps hostRepo out of a shell — same
     // defense-in-depth pattern as `storeCeremonyPlan` (#1084 round 3).
-    const searchOut = execFileSync(
+    const searchOut = exec(
       "gh",
       [
         "issue", "list",
@@ -470,7 +489,7 @@ export function registerCeremony(opts: {
   let issueUrl = "";
   let issueNumber = 0;
   try {
-    const createOut = execFileSync(
+    const createOut = exec(
       "gh",
       [
         "issue", "create",
@@ -509,6 +528,7 @@ export function registerCeremony(opts: {
     issueNumber,
     hostName,
     pluginRoot: opts.pluginRoot,
+    exec: opts.exec,
   });
 
   return {
@@ -521,7 +541,7 @@ export function registerCeremony(opts: {
   };
 }
 
-function renderCeremonyIssueBody(opts: { hostRepo: string; hostName: string }): string {
+export function renderCeremonyIssueBody(opts: { hostRepo: string; hostName: string }): string {
   return `## Problem
 
 The **${opts.hostName}** repo needs kaizen's enforcement hooks, reflection workflows, and dev workflow skills, but today has no \`kaizen.config.json\`, no \`.agents/kaizen/local/policies-local.md\`, no kaizen section in \`CLAUDE.md\`, and no kaizen pre-push git hook. kaizen is installed as a Claude Code plugin at project scope, so the plugin is active for every collaborator once they pull — but without this configuration, kaizen's hooks fire without context they expect.
@@ -554,22 +574,25 @@ This issue is filed by \`/kaizen-setup\` itself — kaizen adopts its own discip
 `;
 }
 
-function storeCeremonyPlan(opts: {
+export function storeCeremonyPlan(opts: {
   cwd: string;
   hostRepo: string;
   issueNumber: number;
   hostName: string;
   pluginRoot?: string;
+  /** @internal — test injection; defaults to `execFileSync` */
+  exec?: ExecFileSyncLike;
 }): string {
   const pluginRoot = opts.pluginRoot ?? process.env.CLAUDE_PLUGIN_ROOT ?? "";
   if (!pluginRoot) return "";
 
+  const exec: ExecFileSyncLike = opts.exec ?? (execFileSync as ExecFileSyncLike);
   const planMd = renderCeremonyPlan({ hostRepo: opts.hostRepo, hostName: opts.hostName });
   try {
     // execFileSync with an arg array keeps the shell out of the call
     // path entirely — each arg is passed as-is to npx/tsx and cannot
     // be parsed as shell metacharacters (CodeQL js/shell-command-injection).
-    const out = execFileSync(
+    const out = exec(
       "npx",
       [
         "--prefix",
@@ -592,7 +615,7 @@ function storeCeremonyPlan(opts: {
   }
 }
 
-function renderCeremonyPlan(opts: { hostRepo: string; hostName: string }): string {
+export function renderCeremonyPlan(opts: { hostRepo: string; hostName: string }): string {
   return `# Plan — configure kaizen plugin for ${opts.hostName}
 
 **Path**: ceremony — setup ships as a PR, per #1085.
