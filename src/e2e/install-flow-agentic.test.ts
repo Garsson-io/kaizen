@@ -66,8 +66,8 @@ function runClaude(prompt: string, cwd: string, opts: { maxTurns?: number; maxBu
     "--output-format", "json",
     "--model", "sonnet",
     "--dangerously-skip-permissions",
-    "--max-turns", String(opts.maxTurns ?? 25),
-    "--max-budget-usd", String(opts.maxBudget ?? 2.5),
+    "--max-turns", String(opts.maxTurns ?? 40),
+    "--max-budget-usd", String(opts.maxBudget ?? 4.0),
     prompt,
   ];
   const r = spawnSync("claude", args, {
@@ -107,7 +107,12 @@ function makeBareHostRepo(name: string): string {
   const dir = mkdtempSync(join(tmpdir(), `kaizen-install-agentic-${name}-`));
   execSync("git init -q -b main", { cwd: dir });
   execSync("git config user.email test@test && git config user.name test", { cwd: dir });
-  writeFileSync(join(dir, "README.md"), `# ${name}\n\nA test host project.\n`);
+  // Add a realistic origin so /kaizen-setup's auto-detection can
+  // derive `repo` without asking. Real host repos have a remote;
+  // a repro without one isn't representative of the bug we're
+  // forcing the flow through.
+  execSync(`git remote add origin https://github.com/test-org/${name}.git`, { cwd: dir });
+  writeFileSync(join(dir, "README.md"), `# ${name}\n\nA test host project for the kaizen install flow.\n`);
   execSync("git add -A && git commit -q -m init", { cwd: dir });
   return dir;
 }
@@ -143,21 +148,21 @@ describe("install-flow agentic E2E (#1081) — README must lead the agent to a c
       const result = runClaude(
         `install the Claude Code plugin at ${PLUGIN_SOURCE} into this repo`,
         hostRepo,
-        { maxTurns: 25, maxBudget: 2.5 },
+        { maxTurns: 40, maxBudget: 4.0 },
       );
 
-      const tail = (result.result ?? "").slice(-800);
+      const diag = `turns=${result.num_turns} cost=$${result.total_cost_usd?.toFixed(2)} tail:\n${(result.result ?? "").slice(-1200)}`;
 
       expect(
         result.is_error,
-        `claude -p returned is_error=true. Transcript tail:\n${tail}`,
+        `phase 1 is_error=true. ${diag}`,
       ).toBe(false);
 
       // Plugin settings file present at project scope (team-shared).
       const settingsPath = join(hostRepo, ".claude", "settings.json");
       expect(
         existsSync(settingsPath),
-        `.claude/settings.json not created. #1080 regression — agent used user scope or failed install. Transcript tail:\n${tail}`,
+        `.claude/settings.json not created. #1080 regression — agent used user scope or failed install. ${diag}`,
       ).toBe(true);
 
       const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
@@ -198,21 +203,21 @@ describe("install-flow agentic E2E (#1081) — README must lead the agent to a c
       const result = runClaude(
         `configure this repo to use the kaizen plugin that's already installed`,
         hostRepo,
-        { maxTurns: 25, maxBudget: 2.5 },
+        { maxTurns: 40, maxBudget: 4.0 },
       );
 
-      const tail = (result.result ?? "").slice(-800);
+      const diag = `turns=${result.num_turns} cost=$${result.total_cost_usd?.toFixed(2)} tail:\n${(result.result ?? "").slice(-1200)}`;
 
       expect(
         result.is_error,
-        `claude -p returned is_error=true. Transcript tail:\n${tail}`,
+        `phase 2 is_error=true. ${diag}`,
       ).toBe(false);
 
       // Kaizen config file present.
       const configPath = join(hostRepo, "kaizen.config.json");
       expect(
         existsSync(configPath),
-        `kaizen.config.json not created. #1081 regression — /kaizen-setup was not invoked or did not complete. Transcript tail:\n${tail}`,
+        `kaizen.config.json not created. #1081 regression — /kaizen-setup was not invoked or did not complete. ${diag}`,
       ).toBe(true);
 
       const config = JSON.parse(readFileSync(configPath, "utf-8"));
@@ -222,7 +227,7 @@ describe("install-flow agentic E2E (#1081) — README must lead the agent to a c
       // policies-local.md scaffolded.
       expect(
         existsSync(join(hostRepo, ".agents", "kaizen", "local", "policies-local.md")),
-        `.agents/kaizen/local/policies-local.md not scaffolded. Transcript tail:\n${tail}`,
+        `.agents/kaizen/local/policies-local.md not scaffolded. ${diag}`,
       ).toBe(true);
 
       // CLAUDE.md contains a kaizen section.

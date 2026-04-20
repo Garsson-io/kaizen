@@ -64,17 +64,36 @@ Activation lives ONLY in the project's `.claude/settings.json`, never in user-sc
 
 ## Step 4: Create `kaizen.config.json`
 
-Ask the admin for project name, repo (`org/repo`), and description. Default `kaizen-repo` to `Garsson-io/kaizen`.
+**Auto-detect values first — do not stop to ask unless a value genuinely can't be derived.** The admin shouldn't have to answer three questions they could have answered from the repo itself.
+
+Detect defaults:
+
+```bash
+NAME=$(basename "$(pwd)")
+
+# Parse `git remote get-url origin` into `<owner>/<repo>`.
+REMOTE=$(git remote get-url origin 2>/dev/null || true)
+REPO=$(printf %s "$REMOTE" \
+  | sed -E 's|^git@github\.com:|https://github.com/|; s|\.git$||; s|^https://github\.com/||')
+
+# First non-empty non-heading line of README.md (or fallback).
+DESCRIPTION=$(awk 'NF && !/^#/ { print; exit }' README.md 2>/dev/null \
+  || echo "A kaizen-enabled project")
+```
+
+Now run config with the detected values. If you're in an interactive session and the values look wrong for the admin's intent, offer one confirmation prompt; otherwise proceed. In headless (`claude -p`) mode, proceed without asking.
 
 ```bash
 npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" \
   --step config \
-  --name "<name>" \
-  --repo "<org/repo>" \
-  --description "<description>" \
+  --name "$NAME" \
+  --repo "$REPO" \
+  --description "$DESCRIPTION" \
   --kaizen-repo "Garsson-io/kaizen" \
   --channel "none"
 ```
+
+If `git remote get-url origin` returns nothing (fresh repo, no remote yet), the admin needs to set one before `--repo` can be filled — fall back to asking in that specific case only.
 
 ---
 
@@ -90,9 +109,15 @@ Creates `.agents/kaizen/local/policies-local.md` if it doesn't exist. Also appen
 
 ## Step 6: Inject CLAUDE.md section
 
-Read the fragment at `$CLAUDE_PLUGIN_ROOT/.agents/kaizen/instructions-fragment.md` and append it to the host agent-instructions file (typically `CLAUDE.md`; if your host uses `AGENTS.md`, append there). If the target doesn't exist, create it. If it already has a kaizen section (look for `<!-- BEGIN KAIZEN PLUGIN`), skip.
+Append the kaizen fragment to the host agent-instructions file (typically `CLAUDE.md`; `AGENTS.md` if present instead).
 
-The fragment uses **skill names + GitHub URLs only** — no `{{KAIZEN_ROOT}}` placeholder, no local absolute paths. It survives kaizen version bumps and works on any collaborator's machine without substitution.
+```bash
+npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" --step claude-md-inject
+```
+
+Idempotent — the CLI skips if the target already contains `<!-- BEGIN KAIZEN PLUGIN`. The fragment uses **skill names + GitHub URLs only** — no `{{KAIZEN_ROOT}}` placeholder, no local absolute paths. It survives kaizen version bumps and works on any collaborator's machine without substitution.
+
+**Do not hand-roll this step.** Earlier prose-only documentation let agents skip it in headless mode; making it a CLI call makes the step mechanistic.
 
 ---
 

@@ -309,6 +309,74 @@ Add project-specific enforcement rules here.
   return { step: "scaffold", status: "ok", path };
 }
 
+export interface ClaudeMdInjectResult {
+  step: "claude-md-inject";
+  status: "ok" | "skipped" | "error";
+  path?: string;
+  reason?: string;
+  error?: string;
+}
+
+/**
+ * Step 6 of `/kaizen-setup` — append the kaizen fragment to the host's
+ * agent-instructions file.
+ *
+ * Mechanistic so agents in headless mode cannot skip it by misreading
+ * prose-style directions (#1081 regression in phase-2 of the live E2E:
+ * agent completed config + scaffold steps but never reached Step 6
+ * because it was documented as "read and append" rather than a CLI
+ * call).
+ *
+ * Target file resolution, in order:
+ *   1. `$opts.target` if provided
+ *   2. `CLAUDE.md` if present (common default)
+ *   3. `AGENTS.md` if present (alt convention)
+ *   4. Create `CLAUDE.md`
+ *
+ * Idempotent: if the target already contains `<!-- BEGIN KAIZEN PLUGIN`
+ * we skip. The fragment uses stable markers on either end so re-runs
+ * are safe.
+ */
+export function injectClaudeMd(opts: {
+  cwd: string;
+  pluginRoot: string;
+  target?: string;
+}): ClaudeMdInjectResult {
+  const fragmentPath = join(opts.pluginRoot, ".agents/kaizen/instructions-fragment.md");
+  if (!existsSync(fragmentPath)) {
+    return {
+      step: "claude-md-inject",
+      status: "error",
+      error: `fragment not found: ${fragmentPath}`,
+    };
+  }
+
+  let target = opts.target;
+  if (!target) {
+    const claudeMd = join(opts.cwd, "CLAUDE.md");
+    const agentsMd = join(opts.cwd, "AGENTS.md");
+    if (existsSync(claudeMd)) target = claudeMd;
+    else if (existsSync(agentsMd)) target = agentsMd;
+    else target = claudeMd; // create CLAUDE.md by default
+  }
+
+  const existing = existsSync(target) ? readFileSync(target, "utf-8") : "";
+  if (existing.includes("<!-- BEGIN KAIZEN PLUGIN")) {
+    return {
+      step: "claude-md-inject",
+      status: "skipped",
+      path: target,
+      reason: "kaizen section already present",
+    };
+  }
+
+  const fragment = readFileSync(fragmentPath, "utf-8");
+  const separator = existing === "" ? "" : existing.endsWith("\n\n") ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+  writeFileSync(target, existing + separator + fragment);
+
+  return { step: "claude-md-inject", status: "ok", path: target };
+}
+
 export interface CeremonyResult {
   step: "ceremony";
   status: "ok" | "skipped" | "error";
@@ -801,6 +869,20 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       console.log(JSON.stringify(checkPreconditions(cwd)));
       break;
 
+    case "claude-md-inject": {
+      const pluginRoot = values["plugin-root"] ?? process.env.CLAUDE_PLUGIN_ROOT ?? "";
+      if (!pluginRoot) {
+        console.log(JSON.stringify({
+          step: "claude-md-inject",
+          status: "error",
+          error: "plugin-root not set (pass --plugin-root or export CLAUDE_PLUGIN_ROOT)",
+        }));
+        process.exit(1);
+      }
+      console.log(JSON.stringify(injectClaudeMd({ cwd, pluginRoot })));
+      break;
+    }
+
     case "ceremony": {
       const configPath = join(cwd, "kaizen.config.json");
       if (!existsSync(configPath)) {
@@ -871,7 +953,7 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
 
     default:
       console.error(`Unknown step: ${values.step}`);
-      console.error("Steps: detect, precondition, config, scaffold, enable, ceremony, verify, post-update-validate, install-git-hooks");
+      console.error("Steps: detect, precondition, config, scaffold, enable, claude-md-inject, ceremony, verify, post-update-validate, install-git-hooks");
       process.exit(1);
   }
 }
