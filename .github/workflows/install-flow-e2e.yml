@@ -9,6 +9,10 @@ name: Install-flow agentic E2E
 #   - kaizen-setup.*     — the skill + its hooks + ceremony / inject steps
 #   - instructions-fragment.md — what gets injected into CLAUDE.md
 #   - install-flow-agentic.test.ts — the test itself
+#   - src/hooks/** + .claude/hooks/** — hooks fire during the agentic
+#     session (PreToolUse / Stop / pre-push), so a hook regression can
+#     block the install agent; this guard catches those before merge
+#   - .claude-plugin/plugin.json — hook/skill registration shape
 #   - .github/workflows/install-flow-e2e.yml — so workflow edits test
 #
 # Gated on the `ANTHROPIC_API_KEY` repo secret — if it isn't present
@@ -23,6 +27,9 @@ on:
       - 'src/kaizen-setup.ts'
       - 'src/kaizen-setup.test.ts'
       - 'src/e2e/install-flow-agentic.test.ts'
+      - 'src/hooks/**'
+      - '.claude/hooks/**'
+      - '.claude-plugin/plugin.json'
       - '.agents/kaizen/instructions-fragment.md'
       - '.agents/skills/kaizen-setup/SKILL.md'
       - '.github/workflows/install-flow-e2e.yml'
