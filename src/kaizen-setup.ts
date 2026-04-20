@@ -15,7 +15,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import { join } from "path";
 import { parseArgs } from "util";
 import { loadAllSkillMetadata, validateSkillDependencies, validateSkillVersions } from "./skill-metadata.js";
@@ -360,7 +360,15 @@ export function injectClaudeMd(opts: {
     else target = claudeMd; // create CLAUDE.md by default
   }
 
-  const existing = existsSync(target) ? readFileSync(target, "utf-8") : "";
+  // Read-then-write without a prior existsSync probe: CodeQL's
+  // js/file-system-race flags a stat-then-op pattern, so we let the
+  // read itself discover ENOENT in a single syscall.
+  let existing = "";
+  try {
+    existing = readFileSync(target, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
   if (existing.includes("<!-- BEGIN KAIZEN PLUGIN")) {
     return {
       step: "claude-md-inject",
@@ -542,8 +550,23 @@ function storeCeremonyPlan(opts: {
 
   const planMd = renderCeremonyPlan({ hostRepo: opts.hostRepo, hostName: opts.hostName });
   try {
-    const out = execSync(
-      `npx --prefix "${pluginRoot}" tsx "${pluginRoot}/src/cli-structured-data.ts" store-plan --issue ${opts.issueNumber} --repo "${opts.hostRepo}" --stdin`,
+    // execFileSync with an arg array keeps the shell out of the call
+    // path entirely — each arg is passed as-is to npx/tsx and cannot
+    // be parsed as shell metacharacters (CodeQL js/shell-command-injection).
+    const out = execFileSync(
+      "npx",
+      [
+        "--prefix",
+        pluginRoot,
+        "tsx",
+        join(pluginRoot, "src/cli-structured-data.ts"),
+        "store-plan",
+        "--issue",
+        String(opts.issueNumber),
+        "--repo",
+        opts.hostRepo,
+        "--stdin",
+      ],
       { encoding: "utf-8", input: planMd, timeout: 30000 },
     );
     const m = out.match(/https?:\/\/\S+/);

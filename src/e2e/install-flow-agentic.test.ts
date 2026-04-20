@@ -30,7 +30,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execSync, spawnSync } from "node:child_process";
+import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -182,12 +182,17 @@ describe("install-flow agentic E2E (#1081) — README must lead the agent to a c
       // `claude plugin marketplace add + install --scope project` here
       // by running those CLI commands directly, then invoke a fresh
       // `claude -p` which will pick up the plugin on session start.
-      execSync(
-        `claude plugin marketplace add "${PLUGIN_SOURCE}" --scope project`,
+      // execFileSync with an arg array so PLUGIN_SOURCE (env-derived)
+      // is never passed through a shell — fixes CodeQL
+      // js/shell-command-injection-from-environment.
+      execFileSync(
+        "claude",
+        ["plugin", "marketplace", "add", PLUGIN_SOURCE, "--scope", "project"],
         { cwd: hostRepo, encoding: "utf-8", timeout: 60000 },
       );
-      execSync(
-        `claude plugin install kaizen@kaizen --scope project`,
+      execFileSync(
+        "claude",
+        ["plugin", "install", "kaizen@kaizen", "--scope", "project"],
         { cwd: hostRepo, encoding: "utf-8", timeout: 60000 },
       );
 
