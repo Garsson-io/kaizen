@@ -432,8 +432,18 @@ export function registerCeremony(opts: {
   // if the admin closed a prior one and is re-running, we'll create a
   // fresh one (they probably want a fresh PR too).
   try {
-    const searchOut = execSync(
-      `gh issue list --repo "${hostRepo}" --state open --search "chore(kaizen): configure kaizen plugin" --json number,title,url --limit 5`,
+    // execFileSync + arg array keeps hostRepo out of a shell — same
+    // defense-in-depth pattern as `storeCeremonyPlan` (#1084 round 3).
+    const searchOut = execFileSync(
+      "gh",
+      [
+        "issue", "list",
+        "--repo", hostRepo,
+        "--state", "open",
+        "--search", "chore(kaizen): configure kaizen plugin",
+        "--json", "number,title,url",
+        "--limit", "5",
+      ],
       { encoding: "utf-8", timeout: 30000 },
     );
     const results = JSON.parse(searchOut.trim()) as Array<{ number: number; title: string; url: string }>;
@@ -460,8 +470,14 @@ export function registerCeremony(opts: {
   let issueUrl = "";
   let issueNumber = 0;
   try {
-    const createOut = execSync(
-      `gh issue create --repo "${hostRepo}" --title ${JSON.stringify(title)} --body-file -`,
+    const createOut = execFileSync(
+      "gh",
+      [
+        "issue", "create",
+        "--repo", hostRepo,
+        "--title", title,
+        "--body-file", "-",
+      ],
       { encoding: "utf-8", input: issueBody, timeout: 30000 },
     );
     issueUrl = createOut.trim().split("\n").pop() ?? "";
