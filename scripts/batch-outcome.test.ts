@@ -88,6 +88,12 @@ describe('buildBatchOutcome — pure derivation', () => {
     expect(outcome.totals.issues_filed).toBe(1);
     expect(outcome.totals.cost_usd).toBeCloseTo(4.5);
     expect(outcome.mode_breakdown[0].mode).toBe('exploit');
+    expect(outcome.mode_breakdown[0].efficiency).toBeCloseTo(0.33);
+    // Durable record carries measurements Phase 2 trend analysis needs.
+    expect(outcome.totals.duration_seconds).toBe(600);
+    expect(outcome.totals.lines_deleted).toBe(10);
+    expect(outcome.cost_anomaly_count).toBe(0);
+    expect(outcome.trend).toBeNull();
     expect(outcome.prs).toEqual(['https://github.com/Garsson-io/kaizen/pull/1108']);
   });
 
@@ -102,7 +108,7 @@ describe('buildBatchOutcome — pure derivation', () => {
 
   it('normalizes non-finite derived numbers so the result is schema-valid and JSON-clean', () => {
     // No successes: avg_cost_per_success = NaN, overall_efficiency = Infinity upstream.
-    const score = makeScore({ successful_runs: 0, avg_cost_per_success: NaN, overall_efficiency: Infinity, total_cost_usd: NaN });
+    const score = makeScore({ successful_runs: 0, success_rate: 0, avg_cost_per_success: NaN, overall_efficiency: Infinity, total_cost_usd: NaN });
     const outcome = buildBatchOutcome(makeState({ stop_reason: 'failed' }), score, 1_600);
     expect(() => BatchOutcomeSchema.parse(outcome)).not.toThrow();
     expect(outcome.avg_cost_per_success).toBeNull();

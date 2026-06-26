@@ -28,7 +28,7 @@ export const BATCH_OUTCOME_ATTACHMENT = 'batch-outcome';
  */
 export const BATCH_OUTCOME_SCHEMA_VERSION = 1;
 
-/** Per-mode effectiveness rollup carried in the outcome (subset of ModeStats). */
+/** Per-mode effectiveness rollup carried in the outcome (mirrors ModeStats). */
 const ModeBreakdownSchema = z.object({
   mode: z.string(),
   runs: z.number(),
@@ -36,7 +36,23 @@ const ModeBreakdownSchema = z.object({
   success_rate: z.number(),
   cost_usd: z.number(),
   prs: z.number(),
+  avg_cost: z.number(),
+  efficiency: z.number(),
+  lines_deleted: z.number(),
+  issues_pruned: z.number(),
 });
+
+/** Batch trend analysis (mirrors BatchTrend); null when fewer than 4 runs. */
+const BatchTrendSchema = z
+  .object({
+    cost_slope: z.number(),
+    first_half_success_rate: z.number(),
+    second_half_success_rate: z.number(),
+    efficiency_slope: z.number(),
+    duration_slope: z.number(),
+    summary: z.string(),
+  })
+  .nullable();
 
 /**
  * The structured batch outcome. Derived purely from `BatchState` + `BatchScore`.
@@ -57,11 +73,17 @@ export const BatchOutcomeSchema = z.object({
     issues_closed: z.number(),
     issues_filed: z.number(),
     cost_usd: z.number(),
+    duration_seconds: z.number(),
+    lines_deleted: z.number(),
+    issues_pruned: z.number(),
   }),
   success_rate: z.number(),
   avg_cost_per_success: z.number().nullable(),
   overall_efficiency: z.number(),
   review_fail_rate: z.number(),
+  cost_anomaly_count: z.number(),
+  mode_diversity: z.number(),
+  trend: BatchTrendSchema,
   mode_breakdown: z.array(ModeBreakdownSchema),
   prs: z.array(z.string()),
   issues_closed: z.array(z.string()),
@@ -101,11 +123,17 @@ export function buildBatchOutcome(
       issues_closed: score.total_issues_closed,
       issues_filed: state.issues_filed.length,
       cost_usd: finite(score.total_cost_usd),
+      duration_seconds: finite(score.total_duration_seconds),
+      lines_deleted: finite(score.total_lines_deleted),
+      issues_pruned: finite(score.total_issues_pruned),
     },
     success_rate: finite(score.success_rate),
     avg_cost_per_success: finiteOrNull(score.avg_cost_per_success),
     overall_efficiency: finite(score.overall_efficiency),
     review_fail_rate: finite(score.review_fail_rate),
+    cost_anomaly_count: score.cost_anomaly_count,
+    mode_diversity: finite(score.mode_diversity),
+    trend: score.trend,
     mode_breakdown: score.mode_breakdown.map((m) => ({
       mode: m.mode,
       runs: m.runs,
@@ -113,6 +141,10 @@ export function buildBatchOutcome(
       success_rate: finite(m.success_rate),
       cost_usd: finite(m.cost_usd),
       prs: m.prs,
+      avg_cost: finite(m.avg_cost),
+      efficiency: finite(m.efficiency),
+      lines_deleted: finite(m.lines_deleted),
+      issues_pruned: finite(m.issues_pruned),
     })),
     prs: state.prs,
     issues_closed: state.issues_closed,
