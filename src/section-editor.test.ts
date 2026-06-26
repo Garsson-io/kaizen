@@ -293,6 +293,37 @@ describe('readAttachment', () => {
   });
 });
 
+// Regression for #1082: retrievePlan/retrieveTestPlan crashed (TypeError) on any
+// issue with comments when running against an older gh CLI, because the issue
+// fetch path relied on a `url` field that older `gh issue view --json comments`
+// does not emit. Both prevention tests below FAIL before the categorical fix:
+//   1. the issue path must use the stable REST API (like the PR path), not `gh issue view`;
+//   2. extractCommentId must null-guard so a missing url degrades to '' instead of throwing.
+describe('#1082 — comment fetch is gh-version-robust', () => {
+  beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
+
+  it('fetches issue comments via the stable REST API (not gh issue view), with --paginate', () => {
+    ghReturns(JSON.stringify({ url: 'https://...#issuecomment-1', body: 'a comment' }));
+    listAttachments(issueAttach);
+    const args = mockGh.mock.calls[0][1] as string[];
+    expect(args).toContain('api');
+    expect(args.some(a => a.includes(`/issues/${issueAttach.number}/comments`))).toBe(true);
+    expect(args).toContain('--paginate');
+    // Must NOT use the version-fragile `gh issue view` path for comments.
+    expect(args).not.toContain('view');
+  });
+
+  it('does not throw on a comment whose url is null (old-gh shape), degrades commentId to ""', () => {
+    // Real shape from older `gh issue view --json comments`: no html_url → url is null.
+    ghReturns(JSON.stringify({ url: null, body: '<!-- kaizen:plan -->\n## Plan\n\n1. Do X' }));
+    let a: ReturnType<typeof readAttachment> = null;
+    expect(() => { a = readAttachment(issueAttach, 'plan'); }).not.toThrow();
+    expect(a).not.toBeNull();
+    expect(a!.content).toContain('Do X');
+    expect(a!.commentId).toBe('');
+  });
+});
+
 describe('writeAttachment', () => {
   beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
 
