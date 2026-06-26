@@ -223,9 +223,17 @@ async function handleQuickPass(a: CliArgs): Promise<void> {
 }
 
 async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
-  const text = resolveContent(a);
+  // The verdict is ALWAYS derived from stored findings (#1019). Any supplied text (--note, or
+  // legacy --text/--file) is non-authoritative commentary appended below the derived block.
+  const note = (a.note ?? resolveContent(a)) || undefined;
   const r = resolveRound(a);
-  const url = storeReviewSummary(prTarget(a.pr, a.repo), r, text || undefined);
+  let url: string;
+  try {
+    url = storeReviewSummary(prTarget(a.pr, a.repo), r, note);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
   // #920: Write review sentinel so pr-review-loop.ts can verify outcome
   writeReviewSentinel(a.repo, a.pr, r);
   console.log(`Review summary stored (round ${r}): ${url}`);
