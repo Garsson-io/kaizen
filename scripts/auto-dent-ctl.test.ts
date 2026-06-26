@@ -20,6 +20,7 @@ import {
   readAggregate,
   computeAggregateStats,
   formatAggregateStats,
+  buildSteerOutput,
   DEFAULT_WATCHDOG_THRESHOLD_SEC,
   type BatchInfo,
   type WatchdogResult,
@@ -1091,5 +1092,33 @@ describe('formatAggregateStats', () => {
     expect(output).toContain('60%');
     expect(output).toContain('Recent batches');
     expect(output).toContain('b1');
+  });
+});
+
+describe('buildSteerOutput — cloud-backed steer command (#940 Phase 2)', () => {
+  function outcome(over: Record<string, unknown> = {}): any {
+    return {
+      schema_version: 1, batch_id: 'b', guidance: 'g', batch_start: 1, batch_end: 2,
+      wall_seconds: 1, stop_reason: 'completed',
+      totals: { runs: 4, successful_runs: 3, prs: 3, issues_closed: 3, issues_filed: 0, cost_usd: 10, duration_seconds: 100, lines_deleted: 0, issues_pruned: 0 },
+      success_rate: 0.75, avg_cost_per_success: 3, overall_efficiency: 0.3, review_fail_rate: 0,
+      cost_anomaly_count: 0, mode_diversity: 1, trend: null, mode_breakdown: [], prs: [], issues_closed: [], issues_filed: [],
+      ...over,
+    };
+  }
+
+  it('wires read → analyze → format end to end with injected deps', () => {
+    const out = buildSteerOutput('Garsson-io/kaizen', {}, {
+      listIssues: () => [101, 102],
+      readOutcome: (n) =>
+        outcome({ batch_id: `b${n}`, batch_start: Number(n), review_fail_rate: 0.5 }),
+    });
+    expect(out).toContain('Cross-Batch Steering');
+    expect(out).toContain('Review fail rate');
+  });
+
+  it('renders the cold-start report when no outcomes are found', () => {
+    const out = buildSteerOutput('Garsson-io/kaizen', {}, { listIssues: () => [] });
+    expect(out).toMatch(/without cross-batch steering/i);
   });
 });

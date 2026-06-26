@@ -47,6 +47,7 @@ import {
   findExistingProgressIssue,
   ensureBatchProgressIssue,
   extractPlanText,
+  populateCrossBatchSteering,
 } from './auto-dent-run.js';
 import * as github from './auto-dent-github.js';
 
@@ -320,6 +321,78 @@ describe('buildTemplateVars with reflection insights', () => {
     const state = makeBatchState();
     const vars = buildTemplateVars(state, 3, tmpDir);
     expect(vars.reflection_insights).toBe('');
+  });
+
+  it('surfaces cross_batch_steering as a numbered list when state has it', () => {
+    const state = makeBatchState({ cross_batch_steering: ['Prefer exploit mode', 'Tighten test plans'] });
+    const vars = buildTemplateVars(state, 1);
+    expect(vars.cross_batch_steering).toContain('1. Prefer exploit mode');
+    expect(vars.cross_batch_steering).toContain('2. Tighten test plans');
+  });
+
+  it('renders the cross-batch steering block in the prompt only when non-empty', () => {
+    const withSteering = buildPrompt(makeBatchState({ cross_batch_steering: ['Reduce scope per run'] }), 1);
+    expect(withSteering).toContain('Cross-Batch Steering');
+    expect(withSteering).toContain('Reduce scope per run');
+
+    const without = buildPrompt(makeBatchState({ cross_batch_steering: [] }), 1);
+    expect(without).not.toContain('Cross-Batch Steering');
+  });
+});
+
+describe('populateCrossBatchSteering — close the loop (#940 Phase 2)', () => {
+  function tmpState(state: BatchState): string {
+    const dir = mkdtempSync(join(tmpdir(), 'cbs-'));
+    const f = join(dir, 'state.json');
+    writeState(f, state);
+    return f;
+  }
+
+  it('stores steering derived from prior outcomes and persists it', () => {
+    const state = makeBatchState({ batch_id: 'self' });
+    const f = tmpState(state);
+    const result = populateCrossBatchSteering(state, f, {
+      read: () => [
+        // Two batches, both stopped "backlog exhausted" → recurring stop-reason signal.
+        {
+          schema_version: 1, batch_id: 'p1', guidance: 'g', batch_start: 1, batch_end: 2,
+          wall_seconds: 1, stop_reason: 'backlog exhausted — no more open issues',
+          totals: { runs: 2, successful_runs: 2, prs: 2, issues_closed: 2, issues_filed: 0, cost_usd: 4, duration_seconds: 100, lines_deleted: 0, issues_pruned: 0 },
+          success_rate: 1, avg_cost_per_success: 2, overall_efficiency: 0.5, review_fail_rate: 0,
+          cost_anomaly_count: 0, mode_diversity: 1, trend: null, mode_breakdown: [], prs: [], issues_closed: [], issues_filed: [],
+        },
+        {
+          schema_version: 1, batch_id: 'p2', guidance: 'g', batch_start: 3, batch_end: 4,
+          wall_seconds: 1, stop_reason: 'backlog exhausted matching guidance',
+          totals: { runs: 2, successful_runs: 2, prs: 2, issues_closed: 2, issues_filed: 0, cost_usd: 4, duration_seconds: 100, lines_deleted: 0, issues_pruned: 0 },
+          success_rate: 1, avg_cost_per_success: 2, overall_efficiency: 0.5, review_fail_rate: 0,
+          cost_anomaly_count: 0, mode_diversity: 1, trend: null, mode_breakdown: [], prs: [], issues_closed: [], issues_filed: [],
+        },
+      ],
+    });
+    expect(result.some((s) => /backlog exhausted/i.test(s))).toBe(true);
+    // Persisted to state and onto disk.
+    expect(state.cross_batch_steering).toEqual(result);
+    expect(readState(f).cross_batch_steering).toEqual(result);
+  });
+
+  it('is idempotent — does not refetch when already populated', () => {
+    const state = makeBatchState({ cross_batch_steering: ['already here'] });
+    const f = tmpState(state);
+    let called = false;
+    const result = populateCrossBatchSteering(state, f, { read: () => { called = true; return []; } });
+    expect(called).toBe(false);
+    expect(result).toEqual(['already here']);
+  });
+
+  it('fails open — a GitHub error yields empty steering, never a throw', () => {
+    const state = makeBatchState({ batch_id: 'self' });
+    const f = tmpState(state);
+    const result = populateCrossBatchSteering(state, f, {
+      read: () => { throw new Error('gh issue list failed: network'); },
+    });
+    expect(result).toEqual([]);
+    expect(state.cross_batch_steering).toEqual([]);
   });
 });
 
