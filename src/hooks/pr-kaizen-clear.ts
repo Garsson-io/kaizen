@@ -16,10 +16,12 @@
  */
 
 import { execSync } from 'node:child_process';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
+import { verifyIssueRef, type RefStatus } from './lib/issue-ref-verifier.js';
+import { resolveProjectRoot } from '../lib/resolve-project-root.js';
 import { stripHeredocBody } from './parse-command.js';
 import {
   buildReflectionRecord,
@@ -101,6 +103,29 @@ const POSITIVE_DISPOSITIONS = new Set([
   'no-action',
 ]);
 const STANDARD_DISPOSITIONS = new Set(['filed', 'incident', 'fixed-in-pr']);
+
+// ── Outcome verification (kaizen #950, #943) ─────────────────────────
+// A "filed"/"incident" disposition is only honored if its ref points to a
+// real issue/PR. Candidate repos: the PR's own repo plus whatever the host
+// config declares (self-dogfood → one repo; host mode → host + kaizen repo).
+
+function getCandidateRepos(gatePrUrl: string): string[] {
+  const repos: string[] = [];
+  const prRepo = gatePrUrl?.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
+  if (prRepo) repos.push(prRepo);
+  try {
+    const root = resolveProjectRoot(process.cwd());
+    const cfg = JSON.parse(
+      readFileSync(join(root, 'kaizen.config.json'), 'utf-8'),
+    );
+    for (const r of [cfg?.issues?.repo, cfg?.host?.repo, cfg?.kaizen?.repo]) {
+      if (typeof r === 'string' && r) repos.push(r);
+    }
+  } catch {
+    // No config / unreadable → fall back to whatever the PR URL gave us.
+  }
+  return [...new Set(repos)];
+}
 
 function validateImpediments(items: Impediment[]): string[] {
   const errors: string[] = [];
@@ -454,6 +479,8 @@ export function processHookInput(
     stateDir?: string;
     postComment?: (prUrl: string, comment: string) => void;
     getPrFiles?: (prUrl: string) => string[];
+    /** Outcome predicate for filed/incident refs (injected in tests). */
+    verifyRef?: (ref: string) => RefStatus;
   } = {},
 ): string | null {
   if (input.tool_name !== 'Bash') return null;
@@ -601,6 +628,39 @@ export function processHookInput(
     shouldClear = true;
     isNoAction = true;
     clearReason = `no action needed [${noAction.category}]: ${noAction.reason}`;
+  }
+
+  // ── Outcome verification (kaizen #950, #943) ──────────────────
+  // Before clearing, confirm every "filed"/"incident" ref points to a real
+  // issue/PR. A fabricated ref (e.g. {"disposition":"filed","ref":"#9999"})
+  // declares an outcome that never happened — the gate must NOT clear on it.
+  // Network/parse failures return 'unverifiable' → fail open (never deadlock
+  // a run on a flaky network).
+  if (shouldClear && validatedItems.length > 0) {
+    const verifyRef =
+      options.verifyRef ??
+      ((ref: string) => verifyIssueRef(ref, getCandidateRepos(gatePrUrl)));
+    const missingRefs: string[] = [];
+    for (const item of validatedItems) {
+      if (
+        (item.disposition === 'filed' || item.disposition === 'incident') &&
+        item.ref &&
+        verifyRef(item.ref) === 'missing'
+      ) {
+        const desc = item.impediment || item.finding || 'impediment';
+        missingRefs.push(`${item.ref} (${desc})`);
+      }
+    }
+    if (missingRefs.length > 0) {
+      logNoAction('unverified-ref', missingRefs.join('; '), gatePrUrl);
+      return (
+        '\nKAIZEN_IMPEDIMENTS: Outcome verification failed.\n' +
+        'These "filed"/"incident" refs do not resolve to a real issue or PR:\n' +
+        missingRefs.map((m) => `  - ${m}`).join('\n') +
+        '\n\nFile the issue for real (or correct the ref), then resubmit.\n' +
+        '(A gate clears on the verified outcome, not the declaration — kaizen #950.)\n'
+      );
+    }
   }
 
   // ── Clear gate ─────────────────────────────────────────────────

@@ -40,6 +40,45 @@ Gates are the primary control flow mechanism:
 
 This creates a "you must do X before you can do Y" enforcement.
 
+### Outcome Verification Contract (kaizen #950, #943)
+
+**A gate clears on a verified outcome, not on a command-shaped declaration.**
+
+The category error (#943): every gate originally fired on command *invocation*. A review
+gate cleared when it saw `gh pr create` in a tool call — not when a PR was actually created
+and reviewed. An agent could satisfy a gate by issuing the gated command in a context where
+it fails silently, or by emitting a declaration whose claimed effect never happened. This is
+how #843 shipped 25 PRs with zero review: the gate detected the command, not the outcome.
+
+**The contract:** every clearing path declares the *outcome predicate* it verifies, and
+checks it before clearing. Verification has three results, and the fail direction matters:
+
+| Result | Meaning | Gate behavior |
+|--------|---------|---------------|
+| `exists` / verified | the claimed effect is real | **clear** |
+| `missing` / refuted | tool resolved cleanly, effect absent | **fail closed** — keep the gate |
+| `unverifiable` | parse failure, no target, network/auth error | **fail open** — clear, but log |
+
+Fail-open on `unverifiable` is deliberate: a flaky network must never deadlock an autonomous
+run. Fail-closed on a *definitive* refutation is the whole point — a fabricated outcome
+cannot clear the gate. Make the predicate injectable so tests exercise all three results
+without a live network (see `pr-kaizen-clear.ts`'s `verifyRef` option and
+`src/hooks/lib/issue-ref-verifier.ts`).
+
+#### Gate audit — outcome verification status
+
+| Gate (file) | Trigger | Outcome predicate | Status |
+|-------------|---------|-------------------|:------:|
+| `pr-review-loop.ts` | `gh pr diff` for a round | review **sentinel** written by `store-review-summary` (findings stored) — `gh pr diff` alone does not clear (#920) | ✅ verifies outcome |
+| `bump-plugin-version.ts` | `gh pr create` | manifest version is incremented vs `main` (auto-bumps + pushes if not — guarantees the effect) | ✅ ensures outcome |
+| `pr-kaizen-clear.ts` | `KAIZEN_IMPEDIMENTS` | JSON validates **and** every `filed`/`incident` `ref` resolves to a real issue/PR (#950) | ✅ verifies outcome |
+| `enforce-plan-stored.ts` | Edit/Write/`gh pr create` | a plan attachment exists on `git config kaizen.issue` (checked via the Case FE, not command text) | ✅ verifies outcome |
+| `pre-push.ts` | `git push` | reads real git state (merged-branch / remote ref); content-level, not command-string | ✅ verifies outcome |
+| `check-dirty-files.ts` | `gh pr create` | per-file `git diff --quiet HEAD` content check (#1073), not stat | ✅ verifies outcome |
+
+When adding a gate, fill in its row. A gate that only matches a command string and has no
+outcome predicate is the #943 anti-pattern — name the effect it should verify and check it.
+
 ### Kaizen Reflection Flow (kaizen #794)
 
 The reflection gate uses the gate pattern with a subagent for automated issue filing:
