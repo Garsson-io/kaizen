@@ -8,6 +8,7 @@
  */
 
 import type { RunMetrics, RunResult, MergeStatus } from './auto-dent-run.js';
+import { hasHookRejection } from './hook-signals.js';
 
 /**
  * Structured failure taxonomy for auto-dent runs.
@@ -45,7 +46,15 @@ export function classifyFailure(
   if (metrics.exit_code === 0 && !hasArtifacts) return 'empty_success';
 
   if (logOutput) {
+    // Structured detection first: consume the canonical hook contract
+    // (permissionDecision:"deny", decision:"block", gate-signal YAML) instead
+    // of guessing from English prose. See scripts/hook-signals.ts (#1102).
+    if (hasHookRejection(logOutput)) {
+      return 'hook_rejection';
+    }
     const log = logOutput.toLowerCase();
+    // Legacy fallback: pre-commit / framework hooks that don't speak the kaizen
+    // structured contract still surface as English prose. Kept as a safety net.
     if (log.includes('hook rejected') || log.includes('hook blocked') || log.includes('pre-commit hook') || log.includes('hook failed')) {
       return 'hook_rejection';
     }

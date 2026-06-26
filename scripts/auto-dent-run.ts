@@ -26,6 +26,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, renameSync, co
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
+import { firstHookReason } from './hook-signals.js';
 import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js';
 import { writeAttachment, addSection } from '../src/section-editor.js';
 import {
@@ -178,6 +179,8 @@ export interface RunMetrics {
   prompt_hash?: string;
   /** Structured failure classification (populated post-run) */
   failure_class?: string;
+  /** Reason a hook blocked this run, when failure_class is hook_rejection (#1102) */
+  hook_rejection_reason?: string;
   /** Number of lifecycle ordering violations detected post-run */
   lifecycle_violations?: number;
   /** Review battery verdict for PRs created in this run */
@@ -1953,8 +1956,14 @@ async function main(): Promise<void> {
     review_verdict: reviewVerdict,
     review_cost_usd: reviewCostUsd,
   };
-  // Classify failure: wall-clock timeout is authoritative (#686), then heuristics
-  runMetrics.failure_class = result.timedOut ? 'timeout' : classifyFailure(runMetrics);
+  // Classify failure: wall-clock timeout is authoritative (#686), then heuristics.
+  // Feed the run log so the log-based branch (hook_rejection, infrastructure,
+  // etc.) actually runs — without this argument it was dead code (#1102).
+  const runLog = existsSync(logFile) ? readFileSync(logFile, 'utf8') : undefined;
+  runMetrics.failure_class = result.timedOut ? 'timeout' : classifyFailure(runMetrics, runLog);
+  if (runMetrics.failure_class === 'hook_rejection' && runLog) {
+    runMetrics.hook_rejection_reason = firstHookReason(runLog);
+  }
   if (!freshState.run_history) freshState.run_history = [];
   freshState.run_history.push(runMetrics);
 
