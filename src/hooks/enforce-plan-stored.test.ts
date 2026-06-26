@@ -130,7 +130,7 @@ describe('checkPlanBeforeEdit', () => {
     }));
     expect(result.allowed).toBe(false);
     expect(result.missing).toContain('issue-link');
-    expect(result.reason).toContain('git config kaizen.issue');
+    expect(result.reason).toContain('git config --worktree kaizen.issue');
   });
 
   it('uses declared issue when branch name is ambiguous', () => {
@@ -188,7 +188,7 @@ describe('checkPlanBeforeEdit', () => {
       expect(result.allowed).toBe(false);
       expect(result.missing).toContain('issue-mismatch');
       expect(result.reason).toContain('Stale kaizen.issue');
-      expect(result.reason).toContain('git config kaizen.issue 950');
+      expect(result.reason).toContain('git config --worktree kaizen.issue 950');
     });
 
     it('ALLOWS when the case branch and declared issue agree', () => {
@@ -216,7 +216,7 @@ describe('checkPlanBeforeEdit', () => {
       }));
       expect(result.allowed).toBe(false);
       expect(result.missing).toContain('issue-link');
-      expect(result.reason).toContain('git config kaizen.issue 1106');
+      expect(result.reason).toContain('git config --worktree kaizen.issue 1106');
     });
   });
 });

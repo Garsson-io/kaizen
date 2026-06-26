@@ -152,6 +152,20 @@ Git worktrees share the common git dir (`.git/objects`, refs, and `.git/hooks/` 
 
 Mitigation: `.claude/hooks/kaizen-worktree-setup.sh` (SessionStart) verifies `.githooks/pre-push` exists and is executable, and warns if `core.hooksPath` is unset.
 
+### Per-worktree `kaizen.issue` binding (#1111)
+
+`kaizen.issue` answers "which issue is **this** worktree's work for?" — inherently per-worktree state. But raw `git config kaizen.issue <N>` writes to the **shared** `.git/config`, so every worktree reads one global value. Two failure modes follow:
+
+- **Leak** — a freshly provisioned run worktree inherits the *previous* run's `kaizen.issue` (observed: a run for #1099 inherited `1106`).
+- **Clobber** — two concurrent runs overwrite each other's binding.
+
+No shared-scope "unset on provisioning" is safe under concurrency (it would clear a sibling's legitimate binding). The categorical fix is to scope the binding to the worktree so the bad state cannot exist:
+
+- `git config extensions.worktreeConfig true` enables per-worktree keys.
+- `git config --worktree kaizen.issue <N>` writes a binding the merged read (`git config --get`) prefers over the shared value — independent per worktree.
+- `src/issue-binding.ts` is the single read/write primitive; `src/cli-issue-binding.ts` exposes `bind` / `read` / `check-leak` so the harness and agents never touch raw shared config.
+- The SessionStart guard in `kaizen-worktree-setup.sh` detects an inherited (leaked) binding at the provisioning choke point and steers to the per-worktree fix (advisory — the #1106 edit-time hook still fail-closes as defense-in-depth).
+
 ## Coexistence with `pr-review-loop.ts`
 
 `pr-review-loop.ts` (`PostToolUse` on `Bash`) is **retained** as a fallback. Its Bash command-string parsing catches `gh pr create` (extracting the PR URL from `gh`'s output — pre-push can't do this, as the PR doesn't exist yet at push time) and handles subsequent-push round bumping.
