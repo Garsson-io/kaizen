@@ -42,6 +42,23 @@ for artifact in node_modules dist; do
   fi
 done
 
+# Provisioning guard for a leaked kaizen.issue (#1111, harness-side half of #1106).
+# `kaizen.issue` is per-worktree state, but raw `git config kaizen.issue <N>` writes
+# to the SHARED .git/config, so a fresh worktree inherits the previous run's value.
+# Detect that leak at the provisioning choke point and steer to the per-worktree fix.
+# Advisory only (SessionStart never blocks); the #1106 edit-time hook fail-closes.
+# Canonical logic + tests live in src/issue-binding.ts — this is a fast bash mirror.
+MERGED_ISSUE=$(git config --get kaizen.issue 2>/dev/null || true)
+WT_ISSUE=$(git config --worktree --get kaizen.issue 2>/dev/null || true)
+if [ -n "$MERGED_ISSUE" ] && [ -z "$WT_ISSUE" ]; then
+  CUR_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  BRANCH_TOKEN=$(printf '%s' "$CUR_BRANCH" | sed -n 's#^case/[0-9]\{6,\}-k\([0-9]\+\).*#\1#p')
+  if [ -z "$BRANCH_TOKEN" ] || [ "$BRANCH_TOKEN" != "$MERGED_ISSUE" ]; then
+    echo "kaizen-worktree-setup: ⚠️  Leaked kaizen.issue — this worktree inherits #$MERGED_ISSUE from shared config with no binding of its own." >&2
+    echo "kaizen-worktree-setup:    Bind this worktree to its real issue: npx tsx src/cli-issue-binding.ts bind --issue <N>" >&2
+  fi
+fi
+
 # Verify .githooks/pre-push presence (epic #1059, I-G).
 # When a worktree is on a branch that doesn't have .githooks/ committed, git
 # silently finds no hook and runs nothing. Surface the gap at session start.

@@ -20,6 +20,7 @@ import { appendFileSync } from 'node:fs';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-command.js';
 import { CaseSystem } from '../case-system.js';
+import { extractCaseIssueFromBranch } from './lib/case-branch.js';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -100,17 +101,10 @@ export function extractIssueNumber(fullCommand: string): string | null {
 // the worktree's branch (#1106) — the gate must verify "this work corresponds
 // to #N", not merely "a plan exists for #N" (the #943/#950 category error).
 
-/**
- * Parse the issue number from a canonical case branch (`case/<date>-k<N>-<slug>`,
- * e.g. `case/260626-k950-outcome-verification`). Returns null for ANY other
- * branch shape (main, feature/*, worktree-*, bare k<N>-*), so it never misfires
- * on names the case system did not create. This anchored, case-prefixed match is
- * what makes the result safe to trust as a cross-check rather than a guess.
- */
-export function extractCaseIssueFromBranch(branch: string): string | null {
-  const m = branch.match(/^case\/\d{6,}-k(\d+)(?:-|$)/);
-  return m ? m[1] : null;
-}
+// Canonical case-branch parsing now lives in hooks/lib/case-branch.ts so non-hook
+// modules can reuse it without crossing the #923 boundary. Re-exported here to
+// preserve this module's public surface (existing importers and tests).
+export { extractCaseIssueFromBranch };
 
 /**
  * Build the BLOCKED result shown when the worktree's case branch says issue M
@@ -124,8 +118,8 @@ function staleIssueResult(branchIssue: string, declaredIssue: string): PlanCheck
 
 This config was almost certainly inherited from another run/worktree. The plan gate would otherwise verify a plan for the WRONG issue (#${declaredIssue}) while you edit code for #${branchIssue}.
 
-FIX IT NOW — point the config at this worktree's actual issue:
-  git config kaizen.issue ${branchIssue}
+FIX IT NOW — bind THIS worktree (per-worktree scope, so it can't leak to or inherit from another run — #1111):
+  git config extensions.worktreeConfig true && git config --worktree kaizen.issue ${branchIssue}
 
 Then retry. (If you really intend to work on #${declaredIssue}, you are on the wrong branch — switch to that issue's case worktree instead.)`,
   };
@@ -214,12 +208,12 @@ export function checkPlanBeforeEdit(
 
   if (!issueNum) {
     const declareHint = branchIssue
-      ? `This worktree's branch is for issue #${branchIssue}. Declare it:
+      ? `This worktree's branch is for issue #${branchIssue}. Bind it (per-worktree, leak-proof — #1111):
 
-  git config kaizen.issue ${branchIssue}`
-      : `Every source-code edit must be tied to an issue. Declare it explicitly:
+  git config extensions.worktreeConfig true && git config --worktree kaizen.issue ${branchIssue}`
+      : `Every source-code edit must be tied to an issue. Bind it explicitly (per-worktree, leak-proof — #1111):
 
-  git config kaizen.issue <N>
+  git config extensions.worktreeConfig true && git config --worktree kaizen.issue <N>
 
 (where <N> is the issue number, e.g. 1055)`;
     return {
@@ -301,8 +295,8 @@ export function checkPlanBeforePr(
       missing: ['issue-link'],
       reason: `BLOCKED: Cannot verify plan — no issue declared.
 
-Declare the issue explicitly:
-  git config kaizen.issue <N>
+Bind the issue explicitly (per-worktree, leak-proof — #1111):
+  git config extensions.worktreeConfig true && git config --worktree kaizen.issue <N>
 
 Or include \`Closes #N\` in the PR body.
 This hook enforces I3 (stored test plan) and I8 (plan before implementation).`,
