@@ -238,6 +238,91 @@ describe("kaizen-evaluate — Phase 4.5: Plan Formation", () => {
 });
 
 // ---------------------------------------------------------------------------
+// kaizen-write-plan / kaizen-evaluate — Test-plan discipline (kaizen #1014)
+// ---------------------------------------------------------------------------
+// Problem the old skills had: Phase 4.5 could produce a CORRECT seam map (naming
+//   SessionSimulator as the seam for session-level behavior) yet a WRONG test plan
+//   that downgraded it to unit-only and deferred "E2E" to #944 — an issue that is
+//   itself a symptom of the current meta-issue (#1010). Two heuristic errors:
+//     (1) conflating cheap subprocess System tests with expensive LLM E2E ("defer on cost"), and
+//     (2) circular deferral — deferring a missing test level to the very issue that
+//         exists because that test level is missing.
+// What the new skills add:
+//     - COST NOTE: SessionSimulator/hook-runner are System level, $0, never deferred on cost.
+//     - No circular deferral: a deferral target may not be a symptom of the current issue.
+//     - Seam-map coverage gate (write-plan): every Step-5 seam must appear at its assigned level.
+// ---------------------------------------------------------------------------
+
+describe("kaizen-write-plan — test-plan discipline (#1014)", () => {
+  it("SKILL.md names cheap System hook/session tests and forbids cost-deferral", () => {
+    const skill = loadSkill("kaizen-write-plan");
+    expect(skill).toContain("COST NOTE");
+    expect(skill).toContain("SessionSimulator");
+    // The level for a subprocess hook/session seam is at least System, not deferrable on cost.
+    expect(skill).toMatch(/never defer[^.]*cost/i);
+  });
+
+  it("SKILL.md forbids circular deferral to a symptom of the current issue", () => {
+    const skill = loadSkill("kaizen-write-plan");
+    expect(skill).toContain("No circular deferral");
+    expect(skill).toContain("symptom");
+  });
+
+  it("SKILL.md has a seam-map coverage gate tying Step 5 seams to test-plan rows", () => {
+    const skill = loadSkill("kaizen-write-plan");
+    expect(skill).toContain("Seam-map coverage gate");
+  });
+
+  it.skipIf(!isLive)(
+    "keeps a SessionSimulator seam at System level and rejects circular deferral to a symptom issue",
+    async () => {
+      // Reproduces the #1014 scenario directly. With the new guidance, the correct
+      // answer is: System level (not deferred on cost) AND the deferral to #944 is
+      // circular because #944 is a listed symptom of the meta-issue being planned.
+      const prompt = [
+        "You are applying the kaizen-write-plan Step 6 (Assign test levels) and Scope",
+        "Reduction Discipline rules below:",
+        "",
+        "RULE A (COST NOTE): Subprocess-based hook/session tests — SessionSimulator,",
+        "hook-runner.ts, spawnSync on a hook script — are System level: real hooks in a",
+        "subprocess, ZERO LLM/API calls, deterministic, ~$0, <1s. Only real `claude -p`",
+        "tests carry LLM cost. Never downgrade or defer a session/hook seam on cost grounds.",
+        "RULE B (No circular deferral): a deferral target issue must be an independent",
+        "mechanism, not a symptom of the issue you are currently planning.",
+        "",
+        "Scenario: You are planning meta-issue #1010 (worktree-lifecycle cluster). Its",
+        "listed symptoms include #944 ('zero E2E tests for worktree lifecycle').",
+        "Step 5 named the seam for the lifecycle behavior as: SEAM: spawnSync on",
+        "kaizen-worktree-setup.sh via SessionSimulator.",
+        "",
+        "A teammate proposes: 'test plan = unit tests only; defer the session test to #944.'",
+        "",
+        "Apply the rules. State (a) the minimum test LEVEL for the SessionSimulator-based",
+        "behavior (one word: Unit/Integration/System/Agentic/Workflow), and (b) whether",
+        "deferring it to #944 is acceptable. End with one line: 'LEVEL: <level>' and one",
+        "line: 'DEFERRAL: <acceptable|circular>'.",
+      ].join("\n");
+
+      const output = runSkill(prompt, { maxBudget: 0.1 });
+      // New guidance must drive both decisions: System level, circular deferral.
+      expect(output).toMatch(/LEVEL:\s*System/i);
+      expect(output).toMatch(/DEFERRAL:\s*circular/i);
+    },
+    90_000,
+  );
+});
+
+describe("kaizen-evaluate — test-plan discipline (#1014)", () => {
+  it("SKILL.md mirrors the cheap-System cost note and anti-circular deferral", () => {
+    const skill = loadSkill("kaizen-evaluate");
+    expect(skill).toContain("COST NOTE");
+    expect(skill).toContain("SessionSimulator");
+    expect(skill).toContain("No circular deferral");
+    expect(skill).toContain("symptom");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Behavioral smoke test — dry dimension detects known DRY violation (kaizen #952)
 // ---------------------------------------------------------------------------
 
