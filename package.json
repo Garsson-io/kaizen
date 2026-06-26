@@ -12,6 +12,7 @@
     "test:e2e:live": "KAIZEN_LIVE_TEST=1 timeout --kill-after=10 120 vitest run src/e2e/",
     "test:e2e:skills": "KAIZEN_SKILL_TEST=1 timeout --kill-after=10 180 vitest run src/e2e/skill-change.test.ts",
     "test:hooks": "bash .claude/hooks/tests/run-all-tests.sh",
+    "test:shell": "bash scripts/auto-dent.test.sh",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
