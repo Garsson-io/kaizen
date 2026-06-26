@@ -12,38 +12,56 @@
  * Part of kAIzen Agent Control Flow — kaizen #775
  */
 
-import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { isGhPrCommand, stripHeredocBody } from './parse-command.js';
+import { createDefaultGitExec, resolveTargetWorktree, type GitExec } from './lib/git-state.js';
 
 export function bumpPluginVersion(
   command: string,
   options: {
-    gitRunner?: (args: string) => string;
+    /**
+     * argv-safe git runner (git-state.ts contract). The default routes
+     * through `spawnSync('git', argv)` — no shell string interpolation.
+     */
+    exec?: GitExec;
     projectRoot?: string;
+    /** Agent process cwd; used as the fallback target worktree (#1073/#240). */
+    cwd?: string;
   } = {},
 ): string | null {
   const cmdLine = stripHeredocBody(command);
   if (!isGhPrCommand(cmdLine, 'create')) return null;
 
-  const git = options.gitRunner ?? ((args: string) => {
+  const exec = options.exec ?? createDefaultGitExec();
+  const fallbackCwd = options.cwd ?? process.cwd();
+
+  // #1073/#240: anchor every git read to the *gated command's* worktree, not
+  // the agent's inherited process.cwd(). When the agent runs
+  // `cd <worktree> && gh pr create` while its cwd is the main checkout, an
+  // un-anchored `rev-parse --show-toplevel` resolves the MAIN repo and bumps
+  // the wrong .claude-plugin/plugin.json — the exact #1073 phantom-plugin.json
+  // failure mode.
+  const target = resolveTargetWorktree(command, fallbackCwd).dir;
+  const anchor: readonly string[] = target ? ['-C', target] : [];
+  const git = (args: readonly string[]): string => {
     try {
-      return execSync(`git ${args}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      const r = exec([...anchor, ...args]);
+      return r.exitCode === 0 ? r.stdout.trim() : '';
     } catch {
       return '';
     }
-  });
+  };
 
-  const projectRoot = options.projectRoot ?? (git('rev-parse --show-toplevel') || process.cwd());
+  const projectRoot = options.projectRoot ?? (git(['rev-parse', '--show-toplevel']) || fallbackCwd);
   const pluginJson = join(projectRoot, '.claude-plugin', 'plugin.json');
   if (!existsSync(pluginJson)) return null;
 
   // Compare version on current branch vs main
   const mainVersion = (() => {
     try {
-      const raw = git('show origin/main:.claude-plugin/plugin.json');
+      const raw = git(['show', 'origin/main:.claude-plugin/plugin.json']);
       return raw ? JSON.parse(raw).version || '0.0.0' : '0.0.0';
     } catch {
       return '0.0.0';
@@ -64,15 +82,21 @@ export function bumpPluginVersion(
   content.version = newVersion;
   writeFileSync(pluginJson, JSON.stringify(content, null, 2) + '\n');
 
-  // Stage, commit, and push (#919: push so gh pr create doesn't fail)
+  // Stage, commit, and push (#919: push so gh pr create doesn't fail).
+  // argv form — the filename is a discrete array element, never interpolated
+  // into a shell string (#1073 review: kill the shell-injection surface).
   try {
-    git(`add "${pluginJson}"`);
-    git(`commit -m "chore: bump plugin version to ${newVersion}" -m "Auto-bumped by kaizen-bump-plugin-version hook."`);
+    git(['add', pluginJson]);
+    git([
+      'commit',
+      '-m', `chore: bump plugin version to ${newVersion}`,
+      '-m', 'Auto-bumped by kaizen-bump-plugin-version hook.',
+    ]);
   } catch {
     // If commit fails (nothing to commit, etc.), ignore
   }
   try {
-    git('push');
+    git(['push']);
   } catch {
     // Push failure is non-blocking — agent can retry (#919: fail-open)
   }

@@ -2,30 +2,42 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bumpPluginVersion } from './bump-plugin-version.js';
+import type { GitExec } from './lib/git-state.js';
 
 const TEST_DIR = '/tmp/.test-bump-plugin';
 const PLUGIN_DIR = join(TEST_DIR, '.claude-plugin');
 const PLUGIN_JSON = join(PLUGIN_DIR, 'plugin.json');
 
+function writePluginAt(root: string, version: string) {
+  const dir = join(root, '.claude-plugin');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'plugin.json'), JSON.stringify({ name: 'test', version }, null, 2));
+}
+
 function writePlugin(version: string) {
-  mkdirSync(PLUGIN_DIR, { recursive: true });
-  writeFileSync(PLUGIN_JSON, JSON.stringify({ name: 'test', version }, null, 2));
+  writePluginAt(TEST_DIR, version);
 }
 
+// argv-safe GitExec seam (git-state.ts contract). Records each git argv so
+// tests can assert command ordering AND -C worktree anchoring (#1073/#240).
 function trackingGit(mainVersion: string) {
-  const calls: string[] = [];
-  const runner = (args: string) => {
-    calls.push(args);
-    if (args.includes('rev-parse --show-toplevel')) return TEST_DIR;
-    if (args.includes('show origin/main:.claude-plugin/plugin.json')) {
-      return JSON.stringify({ version: mainVersion });
+  const calls: string[][] = [];
+  const exec: GitExec = (args) => {
+    const argv = [...args];
+    calls.push(argv);
+    const joined = argv.join(' ');
+    if (joined.includes('show origin/main:.claude-plugin/plugin.json')) {
+      return { stdout: JSON.stringify({ version: mainVersion }), stderr: '', exitCode: 0 };
     }
-    return '';
+    if (joined.includes('rev-parse --show-toplevel')) {
+      return { stdout: TEST_DIR, stderr: '', exitCode: 0 };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
   };
-  return { runner, calls };
+  return { exec, calls };
 }
 
-const mockGit = (mainVersion: string) => trackingGit(mainVersion).runner;
+const mockGit = (mainVersion: string) => trackingGit(mainVersion).exec;
 
 beforeEach(() => {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
@@ -46,7 +58,7 @@ describe('bumpPluginVersion', () => {
   it('bumps patch version when main and current match', () => {
     writePlugin('1.0.5');
     const result = bumpPluginVersion('gh pr create --title "test"', {
-      gitRunner: mockGit('1.0.5'),
+      exec: mockGit('1.0.5'),
       projectRoot: TEST_DIR,
     });
     expect(result).toContain('1.0.5 -> 1.0.6');
@@ -57,7 +69,7 @@ describe('bumpPluginVersion', () => {
   it('skips when already bumped (different from main)', () => {
     writePlugin('1.1.0');
     const result = bumpPluginVersion('gh pr create --title "test"', {
-      gitRunner: mockGit('1.0.5'),
+      exec: mockGit('1.0.5'),
       projectRoot: TEST_DIR,
     });
     expect(result).toBeNull();
@@ -73,7 +85,7 @@ describe('bumpPluginVersion', () => {
   it('does not create temp files', () => {
     writePlugin('1.0.0');
     bumpPluginVersion('gh pr create --title "test"', {
-      gitRunner: mockGit('1.0.0'),
+      exec: mockGit('1.0.0'),
       projectRoot: TEST_DIR,
     });
     expect(existsSync(join(PLUGIN_DIR, 'plugin.json.tmp'))).toBe(false);
@@ -84,15 +96,15 @@ describe('bumpPluginVersion', () => {
 describe('INVARIANT: bump hook pushes after committing (#919)', () => {
   it('calls git push after git add + git commit', () => {
     writePlugin('1.0.5');
-    const { runner, calls } = trackingGit('1.0.5');
+    const { exec, calls } = trackingGit('1.0.5');
     bumpPluginVersion('gh pr create --title "test"', {
-      gitRunner: runner,
+      exec,
       projectRoot: TEST_DIR,
     });
     // Must have add → commit → push in order
     const addIdx = calls.findIndex(c => c.includes('add'));
     const commitIdx = calls.findIndex(c => c.includes('commit'));
-    const pushIdx = calls.findIndex(c => c === 'push');
+    const pushIdx = calls.findIndex(c => c.includes('push'));
     expect(addIdx).toBeGreaterThanOrEqual(0);
     expect(commitIdx).toBeGreaterThan(addIdx);
     expect(pushIdx).toBeGreaterThan(commitIdx);
@@ -100,18 +112,66 @@ describe('INVARIANT: bump hook pushes after committing (#919)', () => {
 
   it('returns success even if push fails (fail-open)', () => {
     writePlugin('1.0.5');
-    const { runner } = trackingGit('1.0.5');
+    const { exec } = trackingGit('1.0.5');
     // Override to throw on push
-    const failOnPush = (args: string) => {
-      if (args.includes('push')) throw new Error('push failed');
-      return runner(args);
+    const failOnPush: GitExec = (args) => {
+      if ([...args].includes('push')) throw new Error('push failed');
+      return exec(args);
     };
     const result = bumpPluginVersion('gh pr create --title "test"', {
-      gitRunner: failOnPush,
+      exec: failOnPush,
       projectRoot: TEST_DIR,
     });
     // Should still succeed — push failure is non-blocking
     expect(result).toContain('1.0.5 -> 1.0.6');
+  });
+});
+
+// #1073/#240: REGRESSION — bump must anchor git reads to the gated command's
+// worktree, never the agent's process.cwd(). Without -C anchoring, an agent
+// running `cd <worktree> && gh pr create` from a cwd in the MAIN checkout
+// would bump the MAIN repo's plugin.json (the phantom-plugin.json family).
+describe('REGRESSION: bump resolves the gated command worktree, not cwd (#1073)', () => {
+  const MAIN_DIR = join(TEST_DIR, 'main');
+  const WORKTREE_DIR = join(TEST_DIR, 'wt');
+
+  it('bumps the worktree plugin.json named in `cd <wt> && gh pr create`', () => {
+    writePluginAt(MAIN_DIR, '1.0.5');
+    writePluginAt(WORKTREE_DIR, '1.0.5');
+
+    const calls: string[][] = [];
+    // Resolve --show-toplevel per -C anchor so projectRoot follows the target.
+    const exec: GitExec = (args) => {
+      const argv = [...args];
+      calls.push(argv);
+      const joined = argv.join(' ');
+      // argv[0..1] is `-C <target>` for every anchored read.
+      const target = argv[0] === '-C' ? argv[1] : '';
+      if (joined.includes('rev-parse --show-toplevel')) {
+        return { stdout: target, stderr: '', exitCode: 0 };
+      }
+      if (joined.includes('show origin/main:.claude-plugin/plugin.json')) {
+        return { stdout: JSON.stringify({ version: '1.0.5' }), stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    };
+
+    const result = bumpPluginVersion(`cd ${WORKTREE_DIR} && gh pr create --title x`, {
+      exec,
+      cwd: MAIN_DIR, // agent process.cwd() is the MAIN checkout — the trap
+    });
+
+    // The worktree's plugin.json is bumped...
+    expect(result).toContain('1.0.5 -> 1.0.6');
+    expect(JSON.parse(readFileSync(join(WORKTREE_DIR, '.claude-plugin/plugin.json'), 'utf-8')).version)
+      .toBe('1.0.6');
+    // ...and the MAIN checkout's plugin.json is left untouched.
+    expect(JSON.parse(readFileSync(join(MAIN_DIR, '.claude-plugin/plugin.json'), 'utf-8')).version)
+      .toBe('1.0.5');
+    // Every git read was anchored to the worktree, never the main cwd.
+    const anchors = calls.filter(c => c[0] === '-C').map(c => c[1]);
+    expect(anchors.every(a => a === WORKTREE_DIR)).toBe(true);
+    expect(anchors).not.toContain(MAIN_DIR);
   });
 });
 

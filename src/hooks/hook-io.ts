@@ -6,7 +6,7 @@
  */
 
 import { appendFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { createDefaultGitExec, resolveTargetWorktree, type GitExec } from './lib/git-state.js';
 
 const getTraceFile = (): string => process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
 const isTraceEnabled = (): boolean => process.env.KAIZEN_HOOK_TRACE !== '0';
@@ -75,13 +75,25 @@ export function writeHookOutput(text: string): void {
   process.stdout.write(text);
 }
 
-/** Get the current git branch name. Returns empty string on failure. */
-export function getCurrentBranch(): string {
+/**
+ * Get the current git branch name. Returns empty string on failure.
+ *
+ * cmdLine-aware (#1073/#240): when the gated command is available, the branch
+ * is read from that command's *target worktree* (`git -C <target> rev-parse
+ * --abbrev-ref HEAD`) instead of the agent's inherited `process.cwd()`. With
+ * no cmdLine the target falls back to cwd — behaviorally identical to the
+ * legacy un-anchored call, but routed through the argv-safe git-state runner.
+ */
+export function getCurrentBranch(
+  cmdLine = '',
+  options: { cwd?: string; exec?: GitExec } = {},
+): string {
   try {
-    return execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
+    const exec = options.exec ?? createDefaultGitExec();
+    const target = resolveTargetWorktree(cmdLine, options.cwd ?? process.cwd()).dir;
+    const anchor: readonly string[] = target ? ['-C', target] : [];
+    const r = exec([...anchor, 'rev-parse', '--abbrev-ref', 'HEAD']);
+    return r.exitCode === 0 ? r.stdout.trim() : '';
   } catch {
     return '';
   }
