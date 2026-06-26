@@ -1221,11 +1221,30 @@ describe('classifyFailure', () => {
     expect(classifyFailure(makeRunMetrics({ exit_code: 1, prs: [] }))).toBe('crash');
   });
 
-  it('classifies hook rejection from log', () => {
+  it('classifies hook rejection from log (legacy English-prose fallback)', () => {
     expect(classifyFailure(
       makeRunMetrics({ exit_code: 1, prs: [] }),
       'Error: hook rejected the commit',
     )).toBe('hook_rejection');
+  });
+
+  it('classifies hook rejection from a structured deny envelope without any prose (#1102)', () => {
+    // No English "hook rejected/blocked/failed" string anywhere — detection must
+    // come from the structured contract, not prose.
+    const log = JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'BLOCKED: No plan stored for issue #5.',
+      },
+    });
+    expect(log.toLowerCase()).not.toContain('hook rejected');
+    expect(classifyFailure(makeRunMetrics({ exit_code: 1, prs: [] }), log)).toBe('hook_rejection');
+  });
+
+  it('classifies hook rejection from a stop-gate block envelope (#1102)', () => {
+    const log = JSON.stringify({ decision: 'block', reason: 'PR REVIEW required' });
+    expect(classifyFailure(makeRunMetrics({ exit_code: 1, prs: [] }), log)).toBe('hook_rejection');
   });
 
   it('classifies infrastructure failure from log', () => {
