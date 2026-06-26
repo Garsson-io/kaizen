@@ -86,11 +86,50 @@ export function extractIssueNumber(fullCommand: string): string | null {
   return match ? match[1] : null;
 }
 
-// NOTE: Branch-name parsing was intentionally removed.
-// The issue binding is EXPLICIT via `git config kaizen.issue <N>` (set by the
-// /kaizen-implement skill or the user). For PR creation, the canonical
-// `Closes #N` syntax in the PR body is the fallback. Parsing branch names
-// was fragile — every naming convention we didn't anticipate was a bypass.
+// NOTE: Branch-name parsing was intentionally removed as a *primary* issue
+// source. The issue binding is EXPLICIT via `git config kaizen.issue <N>` (set
+// by the /kaizen-implement skill or the user). For PR creation, the canonical
+// `Closes #N` syntax in the PR body is the fallback. Parsing arbitrary branch
+// names was fragile — every naming convention we didn't anticipate was a bypass.
+//
+// extractCaseIssueFromBranch below is the ONE exception, and it is NOT a primary
+// source — it is a *consistency cross-check*. It parses ONLY the canonical
+// case-branch shape that the case system itself produces, so a match is
+// trustworthy ground truth about which case this worktree is for. We use it to
+// catch a stale/inherited `kaizen.issue` that points at a different issue than
+// the worktree's branch (#1106) — the gate must verify "this work corresponds
+// to #N", not merely "a plan exists for #N" (the #943/#950 category error).
+
+/**
+ * Parse the issue number from a canonical case branch (`case/<date>-k<N>-<slug>`,
+ * e.g. `case/260626-k950-outcome-verification`). Returns null for ANY other
+ * branch shape (main, feature/*, worktree-*, bare k<N>-*), so it never misfires
+ * on names the case system did not create. This anchored, case-prefixed match is
+ * what makes the result safe to trust as a cross-check rather than a guess.
+ */
+export function extractCaseIssueFromBranch(branch: string): string | null {
+  const m = branch.match(/^case\/\d{6,}-k(\d+)(?:-|$)/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Build the BLOCKED result shown when the worktree's case branch says issue M
+ * but `git config kaizen.issue` says N (≠ M) — a stale/inherited config (#1106).
+ */
+function staleIssueResult(branchIssue: string, declaredIssue: string): PlanCheckResult {
+  return {
+    allowed: false,
+    missing: ['issue-mismatch'],
+    reason: `BLOCKED: Stale kaizen.issue — your worktree branch is for issue #${branchIssue}, but \`git config kaizen.issue\` says #${declaredIssue}.
+
+This config was almost certainly inherited from another run/worktree. The plan gate would otherwise verify a plan for the WRONG issue (#${declaredIssue}) while you edit code for #${branchIssue}.
+
+FIX IT NOW — point the config at this worktree's actual issue:
+  git config kaizen.issue ${branchIssue}
+
+Then retry. (If you really intend to work on #${declaredIssue}, you are on the wrong branch — switch to that issue's case worktree instead.)`,
+  };
+}
 
 // ── Source file detection ───────────────────────────────────────────
 //
@@ -166,23 +205,40 @@ export function checkPlanBeforeEdit(
 
   // Issue must be EXPLICITLY declared via `git config kaizen.issue <N>`.
   // This is the agent's binding contract: "I am working on #N".
-  // No branch-name parsing, no guessing.
   const issueNum = deps.getDeclaredIssue();
+
+  // Ground truth from the canonical case branch (if any). Used to (a) suggest
+  // the right issue when none is declared, and (b) catch a stale/inherited
+  // config that names a DIFFERENT issue than this worktree's branch (#1106).
+  const branchIssue = extractCaseIssueFromBranch(deps.getCurrentBranch());
+
   if (!issueNum) {
+    const declareHint = branchIssue
+      ? `This worktree's branch is for issue #${branchIssue}. Declare it:
+
+  git config kaizen.issue ${branchIssue}`
+      : `Every source-code edit must be tied to an issue. Declare it explicitly:
+
+  git config kaizen.issue <N>
+
+(where <N> is the issue number, e.g. 1055)`;
     return {
       allowed: false,
       missing: ['issue-link'],
       reason: `BLOCKED: You have not declared which issue you are working on.
 
-Every source-code edit must be tied to an issue. Declare it explicitly:
-
-  git config kaizen.issue <N>
-
-(where <N> is the issue number, e.g. 1055)
+${declareHint}
 
 Or use /kaizen-implement, which sets this for you.
 This hook enforces I8: implementation must be tied to a planned issue.`,
     };
+  }
+
+  // Cross-check: a canonical case branch is trustworthy ground truth. If it
+  // disagrees with the declared issue, the config is stale/inherited (#1106) —
+  // fail closed before the plan gate verifies a plan for the wrong issue.
+  if (branchIssue && branchIssue !== issueNum) {
+    return staleIssueResult(branchIssue, issueNum);
   }
 
   const repo = deps.detectRepo();
@@ -237,7 +293,7 @@ export function checkPlanBeforePr(
   if (isDocsOnly(changedFiles)) return { allowed: true };
 
   // Priority: declared issue > PR body "Closes #N" (canonical GitHub syntax).
-  // No branch-name parsing — too fragile.
+  // Arbitrary branch names are not a primary source — too fragile.
   const issueNum = deps.getDeclaredIssue() ?? extractIssueNumber(fullCommand);
   if (!issueNum) {
     return {
@@ -251,6 +307,14 @@ Declare the issue explicitly:
 Or include \`Closes #N\` in the PR body.
 This hook enforces I3 (stored test plan) and I8 (plan before implementation).`,
     };
+  }
+
+  // Cross-check the declared issue against the canonical case branch (#1106):
+  // a stale/inherited config that names a different issue than this worktree's
+  // branch would otherwise verify a plan for the wrong issue at PR time.
+  const branchIssue = extractCaseIssueFromBranch(deps.getCurrentBranch());
+  if (branchIssue && branchIssue !== issueNum) {
+    return staleIssueResult(branchIssue, issueNum);
   }
 
   // Use Case FE for existence check

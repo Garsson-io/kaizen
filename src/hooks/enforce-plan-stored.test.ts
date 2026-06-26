@@ -10,6 +10,7 @@ import {
   checkPlanBeforePr,
   checkPlanBeforeEdit,
   extractIssueNumber,
+  extractCaseIssueFromBranch,
   isDocsOnly,
   isSourceFile,
   checkPlanSubstance,
@@ -81,6 +82,22 @@ describe('extractIssueNumber', () => {
   it('Closes #N', () => expect(extractIssueNumber('Closes #1055')).toBe('1055'));
   it('fixes #N', () => expect(extractIssueNumber('fixes #42')).toBe('42'));
   it('null when absent', () => expect(extractIssueNumber('no ref')).toBeNull());
+});
+
+describe('extractCaseIssueFromBranch', () => {
+  it('parses k<N> from a 6-digit-date case branch', () =>
+    expect(extractCaseIssueFromBranch('case/260626-k950-outcome-verification')).toBe('950'));
+  it('parses k<N> from a 10-digit-date case branch', () =>
+    expect(extractCaseIssueFromBranch('case/2606261001-k1102-hook-observability')).toBe('1102'));
+  it('parses k<N> when the slug is absent (trailing token)', () =>
+    expect(extractCaseIssueFromBranch('case/260626-k1106')).toBe('1106'));
+  it('returns null for main', () => expect(extractCaseIssueFromBranch('main')).toBeNull());
+  it('returns null for feature branches', () =>
+    expect(extractCaseIssueFromBranch('feature/k950-thing')).toBeNull());
+  it('returns null for harness worktree branches', () =>
+    expect(extractCaseIssueFromBranch('worktree-2606261134-38ae')).toBeNull());
+  it('returns null for a bare k<N> branch (not the canonical case shape)', () =>
+    expect(extractCaseIssueFromBranch('k40-something')).toBeNull());
 });
 
 
@@ -160,6 +177,48 @@ describe('checkPlanBeforeEdit', () => {
     const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => null }));
     expect(result.reason).toContain('Wait for the skill to COMPLETE');
   });
+
+  // ── #1106: stale/inherited kaizen.issue cross-check ───────────────
+  describe('stale kaizen.issue (#1106)', () => {
+    it('BLOCKS when a case branch (k950) disagrees with declared issue (1108) — live repro', () => {
+      const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({}, {
+        getCurrentBranch: () => 'case/260626-k950-outcome-verification',
+        getDeclaredIssue: () => '1108',
+      }));
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('issue-mismatch');
+      expect(result.reason).toContain('Stale kaizen.issue');
+      expect(result.reason).toContain('git config kaizen.issue 950');
+    });
+
+    it('ALLOWS when the case branch and declared issue agree', () => {
+      const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({}, {
+        getCurrentBranch: () => 'case/260626-k950-outcome-verification',
+        getDeclaredIssue: () => '950',
+      }));
+      expect(result.allowed).toBe(true);
+    });
+
+    it('does NOT cross-check on a non-case branch even if names differ', () => {
+      // Declared 1108, branch is not the canonical case shape → no misfire,
+      // falls through to the normal plan gate (which has a plan → allowed).
+      const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({}, {
+        getCurrentBranch: () => 'feature/k950-thing',
+        getDeclaredIssue: () => '1108',
+      }));
+      expect(result.allowed).toBe(true);
+    });
+
+    it('suggests the branch issue when none is declared on a case branch', () => {
+      const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({}, {
+        getCurrentBranch: () => 'case/260626-k1106-plan-gate-issue-match',
+        getDeclaredIssue: () => null,
+      }));
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('issue-link');
+      expect(result.reason).toContain('git config kaizen.issue 1106');
+    });
+  });
 });
 
 // ── Gate 2: gh pr create ────────────────────────────────────────────
@@ -217,6 +276,19 @@ describe('checkPlanBeforePr', () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.missing).toContain('substance');
+  });
+
+  it('#1106: BLOCKS when case branch (k950) disagrees with declared issue (1108)', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Closes #1108'),
+      makeDeps({}, {
+        getCurrentBranch: () => 'case/260626-k950-outcome-verification',
+        getDeclaredIssue: () => '1108',
+      }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('issue-mismatch');
+    expect(result.reason).toContain('Stale kaizen.issue');
   });
 });
 
