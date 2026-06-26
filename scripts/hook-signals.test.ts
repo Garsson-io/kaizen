@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { detectHookSignals, hasHookRejection, firstHookReason } from './hook-signals.js';
 import { formatHookOutput } from '../src/hooks/lib/gate-signal.js';
 
@@ -107,5 +109,63 @@ describe('detectHookSignals', () => {
     const signals = detectHookSignals(log);
     expect(signals.length).toBe(1);
     expect(signals[0].kind).toBe('block');
+  });
+});
+
+/**
+ * REAL HARNESS SHAPE — the harness captures `claude --output-format stream-json`,
+ * where the hook payload is nested as an escaped JSON string inside a
+ * `hook_response` envelope's `output`/`stdout`, NOT as a bare top-level line.
+ * These tests pin detection against that actual shape so the detector can never
+ * again parse a format the harness doesn't produce (the #1102 fix's own bug).
+ */
+describe('detectHookSignals — real stream-json envelope nesting', () => {
+  it('detects a deny nested-and-escaped inside a hook_response envelope', () => {
+    const innerPayload = JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'BLOCKED: Bash is not allowed during PR review.',
+      },
+    });
+    // The harness writes one stream-json envelope per line; the payload appears
+    // in BOTH output and stdout — detection must de-dupe to a single signal.
+    const envelope = JSON.stringify({
+      type: 'system',
+      subtype: 'hook_response',
+      hook_event: 'PreToolUse',
+      output: innerPayload,
+      stdout: innerPayload,
+      exit_code: 2,
+    });
+    const log = `{"type":"system","subtype":"init"}\n${envelope}\n{"type":"result"}`;
+
+    const signals = detectHookSignals(log);
+    expect(signals.length).toBe(1);
+    expect(signals[0].kind).toBe('deny');
+    expect(signals[0].source).toBe('permission-decision');
+    expect(signals[0].reason).toContain('not allowed during PR review');
+    expect(hasHookRejection(log)).toBe(true);
+  });
+
+  it('detects a stop-gate block nested inside a stream-json envelope', () => {
+    const inner = JSON.stringify({ decision: 'block', reason: 'PR REVIEW required' });
+    const envelope = JSON.stringify({ type: 'system', subtype: 'hook_response', stdout: inner });
+    const signals = detectHookSignals(envelope);
+    expect(signals.some((s) => s.kind === 'block' && s.reason?.includes('PR REVIEW'))).toBe(true);
+  });
+
+  it('REGRESSION (#1102): real captured probe-hooks.jsonl yields ≥1 hook rejection', () => {
+    // This fixture is a genuine `--output-format stream-json` capture committed
+    // in #1049. The original #1102 fix returned ZERO signals against it because
+    // it assumed bare top-level payloads. This test is the one that catches it.
+    const fixture = fileURLToPath(new URL('../fixtures/live/probe-hooks.jsonl', import.meta.url));
+    const log = readFileSync(fixture, 'utf8');
+    const signals = detectHookSignals(log);
+    expect(signals.length).toBeGreaterThan(0);
+    expect(hasHookRejection(log)).toBe(true);
+    expect(firstHookReason(log)).toBeTruthy();
+    // Every detected signal must be a genuine rejection, never an allow.
+    expect(signals.every((s) => s.kind === 'deny' || s.kind === 'block')).toBe(true);
   });
 });

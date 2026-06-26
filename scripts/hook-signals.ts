@@ -21,8 +21,19 @@
  *        reason: ...
  *        ---
  *
- * All three are deterministic. We never match English substrings here — that
- * stays in classifyFailure() only as a documented legacy fallback.
+ * CRITICAL — the harness captures `claude --output-format stream-json`, so in a
+ * real run log the hook payload is NOT a bare top-level line. It is *nested as
+ * an escaped JSON string* inside a `hook_response` envelope, e.g.
+ *
+ *   {"type":"system","subtype":"hook_response","hook_event":"PreToolUse",
+ *     "output":"{\"hookSpecificOutput\":{...\"permissionDecision\":\"deny\"...}}",
+ *     "stdout":"{\"hookSpecificOutput\":...}", ...}
+ *
+ * So detection must (a) match a bare payload line (legacy / direct-hook output),
+ * AND (b) parse each stream-json envelope and re-scan its de-escaped string
+ * leaves (output/stdout/...) for the same three shapes. Both paths are
+ * deterministic and contract-coupled. We never match English substrings here —
+ * that stays in classifyFailure() only as a documented legacy fallback.
  */
 
 import { z } from 'zod';
@@ -55,12 +66,13 @@ const StopDecisionSchema = z.object({
 });
 
 /**
- * Try to parse a single line as one of the JSON deny/block envelopes.
- * Returns a signal only for genuine rejections (deny / block).
+ * Try to interpret a chunk of text as one of the JSON deny/block envelopes.
+ * Works on a bare log line OR a de-escaped string leaf pulled out of a
+ * stream-json envelope. Returns a signal only for genuine rejections.
  */
-function jsonSignalFromLine(line: string): HookSignal | null {
-  const trimmed = line.trim();
-  // Cheap pre-filter: only attempt JSON.parse on lines that look like an object.
+function jsonSignalFromText(text: string): HookSignal | null {
+  const trimmed = text.trim();
+  // Cheap pre-filter: only attempt JSON.parse on text that looks like an object.
   if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
 
   let parsed: unknown;
@@ -113,19 +125,80 @@ function yamlSignals(log: string): HookSignal[] {
 }
 
 /**
+ * Recursively collect the de-escaped string leaves of a parsed JSON value.
+ * The real harness shape nests the hook payload as an escaped JSON string in a
+ * `hook_response` envelope's `output`/`stdout` fields, so we must re-scan those
+ * de-escaped strings. Depth-bounded to stay O(envelope size) on large lines.
+ */
+function collectStringLeaves(value: unknown, acc: string[], depth = 0): void {
+  if (depth > 6) return;
+  if (typeof value === 'string') {
+    acc.push(value);
+  } else if (Array.isArray(value)) {
+    for (const v of value) collectStringLeaves(v, acc, depth + 1);
+  } else if (value && typeof value === 'object') {
+    for (const v of Object.values(value)) collectStringLeaves(v, acc, depth + 1);
+  }
+}
+
+/** Stable identity for de-duplicating signals (output and stdout often dupe). */
+function signalKey(s: HookSignal): string {
+  return `${s.kind}|${s.source}|${s.hook ?? ''}|${s.reason ?? ''}`;
+}
+
+/**
  * Detect all structured hook rejections (deny/block) in a run log.
+ *
+ * Two coupled paths, both contract-based:
+ *   - Bare payload lines (direct hook output / legacy): match the line itself.
+ *   - stream-json envelopes (real harness, `--output-format stream-json`):
+ *     parse the envelope and re-scan its de-escaped string leaves, because the
+ *     payload lives nested-and-escaped inside `output`/`stdout` (issue #1102).
  */
 export function detectHookSignals(log: string): HookSignal[] {
   if (!log) return [];
   const signals: HookSignal[] = [];
 
   for (const line of log.split('\n')) {
-    const sig = jsonSignalFromLine(line);
-    if (sig) signals.push(sig);
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // (a) bare payload line — the whole line IS the hook JSON.
+    const bare = jsonSignalFromText(trimmed);
+    if (bare) signals.push(bare);
+
+    // (b) stream-json envelope — re-scan de-escaped string leaves for the same
+    //     JSON and canonical-YAML shapes nested inside output/stdout/etc.
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      let env: unknown;
+      try {
+        env = JSON.parse(trimmed);
+      } catch {
+        env = null;
+      }
+      if (env && typeof env === 'object') {
+        const leaves: string[] = [];
+        collectStringLeaves(env, leaves);
+        for (const leaf of leaves) {
+          const inner = jsonSignalFromText(leaf);
+          if (inner) signals.push(inner);
+          signals.push(...yamlSignals(leaf));
+        }
+      }
+    }
   }
+
+  // Canonical YAML emitted as bare `---` fences directly in the log.
   signals.push(...yamlSignals(log));
 
-  return signals;
+  // De-duplicate: the same rejection surfaces in both `output` and `stdout`.
+  const seen = new Set<string>();
+  return signals.filter((s) => {
+    const key = signalKey(s);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** True if the run log contains any structured hook deny/block. */
