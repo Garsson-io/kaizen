@@ -254,15 +254,28 @@ This hook enforces I8: implementation must be tied to a planned issue.`,
       ? `\n\n⚠ Also: you wrote to the main checkout. Your worktree is ${worktreeRoot}.\nUse this path instead: ${suggestedPath}`
       : '';
 
+    // Name the ACTUAL missing artifact so the author doesn't burn a diagnostic
+    // round (#1069). "No plan stored" was misleading when the plan existed and
+    // only the test plan was missing.
+    const missing = !gate.hasPlan ? 'plan' : 'testplan';
+    let headline: string;
+    if (!gate.hasPlan && !gate.hasTestPlan) {
+      headline = `BLOCKED: No plan or test plan stored for issue #${issueNum}.`;
+    } else if (!gate.hasPlan) {
+      headline = `BLOCKED: No implementation plan stored for issue #${issueNum} (a test plan exists, the plan does not).`;
+    } else {
+      headline = `BLOCKED: A plan is stored for issue #${issueNum}, but the test plan is missing.`;
+    }
+
     return {
       allowed: false,
-      missing: [!gate.hasPlan ? 'plan' : 'testplan'],
-      reason: `BLOCKED: No plan stored for issue #${issueNum}. You MUST run /kaizen-write-plan before writing any code.
+      missing: [missing],
+      reason: `${headline} You MUST run /kaizen-write-plan before writing any code.
 
 DO THIS NOW:
   Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })
 
-The skill knows how to create and store the plan correctly.
+The skill creates and stores BOTH the implementation plan and the test plan correctly.
 IMPORTANT: Wait for the skill to COMPLETE. Do not retry Write until the skill is done — intermediate retries will be denied again.${pathHint}`,
     };
   }
