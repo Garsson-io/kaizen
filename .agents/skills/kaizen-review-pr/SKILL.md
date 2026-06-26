@@ -213,20 +213,28 @@ Fix MUST-FIX first, then SHOULD-FIX:
 
 ## Phase 5: Verdict
 
-```
-REVIEW PASSED — N rounds, M findings fixed
-```
+**You do not write the verdict. The verdict is derived.** `store-review-summary` reads the
+per-dimension findings you stored this round and composes the authoritative verdict block from
+them — any MISSING → FAIL, PARTIAL but no MISSING → PASS (surfaced loudly), else PASS. You cannot
+substitute a hand-written "REVIEW PASSED" for the derived block (#1019); a note that asserts the
+round passed while the findings derive FAIL is rejected.
 
-Before declaring: confirm every requirement from the linked issue is DONE or deferred with a filed follow-up issue.
+Before storing: confirm every requirement from the linked issue is DONE or deferred with a filed
+follow-up issue. If any dimension still has MISSING findings, the round is FAIL — fix them
+(Phase 4) or escalate; do not narrate a pass.
 
 Store the round summary (required to advance to next round or close the gate):
 ```bash
 npx tsx src/cli-structured-data.ts store-review-summary \
-  --pr <PR_NUMBER> --repo <owner/repo> --round <N> \
-  --text "REVIEW PASSED — <N> rounds, <M> findings fixed"
+  --pr <PR_NUMBER> --repo <owner/repo> --round <N>
 ```
 
-If findings needed fixing: return to Phase 1 with the updated diff for the next round.
+Add `--note "<context>"` only for non-verdict commentary (e.g. "rebased onto main, re-ran tests").
+Read back the derived verdict with `read-review-summary --pr <N> --repo <repo> --round <N>` — the
+header line (`## Review Round N — PASS | PASS — k PARTIAL | FAIL`) is the real verdict.
+
+If the derived verdict is FAIL or PASS — k PARTIAL with blocking gaps: return to Phase 1 with the
+updated diff for the next round.
 
 ---
 
