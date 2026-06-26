@@ -21,9 +21,9 @@ const HOOKS_DIR = join(__dirname, '..');
 // Hooks whose migration to git-state.ts is pending. Removing an entry here
 // without migrating the hook will re-introduce the cwd-drift anti-pattern.
 const OPT_OUT = new Set<string>([
-  'bump-plugin-version.ts',
+  // bump-plugin-version.ts — migrated to git-state.ts (#1074)
+  // hook-io.ts — migrated to git-state.ts (#1074)
   'kaizen-reflect.ts',
-  'hook-io.ts',
   'pr-kaizen-clear.ts',
   'pr-kaizen-clear-fallback.ts',
   'pr-review-loop.ts',

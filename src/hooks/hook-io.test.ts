@@ -1,17 +1,10 @@
-import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import { Readable } from 'node:stream';
 import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeHookOutput, getCurrentBranch, readHookInput, traceNullInput } from './hook-io.js';
-
-vi.mock('node:child_process', () => ({
-  execSync: vi.fn(),
-}));
-
-// Access the mocked execSync
-import { execSync } from 'node:child_process';
-const mockedExecSync = vi.mocked(execSync);
+import type { GitExec } from './lib/git-state.js';
 
 describe('hook-io', () => {
   afterEach(() => {
@@ -171,16 +164,44 @@ describe('hook-io', () => {
   });
 
   describe('getCurrentBranch', () => {
+    const okBranch = (name: string): GitExec => () => ({ stdout: name + '\n', stderr: '', exitCode: 0 });
+
     it('returns trimmed branch name on success', () => {
-      mockedExecSync.mockReturnValue('feat-branch\n');
-      expect(getCurrentBranch()).toBe('feat-branch');
+      expect(getCurrentBranch('', { exec: okBranch('feat-branch'), cwd: '/repo' })).toBe('feat-branch');
     });
 
-    it('returns empty string on git failure', () => {
-      mockedExecSync.mockImplementation(() => {
-        throw new Error('not a git repo');
-      });
-      expect(getCurrentBranch()).toBe('');
+    it('returns empty string on git failure (nonzero exit)', () => {
+      const fail: GitExec = () => ({ stdout: '', stderr: 'fatal: not a git repo', exitCode: 128 });
+      expect(getCurrentBranch('', { exec: fail, cwd: '/repo' })).toBe('');
+    });
+
+    it('returns empty string when the runner throws', () => {
+      const thrower: GitExec = () => { throw new Error('boom'); };
+      expect(getCurrentBranch('', { exec: thrower, cwd: '/repo' })).toBe('');
+    });
+
+    // #1073/#240 REGRESSION: read the branch from the gated command's target
+    // worktree (`cd <wt> && ...`), not the agent's inherited process.cwd().
+    it('anchors rev-parse to the cd-target worktree, not cwd', () => {
+      const calls: string[][] = [];
+      const exec: GitExec = (args) => {
+        calls.push([...args]);
+        return { stdout: 'wt-branch\n', stderr: '', exitCode: 0 };
+      };
+      const branch = getCurrentBranch('cd /work/wt && git status', { exec, cwd: '/main/checkout' });
+      expect(branch).toBe('wt-branch');
+      expect(calls[0].slice(0, 2)).toEqual(['-C', '/work/wt']);
+      expect(calls[0]).not.toContain('/main/checkout');
+    });
+
+    it('falls back to the cwd anchor when the command names no target', () => {
+      const calls: string[][] = [];
+      const exec: GitExec = (args) => {
+        calls.push([...args]);
+        return { stdout: 'main\n', stderr: '', exitCode: 0 };
+      };
+      getCurrentBranch('', { exec, cwd: '/repo' });
+      expect(calls[0].slice(0, 2)).toEqual(['-C', '/repo']);
     });
   });
 
