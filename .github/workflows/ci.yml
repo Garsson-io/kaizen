@@ -38,6 +38,8 @@ jobs:
       - run: npm run build
       - name: Run shell hook tests
         run: bash .claude/hooks/tests/run-all-tests.sh
+      - name: Run script-level shell tests (auto-dent batch-state logic, #806)
+        run: npm run test:shell
       - name: Verify no test side-effects on repo files
         run: |
           DIRTY=$(git status --porcelain)
