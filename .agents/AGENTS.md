@@ -52,6 +52,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `docs/artifact-lifecycle.md` | Artifact chain — where outputs live, who consumes them, recursive loops |
 | `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume. `resolveStateDir(gitCommonDir)` stores state in the **main repo** (never inside a worktree) — survives worktree deletion (#929, #934) |
 | `scripts/auto-dent-artifacts.ts` | Run artifact manifest + bundle — `buildRunManifest`, `writeRunManifest`, `bundleArtifacts` (auto-called at run completion) |
+| `scripts/batch-artifacts-upload.ts` | **Cloud-side raw artifacts** (#696, epic #842) — at batch finalize, inlines `events.jsonl` + `state.json` into an idempotent `batch-artifacts` attachment on the progress issue, size-capped to GitHub's 65,536-char comment limit (truncate head+tail → on-disk pointer). Sibling of the `batch-outcome` *summary* attachment. Wired into `closeBatchProgressIssue`. Supersedes the orphaned `upload-batch-artifacts.sh`. |
 | `src/cli-dimensions.ts` | Dimension CLI: list/show/add/validate `prompts/review-*.md` files |
 | `src/structured-data.ts` | **Structured data API**: reviews, plans, metadata, connected issues, PR sections, iteration state |
 | `src/cli-structured-data.ts` | CLI for structured data — the primary interface for skills |
