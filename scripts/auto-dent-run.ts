@@ -51,6 +51,7 @@ export {
   ghExec,
   checkMergeStatus,
   sweepBatchPRs,
+  driveBatchToMerge,
   labelArtifacts,
   queueAutoMerge,
   extractLinkedIssue,
@@ -62,6 +63,10 @@ export {
   type MergeStatus,
   type SweepAction,
   type SweepResult,
+  type DriveStatus,
+  type DriveReason,
+  type DriveResult,
+  type DriveOptions,
   type CleanupResult,
   type EpicSyncResult,
   type VerifyCloseResult,
@@ -115,7 +120,7 @@ export {
 import {
   ghExec,
   checkMergeStatus,
-  sweepBatchPRs,
+  driveBatchToMerge,
   labelArtifacts,
   queueAutoMerge,
   fetchIssueLabels,
@@ -1946,17 +1951,40 @@ async function main(): Promise<void> {
     }
   }
 
-  // Sweep ALL batch PRs (not just this run's) to update stale branches.
-  // When main advances from a merged PR, earlier PRs fall BEHIND and
-  // auto-merge stalls. This unblocks them. (Issue #368, H1/H4)
+  // Drive ALL batch PRs (not just this run's) toward a terminal state. This
+  // supersedes the old one-shot sweep: it polls each queued PR, re-updating a
+  // branch that falls BEHIND *across* attempts (not just once), and classifies
+  // any PR that can't merge (blocked / conflicting / failing checks / timed out)
+  // with a reason instead of leaving it silently "queued". (Issue #1129, #368)
+  //
+  // Per-run budget is intentionally short — each subsequent run re-polls the
+  // full batch, so PRs continue to be driven across the trampoline without any
+  // single run blocking for long. `--auto` stays queued, so GitHub may still
+  // merge a "timed_out" PR server-side after the batch ends.
   const allBatchPRs = [...new Set([...state.prs, ...result.prs])];
   if (allBatchPRs.length > 0) {
-    const sweepResults = sweepBatchPRs(allBatchPRs);
-    const updated = sweepResults.filter((r) => r.action === 'updated');
-    if (updated.length > 0) {
+    const driveResults = driveBatchToMerge(allBatchPRs, {
+      maxAttempts: 6,
+      sleepMs: 10_000,
+    });
+    const stuck = driveResults.filter((r) => r.status === 'stuck');
+    for (const r of driveResults) {
+      if (r.status === 'merged' || r.status === 'closed') continue;
+      console.log(`  [babysit] ${r.pr}: stuck (${r.reason}) after ${r.attempts} poll(s)`);
+    }
+    const merged = driveResults.filter((r) => r.status === 'merged').length;
+    if (merged > 0 || stuck.length > 0) {
       console.log(
-        `  [sweep] updated ${updated.length} stale PR branch(es)`,
+        `  [babysit] ${merged} merged, ${stuck.length} stuck of ${driveResults.length} batch PR(s)`,
       );
+    }
+    if (state.experiment) {
+      for (const r of driveResults) {
+        appendFileSync(
+          logFile,
+          `merge_drive=${r.pr} ${r.status}${r.reason ? ':' + r.reason : ''} attempts=${r.attempts}\n`,
+        );
+      }
     }
   }
 
