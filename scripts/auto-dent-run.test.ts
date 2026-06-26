@@ -2928,3 +2928,23 @@ describe('extractPlanText — plan section regex extraction (kaizen #901)', () =
     expect(result).toContain('Lowercase header');
   });
 });
+
+describe('classifyFailure live wiring (#1102 regression guard)', () => {
+  // The log-based heuristic branch (hook_rejection, infrastructure, timeout...)
+  // is dead code unless the live call site passes the run log. This test pins
+  // that the production call in auto-dent-run.ts passes a log argument, so the
+  // branch can never be silently re-orphaned.
+  const source = readFileSync(join(__dirname, 'auto-dent-run.ts'), 'utf8');
+
+  it('reads the run log before classifying', () => {
+    expect(source).toMatch(/readFileSync\(logFile, 'utf8'\)/);
+  });
+
+  it('passes a non-empty second argument to classifyFailure', () => {
+    // Match the production call (not a bare metrics-only call). The second arg
+    // must be the run log variable.
+    const call = source.match(/classifyFailure\(runMetrics,\s*([A-Za-z0-9_]+)\)/);
+    expect(call).not.toBeNull();
+    expect(call![1]).not.toBe('');
+  });
+});
