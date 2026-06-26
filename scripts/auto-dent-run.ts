@@ -38,6 +38,7 @@ import {
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
 import { runFixLoop, type CliArgs as ReviewFixArgs } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
+import { buildBatchOutcome, writeBatchOutcomeAttachment } from './batch-outcome.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -1100,6 +1101,19 @@ export function closeBatchProgressIssue(
   ghExec(
     `gh issue comment ${m[1]} --repo ${kaizenRepo} --body ${JSON.stringify(summary)}`,
   );
+
+  // Durable cross-batch learning (#1108, #940 Phase 1): write a machine-readable
+  // batch-outcome attachment BEFORE closing, so future batches can read back what
+  // this batch measured instead of starting blind. Best-effort — a failed write
+  // must never block batch close (this runs on abnormal exits too).
+  try {
+    const outcome = buildBatchOutcome(state, batchScore, Math.floor(Date.now() / 1000));
+    writeBatchOutcomeAttachment(m[1], kaizenRepo, outcome);
+    console.log(`  [intelligence] stored batch-outcome attachment on #${m[1]}`);
+  } catch (err) {
+    console.log(`  [intelligence] batch-outcome write skipped: ${(err as Error).message}`);
+  }
+
   ghExec(`gh issue close ${m[1]} --repo ${kaizenRepo} --reason completed`);
   console.log(`  [hygiene] closed batch progress issue`);
 }
