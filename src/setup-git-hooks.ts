@@ -161,6 +161,78 @@ export function detectHostFramework(cwd: string): HostDetectionResult {
   return { framework: 'none' };
 }
 
+// ── Thin wrapper builder ──────────────────────────────────────────────
+
+/**
+ * Build the host-side `.kaizen-hooks/pre-push` content as a THIN WRAPPER
+ * that dispatches to the plugin-resident `kaizen-host-entry.sh` (#1086).
+ *
+ * Why a wrapper and not a copy: the previous design wrote a ~66-line *copy*
+ * of `kaizen-host-entry.sh` into the host repo with `__KAIZEN_PLUGIN_ROOT__`
+ * substituted. That copy froze the host's pre-push logic at the kaizen
+ * version present when setup last ran — bug fixes to the gate never reached
+ * the host until it re-ran `/kaizen-setup`. That is the opposite of kaizen's
+ * continuous-improvement loop: an incident that teaches us something about
+ * pre-push couldn't propagate.
+ *
+ * The wrapper holds ONLY the version-stable plumbing — resolve the plugin
+ * root, then `exec` the canonical entry inside the plugin. All logic that
+ * changes version-to-version (agent-env gate, tsx resolution, dispatch to
+ * `pre-push.ts`) lives in `kaizen-host-entry.sh` inside the plugin, so a
+ * plugin update reaches every host automatically.
+ *
+ * Resolution order mirrors `kaizen-host-entry.sh`:
+ *   1. `$CLAUDE_PLUGIN_ROOT` (set by Claude Code at invocation time)
+ *   2. the baked-in install-time path (`pluginRoot` arg)
+ *   3. a search of the Claude plugin cache
+ *   4. fail-open (never block a push if kaizen can't be located)
+ *
+ * Deliberately NO agent-env gate here. `kaizen-host-entry.sh` already gates
+ * on the agent-env vars as its first action, and `agent-env-agreement.test.ts`
+ * pins that var list against `pre-push.ts` so it can't drift. Duplicating the
+ * gate into the wrapper would add a third copy of that list to keep in sync —
+ * the exact drift hazard the agreement test exists to prevent. In the common
+ * case the baked-in path resolves without a cache scan, so a human push still
+ * exits fast once it reaches the entry's gate. The resolved root is exported
+ * as `CLAUDE_PLUGIN_ROOT` so the entry re-resolves to the same plugin.
+ */
+export function buildThinWrapper(pluginRoot: string): string {
+  return `#!/usr/bin/env bash
+# Kaizen host-project pre-push wrapper (installed by /kaizen-setup, #1086).
+#
+# THIN WRAPPER — do not add logic here. This file resolves the kaizen plugin
+# root and execs the canonical entry inside the plugin. All version-sensitive
+# behavior (agent-env gate, runtime resolution, hook dispatch) lives in
+# \$KAIZEN_ROOT/src/hooks/kaizen-host-entry.sh, so a plugin update reaches this
+# host automatically — no need to re-run /kaizen-setup.
+
+set -eu
+
+# Resolve kaizen plugin root: env -> baked-in install path -> cache -> fail-open.
+KAIZEN_ROOT="\${CLAUDE_PLUGIN_ROOT:-}"
+if [ ! -d "\$KAIZEN_ROOT" ]; then
+  KAIZEN_ROOT="${pluginRoot}"
+fi
+if [ ! -d "\$KAIZEN_ROOT" ]; then
+  CACHE_ROOT="\${HOME}/.claude/plugins/cache"
+  if [ -d "\$CACHE_ROOT" ]; then
+    CANDIDATE=\$(find "\$CACHE_ROOT" -maxdepth 5 -name "plugin.json" -path "*kaizen*" 2>/dev/null | head -1 || true)
+    [ -n "\$CANDIDATE" ] && KAIZEN_ROOT=\$(dirname "\$(dirname "\$CANDIDATE")")
+  fi
+fi
+
+# Fail-open: never block a push if kaizen can't be located.
+[ -d "\$KAIZEN_ROOT" ] || exit 0
+
+ENTRY="\$KAIZEN_ROOT/src/hooks/kaizen-host-entry.sh"
+[ -f "\$ENTRY" ] || exit 0
+
+# Export the resolved root so the entry re-resolves to the same plugin.
+export CLAUDE_PLUGIN_ROOT="\$KAIZEN_ROOT"
+exec bash "\$ENTRY" "\$@"
+`;
+}
+
 // ── Entry script writer ───────────────────────────────────────────────
 
 export function writeEntryScript(cwd: string, content: string): string {

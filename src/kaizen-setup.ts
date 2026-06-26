@@ -19,7 +19,7 @@ import { execSync } from "child_process";
 import { join } from "path";
 import { parseArgs } from "util";
 import { loadAllSkillMetadata, validateSkillDependencies, validateSkillVersions } from "./skill-metadata.js";
-import { installGitHooks, type InstallResult } from "./setup-git-hooks.js";
+import { installGitHooks, buildThinWrapper, type InstallResult } from "./setup-git-hooks.js";
 
 // ── Types ──
 
@@ -494,23 +494,27 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       // Epic #1059: install kaizen's pre-push hook into host project.
       // Option C: detect host framework; inject into theirs; raw fallback if none.
       const pluginRoot = values["plugin-root"] ?? process.env.CLAUDE_PLUGIN_ROOT;
-      const entryTemplatePath = pluginRoot
+      // The host's `.kaizen-hooks/pre-push` is a THIN WRAPPER (#1086) that execs
+      // the plugin-resident canonical entry — it does not copy the entry's logic.
+      // Verify the entry exists in the plugin so a broken/missing install fails
+      // fast here rather than silently fail-opening at push time.
+      const entryPath = pluginRoot
         ? join(pluginRoot, "src/hooks/kaizen-host-entry.sh")
         : null;
 
-      if (!entryTemplatePath || !existsSync(entryTemplatePath)) {
+      if (!entryPath || !existsSync(entryPath)) {
         console.log(JSON.stringify({
           step: "install-git-hooks",
           status: "error",
-          error: `entry template not found: ${entryTemplatePath ?? "(plugin-root not set)"}`,
+          error: `kaizen entry not found in plugin: ${entryPath ?? "(plugin-root not set)"}`,
         }));
         process.exit(1);
       }
 
-      const template = readFileSync(entryTemplatePath, "utf-8");
-      // Substitute plugin root so the entry script can locate kaizen at runtime.
-      // See src/hooks/kaizen-host-entry.sh: __KAIZEN_PLUGIN_ROOT__ is the placeholder.
-      const entryContent = template.replace(/__KAIZEN_PLUGIN_ROOT__/g, pluginRoot ?? "");
+      // Build the thin wrapper, baking in the plugin root as the secondary
+      // fallback. All version-sensitive logic stays in the plugin entry, so a
+      // plugin update reaches the host without re-running /kaizen-setup.
+      const entryContent = buildThinWrapper(pluginRoot ?? "");
       const runPostInstall = values["run-post-install"] === "true";
 
       const result: InstallResult = installGitHooks({ cwd, entryScriptContent: entryContent, runPostInstall });
