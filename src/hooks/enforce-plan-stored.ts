@@ -187,6 +187,46 @@ export function checkTestPlanSubstance(testPlanText: string): string[] {
   return failures;
 }
 
+/**
+ * Run the substance heuristic over the already-fetched gate text. Returns a
+ * BLOCKED result if either the plan or the test plan is a rubber-stamp, else
+ * null. Shared by BOTH choke points (first source edit AND `gh pr create`) so
+ * there is ONE substance bar — the gates can never drift to different bars
+ * (#1035). `planText`/`testPlanText` are guarded for null: existence is already
+ * enforced upstream, so a null here means "nothing to substance-check" → no
+ * failure, never a false denial.
+ */
+export function checkSubstance(
+  issueNum: string,
+  planText: string | null | undefined,
+  testPlanText: string | null | undefined,
+): PlanCheckResult | null {
+  const planIssues = planText ? checkPlanSubstance(planText) : [];
+  const testPlanIssues = testPlanText ? checkTestPlanSubstance(testPlanText) : [];
+  if (planIssues.length === 0 && testPlanIssues.length === 0) return null;
+
+  const parts: string[] = [];
+  if (planIssues.length > 0) {
+    parts.push(`Plan substance failures:\n${planIssues.map(i => `  - ${i}`).join('\n')}`);
+  }
+  if (testPlanIssues.length > 0) {
+    parts.push(`Test plan substance failures:\n${testPlanIssues.map(i => `  - ${i}`).join('\n')}`);
+  }
+  return {
+    allowed: false,
+    missing: ['substance'],
+    reason: `BLOCKED: Plan exists but is not substantive (rubber-stamp check).
+
+${parts.join('\n\n')}
+
+A one-sentence stub passes the existence gate but cannot guide implementation —
+which is the whole point of writing it first (#1035). Fix it NOW, before the code:
+Run /kaizen-write-plan to produce a proper plan with Success Criteria,
+Design Alternatives, and a Seam Map & Test Plan with test levels.
+  Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })`,
+  };
+}
+
 // ── Gate 1: Edit/Write — block source edits without a plan ──────────
 
 export function checkPlanBeforeEdit(
@@ -267,6 +307,14 @@ IMPORTANT: Wait for the skill to COMPLETE. Do not retry Write until the skill is
     };
   }
 
+  // Existence passed — now enforce SUBSTANCE at the FIRST source edit, using the
+  // already-fetched gate text (no refetch). This is the same heuristic the PR
+  // gate applies, just earlier: a rubber-stamp plan is caught before any code is
+  // written, not after (#1035). Same bar at both choke points → no new false
+  // positives, only earlier feedback.
+  const substanceResult = checkSubstance(issueNum, gate.planText, gate.testPlanText);
+  if (substanceResult) return substanceResult;
+
   return { allowed: true };
 }
 
@@ -326,31 +374,11 @@ Run /kaizen-write-plan — the skill knows how to create and store the plan corr
     };
   }
 
-  // Substance check: plan must be substantive (not a rubber stamp).
-  // Reuse text from gate (PlanGateResult carries it — no refetch).
-  const planIssues = gate.planText ? checkPlanSubstance(gate.planText) : [];
-  const testPlanIssues = gate.testPlanText ? checkTestPlanSubstance(gate.testPlanText) : [];
-
-  if (planIssues.length > 0 || testPlanIssues.length > 0) {
-    const parts: string[] = [];
-    if (planIssues.length > 0) {
-      parts.push(`Plan substance failures:\n${planIssues.map(i => `  - ${i}`).join('\n')}`);
-    }
-    if (testPlanIssues.length > 0) {
-      parts.push(`Test plan substance failures:\n${testPlanIssues.map(i => `  - ${i}`).join('\n')}`);
-    }
-    return {
-      allowed: false,
-      missing: ['substance'],
-      reason: `BLOCKED: Plan exists but is not substantive (rubber-stamp check).
-
-${parts.join('\n\n')}
-
-Run /kaizen-write-plan to produce a proper plan with Success Criteria,
-Design Alternatives, and a Seam Map & Test Plan with test levels.
-  Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })`,
-    };
-  }
+  // Substance check: plan must be substantive (not a rubber stamp). Reuse text
+  // from gate (PlanGateResult carries it — no refetch). Same helper as the edit
+  // gate → one substance bar at both choke points (#1035).
+  const substanceResult = checkSubstance(issueNum, gate.planText, gate.testPlanText);
+  if (substanceResult) return substanceResult;
 
   return { allowed: true };
 }
