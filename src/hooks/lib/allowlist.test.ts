@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isAllowedRuntimeDir,
+  isEscapeHatch,
   isKaizenCommand,
   isReadonlyMonitoringCommand,
   isReviewCommand,
@@ -72,6 +73,53 @@ describe('isReviewCommand', () => {
     expect(isReviewCommand('gh pr create --title "test"')).toBe(false);
     expect(isReviewCommand('git push')).toBe(false);
   });
+
+  // #1068: the stop-gate advertises KAIZEN_UNFINISHED as the way out of a
+  // needs_review block. The review allowlist must honor it, or the documented
+  // escape deadlocks.
+  it('allows the universal KAIZEN_UNFINISHED escape (no deadlock — #1068)', () => {
+    expect(isReviewCommand("echo 'KAIZEN_UNFINISHED: review blocked, deferring'")).toBe(true);
+  });
+});
+
+describe('isEscapeHatch', () => {
+  it('recognizes KAIZEN_UNFINISHED declarations', () => {
+    expect(isEscapeHatch("echo 'KAIZEN_UNFINISHED: session timeout'")).toBe(true);
+    expect(isEscapeHatch('KAIZEN_UNFINISHED: bare form')).toBe(true);
+  });
+
+  it('recognizes KAIZEN_NO_ACTION declarations', () => {
+    expect(isEscapeHatch("echo 'KAIZEN_NO_ACTION [docs-only]: readme'")).toBe(true);
+  });
+
+  it('recognizes KAIZEN_IMPEDIMENTS declarations', () => {
+    expect(isEscapeHatch("echo 'KAIZEN_IMPEDIMENTS: []'")).toBe(true);
+  });
+
+  it('does not match ordinary commands', () => {
+    expect(isEscapeHatch('git push')).toBe(false);
+    expect(isEscapeHatch('echo hello')).toBe(false);
+    expect(isEscapeHatch('npm install')).toBe(false);
+  });
+});
+
+// Boundary invariant: the Stop gate (gate-manager.ts) advertises a single
+// universal escape (`echo 'KAIZEN_UNFINISHED: <reason>'`). Every PreToolUse
+// gate allowlist MUST accept it, or the harness deadlocks the author it just
+// told to run the escape (#1068). This test ties advertised escape to allowlist
+// reality so a future gate can't silently re-introduce the deadlock.
+describe('escape-hatch invariant across gate allowlists', () => {
+  const UNIVERSAL_ESCAPE = "echo 'KAIZEN_UNFINISHED: honest reason'";
+  const gateAllowlists: Array<[string, (c: string) => boolean]> = [
+    ['isReviewCommand', isReviewCommand],
+    ['isKaizenCommand', isKaizenCommand],
+  ];
+
+  for (const [name, allow] of gateAllowlists) {
+    it(`${name} accepts the universal stop-gate escape`, () => {
+      expect(allow(UNIVERSAL_ESCAPE)).toBe(true);
+    });
+  }
 });
 
 describe('isKaizenCommand', () => {

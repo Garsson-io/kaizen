@@ -115,6 +115,36 @@ describe('checkPlanBeforeEdit', () => {
     expect(result.reason).toContain('kaizen-write-plan');
   });
 
+  // #1069: the block must name the ACTUAL missing artifact, not always say
+  // "No plan stored". Each of {plan missing, testplan missing, both} gets a
+  // distinct, correct message so the author doesn't burn a diagnostic round.
+  describe('block message names the missing artifact (#1069)', () => {
+    it('plan missing → message says the plan is missing', () => {
+      const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => null }));
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toEqual(['plan']);
+      expect(result.reason).toMatch(/No implementation plan stored/);
+    });
+
+    it('only testplan missing → message says the plan exists but the test plan is missing', () => {
+      const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrieveTestPlan: () => null }));
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toEqual(['testplan']);
+      expect(result.reason).toMatch(/test plan is missing/);
+      // Must NOT mislead the author into thinking the plan is absent.
+      expect(result.reason).not.toMatch(/No plan or test plan stored/);
+    });
+
+    it('both missing → message says both are missing', () => {
+      const result = checkPlanBeforeEdit(
+        'src/thing.ts',
+        makeDeps({ retrievePlan: () => null, retrieveTestPlan: () => null }),
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/No plan or test plan stored/);
+    });
+  });
+
   it('allows non-source files even without plan', () => {
     expect(checkPlanBeforeEdit('docs/readme.md', makeDeps({ retrievePlan: () => null })).allowed).toBe(true);
   });
