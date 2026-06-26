@@ -34,6 +34,12 @@ import {
   failureClassLabel,
   formatFailureDistribution,
 } from './auto-dent-score.js';
+import {
+  readBatchOutcomesFromGithub,
+  computeSteeringRecommendations,
+  formatSteeringReport,
+  type ReadOutcomesDeps,
+} from './batch-outcome.js';
 
 function getRepoRoot(): string {
   try {
@@ -49,6 +55,40 @@ function getRepoRoot(): string {
 
 function getLogsDir(): string {
   return join(getRepoRoot(), 'logs', 'auto-dent');
+}
+
+/**
+ * Resolve the kaizen repo for cloud reads. Priority: explicit `--repo`, then the
+ * newest discovered batch's `kaizen_repo`, then `kaizen.config.json`. Returns ''
+ * if none can be found.
+ */
+function resolveKaizenRepo(explicit: string | undefined, logsDir: string): string {
+  if (explicit) return explicit;
+  const batches = discoverBatches(logsDir);
+  for (const b of batches) {
+    const r = b.state.kaizen_repo || b.state.host_repo;
+    if (r && r !== 'unknown') return r;
+  }
+  try {
+    const cfg = JSON.parse(readFileSync(join(getRepoRoot(), 'kaizen.config.json'), 'utf8'));
+    return cfg?.kaizen?.repo || cfg?.host?.repo || '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Read cross-batch outcomes from GitHub, analyze them, and render the steering
+ * report (#940 Phase 2). Exported so the read→analyze→format wiring is testable
+ * with injected deps (no network).
+ */
+export function buildSteerOutput(
+  repo: string,
+  opts: { limit?: number } = {},
+  deps: ReadOutcomesDeps = {},
+): string {
+  const outcomes = readBatchOutcomesFromGithub(repo, { limit: opts.limit }, deps);
+  return formatSteeringReport(computeSteeringRecommendations(outcomes));
 }
 
 export interface BatchInfo {
@@ -974,6 +1014,7 @@ Usage:
   auto-dent-ctl.ts reflect --post [batch-id]  Post reflection summary to progress issue (#571)
   auto-dent-ctl.ts reflect --prompt [batch-id]  Output rendered prompt for Claude reflection
   auto-dent-ctl.ts history             Cross-batch aggregate stats (#586)
+  auto-dent-ctl.ts steer [--repo R] [--limit N]  Cross-batch steering read from GitHub outcomes (#940 Phase 2)
   auto-dent-ctl.ts aggregate [batch-id]  Append batch(es) to aggregate.jsonl (called at batch end)
   auto-dent-ctl.ts watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)
 
@@ -1223,6 +1264,25 @@ Cross-batch learning (#586):
       }
       const stats = computeAggregateStats(records);
       console.log(formatAggregateStats(stats));
+      break;
+    }
+
+    case 'steer': {
+      // Cloud-backed cross-batch steering (#940 Phase 2): read batch-outcome
+      // attachments from GitHub progress issues and print the recommendations the
+      // next batch would receive in its prompt.
+      let repoArg: string | undefined;
+      let limit: number | undefined;
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === '--repo' && args[i + 1]) repoArg = args[++i];
+        else if (args[i] === '--limit' && args[i + 1]) limit = parseInt(args[++i], 10);
+      }
+      const repo = resolveKaizenRepo(repoArg, logsDir);
+      if (!repo) {
+        console.error('Could not resolve kaizen repo. Pass --repo <owner/name>.');
+        process.exit(1);
+      }
+      console.log(buildSteerOutput(repo, { limit }));
       break;
     }
 

@@ -39,7 +39,12 @@ import {
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
 import { runFixLoop, type CliArgs as ReviewFixArgs } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
-import { buildBatchOutcome, writeBatchOutcomeAttachment } from './batch-outcome.js';
+import {
+  buildBatchOutcome,
+  writeBatchOutcomeAttachment,
+  readBatchOutcomesFromGithub,
+  computeSteeringRecommendations,
+} from './batch-outcome.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -153,6 +158,12 @@ export interface BatchState {
   contemplation_recommendations?: string[];
   /** Insights from reflect-mode runs that feed back into subsequent runs (#699) */
   reflection_insights?: string[];
+  /**
+   * Cross-batch steering derived from PRIOR batches' GitHub outcomes (#940 Phase 2).
+   * Populated once per batch (fail-open) and surfaced as {{cross_batch_steering}}
+   * so observable cloud data biases this batch's choices.
+   */
+  cross_batch_steering?: string[];
 }
 
 export interface RunMetrics {
@@ -424,6 +435,12 @@ export function buildTemplateVars(
     ? contemplationRecs.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
 
+  // Cross-batch steering from prior batches' GitHub outcomes (#940 Phase 2).
+  const crossBatchSteering = [...new Set(state.cross_batch_steering || [])];
+  const crossBatchSteeringText = crossBatchSteering.length > 0
+    ? crossBatchSteering.map((r, i) => `${i + 1}. ${r}`).join('\n')
+    : '';
+
   return {
     guidance: state.guidance,
     run_tag: runTag,
@@ -440,6 +457,7 @@ export function buildTemplateVars(
     plan_assignment: planAssignment,
     claimed_plan_issue: claimedPlanIssue,
     reflection_insights: reflectionInsights,
+    cross_batch_steering: crossBatchSteeringText,
     run_history_table: runHistoryTable,
     total_cost: totalCost,
     pr_count: prCount,
@@ -755,6 +773,61 @@ export interface PromptMetadata {
 
 export function buildPrompt(state: BatchState, runNum: number, logDir?: string): string {
   return buildPromptWithMetadata(state, runNum, logDir).prompt;
+}
+
+/**
+ * Populate `state.cross_batch_steering` from PRIOR batches' GitHub outcomes,
+ * once per batch (#940 Phase 2). This is what closes the cross-batch learning
+ * loop: Phase 1 wrote durable `batch-outcome` records to GitHub; here a later
+ * batch reads them, derives steering recommendations, and persists them so every
+ * run in this batch sees them via {{cross_batch_steering}}.
+ *
+ * Fail-open and idempotent: runs only when the field is unset, and any GitHub /
+ * parse error degrades to an empty array (no steering) rather than breaking the
+ * run. The result is persisted so it is computed at most once per batch. `deps`
+ * is injectable for tests. Returns the steering strings that were stored.
+ */
+export function populateCrossBatchSteering(
+  state: BatchState,
+  stateFile: string,
+  deps: { read?: typeof readBatchOutcomesFromGithub } = {},
+): string[] {
+  // Already attempted this batch (possibly resumed) — don't refetch.
+  if (state.cross_batch_steering !== undefined) return state.cross_batch_steering;
+
+  const repo = state.kaizen_repo;
+  let steering: string[] = [];
+  if (repo && repo !== 'unknown') {
+    try {
+      const read = deps.read ?? readBatchOutcomesFromGithub;
+      const outcomes = read(repo, { excludeBatchId: state.batch_id });
+      const report = computeSteeringRecommendations(outcomes);
+      steering = report.recommendations.map((r) => r.text);
+      if (steering.length > 0) {
+        console.log(
+          `  [intelligence] cross-batch steering: ${steering.length} signal(s) from ${report.batches_analyzed} prior batch(es)`,
+        );
+      } else {
+        console.log(
+          `  [intelligence] cross-batch steering: no strong signal from ${report.batches_analyzed} prior batch(es)`,
+        );
+      }
+    } catch (err) {
+      // Fail-open: prior-batch intelligence is a nicety, never a blocker.
+      console.log(
+        `  [intelligence] cross-batch steering skipped: ${(err as Error).message?.split('\n')[0]}`,
+      );
+      steering = [];
+    }
+  }
+
+  state.cross_batch_steering = steering;
+  try {
+    writeState(stateFile, state);
+  } catch {
+    /* best-effort persistence; in-memory value still steers this run */
+  }
+  return steering;
 }
 
 export function buildPromptWithMetadata(state: BatchState, runNum: number, logDir?: string): PromptMetadata {
@@ -1620,6 +1693,10 @@ async function main(): Promise<void> {
   if (resetCount > 0) {
     console.log(`  [plan] reset ${resetCount} interrupted item(s) from 'assigned' to 'pending'`);
   }
+
+  // Close the cross-batch learning loop (#940 Phase 2): read prior batches'
+  // GitHub outcomes once per batch and surface steering via the prompt. Fail-open.
+  populateCrossBatchSteering(state, stateFile);
 
   const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(2, 14);
   const logFile = `${logDir}/run-${runNum}-${timestamp}.log`;

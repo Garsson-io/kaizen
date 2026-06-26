@@ -27,6 +27,17 @@ Prior mid-batch reflection produced these insights. Use them to guide your work:
 Factor these insights into your issue selection and approach.
 {{/reflection_insights}}
 
+{{#cross_batch_steering}}
+## Cross-Batch Steering (from prior batches)
+
+Earlier auto-dent batches recorded structured outcomes on GitHub. Analyzing them
+surfaced these steering signals — weigh them when choosing what to work on and how:
+
+{{cross_batch_steering}}
+
+These reflect what worked and what didn't across batches, not just this one.
+{{/cross_batch_steering}}
+
 {{#contemplation_recommendations}}
 ## Strategic Recommendations (from contemplation)
 
