@@ -61,6 +61,10 @@ export interface RunCompleteEvent extends BaseEvent {
   stop_requested: boolean;
   failure_class?: string;
   lifecycle_violations: number;
+  /** Lifecycle health: clean | degraded (ordering) | critical (gaps/phantoms) (#1103) */
+  lifecycle_health?: 'clean' | 'degraded' | 'critical';
+  /** Count of critical lifecycle findings (gaps + phantom phases) (#1103) */
+  lifecycle_critical?: number;
   outcome: 'success' | 'empty_success' | 'failure' | 'stop';
   /** Cognitive mode used, for context in analysis */
   mode?: string;
