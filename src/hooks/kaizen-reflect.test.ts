@@ -117,6 +117,40 @@ describe('processHookInput', () => {
       expect(output).toContain('post-merge steps');
     });
 
+    it('loads merge changed files through the gh argv seam', () => {
+      const gh = vi.fn((args: string[]) => {
+        if (args[0] === 'pr' && args[1] === 'diff') {
+          return 'src/hooks/kaizen-reflect.ts\nsrc/lib/gh-exec.ts';
+        }
+        if (args[0] === 'pr' && args[1] === 'view') {
+          return 'Shared gh helper';
+        }
+        return '';
+      });
+      const input = makeInput({
+        command: 'gh pr merge 42 --repo Garsson-io/kaizen --squash',
+        stdout: '✓ Pull request merged',
+      });
+
+      const output = processHookInput(input, {
+        ...defaultOpts,
+        changedFiles: undefined,
+        gh,
+        sendNotification: vi.fn(),
+      });
+
+      expect(output).toContain('src/hooks/kaizen-reflect.ts');
+      expect(output).toContain('src/lib/gh-exec.ts');
+      expect(gh).toHaveBeenCalledWith([
+        'pr',
+        'diff',
+        '42',
+        '--name-only',
+        '--repo',
+        'Garsson-io/kaizen',
+      ]);
+    });
+
     it('sends Telegram notification on merge', () => {
       const sendNotification = vi.fn();
       const input = makeInput({
@@ -130,6 +164,46 @@ describe('processHookInput', () => {
       expect(sendNotification).toHaveBeenCalledTimes(1);
       expect(sendNotification).toHaveBeenCalledWith(
         expect.stringContaining('PR merged'),
+      );
+    });
+
+    it('loads merge notification title through the gh argv seam', () => {
+      const sendNotification = vi.fn();
+      const gh = vi.fn((args: string[]) => {
+        if (args[0] === 'pr' && args[1] === 'diff') {
+          return 'src/hooks/kaizen-reflect.ts';
+        }
+        if (args[0] === 'pr' && args[1] === 'view') {
+          return 'Use shared gh helper';
+        }
+        return '';
+      });
+      const input = makeInput({
+        command:
+          'gh pr merge https://github.com/Garsson-io/kaizen/pull/42 --squash',
+        stdout: '✓ Pull request merged',
+      });
+
+      processHookInput(input, {
+        ...defaultOpts,
+        changedFiles: undefined,
+        gh,
+        sendNotification,
+      });
+
+      expect(gh).toHaveBeenCalledWith([
+        'pr',
+        'view',
+        '42',
+        '--repo',
+        'Garsson-io/kaizen',
+        '--json',
+        'title',
+        '--jq',
+        '.title',
+      ]);
+      expect(sendNotification).toHaveBeenCalledWith(
+        expect.stringContaining('Use shared gh helper'),
       );
     });
   });

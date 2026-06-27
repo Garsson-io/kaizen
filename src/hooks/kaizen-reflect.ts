@@ -15,6 +15,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { gh } from '../lib/gh-exec.js';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import {
@@ -34,6 +35,8 @@ import {
   emitSessionEvent,
 } from './session-telemetry.js';
 import { analyzeHookTelemetry } from './telemetry-analysis.js';
+
+type GhRunner = (args: string[]) => string;
 
 /** Detect the GitHub repo from the origin remote URL. */
 function detectGhRepo(): string | undefined {
@@ -62,22 +65,20 @@ function getCurrentBranch(): string {
 }
 
 /** Get changed files for context. */
-function getChangedFiles(cmdLine: string, isMerge: boolean): string {
+function getChangedFiles(cmdLine: string, isMerge: boolean, ghRun: GhRunner = gh): string {
   try {
     if (isMerge) {
       const prNum = cmdLine.match(/gh\s+pr\s+merge\s+(\d+)/)?.[1];
       const repo = extractRepoFlag(cmdLine) ?? detectGhRepo();
-      const repoFlag = repo ? `--repo ${repo}` : '';
+      const args = ['pr', 'diff'];
       if (prNum) {
-        return execSync(`gh pr diff ${prNum} --name-only ${repoFlag}`, {
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        }).trim();
+        args.push(prNum);
       }
-      return execSync(`gh pr diff --name-only ${repoFlag}`, {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim();
+      args.push('--name-only');
+      if (repo) {
+        args.push('--repo', repo);
+      }
+      return ghRun(args).trim();
     }
     return execSync('git diff --name-only main...HEAD', {
       encoding: 'utf-8',
@@ -140,16 +141,23 @@ function sendTelegramIpc(text: string, projectDir?: string): void {
 }
 
 /** Get PR title via gh CLI. */
-function getPrTitle(prUrl: string): string {
+function getPrTitle(prUrl: string, ghRun: GhRunner = gh): string {
   const prNum = prUrl.match(/(\d+)$/)?.[1];
   const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
   if (!prNum || !repo) return 'unknown';
   try {
     return (
-      execSync(`gh pr view ${prNum} --repo ${repo} --json title --jq .title`, {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim() || 'unknown'
+      ghRun([
+        'pr',
+        'view',
+        prNum,
+        '--repo',
+        repo,
+        '--json',
+        'title',
+        '--jq',
+        '.title',
+      ]).trim() || 'unknown'
     );
   } catch {
     return 'unknown';
@@ -314,6 +322,7 @@ export function processHookInput(
     repoFromGit?: string;
     mainCheckout?: string;
     changedFiles?: string;
+    gh?: GhRunner;
     sendNotification?: (text: string) => void;
     telemetryDir?: string;
   } = {},
@@ -350,7 +359,8 @@ export function processHookInput(
   if (isReflectionDone(prUrl, stateDir)) return null;
 
   const branch = options.branch ?? getCurrentBranch();
-  const changed = options.changedFiles ?? getChangedFiles(cmdLine, isMerge);
+  const ghRun = options.gh ?? gh;
+  const changed = options.changedFiles ?? getChangedFiles(cmdLine, isMerge, ghRun);
 
   // Write state file for the kaizen gate
   const stateKey = prUrlToStateKey(prUrl);
@@ -399,7 +409,7 @@ export function processHookInput(
   );
 
   // Send Telegram notification for merges
-  const prTitle = getPrTitle(prUrl);
+  const prTitle = getPrTitle(prUrl, ghRun);
   const notifyText = `✅ PR merged: ${prTitle}\n${prUrl}\nBranch: ${branch}\n\nCheck CLAUDE.md post-merge procedure for deploy steps.`;
   if (options.sendNotification) {
     options.sendNotification(notifyText);
