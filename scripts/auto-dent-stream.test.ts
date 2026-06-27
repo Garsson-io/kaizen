@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  extractArtifacts,
   postInFlightUpdate,
   buildInFlightComment,
   relativizeWorktreePath,
@@ -184,6 +185,134 @@ describe('buildInFlightComment', () => {
 
     expect(comment).toContain('| **Review state** | not applicable |');
     expect(comment).toContain('| REVIEW | not applicable | synthetic test task | https://github.com/o/r/pull/1 |');
+  });
+
+  it('populates review and reflection rows from canonical gate set signals', () => {
+    const result = makeRunResult({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1242'],
+    });
+
+    extractArtifacts(
+      `---
+hook: pr-review-loop
+type: gate-set
+gate: needs_review
+pr: https://github.com/Garsson-io/kaizen/pull/1242
+round: 2
+reason: Push detected - new review round
+---
+---
+hook: kaizen-reflect
+type: gate-set
+gate: needs_pr_kaizen
+reason: Kaizen reflection required
+---
+`,
+      result,
+    );
+
+    const comment = buildInFlightComment(1, Date.now(), result, {}, 'Garsson-io/kaizen');
+
+    expect(comment).toContain('| REVIEW | pending | round 2: Push detected - new review round | https://github.com/Garsson-io/kaizen/pull/1242 |');
+    expect(comment).toContain('| REFLECT | pending | Kaizen reflection required | - |');
+  });
+
+  it('populates review and reflection rows from canonical gate clear signals', () => {
+    const result = makeRunResult({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1242'],
+    });
+
+    extractArtifacts(
+      `---
+hook: pr-review-loop
+type: gate-clear
+gate: needs_review
+pr: https://github.com/Garsson-io/kaizen/pull/1242
+round: 2
+reason: Review passed
+---
+---
+hook: pr-kaizen-clear
+type: gate-clear
+gate: needs_pr_kaizen
+reason: Impediments filed
+---
+`,
+      result,
+    );
+
+    const comment = buildInFlightComment(1, Date.now(), result, {}, 'Garsson-io/kaizen');
+
+    expect(comment).toContain('| REVIEW | passed | round 2: Review passed | https://github.com/Garsson-io/kaizen/pull/1242 |');
+    expect(comment).toContain('| REFLECT | completed | Impediments filed | - |');
+  });
+
+  it('populates merge rows from canonical post-merge gate signals', () => {
+    const result = makeRunResult({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1242'],
+    });
+
+    extractArtifacts(
+      `---
+hook: post-merge-clear
+type: gate-set
+gate: needs_post_merge
+pr: https://github.com/Garsson-io/kaizen/pull/1242
+reason: Merge confirmed - run /kaizen to reflect
+---
+`,
+      result,
+    );
+
+    let comment = buildInFlightComment(1, Date.now(), result, {}, 'Garsson-io/kaizen');
+    expect(comment).toContain('| MERGE | merged | Merge confirmed - run /kaizen to reflect | https://github.com/Garsson-io/kaizen/pull/1242 |');
+
+    extractArtifacts(
+      `---
+hook: post-merge-clear
+type: gate-clear
+gate: needs_post_merge
+reason: Kaizen reflection completed
+---
+`,
+      result,
+    );
+
+    comment = buildInFlightComment(1, Date.now(), result, {}, 'Garsson-io/kaizen');
+    expect(comment).toContain('| MERGE | completed | Kaizen reflection completed | https://github.com/Garsson-io/kaizen/pull/1242 |');
+  });
+
+  it('keeps synthetic task lifecycle rows not applicable even if gate text is present', () => {
+    const result = makeRunResult({
+      pickedIssue: 'not applicable',
+      pickedIssueTitle: 'synthetic test task',
+      prs: ['https://github.com/o/r/pull/1'],
+      reviewVerdict: 'skipped',
+    });
+
+    extractArtifacts(
+      `---
+hook: pr-review-loop
+type: gate-set
+gate: needs_review
+pr: https://github.com/o/r/pull/1
+round: 1
+reason: PR created
+---
+---
+hook: kaizen-reflect
+type: gate-set
+gate: needs_pr_kaizen
+reason: Kaizen reflection required
+---
+`,
+      result,
+    );
+
+    const comment = buildInFlightComment(1, Date.now(), result, {}, 'Garsson-io/kaizen');
+
+    expect(comment).toContain('| REVIEW | not applicable | synthetic test task | https://github.com/o/r/pull/1 |');
+    expect(comment).toContain('| REFLECT | not applicable | synthetic test task | - |');
   });
 });
 

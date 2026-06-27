@@ -11,6 +11,7 @@
 import type { RunResult } from './auto-dent-run.js';
 import { parseFinalRunClaim } from './auto-dent-final-claim.js';
 import { ghExec } from './auto-dent-github.js';
+import { parseHookOutput, type HookOutput } from '../src/hooks/lib/gate-signal.js';
 
 // ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
 
@@ -224,6 +225,9 @@ function extractIssueRefs(value: string): string[] {
 }
 
 export function extractArtifacts(text: string, result: RunResult): void {
+  for (const output of parseHookOutputs(text)) {
+    updateProgressFromHookOutput(output, result);
+  }
   for (const marker of parsePhaseMarkers(text)) {
     updateProgressFromMarker(marker, result);
     if (marker.phase === 'PICK' && marker.fields.issue) {
@@ -275,14 +279,19 @@ export function extractArtifacts(text: string, result: RunResult): void {
 
 function pushPr(result: RunResult, prUrl: string): void {
   pushUnique(result.prs, prUrl);
-  if (!result.progressSteps) result.progressSteps = [];
-  const existing = result.progressSteps.find((s) => s.phase === 'PR');
-  const step = {
+  upsertProgressStep(result, {
     phase: 'PR',
     state: 'created',
     detail: prUrl,
     url: prUrl,
-  };
+  });
+}
+
+type ProgressStep = NonNullable<RunResult['progressSteps']>[number];
+
+function upsertProgressStep(result: RunResult, step: ProgressStep): void {
+  if (!result.progressSteps) result.progressSteps = [];
+  const existing = result.progressSteps.find((s) => s.phase === step.phase);
   if (existing) {
     existing.state = step.state;
     existing.detail = step.detail;
@@ -295,14 +304,65 @@ function pushPr(result: RunResult, prUrl: string): void {
 function updateProgressFromMarker(marker: PhaseMarker, result: RunResult): void {
   const step = progressStepFromMarker(marker);
   if (!step) return;
+  mergeProgressStep(result, step);
+}
+
+function mergeProgressStep(result: RunResult, step: ProgressStep): void {
   if (!result.progressSteps) result.progressSteps = [];
   const existing = result.progressSteps.find((s) => s.phase === step.phase);
-  if (existing) {
-    existing.state = step.state || existing.state;
-    existing.detail = step.detail || existing.detail;
-    existing.url = step.url || existing.url;
-  } else {
+  if (!existing) {
     result.progressSteps.push(step);
+    return;
+  }
+  existing.state = step.state || existing.state;
+  existing.detail = step.detail || existing.detail;
+  existing.url = step.url || existing.url;
+}
+
+function parseHookOutputs(text: string): HookOutput[] {
+  const outputs: HookOutput[] = [];
+  for (const match of text.matchAll(/^---\n[\s\S]*?\n---/gm)) {
+    const parsed = parseHookOutput(match[0]);
+    if (parsed) outputs.push(parsed);
+  }
+  return outputs;
+}
+
+function updateProgressFromHookOutput(output: HookOutput, result: RunResult): void {
+  if (output.type !== 'gate-set' && output.type !== 'gate-clear') return;
+  if (!output.gate) return;
+
+  if (output.pr) pushPr(result, output.pr);
+
+  const detail = [output.round ? `round ${output.round}:` : '', output.reason]
+    .filter(Boolean)
+    .join(' ');
+  const url = output.pr || result.prs[0];
+
+  switch (output.gate) {
+    case 'needs_review':
+      upsertProgressStep(result, {
+        phase: 'REVIEW',
+        state: output.type === 'gate-set' ? 'pending' : 'passed',
+        detail,
+        url,
+      });
+      return;
+    case 'needs_pr_kaizen':
+      upsertProgressStep(result, {
+        phase: 'REFLECT',
+        state: output.type === 'gate-set' ? 'pending' : 'completed',
+        detail: output.reason,
+      });
+      return;
+    case 'needs_post_merge':
+      upsertProgressStep(result, {
+        phase: 'MERGE',
+        state: output.type === 'gate-set' ? 'merged' : 'completed',
+        detail: output.reason,
+        url,
+      });
+      return;
   }
 }
 
@@ -545,6 +605,9 @@ function buildKaizenCycleSteps(result: RunResult, repo: string): NonNullable<Run
   for (const step of defaults) {
     const observed = existing.get(step.phase);
     if (!observed) continue;
+    if (synthetic && ['PLAN', 'EVALUATE', 'CASE', 'TEST', 'REVIEW', 'FIX', 'REFLECT', 'CLEANUP'].includes(step.phase)) {
+      continue;
+    }
     step.state = observed.state || step.state;
     step.detail = observed.detail || step.detail;
     step.url = observed.url || step.url;
