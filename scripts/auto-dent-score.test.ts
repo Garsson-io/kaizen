@@ -8,6 +8,7 @@ import {
   computeBatchTrend,
   formatRunScoreLine,
   formatBatchScoreTable,
+  effectiveIssuesClosed,
   formatModeBreakdown,
   postHocScoreBatch,
   formatPostHocLine,
@@ -1345,5 +1346,49 @@ describe('formatFailureDistribution', () => {
 
   it('returns empty string for empty array', () => {
     expect(formatFailureDistribution([])).toBe('');
+  });
+});
+
+describe('effectiveIssuesClosed / reconciled count (#1173)', () => {
+  // Minimal score; only the two issue-closed fields matter for these assertions.
+  const baseScore = (): BatchScore => ({
+    total_runs: 2,
+    successful_runs: 2,
+    success_rate: 1,
+    total_cost_usd: 4,
+    total_prs: 2,
+    total_issues_closed: 2, // per-run scraped sum (undercount)
+    total_duration_seconds: 100,
+    total_lines_deleted: 0,
+    total_issues_pruned: 0,
+    avg_cost_per_success: 2,
+    avg_duration_seconds: 50,
+    overall_efficiency: 0.5,
+    runs: [],
+    mode_breakdown: [],
+    cost_anomaly_count: 0,
+    mode_diversity: 0,
+    trend: null,
+  });
+
+  it('prefers the reconciled count when present', () => {
+    const score = { ...baseScore(), reconciled_issues_closed: 6 };
+    expect(effectiveIssuesClosed(score)).toBe(6);
+  });
+
+  it('falls back to the per-run sum when reconciled is absent', () => {
+    expect(effectiveIssuesClosed(baseScore())).toBe(2);
+  });
+
+  it('treats a reconciled value of 0 as authoritative (not falling back)', () => {
+    const score = { ...baseScore(), reconciled_issues_closed: 0 };
+    expect(effectiveIssuesClosed(score)).toBe(0);
+  });
+
+  it('formatBatchScoreTable shows the reconciled count, not the scraped sum', () => {
+    const score = { ...baseScore(), reconciled_issues_closed: 6 };
+    const table = formatBatchScoreTable(score);
+    expect(table).toContain('| **Issues closed** | 6 |');
+    expect(table).not.toContain('| **Issues closed** | 2 |');
   });
 });

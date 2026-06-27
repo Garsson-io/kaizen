@@ -605,3 +605,33 @@ export function verifyIssuesClosed(
 
   return results;
 }
+
+/**
+ * Authoritative batch-level set of issues actually closed by a batch's merged PRs.
+ *
+ * The per-run `issues_closed` metric is scraped from the agent's live text stream
+ * and undercounts: it misses closures the agent didn't narrate verbatim, and it
+ * never sees the `verified` set that GitHub auto-closed from a merged PR's
+ * `Closes #N` (only force-closures were ever recorded back). Summing those
+ * per-run scrapes is also wrong in the other direction, since this verification
+ * re-runs over ALL batch PRs every run and would double-count.
+ *
+ * This derives the truth once at finalize from the merged PR bodies: the deduped
+ * union of `verified ∪ forceClosed` across every merged PR in the batch. Same
+ * "measure outcomes from the authoritative source, not scraped narration" rule
+ * as #1153 / #943. Returns sorted `#N` refs. (#1173)
+ */
+export function reconcileBatchClosedIssues(
+  prUrls: string[],
+  repo: string,
+): string[] {
+  const results = verifyIssuesClosed(prUrls, repo);
+  const closed = new Set<string>();
+  for (const r of results) {
+    for (const ref of r.verified) closed.add(ref);
+    for (const ref of r.forceClosed) closed.add(ref);
+  }
+  return [...closed].sort(
+    (a, b) => Number(a.replace('#', '')) - Number(b.replace('#', '')),
+  );
+}

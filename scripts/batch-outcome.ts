@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { writeAttachment, readAttachment } from '../src/section-editor.js';
 import { gh } from '../src/lib/gh-exec.js';
 import type { BatchState } from './auto-dent-run.js';
-import type { BatchScore } from './auto-dent-score.js';
+import { type BatchScore, effectiveIssuesClosed } from './auto-dent-score.js';
 
 /** Named-attachment key on the progress issue. Stable contract with Phase 2 readers. */
 export const BATCH_OUTCOME_ATTACHMENT = 'batch-outcome';
@@ -121,7 +121,7 @@ export function buildBatchOutcome(
       runs: score.total_runs,
       successful_runs: score.successful_runs,
       prs: score.total_prs,
-      issues_closed: score.total_issues_closed,
+      issues_closed: effectiveIssuesClosed(score),
       issues_filed: state.issues_filed.length,
       cost_usd: finite(score.total_cost_usd),
       duration_seconds: finite(score.total_duration_seconds),

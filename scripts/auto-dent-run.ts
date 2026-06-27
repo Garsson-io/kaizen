@@ -61,6 +61,7 @@ export {
   fetchIssueLabels,
   syncEpicChecklists,
   verifyIssuesClosed,
+  reconcileBatchClosedIssues,
   type MergeStatus,
   type DriveStatus,
   type DriveReason,
@@ -133,6 +134,7 @@ import {
   queueAutoMerge,
   fetchIssueLabels,
   verifyIssuesClosed,
+  reconcileBatchClosedIssues,
   syncEpicChecklists,
 } from './auto-dent-github.js';
 import {
@@ -1284,6 +1286,22 @@ export function closeBatchProgressIssue(
 
   const batchScore = scoreBatch(state.run_history || []);
 
+  // Authoritative "issues closed" count (#1173): the per-run sum in batchScore is
+  // scraped from agent narration and undercounts (it never saw GitHub's verified
+  // auto-closures). Reconcile once here from the merged PR bodies — the deduped
+  // union of verified ∪ force-closed — so the summary, score table, and
+  // batch-outcome attachment all report the true count instead of the scrape.
+  // Best-effort: a gh failure must never block batch close.
+  let reconciledClosed: string[] = [];
+  if (state.prs.length > 0) {
+    try {
+      reconciledClosed = reconcileBatchClosedIssues(state.prs, kaizenRepo);
+      batchScore.reconciled_issues_closed = reconciledClosed.length;
+    } catch (err) {
+      console.log(`  [intelligence] issues-closed reconcile skipped: ${(err as Error).message}`);
+    }
+  }
+
   // Post-hoc: check final merge status for all PRs
   if (state.prs.length > 0) {
     const postHoc = runPostHocScoring(state.prs, batchScore.total_cost_usd);
@@ -1300,7 +1318,7 @@ export function closeBatchProgressIssue(
     '',
     `**PRs:** ${state.prs.length > 0 ? state.prs.join(', ') : 'none'}`,
     `**Issues filed:** ${state.issues_filed.length > 0 ? state.issues_filed.join(', ') : 'none'}`,
-    `**Issues closed:** ${state.issues_closed.length > 0 ? state.issues_closed.join(' ') : 'none'}`,
+    `**Issues closed:** ${reconciledClosed.length > 0 ? reconciledClosed.join(' ') : state.issues_closed.length > 0 ? state.issues_closed.join(' ') : 'none'}`,
   ].join('\n');
 
   ghExec(

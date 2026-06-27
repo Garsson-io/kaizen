@@ -16,6 +16,7 @@ import {
   extractAllLinkedIssues,
   syncEpicChecklists,
   verifyIssuesClosed,
+  reconcileBatchClosedIssues,
 } from './auto-dent-github.js';
 import { makeRunResult } from './auto-dent-test-helpers.js';
 
@@ -846,5 +847,114 @@ describe('verifyIssuesClosed', () => {
       'owner/repo',
     );
     expect(results).toEqual([]);
+  });
+});
+
+describe('reconcileBatchClosedIssues (#1173)', () => {
+  beforeEach(() => {
+    mockSpawnSync.mockReset();
+  });
+
+  it('counts verified auto-closures, not just force-closures', () => {
+    // The undercount bug: a merged PR whose Closes #N GitHub already auto-closed
+    // must be counted. Previously only force-closed issues were recorded back.
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
+      if (cmdStr.includes('pr view')) {
+        return ok(JSON.stringify({ state: 'MERGED', body: 'Closes #5\nFixes #6' }));
+      }
+      if (cmdStr.includes('issue view')) {
+        return ok(JSON.stringify({ state: 'CLOSED' }));
+      }
+      return ok('');
+    }) as any);
+
+    const closed = reconcileBatchClosedIssues(
+      ['https://github.com/owner/repo/pull/1'],
+      'owner/repo',
+    );
+    expect(closed).toEqual(['#5', '#6']);
+  });
+
+  it('unions verified and force-closed sets', () => {
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
+      if (cmdStr.includes('pr view')) {
+        return ok(JSON.stringify({ state: 'MERGED', body: 'Closes #5\nFixes #6' }));
+      }
+      if (cmdStr.includes('issue view 5')) {
+        return ok(JSON.stringify({ state: 'CLOSED' }));
+      }
+      if (cmdStr.includes('issue view 6')) {
+        return ok(JSON.stringify({ state: 'OPEN' }));
+      }
+      if (cmdStr.includes('issue close')) return ok('ok');
+      return ok('');
+    }) as any);
+
+    const closed = reconcileBatchClosedIssues(
+      ['https://github.com/owner/repo/pull/1'],
+      'owner/repo',
+    );
+    expect(closed).toEqual(['#5', '#6']);
+  });
+
+  it('dedupes issues closed by more than one batch PR (no double count)', () => {
+    // verifyIssuesClosed re-runs over ALL batch PRs each run; if two PRs both
+    // reference #7 the reconciled set must contain it once, not twice.
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
+      if (cmdStr.includes('pr view')) {
+        return ok(JSON.stringify({ state: 'MERGED', body: 'Closes #7' }));
+      }
+      if (cmdStr.includes('issue view')) {
+        return ok(JSON.stringify({ state: 'CLOSED' }));
+      }
+      return ok('');
+    }) as any);
+
+    const closed = reconcileBatchClosedIssues(
+      [
+        'https://github.com/owner/repo/pull/1',
+        'https://github.com/owner/repo/pull/2',
+      ],
+      'owner/repo',
+    );
+    expect(closed).toEqual(['#7']);
+  });
+
+  it('excludes issues from PRs that are not merged', () => {
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
+      if (cmdStr.includes('pr view')) {
+        return ok(JSON.stringify({ state: 'OPEN', body: 'Closes #9' }));
+      }
+      return ok('');
+    }) as any);
+
+    const closed = reconcileBatchClosedIssues(
+      ['https://github.com/owner/repo/pull/1'],
+      'owner/repo',
+    );
+    expect(closed).toEqual([]);
+  });
+
+  it('returns refs sorted by issue number', () => {
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmdStr = args.join(' ');
+      if (cmdStr.includes('pr view')) {
+        return ok(JSON.stringify({ state: 'MERGED', body: 'Closes #30\nFixes #4\nResolves #12' }));
+      }
+      if (cmdStr.includes('issue view')) {
+        return ok(JSON.stringify({ state: 'CLOSED' }));
+      }
+      return ok('');
+    }) as any);
+
+    const closed = reconcileBatchClosedIssues(
+      ['https://github.com/owner/repo/pull/1'],
+      'owner/repo',
+    );
+    expect(closed).toEqual(['#4', '#12', '#30']);
   });
 });
