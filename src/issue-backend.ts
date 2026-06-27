@@ -30,6 +30,7 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { gh } from "./lib/gh-exec.js";
 
 // ── Types ──
 
@@ -122,10 +123,6 @@ function shellExec(bin: string, args: string[]): string {
 export class GitHubBackend implements IssueBackend {
   readonly name = "github";
 
-  private gh(args: string[]): string {
-    return shellExec("gh", args);
-  }
-
   create(opts: CreateIssueOpts): CreateResult {
     const args = ["issue", "create"];
     if (opts.repo) args.push("--repo", opts.repo);
@@ -134,7 +131,7 @@ export class GitHubBackend implements IssueBackend {
     for (const label of opts.labels ?? []) {
       args.push("--label", label);
     }
-    const url = this.gh(args);
+    const url = gh(args);
     const match = url.match(/\/(\d+)$/);
     return { number: match ? parseInt(match[1], 10) : 0, url };
   }
@@ -152,7 +149,7 @@ export class GitHubBackend implements IssueBackend {
     const jsonFields = opts.json ?? ["number", "title", "state", "labels", "body", "url", "createdAt", "updatedAt"];
     args.push("--json", jsonFields.join(","));
 
-    const output = this.gh(args);
+    const output = gh(args);
     if (!output) return [];
     return (JSON.parse(output) as any[]).map(parseRawIssue);
   }
@@ -161,7 +158,7 @@ export class GitHubBackend implements IssueBackend {
     const args = ["issue", "view", String(number)];
     if (repo) args.push("--repo", repo);
     args.push("--json", "number,title,state,labels,body,url,createdAt,updatedAt,closedAt");
-    return parseRawIssue(JSON.parse(this.gh(args)));
+    return parseRawIssue(JSON.parse(gh(args)));
   }
 
   edit(opts: EditIssueOpts): void {
@@ -174,26 +171,26 @@ export class GitHubBackend implements IssueBackend {
       args.push("--remove-label", label);
     }
     if (opts.body !== undefined) args.push("--body", opts.body);
-    this.gh(args);
+    gh(args);
   }
 
   comment(opts: CommentOpts): void {
     const args = ["issue", "comment", String(opts.number)];
     if (opts.repo) args.push("--repo", opts.repo);
     args.push("--body", opts.body);
-    this.gh(args);
+    gh(args);
   }
 
   close(number: number, repo?: string): void {
     const args = ["issue", "close", String(number)];
     if (repo) args.push("--repo", repo);
-    this.gh(args);
+    gh(args);
   }
 
   reopen(number: number, repo?: string): void {
     const args = ["issue", "reopen", String(number)];
     if (repo) args.push("--repo", repo);
-    this.gh(args);
+    gh(args);
   }
 }
 

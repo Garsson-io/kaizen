@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -86,5 +86,56 @@ describe("createIssueBackend", () => {
   it("defaults to github for unknown backend", () => {
     const backend = createIssueBackend({ backend: "github" });
     expect(backend.name).toBe("github");
+  });
+});
+
+describe("GitHubBackend gh execution", () => {
+  it("passes GitHub issue create arguments through the shared argv-based gh helper", async () => {
+    vi.resetModules();
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      stdout: "https://github.com/Garsson-io/kaizen/issues/42\n",
+      stderr: "",
+    }));
+    const execSync = vi.fn(() => "https://github.com/Garsson-io/kaizen/issues/42");
+    vi.doMock("node:child_process", () => ({ spawnSync, execSync }));
+
+    try {
+      const { GitHubBackend: MockedGitHubBackend } = await import("./issue-backend.js");
+
+      const result = new MockedGitHubBackend().create({
+        repo: "Garsson-io/kaizen",
+        title: "Title with spaces; $(touch nope)",
+        body: "Body with `backticks` and \"quotes\"",
+        labels: ["kaizen", "needs review"],
+      });
+
+      expect(result).toEqual({
+        number: 42,
+        url: "https://github.com/Garsson-io/kaizen/issues/42",
+      });
+      expect(spawnSync).toHaveBeenCalledWith("gh", [
+        "issue",
+        "create",
+        "--repo",
+        "Garsson-io/kaizen",
+        "--title",
+        "Title with spaces; $(touch nope)",
+        "--body",
+        "Body with `backticks` and \"quotes\"",
+        "--label",
+        "kaizen",
+        "--label",
+        "needs review",
+      ], {
+        encoding: "utf8",
+        timeout: 30_000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      expect(execSync).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
   });
 });
