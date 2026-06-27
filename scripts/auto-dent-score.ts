@@ -64,7 +64,17 @@ export function classifyFailure(
     if (log.includes('timeout') || log.includes('timed out') || log.includes('exceeded time limit')) {
       return 'timeout';
     }
-    if (log.includes('git error') || log.includes('worktree') || log.includes('github api') || log.includes('could not resolve') || log.includes('fatal: ')) {
+    if (
+      log.includes('git error') ||
+      log.includes('worktree') ||
+      log.includes('github api') ||
+      log.includes('could not resolve') ||
+      log.includes('fatal: ') ||
+      log.includes('rate_limit_event') ||
+      log.includes('api_error_status":429') ||
+      log.includes('api_error_status:429') ||
+      log.includes('session limit')
+    ) {
       return 'infrastructure';
     }
     if (log.includes('scope overflow') || log.includes('too many changes') || log.includes('budget exceeded') || log.includes('context limit')) {

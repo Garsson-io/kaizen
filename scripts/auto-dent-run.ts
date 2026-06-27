@@ -1700,13 +1700,14 @@ async function main(): Promise<void> {
     repoRoot,
     stateFile,
   );
+  const runId = makeRunId(state.batch_id, runNum);
 
   // Emit run.start telemetry with correct pre-run timestamp (#656)
   // Uses emitAt() to backdate the envelope timestamp to when the run actually started,
   // and includes start_epoch for explicit duration calculations.
   events.emitAt(runStartDate, {
     type: 'run.start',
-    run_id: makeRunId(state.batch_id, runNum),
+    run_id: runId,
     batch_id: state.batch_id,
     run_num: runNum,
     mode: runMode,
@@ -1743,7 +1744,6 @@ async function main(): Promise<void> {
   // Emit per-artifact events from stream results (#647)
   let pickedIssue = '';
   {
-    const runId = makeRunId(state.batch_id, runNum);
     // Extract picked issue from log phase markers
     try {
       const logContent = readFileSync(logFile, 'utf8');
@@ -1876,7 +1876,7 @@ async function main(): Promise<void> {
       : 'failure' as const;
     events.emit({
       type: 'run.complete',
-      run_id: makeRunId(state.batch_id, runNum),
+      run_id: runId,
       batch_id: state.batch_id,
       run_num: runNum,
       duration_ms: duration * 1000,
@@ -2065,7 +2065,7 @@ async function main(): Promise<void> {
     console.log(`  [contemplate] ${newRecs.length} new recommendation(s) stored (${result.contemplationRecs.length - newRecs.length} duplicates skipped)`);
     events.emit({
       type: 'batch.reflect',
-      run_id: makeRunId(state.batch_id, runNum),
+      run_id: runId,
       batch_id: state.batch_id,
       run_num: runNum,
       recommendations_count: result.contemplationRecs.length,
