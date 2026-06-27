@@ -301,12 +301,25 @@ export function parseReviewFindingMeta(value: unknown): ReviewFindingMeta | null
   };
 }
 
-export function extractReviewFindingMeta(content: string): ReviewFindingMeta | null {
+/**
+ * Extract the raw JSON object from the first `<!-- meta:{...} -->` comment in a
+ * stored attachment. Single structured accessor for the meta block so callers
+ * never hand-roll a regex + JSON.parse (I29). The meta JSON is always flat
+ * (no nested braces), so the non-greedy `\{.*?\}` is correct.
+ */
+export function extractMetaComment(content: string): Record<string, unknown> | null {
   const match = content.match(/<!-- meta:(\{.*?\}) -->/);
   if (!match) return null;
   try {
-    return parseReviewFindingMeta(JSON.parse(match[1]));
+    const parsed = JSON.parse(match[1]);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
+}
+
+export function extractReviewFindingMeta(content: string): ReviewFindingMeta | null {
+  return parseReviewFindingMeta(extractMetaComment(content));
 }

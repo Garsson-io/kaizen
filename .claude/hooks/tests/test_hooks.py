@@ -183,6 +183,7 @@ class TestEdgeCases:
         "kaizen-enforce-pr-review-ts.sh",
         "kaizen-enforce-case-worktree.sh",
         "kaizen-check-dirty-files-ts.sh",
+        "kaizen-enforce-merge-verdict-ts.sh",
         "kaizen-pr-quality-checks-ts.sh",
     ])
     def test_empty_command(self, review_harness, hook):
@@ -193,6 +194,7 @@ class TestEdgeCases:
         "kaizen-enforce-pr-review-ts.sh",
         "kaizen-enforce-case-worktree.sh",
         "kaizen-check-dirty-files-ts.sh",
+        "kaizen-enforce-merge-verdict-ts.sh",
         "kaizen-pr-quality-checks-ts.sh",
     ])
     def test_missing_tool_input(self, review_harness, hook):
@@ -205,6 +207,7 @@ class TestEdgeCases:
         "kaizen-enforce-pr-review-ts.sh",
         "kaizen-enforce-case-worktree.sh",
         "kaizen-check-dirty-files-ts.sh",
+        "kaizen-enforce-merge-verdict-ts.sh",
         "kaizen-pr-quality-checks-ts.sh",
     ])
     def test_malformed_json(self, review_harness, hook):

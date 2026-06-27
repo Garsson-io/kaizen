@@ -40,7 +40,6 @@ import {
   issueTarget,
   storeReviewFinding,
   storeReviewSummary,
-  storeReviewBatch,
   storeQuickPass,
   nextReviewRound,
   listReviewRounds,
@@ -58,14 +57,24 @@ import {
   updatePrSection,
   storeIterationState,
   retrieveIterationState,
+  deriveStoredRoundVerdict,
   type ReviewFindingData,
-  type StoreReviewSummaryOptions,
 } from './structured-data.js';
 import {
   buildReviewSentinelRecord,
   serializeReviewSentinel,
 } from './review-sentinel.js';
 import { normalizeReviewFindingData, validateReviewFindingPayload, summarizeFindingStatuses } from './review-finding-contract.js';
+import {
+  waitForCiProof,
+  ciProofExitCode,
+  formatCiProofFailure,
+  createDefaultCiProofRunner,
+  type CiProofRunner,
+  type CiProofResult,
+} from './review-ci-proof.js';
+import type { AttachmentTarget } from './section-editor.js';
+import type { RoundVerdict } from './review-finding-contract.js';
 
 export type CliArgs = Record<string, string> & { command: string };
 type Handler = (a: CliArgs) => Promise<void>;
@@ -74,7 +83,7 @@ type Handler = (a: CliArgs) => Promise<void>;
  * Flags that are booleans — no value follows, presence means true.
  * Keeps `--stdin` usable without the trap of consuming the next arg.
  */
-const BOOLEAN_FLAGS = new Set(['stdin']);
+const BOOLEAN_FLAGS = new Set(['stdin', 'skip-ci-proof']);
 
 export function parseArgs(argv?: string[]): CliArgs {
   const args = argv ?? process.argv.slice(2);
@@ -177,10 +186,73 @@ function writeReviewSentinel(repo: string, pr: string | undefined, round: number
   }
 }
 
-function reviewSummaryOptions(a: CliArgs): StoreReviewSummaryOptions {
-  return {
-    expectedHeadSha: a['head-sha'],
-  };
+const DEFAULT_CI_PROOF_TIMEOUT_SEC = 900; // 15 min — covers a typical CI run.
+const DEFAULT_CI_PROOF_POLL_SEC = 15;
+
+function intFromEnvOrArg(value: string | undefined, fallback: number): number {
+  const n = value != null ? parseInt(value, 10) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * Dependencies for the CI-proof gate. Injectable so the wiring (verdict →
+ * proof → exit) is unit-testable without shelling out or killing the process.
+ */
+export interface CiProofGateDeps {
+  runner?: CiProofRunner;
+  deriveVerdict?: (target: AttachmentTarget, round: number) => RoundVerdict;
+  exit?: (code: number) => never;
+  env?: NodeJS.ProcessEnv;
+  log?: (msg: string) => void;
+}
+
+/**
+ * Verdict→terminal-action binding (#1227): a PASS review summary must not be
+ * recorded unless CI is green for the reviewed head. The proof lives HERE, at
+ * the CLI boundary — not in the side-effect-free storage layer (#1222/#1225).
+ *
+ * Behaviour:
+ *   - derived verdict FAIL  → no proof needed (storing a FAIL is always allowed)
+ *   - non-PR target / skip  → proof skipped
+ *   - waits for CI (poll), so `pending` is a WAIT, not a FAIL (#1221)
+ *   - pending after timeout → exit 75 (EX_TEMPFAIL): NOT a review FAIL
+ *   - stale head / CI red   → exit 1: real FAIL, re-review/re-fix required
+ */
+export async function enforceCiProofForPass(
+  target: AttachmentTarget,
+  round: number,
+  a: CliArgs,
+  deps: CiProofGateDeps = {},
+): Promise<CiProofResult | { status: 'skipped' }> {
+  const env = deps.env ?? process.env;
+  const exit = deps.exit ?? ((code: number) => process.exit(code));
+  const log = deps.log ?? ((msg: string) => process.stderr.write(`${msg}\n`));
+
+  if ('skip-ci-proof' in a || env.KAIZEN_SKIP_CI_PROOF === '1') {
+    log('[ci-proof] OVERRIDE: skipping CI proof (--skip-ci-proof / KAIZEN_SKIP_CI_PROOF=1).');
+    return { status: 'skipped' };
+  }
+
+  const derive = deps.deriveVerdict ?? deriveStoredRoundVerdict;
+  const verdict = derive(target, round);
+  if (verdict === 'FAIL') return { status: 'skipped' };
+
+  const runner = deps.runner ?? createDefaultCiProofRunner();
+  const timeoutMs = intFromEnvOrArg(a['ci-timeout-sec'] ?? env.KAIZEN_CI_PROOF_TIMEOUT_SEC, DEFAULT_CI_PROOF_TIMEOUT_SEC) * 1000;
+  const intervalMs = intFromEnvOrArg(a['ci-poll-sec'] ?? env.KAIZEN_CI_PROOF_POLL_SEC, DEFAULT_CI_PROOF_POLL_SEC) * 1000;
+
+  const result = await waitForCiProof(
+    { kind: target.kind, number: target.number, repo: target.repo },
+    { expectedHeadSha: a['head-sha'] },
+    runner,
+    { timeoutMs, intervalMs },
+  );
+
+  if (result.status === 'pass' || result.status === 'skipped_non_pr') return result;
+
+  log(formatCiProofFailure(result));
+  exit(ciProofExitCode(result));
+  return result; // unreachable when exit really exits; kept for injected exits.
 }
 
 // Review handlers
@@ -254,12 +326,18 @@ async function handleStoreReviewBatch(a: CliArgs): Promise<void> {
     }
   }
   const findings = parsedBatch as ReviewFindingData[];
-  const result = storeReviewBatch(pr, r, findings, reviewSummaryOptions(a));
+  // Store findings (raw evidence) first, then enforce the CI proof on the
+  // derived verdict BEFORE recording the PASS summary + sentinel. A non-green
+  // CI exits here (75 pending / 1 red) without stamping a PASS the review gate
+  // would later consume (#1227 binding).
+  const urls = findings.map(f => storeReviewFinding(pr, r, f));
+  await enforceCiProofForPass(pr, r, a);
+  const summaryUrl = storeReviewSummary(pr, r);
   // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
   // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
   writeReviewSentinel(a.repo, a.pr, r);
-  console.log(`Batch stored: ${result.urls.length} findings + summary (round ${r})`);
-  console.log(`Summary: ${result.summaryUrl}`);
+  console.log(`Batch stored: ${urls.length} findings + summary (round ${r})`);
+  console.log(`Summary: ${summaryUrl}`);
 }
 
 async function handleQuickPass(a: CliArgs): Promise<void> {
@@ -275,9 +353,13 @@ async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
   // legacy --text/--file) is non-authoritative commentary appended below the derived block.
   const note = (a.note ?? resolveContent(a)) || undefined;
   const r = resolveRound(a);
+  const target = prTarget(a.pr, a.repo);
+  // Bind the PASS verdict to CI before recording it (#1227). FAIL summaries and
+  // non-PR / skipped contexts pass through without a proof.
+  await enforceCiProofForPass(target, r, a);
   let url: string;
   try {
-    url = storeReviewSummary(prTarget(a.pr, a.repo), r, note, reviewSummaryOptions(a));
+    url = storeReviewSummary(target, r, note);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

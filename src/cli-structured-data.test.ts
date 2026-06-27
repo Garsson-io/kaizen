@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { handlers, parseArgs, resolveContent, resolveRound, type CliArgs } from './cli-structured-data.js';
+import { handlers, parseArgs, resolveContent, resolveRound, enforceCiProofForPass, type CliArgs } from './cli-structured-data.js';
+import type { CiProofRunner } from './review-ci-proof.js';
 import {
   nextReviewRound,
   storePlan,
@@ -44,9 +45,19 @@ vi.mock('./structured-data.js', () => ({
   updatePrSection: vi.fn(),
   storeIterationState: vi.fn().mockReturnValue('https://example.com/iteration'),
   retrieveIterationState: vi.fn().mockReturnValue({ round: 1 }),
+  deriveStoredRoundVerdict: vi.fn().mockReturnValue('PASS'),
 }));
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Handler tests assert storage wiring, not the CI proof — skip the network
+  // gate (its behaviour is covered by review-ci-proof.test.ts and the
+  // enforceCiProofForPass tests below). Without this, handlers would shell out.
+  process.env.KAIZEN_SKIP_CI_PROOF = '1';
+});
+afterEach(() => {
+  delete process.env.KAIZEN_SKIP_CI_PROOF;
+});
 
 describe('parseArgs', () => {
   it('extracts command and flags', () => {
@@ -251,8 +262,8 @@ describe('store-review-batch — review sentinel', () => {
   });
 });
 
-describe('store-review-summary — CI head proof', () => {
-  it('passes --head-sha through to summary storage before writing the sentinel (#1070)', async () => {
+describe('store-review-summary — storage wiring (#1222: side-effect-free storage)', () => {
+  it('calls storeReviewSummary with target+round only — no options/CI args baked into storage', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await handlers['store-review-summary']({
@@ -263,11 +274,12 @@ describe('store-review-summary — CI head proof', () => {
       ['head-sha']: 'abc123',
     } as CliArgs);
 
+    // The CI/head proof no longer travels into the storage primitive (#1225);
+    // storeReviewSummary takes exactly (target, round, note).
     expect(vi.mocked(storeReviewSummary)).toHaveBeenCalledWith(
       { kind: 'pr', number: 903, repo: 'Garsson-io/kaizen' },
       5,
       undefined,
-      { expectedHeadSha: 'abc123' },
     );
     const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r5'),
@@ -284,6 +296,78 @@ describe('store-review-summary — CI head proof', () => {
     expect(payload.findingCount).toBeGreaterThanOrEqual(0);
     expect(payload.integrity).toMatch(/^sha256:/);
     log.mockRestore();
+  });
+});
+
+// ── enforceCiProofForPass — verdict→CI binding at the CLI boundary (#1227) ──
+
+describe('enforceCiProofForPass — binds PASS verdict to CI', () => {
+  const target = { kind: 'pr', number: '903', repo: 'org/repo' } as const;
+  const noEnv: NodeJS.ProcessEnv = {};
+  const greenRunner: CiProofRunner = {
+    localHead: () => 'abc',
+    prHeadSha: () => 'abc',
+    prChecks: () => [{ bucket: 'pass', state: 'SUCCESS' }],
+    sleep: async () => {},
+    now: () => 0,
+  };
+
+  it('FAIL verdict short-circuits — no proof needed to store a FAIL', async () => {
+    let proofRan = false;
+    const r = await enforceCiProofForPass(target, 1, { command: 'x' } as CliArgs, {
+      env: noEnv,
+      deriveVerdict: () => 'FAIL',
+      runner: { ...greenRunner, prChecks: () => { proofRan = true; return []; } },
+      exit: (() => { throw new Error('should not exit'); }) as never,
+    });
+    expect(r).toEqual({ status: 'skipped' });
+    expect(proofRan).toBe(false);
+  });
+
+  it('PASS verdict + green CI → proceeds (no exit)', async () => {
+    const r = await enforceCiProofForPass(target, 1, { command: 'x' } as CliArgs, {
+      env: noEnv,
+      deriveVerdict: () => 'PASS',
+      runner: greenRunner,
+      exit: (() => { throw new Error('should not exit'); }) as never,
+    });
+    expect(r).toMatchObject({ status: 'pass' });
+  });
+
+  it('PASS verdict + CI RED → exits 1 (real fail BLOCKS the PASS)', async () => {
+    const exits: number[] = [];
+    await enforceCiProofForPass(target, 1, { command: 'x' } as CliArgs, {
+      env: noEnv,
+      deriveVerdict: () => 'PASS',
+      runner: { ...greenRunner, prChecks: () => [{ bucket: 'fail', state: 'FAILURE' }] },
+      exit: ((code: number) => { exits.push(code); return undefined as never; }),
+      log: () => {},
+    });
+    expect(exits).toEqual([1]);
+  });
+
+  it('PASS verdict + CI pending past timeout → exits 75 (NOT a fail) — #1221', async () => {
+    const exits: number[] = [];
+    await enforceCiProofForPass(target, 1, { command: 'x', ['ci-timeout-sec']: '0', ['ci-poll-sec']: '0' } as CliArgs, {
+      env: noEnv,
+      deriveVerdict: () => 'PASS',
+      runner: { ...greenRunner, prChecks: () => [{ bucket: 'pending', state: 'IN_PROGRESS' }] },
+      exit: ((code: number) => { exits.push(code); return undefined as never; }),
+      log: () => {},
+    });
+    expect(exits).toEqual([75]);
+  });
+
+  it('--skip-ci-proof bypasses the gate (logged override)', async () => {
+    let proofRan = false;
+    const r = await enforceCiProofForPass(target, 1, { command: 'x', ['skip-ci-proof']: 'true' } as CliArgs, {
+      env: noEnv,
+      deriveVerdict: () => { proofRan = true; return 'PASS'; },
+      runner: greenRunner,
+      exit: (() => { throw new Error('should not exit'); }) as never,
+    });
+    expect(r).toEqual({ status: 'skipped' });
+    expect(proofRan).toBe(false);
   });
 });
 

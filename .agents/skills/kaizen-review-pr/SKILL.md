@@ -229,10 +229,19 @@ npx tsx src/cli-structured-data.ts store-review-summary \
   --pr <PR_NUMBER> --repo <owner/repo> --round <N> --head-sha "$(git rev-parse HEAD)"
 ```
 
-For a derived PASS or PASS-with-partials verdict, `store-review-summary` now verifies the PR's
-current HEAD matches `--head-sha` and that `gh pr checks` is green for that HEAD before it writes
-the summary/sentinel (#1070). Pending, failing, absent, or stale-head CI refuses storage; re-run
-review on the current head after CI passes.
+For a derived PASS or PASS-with-partials verdict, the CLI verifies CI at the command boundary
+before it writes the summary/sentinel (#1070, redone correctly per #1225): it checks the PR's
+current HEAD matches `--head-sha` and **waits** (polls `gh pr checks`) until CI is terminal for
+that HEAD. The storage layer itself stays side-effect-free (#1222).
+
+Distinguish the two non-pass outcomes — they are NOT the same (#1221):
+- **CI still pending after the wait timeout → exit code 75** (`ci_pending`). This is **NOT a
+  review FAIL** and must **not** burn a fix round. Wait for CI to finish, then re-run
+  `store-review-summary`. (`KAIZEN_SKIP_CI_PROOF=1` bypasses the wait if you must.)
+- **Stale head or red CI → exit code 1.** A real failure: re-review on the current head after CI
+  passes / fix the red checks.
+
+A FAIL verdict stores without a CI proof (you are recording the failure, not asserting a pass).
 
 Add `--note "<context>"` only for non-verdict commentary (e.g. "rebased onto main, re-ran tests").
 Read back the derived verdict with `read-review-summary --pr <N> --repo <repo> --round <N>` — the
