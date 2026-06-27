@@ -330,6 +330,31 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
 
     const body = bodyOfLastCreate();
     expect(body).toContain('## Review Round 4 — PASS');
+
+    // The reverted #1070 gate shelled out to `gh pr view --json headRefOid`, `gh pr checks`,
+    // and `git rev-parse HEAD` on every PASS store (#1221/#1222). Assert directly that NONE of
+    // those CI-proof calls were made — only attachment read/write gh calls are allowed.
+    const ciProofCall = mockGh.mock.calls.find(([cmd, args]) => {
+      if (!Array.isArray(args)) return false;
+      if (cmd === 'git' && args.includes('rev-parse') && args.includes('HEAD')) return true;
+      if (args.includes('checks')) return true; // gh pr checks
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('headRefOid')) return true;
+      return false;
+    });
+    expect(ciProofCall).toBeUndefined();
+  });
+
+  it('stores a derived PASS on a non-PR (issue) target without throwing (#1222 defect 1)', () => {
+    // The reverted gate did `if (target.kind !== 'pr') throw`, so storing a PASS summary on an
+    // issue target — a valid AttachmentTarget — regressed to a throw. The revert restores it.
+    const ok = dimComment(3, 'correctness', 'pass', 2, 0, 0);
+    ghReturns(ok); // compose: list
+    ghReturns(ok); // compose: read
+    ghReturns(''); // writeAttachment: readAttachment (no existing)
+    ghReturns('https://...#issuecomment-sum'); // createComment
+
+    // Pre-revert this threw via `if (target.kind !== 'pr') throw`; now it stores like any target.
+    expect(() => storeReviewSummary(issue, 3)).not.toThrow();
   });
 });
 
