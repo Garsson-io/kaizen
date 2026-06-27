@@ -24,6 +24,11 @@ export interface BranchPrQueryResult {
   openUrl?: string;
 }
 
+export interface GithubPrUrl {
+  repo: string;
+  number: number;
+}
+
 export interface QueryBranchPrStateOptions {
   repo: string;
   branch: string;
@@ -33,6 +38,15 @@ export interface QueryBranchPrStateOptions {
 
 export function emptyBranchPrQueryResult(): BranchPrQueryResult {
   return { mostRecent: null, hasOpen: false };
+}
+
+export function parseGithubPrUrl(prUrl: string | undefined | null): GithubPrUrl | null {
+  if (!prUrl) return null;
+  const match = prUrl.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/);
+  if (!match) return null;
+  const number = Number(match[2]);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  return { repo: match[1], number };
 }
 
 export function parseFirstPrUrl(output: string): string | undefined {

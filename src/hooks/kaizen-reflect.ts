@@ -16,6 +16,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gh } from '../lib/gh-exec.js';
+import { parseGithubPrUrl } from '../lib/github-pr.js';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import {
@@ -142,17 +143,16 @@ function sendTelegramIpc(text: string, projectDir?: string): void {
 
 /** Get PR title via gh CLI. */
 function getPrTitle(prUrl: string, ghRun: GhRunner = gh): string {
-  const prNum = prUrl.match(/(\d+)$/)?.[1];
-  const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
-  if (!prNum || !repo) return 'unknown';
+  const parsed = parseGithubPrUrl(prUrl);
+  if (!parsed) return 'unknown';
   try {
     return (
       ghRun([
         'pr',
         'view',
-        prNum,
+        String(parsed.number),
         '--repo',
-        repo,
+        parsed.repo,
         '--json',
         'title',
         '--jq',

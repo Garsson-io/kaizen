@@ -22,6 +22,7 @@ import { gh } from '../lib/gh-exec.js';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import { verifyIssueRef, type RefStatus } from './lib/issue-ref-verifier.js';
+import { parseGithubPrUrl } from '../lib/github-pr.js';
 import { resolveProjectRoot } from '../lib/resolve-project-root.js';
 import { stripHeredocBody } from './parse-command.js';
 import {
@@ -114,8 +115,8 @@ const STANDARD_DISPOSITIONS = new Set(['filed', 'incident', 'fixed-in-pr']);
 
 function getCandidateRepos(gatePrUrl: string): string[] {
   const repos: string[] = [];
-  const prRepo = gatePrUrl?.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
-  if (prRepo) repos.push(prRepo);
+  const parsedPrUrl = parseGithubPrUrl(gatePrUrl);
+  if (parsedPrUrl) repos.push(parsedPrUrl.repo);
   try {
     const root = resolveProjectRoot(process.cwd());
     const cfg = JSON.parse(
@@ -423,23 +424,21 @@ export function formatReflectionComment(
 
 /** Post reflection as a PR comment (best-effort). */
 export function defaultPostComment(prUrl: string, comment: string): void {
-  const prNum = prUrl.match(/(\d+)$/)?.[1];
-  const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
-  if (!prNum || !repo) return;
+  const parsed = parseGithubPrUrl(prUrl);
+  if (!parsed) return;
   // Route through the shared gh-exec argv boundary (no shell-string interpolation
   // of prNum/repo); the comment body is fed on stdin via `--body-file -`.
-  gh(['pr', 'comment', prNum, '--repo', repo, '--body-file', '-'], 15000, comment);
+  gh(['pr', 'comment', String(parsed.number), '--repo', parsed.repo, '--body-file', '-'], 15000, comment);
 }
 
 // ── PRD detection (kaizen #694) ───────────────────────────────────────
 
 /** List changed files in a PR (best-effort). */
 function defaultGetPrFiles(prUrl: string, ghRun: GhRunner = gh): string[] {
-  const prNum = prUrl.match(/(\d+)$/)?.[1];
-  const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
-  if (!prNum || !repo) return [];
+  const parsed = parseGithubPrUrl(prUrl);
+  if (!parsed) return [];
   try {
-    const out = ghRun(['pr', 'diff', prNum, '--repo', repo, '--name-only']).trim();
+    const out = ghRun(['pr', 'diff', String(parsed.number), '--repo', parsed.repo, '--name-only']).trim();
     return out ? out.split('\n').map(f => f.trim()).filter(Boolean) : [];
   } catch {
     return [];
@@ -756,18 +755,17 @@ export function processHookInput(
 
 /** Auto-close kaizen issues referenced in a merged PR body. */
 export function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void {
-  const prNum = prUrl.match(/(\d+)$/)?.[1];
-  const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
-  if (!prNum || !repo) return;
+  const parsed = parseGithubPrUrl(prUrl);
+  if (!parsed) return;
 
   let prState: string;
   try {
     prState = ghRun([
       'pr',
       'view',
-      prNum,
+      String(parsed.number),
       '--repo',
-      repo,
+      parsed.repo,
       '--json',
       'state',
       '--jq',
@@ -783,9 +781,9 @@ export function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void
     prBody = ghRun([
       'pr',
       'view',
-      prNum,
+      String(parsed.number),
       '--repo',
-      repo,
+      parsed.repo,
       '--json',
       'body',
       '--jq',
