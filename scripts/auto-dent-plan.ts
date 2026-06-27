@@ -26,6 +26,8 @@ import {
   renderTemplate,
   loadPromptTemplate,
 } from './auto-dent-run.js';
+import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
+import type { PhaseProvider } from './auto-dent-provider.js';
 
 export interface PlanItem {
   issue: string;
@@ -54,12 +56,23 @@ export interface PlanTheme {
 export interface BatchPlan {
   created_at: string;
   guidance: string;
+  /** Provider used by the planning pre-pass (#1146). */
+  planning_provider?: PhaseProvider;
   items: PlanItem[];
   wip_excluded: string[];
   epics_scanned: string[];
   decomposition_candidates?: string[];
   /** Coordinated clusters of related items (#941). Derived if not LLM-provided. */
   themes?: PlanTheme[];
+}
+
+export type PlanningProviderName = 'claude' | 'codex';
+
+export interface PlanningCommand {
+  command: string;
+  args: string[];
+  /** Prompt stdin for providers that read the prompt from stdin. */
+  stdin?: string;
 }
 
 function readState(stateFile: string): BatchState {
@@ -99,6 +112,88 @@ Output a JSON plan with ranked work items. Format:
 \`\`\`json
 {"created_at":"...","guidance":"...","items":[{"issue":"#N","title":"...","score":0,"approach":"...","status":"pending"}],"wip_excluded":[],"epics_scanned":[]}
 \`\`\``;
+}
+
+export function selectPlanningProvider(state: BatchState): PhaseProvider {
+  if (state.provider === 'codex' && state.test_task === true) {
+    return { provider: 'codex', billing: 'subscription-cli' };
+  }
+  return { provider: 'claude', billing: 'subscription-cli' };
+}
+
+function planningProviderName(provider: PhaseProvider): PlanningProviderName {
+  return provider.provider === 'codex' ? 'codex' : 'claude';
+}
+
+export function buildPlanningCommand(
+  provider: PhaseProvider,
+  prompt: string,
+  state: BatchState,
+  repoRoot: string,
+): PlanningCommand {
+  if (planningProviderName(provider) === 'codex') {
+    return {
+      command: 'codex',
+      args: buildCodexExecArgs(repoRoot),
+      stdin: prompt,
+    };
+  }
+
+  const args = [
+    '-p',
+    prompt,
+    '--dangerously-skip-permissions',
+    '--output-format',
+    'stream-json',
+    '--max-turns',
+    '5',
+  ];
+  // Use a small budget for planning (if batch has a budget)
+  if (state.budget) {
+    const planBudget = Math.min(parseFloat(state.budget), 1.0).toFixed(2);
+    args.push('--max-budget-usd', planBudget);
+  }
+
+  return { command: 'claude', args };
+}
+
+export function extractPlanningText(provider: PlanningProviderName, raw: string): string {
+  if (provider === 'codex') {
+    const parsed = parseCodexJsonl(raw);
+    return parsed.finalText || parsed.text;
+  }
+
+  let fullText = '';
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const msg = JSON.parse(line);
+      if (msg.type === 'assistant' && msg.message?.content) {
+        for (const block of msg.message.content) {
+          if (block.type === 'text') {
+            fullText += block.text;
+          }
+        }
+      }
+      if (msg.type === 'result' && msg.result) {
+        fullText += '\n' + msg.result;
+      }
+    } catch {
+      // Non-JSON line
+    }
+  }
+  return fullText;
+}
+
+export function withPlanningProvider(plan: BatchPlan, provider: PhaseProvider): BatchPlan {
+  return {
+    ...plan,
+    planning_provider: provider,
+  };
+}
+
+export function formatPlanningFailure(provider: PhaseProvider, message: string): string {
+  return `  [plan:${planningProviderName(provider)}] ${message}`;
 }
 
 /**
@@ -154,6 +249,7 @@ export function validatePlan(raw: any): BatchPlan | null {
   return {
     created_at: raw.created_at || new Date().toISOString(),
     guidance: raw.guidance || '',
+    ...(raw.planning_provider ? { planning_provider: raw.planning_provider } : {}),
     items,
     wip_excluded: Array.isArray(raw.wip_excluded) ? raw.wip_excluded : [],
     epics_scanned: Array.isArray(raw.epics_scanned) ? raw.epics_scanned : [],
@@ -348,53 +444,28 @@ async function runPlanning(
   repoRoot: string,
 ): Promise<BatchPlan | null> {
   const prompt = buildPlanPrompt(state);
-  let fullText = '';
+  const provider = selectPlanningProvider(state);
+  const providerName = planningProviderName(provider);
+  const command = buildPlanningCommand(provider, prompt, state, repoRoot);
+  let rawOutput = '';
 
   return new Promise((resolve) => {
-    const args = [
-      '-p',
-      prompt,
-      '--dangerously-skip-permissions',
-      '--output-format',
-      'stream-json',
-      '--max-turns',
-      '5',
-    ];
-    // Use a small budget for planning (if batch has a budget)
-    if (state.budget) {
-      const planBudget = Math.min(parseFloat(state.budget), 1.0).toFixed(2);
-      args.push('--max-budget-usd', planBudget);
-    }
-
-    const child = spawn('claude', args, {
+    const child = spawn(command.command, command.args, {
       cwd: repoRoot,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [command.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
+    if (command.stdin) child.stdin?.end(command.stdin);
 
     // 5-minute timeout for planning
     const timer = setTimeout(() => {
-      console.log('  [plan] planning timed out after 5 minutes');
+      console.log(formatPlanningFailure(provider, 'planning timed out after 5 minutes'));
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 10_000);
     }, 5 * 60 * 1000);
 
     const rl = createInterface({ input: child.stdout! });
     rl.on('line', (line) => {
-      try {
-        const msg = JSON.parse(line);
-        if (msg.type === 'assistant' && msg.message?.content) {
-          for (const block of msg.message.content) {
-            if (block.type === 'text') {
-              fullText += block.text;
-            }
-          }
-        }
-        if (msg.type === 'result' && msg.result) {
-          fullText += '\n' + msg.result;
-        }
-      } catch {
-        // Non-JSON line
-      }
+      rawOutput += line + '\n';
     });
 
     child.stderr?.on('data', () => {
@@ -403,19 +474,25 @@ async function runPlanning(
 
     child.on('close', () => {
       clearTimeout(timer);
+      const fullText = extractPlanningText(providerName, rawOutput);
       const parsed = extractPlanJson(fullText);
       if (parsed) {
         const plan = validatePlan(parsed);
-        resolve(plan);
+        if (plan) {
+          resolve(withPlanningProvider(plan, provider));
+        } else {
+          console.log(formatPlanningFailure(provider, 'plan JSON failed validation'));
+          resolve(null);
+        }
       } else {
-        console.log('  [plan] could not extract plan JSON from response');
+        console.log(formatPlanningFailure(provider, 'could not extract plan JSON from response'));
         resolve(null);
       }
     });
 
     child.on('error', (err) => {
       clearTimeout(timer);
-      console.log(`  [plan] error: ${err.message}`);
+      console.log(formatPlanningFailure(provider, `error: ${err.message}`));
       resolve(null);
     });
   });
@@ -579,6 +656,8 @@ async function main(): Promise<void> {
 
   console.log('>>> Planning pre-pass starting...');
   console.log(`    Guidance: ${state.guidance}`);
+  const provider = selectPlanningProvider(state);
+  console.log(`    Provider: ${planningProviderName(provider)} (${provider.billing})`);
 
   const plan = await runPlanning(state, repoRoot);
 
