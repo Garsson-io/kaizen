@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import { resolve } from 'node:path';
 import YAML from 'yaml';
+import { parseGithubPrUrl } from './lib/github-pr.js';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
 
 export const REVIEW_SENTINEL_SCHEMA_VERSION = 1;
@@ -56,12 +57,6 @@ export interface ReviewSentinelValidation {
 
 type ReviewSentinelUnsigned = Omit<ReviewSentinelRecord, 'integrity'>;
 
-function parsePrUrl(prUrl: string): { repo: string; prNumber: number } | null {
-  const match = prUrl.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/);
-  if (!match) return null;
-  return { repo: match[1], prNumber: Number(match[2]) };
-}
-
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(',')}]`;
@@ -104,7 +99,7 @@ export function expectedPrReviewDimensions(): string[] {
 }
 
 export function buildReviewSentinelRecord(input: ReviewSentinelInput): ReviewSentinelRecord {
-  const parsed = parsePrUrl(input.prUrl);
+  const parsed = parseGithubPrUrl(input.prUrl);
   if (!parsed) {
     throw new Error(`invalid PR URL for review sentinel: ${input.prUrl}`);
   }
@@ -114,7 +109,7 @@ export function buildReviewSentinelRecord(input: ReviewSentinelInput): ReviewSen
     schemaVersion: REVIEW_SENTINEL_SCHEMA_VERSION,
     prUrl: input.prUrl,
     repo: parsed.repo,
-    prNumber: parsed.prNumber,
+    prNumber: parsed.number,
     round: Number(input.round),
     reviewedAt: input.reviewedAt ?? new Date().toISOString(),
     dimensionsReviewed,

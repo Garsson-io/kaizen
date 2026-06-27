@@ -3,11 +3,28 @@ import {
   findOpenPrUrlForBranch,
   parseBranchPrQueryResult,
   parseFirstPrUrl,
+  parseGithubPrUrl,
   parseIssueNumber,
   parseIssueState,
   queryBranchPrState,
   queryIssueState,
 } from './github-pr.js';
+
+describe('parseGithubPrUrl', () => {
+  it('returns repo and PR number for a full GitHub PR URL', () => {
+    expect(parseGithubPrUrl('https://github.com/Garsson-io/kaizen/pull/997')).toEqual({
+      repo: 'Garsson-io/kaizen',
+      number: 997,
+    });
+  });
+
+  it('returns null for non-PR, non-GitHub, and malformed numeric URLs', () => {
+    expect(parseGithubPrUrl('https://github.com/Garsson-io/kaizen/issues/997')).toBeNull();
+    expect(parseGithubPrUrl('https://gitlab.com/Garsson-io/kaizen/pull/997')).toBeNull();
+    expect(parseGithubPrUrl('https://github.com/Garsson-io/kaizen/pull/not-a-number')).toBeNull();
+    expect(parseGithubPrUrl('')).toBeNull();
+  });
+});
 
 describe('parseFirstPrUrl', () => {
   it('returns the first PR URL from gh JSON output', () => {

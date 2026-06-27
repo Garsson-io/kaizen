@@ -83,4 +83,13 @@ describe('review sentinel contract', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('invalid_findingCount');
   });
+
+  it('throws for malformed PR URLs before building a sentinel', () => {
+    expect(() =>
+      buildReviewSentinelRecord({
+        prUrl: 'https://github.com/Garsson-io/kaizen/pull/not-a-number',
+        round: 1,
+      }),
+    ).toThrow('invalid PR URL');
+  });
 });
