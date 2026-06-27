@@ -141,6 +141,51 @@ describe('decideRescueAction', () => {
     });
     expect(a.kind).toBe('none');
   });
+
+  // #1300 closed-issue guard: a picked issue that is already closed makes the
+  // would-be draft moot — work resolved/superseded elsewhere. None, even with
+  // work ahead of base AND an abnormal exit (the would-be create-draft case).
+  it('does nothing when the picked issue is already closed (#1300)', () => {
+    const a = decideRescueAction({
+      commitsAheadBase: 3,
+      unpushedCommits: 0,
+      dirtyTotal: 2,
+      existingOpenPr: null,
+      pickedIssueClosed: true,
+      abnormal: true,
+    });
+    expect(a.kind).toBe('none');
+    expect(a.commitDirty).toBe(false);
+    expect(a.reason).toMatch(/closed|#1300/i);
+  });
+
+  // The closed-issue guard must NOT touch the push-existing path: an open PR
+  // keeps precedence and is extended even if the issue is marked closed.
+  it('still extends an open PR even if pickedIssueClosed is set (#1300)', () => {
+    const a = decideRescueAction({
+      commitsAheadBase: 5,
+      unpushedCommits: 2,
+      dirtyTotal: 0,
+      existingOpenPr: 'https://x/pr/1',
+      pickedIssueClosed: true,
+      abnormal: false,
+    });
+    expect(a.kind).toBe('push-existing');
+  });
+
+  // An OPEN (or unknown -> false) picked issue with stranded work + abnormal
+  // exit still produces create-draft — the guard is closed-only, fail-open.
+  it('still creates a draft when the picked issue is open/unknown (#1300)', () => {
+    const a = decideRescueAction({
+      commitsAheadBase: 3,
+      unpushedCommits: 0,
+      dirtyTotal: 0,
+      existingOpenPr: null,
+      pickedIssueClosed: false,
+      abnormal: true,
+    });
+    expect(a.kind).toBe('create-draft');
+  });
 });
 
 describe('formatRescueReport', () => {
@@ -209,6 +254,10 @@ function makeFakeGit(cfg: FakeGitConfig, log: string[][]): GitExec {
 function makeFakeGh(
   pr: string | { number?: number; state: 'OPEN' | 'MERGED' | 'CLOSED'; url: string } | null,
   ghLog: string[][],
+  // #1300: the state `gh issue view` reports for the picked issue. Defaults to
+  // unknown ('{}' → null → fail-open), so existing tests that never set a picked
+  // issue are unaffected.
+  issueState?: 'OPEN' | 'CLOSED',
 ): (args: string[]) => string {
   const summary =
     pr == null
@@ -223,6 +272,9 @@ function makeFakeGh(
     }
     if (args[0] === 'pr' && args[1] === 'create') return 'https://github.com/x/pull/999';
     if (args[0] === 'pr' && args[1] === 'comment') return '';
+    if (args[0] === 'issue' && args[1] === 'view') {
+      return issueState ? JSON.stringify({ state: issueState }) : '{}';
+    }
     return '';
   };
 }
@@ -342,6 +394,48 @@ describe('rescueTarget orchestration', () => {
     expect(out.prUrl).toBeUndefined();
     expect(gitLog.some((a) => a.includes('push'))).toBe(false);
     expect(ghLog.some((a) => a[1] === 'create' || a[1] === 'comment')).toBe(false);
+  });
+
+  // #1300 end-to-end: stranded work, no PR, abnormal exit — but the picked issue
+  // is already CLOSED (resolved by another path). The rescue must decline: NO
+  // push, NO gh pr create. It still queried the issue state (issue view called).
+  it('does nothing when the picked issue is already closed (#1300)', () => {
+    const gitLog: string[][] = [];
+    const ghLog: string[][] = [];
+    const out = rescueTarget(
+      { worktree, branch: 'case/x' },
+      { ...ctx, pickedIssue: '#1225' },
+      {
+        git: makeFakeGit({ aheadBase: 3 }, gitLog),
+        gh: makeFakeGh(null, ghLog, 'CLOSED'),
+        readDirty: makeReadDirty(2),
+      },
+    );
+    expect(out.action).toBe('none');
+    expect(out.pushed).toBe(false);
+    expect(out.prUrl).toBeUndefined();
+    expect(gitLog.some((a) => a.includes('push'))).toBe(false);
+    expect(ghLog.some((a) => a[1] === 'create' || a[1] === 'comment')).toBe(false);
+    expect(ghLog.some((a) => a[0] === 'issue' && a[1] === 'view')).toBe(true);
+  });
+
+  // #1300 regression: an OPEN picked issue with stranded work still creates the
+  // draft — the guard is closed-only and must never block a legitimate rescue.
+  it('still creates a draft when the picked issue is open (#1300)', () => {
+    const gitLog: string[][] = [];
+    const ghLog: string[][] = [];
+    const out = rescueTarget(
+      { worktree, branch: 'case/x' },
+      { ...ctx, pickedIssue: '#1300' },
+      {
+        git: makeFakeGit({ aheadBase: 2 }, gitLog),
+        gh: makeFakeGh(null, ghLog, 'OPEN'),
+        readDirty: makeReadDirty(1),
+      },
+    );
+    expect(out.action).toBe('create-draft');
+    expect(out.pushed).toBe(true);
+    expect(ghLog.some((a) => a[1] === 'create' && a.includes('--draft'))).toBe(true);
   });
 
   it('records a push failure without throwing (never hides the original failure)', () => {

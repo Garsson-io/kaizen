@@ -106,3 +106,63 @@ export function queryBranchPrState(options: QueryBranchPrStateOptions): BranchPr
     return emptyBranchPrQueryResult();
   }
 }
+
+export type IssueState = 'OPEN' | 'CLOSED';
+
+/**
+ * Extract a GitHub issue number from a loose token — `#1225`, `1225`, or a
+ * URL like `https://github.com/o/r/issues/1225`. Returns the first run of
+ * digits as a number, or null when the token carries none. Deliberately
+ * permissive: callers pass values pulled from phase markers / config where the
+ * `#` prefix and URL form both occur.
+ */
+export function parseIssueNumber(token: string | undefined | null): number | null {
+  if (!token) return null;
+  const match = /(\d+)/.exec(token);
+  if (!match) return null;
+  const n = parseInt(match[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Parse an issue's state from `gh issue view --json state` output. Returns
+ * 'OPEN'/'CLOSED', or null for malformed/empty/unexpected output. Fail-open by
+ * design: a null result means "state unknown", which callers must treat as
+ * "do not block" — never as "closed".
+ */
+export function parseIssueState(output: string): IssueState | null {
+  try {
+    const parsed = JSON.parse(output || '{}') as { state?: unknown };
+    const raw = typeof parsed.state === 'string' ? parsed.state.toUpperCase() : null;
+    return raw === 'OPEN' || raw === 'CLOSED' ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface QueryIssueStateOptions {
+  repo: string;
+  issue: number;
+  /** Injectable gh runner for tests and callers that already own gh wiring. */
+  gh?: GhRunner;
+}
+
+/**
+ * Query a single issue's state via gh. Sibling of {@link queryBranchPrState} —
+ * one DRY boundary for gh issue-state lookups, no second gh wrapper. Returns
+ * null on any failure (missing repo/issue, gh throw, malformed output) so the
+ * caller fails open: an unknown state must never be mistaken for CLOSED.
+ */
+export function queryIssueState(options: QueryIssueStateOptions): IssueState | null {
+  if (!options.repo || !Number.isFinite(options.issue)) return null;
+  const runGh = options.gh ?? defaultGh;
+  try {
+    return parseIssueState(runGh([
+      'issue', 'view', String(options.issue),
+      '--repo', options.repo,
+      '--json', 'state',
+    ]));
+  } catch {
+    return null;
+  }
+}

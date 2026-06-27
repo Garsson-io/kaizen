@@ -3,7 +3,10 @@ import {
   findOpenPrUrlForBranch,
   parseBranchPrQueryResult,
   parseFirstPrUrl,
+  parseIssueNumber,
+  parseIssueState,
   queryBranchPrState,
+  queryIssueState,
 } from './github-pr.js';
 
 describe('parseFirstPrUrl', () => {
@@ -139,5 +142,80 @@ describe('queryBranchPrState', () => {
     });
 
     expect(result).toEqual({ mostRecent: null, hasOpen: false });
+  });
+});
+
+describe('parseIssueNumber', () => {
+  it('extracts the number from #N, bare N, and a URL', () => {
+    expect(parseIssueNumber('#1225')).toBe(1225);
+    expect(parseIssueNumber('1225')).toBe(1225);
+    expect(parseIssueNumber('https://github.com/o/r/issues/1225')).toBe(1225);
+  });
+
+  it('returns null for empty, missing, or digit-free tokens', () => {
+    expect(parseIssueNumber(undefined)).toBeNull();
+    expect(parseIssueNumber(null)).toBeNull();
+    expect(parseIssueNumber('')).toBeNull();
+    expect(parseIssueNumber('not an issue')).toBeNull();
+  });
+});
+
+describe('parseIssueState', () => {
+  it('maps OPEN and CLOSED case-insensitively', () => {
+    expect(parseIssueState(JSON.stringify({ state: 'OPEN' }))).toBe('OPEN');
+    expect(parseIssueState(JSON.stringify({ state: 'CLOSED' }))).toBe('CLOSED');
+    expect(parseIssueState(JSON.stringify({ state: 'closed' }))).toBe('CLOSED');
+  });
+
+  it('returns null for malformed, empty, or unexpected state (fail-open)', () => {
+    expect(parseIssueState('')).toBeNull();
+    expect(parseIssueState('{not json')).toBeNull();
+    expect(parseIssueState(JSON.stringify({ state: 'MERGED' }))).toBeNull();
+    expect(parseIssueState(JSON.stringify({}))).toBeNull();
+  });
+});
+
+describe('queryIssueState', () => {
+  it('runs a repo-scoped issue view and returns the parsed state', () => {
+    const calls: string[][] = [];
+    const result = queryIssueState({
+      repo: 'owner/repo',
+      issue: 1225,
+      gh: (args) => {
+        calls.push(args);
+        return JSON.stringify({ state: 'CLOSED' });
+      },
+    });
+
+    expect(result).toBe('CLOSED');
+    expect(calls).toEqual([[
+      'issue', 'view', '1225',
+      '--repo', 'owner/repo',
+      '--json', 'state',
+    ]]);
+  });
+
+  it('returns null without calling gh when repo or issue is missing', () => {
+    const calls: string[][] = [];
+    const gh = (args: string[]) => {
+      calls.push(args);
+      return JSON.stringify({ state: 'OPEN' });
+    };
+
+    expect(queryIssueState({ repo: '', issue: 1, gh })).toBeNull();
+    expect(queryIssueState({ repo: 'owner/repo', issue: NaN, gh })).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it('returns null when gh throws (fail-open)', () => {
+    const result = queryIssueState({
+      repo: 'owner/repo',
+      issue: 1225,
+      gh: () => {
+        throw new Error('gh unavailable');
+      },
+    });
+
+    expect(result).toBeNull();
   });
 });

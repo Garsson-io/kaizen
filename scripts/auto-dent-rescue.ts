@@ -34,7 +34,7 @@ import {
   type DirtyState,
 } from '../src/hooks/lib/git-state.js';
 import { gh as defaultGh } from '../src/lib/gh-exec.js';
-import { queryBranchPrState } from '../src/lib/github-pr.js';
+import { parseIssueNumber, queryBranchPrState, queryIssueState } from '../src/lib/github-pr.js';
 
 /** Quality gates a rescue deliberately skips — surfaced in the rescue report. */
 export const SKIPPED_GATES: readonly string[] = [
@@ -107,6 +107,19 @@ export interface RescueDecisionInput {
    * redundant draft. Defaults to false.
    */
   mostRecentMerged?: boolean;
+  /**
+   * True when the run's picked issue is already CLOSED. The work a fresh draft
+   * rescue PR would preserve has been resolved/superseded by another path — a
+   * revert, a sibling run, or a manual close. This is the live #1225 cluster:
+   * #1225 ("redo the gate correctly OR revert") was closed by *revert* (#1297),
+   * yet three draft rescue PRs to redo it (#1258–#1260) sat open as orphans
+   * nobody reconciled. Opening a brand-new draft for resolved work manufactures
+   * exactly that orphan. Symmetric sibling of `mostRecentMerged`: it gates ONLY
+   * `create-draft`; `push-existing` (extending an already-open PR) ignores it.
+   * Fail-open: an unknown issue state must arrive here as false, never true.
+   * Defaults to false. (#1300)
+   */
+  pickedIssueClosed?: boolean;
 }
 
 export interface RescueAction {
@@ -153,6 +166,20 @@ export function decideRescueAction(input: RescueDecisionInput): RescueAction {
   const hasWork = input.commitsAheadBase > 0 || input.dirtyTotal > 0;
   if (!hasWork) {
     return { kind: 'none', commitDirty: false, reason: 'no commits ahead and no dirty files' };
+  }
+  // #1300 closed-issue guard: a fresh draft rescue PR exists to preserve work
+  // that would otherwise vanish, but when the picked issue is already CLOSED the
+  // work is moot — resolved/superseded by another path (revert, sibling run,
+  // manual close). The live cluster: #1225 closed by revert (#1297), leaving
+  // draft rescues #1258–#1260 open as orphans nobody reconciled. Symmetric with
+  // the mostRecentMerged (I7) guard above. The open-PR path keeps precedence, so
+  // an in-flight PR is unaffected; this only stops manufacturing a new orphan.
+  if (input.pickedIssueClosed) {
+    return {
+      kind: 'none',
+      commitDirty: false,
+      reason: 'picked issue already closed — work resolved/superseded by another path; not manufacturing an orphan rescue draft (#1300)',
+    };
   }
   // #1289: only an ABNORMAL termination (watchdog timeout / non-zero exit) strands
   // work that warrants manufacturing a brand-new draft rescue PR. A clean exit or
@@ -306,7 +333,19 @@ export function rescueTarget(target: RescueTarget, ctx: RescueContext, deps: Res
   const existingOpenPr = prState.openUrl ?? null;
   const mostRecentMerged = prState.mostRecent?.state === 'MERGED' && !prState.hasOpen;
 
-  const action = decideRescueAction({ commitsAheadBase, unpushedCommits, dirtyTotal, existingOpenPr, mostRecentMerged, abnormal: ctx.abnormal });
+  // #1300: a brand-new draft (the only path the closed-issue guard gates) is
+  // only on the table when there's no open PR. Query the picked issue's state
+  // just then — never on the push-existing path — and fail open: a null/unknown
+  // state leaves pickedIssueClosed false, so a legitimate rescue is never blocked.
+  let pickedIssueClosed = false;
+  if (!existingOpenPr) {
+    const issueNumber = parseIssueNumber(ctx.pickedIssue);
+    if (issueNumber != null) {
+      pickedIssueClosed = queryIssueState({ gh, repo: ctx.repo, issue: issueNumber }) === 'CLOSED';
+    }
+  }
+
+  const action = decideRescueAction({ commitsAheadBase, unpushedCommits, dirtyTotal, existingOpenPr, mostRecentMerged, pickedIssueClosed, abnormal: ctx.abnormal });
   outcome.action = action.kind;
   if (action.kind === 'none') {
     log?.(`${target.branch}: ${action.reason}`);
