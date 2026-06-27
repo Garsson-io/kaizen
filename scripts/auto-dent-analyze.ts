@@ -18,6 +18,7 @@
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join, basename, resolve } from 'path';
 import { execSync } from 'child_process';
+import { readState, type BatchState } from './auto-dent-run.js';
 
 // Types
 
@@ -656,6 +657,17 @@ export function computeToolPhaseFractions(
   return fractions;
 }
 
+function readBatchState(batchDir: string): BatchState | undefined {
+  const stateFile = join(batchDir, 'state.json');
+  if (!existsSync(stateFile) && !existsSync(`${stateFile}.bak`)) return undefined;
+
+  try {
+    return readState(stateFile);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Analyze an entire batch directory.
  */
@@ -667,24 +679,19 @@ export function analyzeBatch(batchDir: string): BatchAnalysis {
   const runs = logFiles.map((f) => analyzeRunLog(join(batchDir, f)));
 
   // Enrich runs with prompt metadata from state.json run_history (#602)
-  const stateFilePath = join(batchDir, 'state.json');
-  if (existsSync(stateFilePath)) {
-    try {
-      const stateData = JSON.parse(readFileSync(stateFilePath, 'utf8'));
-      const history: Array<{ run: number; prompt_template?: string; prompt_hash?: string }> = stateData.run_history || [];
-      for (const run of runs) {
-        // Extract run number from filename (e.g., "run-5-230323120000.log" → 5)
-        const runNumMatch = basename(run.runFile).match(/^run-(\d+)/);
-        if (runNumMatch) {
-          const runNum = parseInt(runNumMatch[1], 10);
-          const metrics = history.find(h => h.run === runNum);
-          if (metrics) {
-            run.promptTemplate = metrics.prompt_template;
-            run.promptHash = metrics.prompt_hash;
-          }
-        }
+  const stateData = readBatchState(batchDir);
+  const history: Array<{ run: number; prompt_template?: string; prompt_hash?: string }> = stateData?.run_history || [];
+  for (const run of runs) {
+    // Extract run number from filename (e.g., "run-5-230323120000.log" -> 5)
+    const runNumMatch = basename(run.runFile).match(/^run-(\d+)/);
+    if (runNumMatch) {
+      const runNum = parseInt(runNumMatch[1], 10);
+      const metrics = history.find(h => h.run === runNum);
+      if (metrics) {
+        run.promptTemplate = metrics.prompt_template;
+        run.promptHash = metrics.prompt_hash;
       }
-    } catch { /* state.json may be malformed, skip enrichment */ }
+    }
   }
 
   // Cold-start statistics
@@ -749,13 +756,7 @@ export function analyzeBatch(batchDir: string): BatchAnalysis {
 
   // Extract batch ID from state.json or dir name
   let batchId = basename(batchDir);
-  const stateFile = join(batchDir, 'state.json');
-  if (existsSync(stateFile)) {
-    try {
-      const state = JSON.parse(readFileSync(stateFile, 'utf8'));
-      if (state.batch_id) batchId = state.batch_id;
-    } catch { /* use dir name */ }
-  }
+  if (stateData?.batch_id) batchId = stateData.batch_id;
 
   // Completeness aggregate
   const avgCompleteness = runs.length > 0
