@@ -9,6 +9,7 @@
 import { execSync } from "child_process";
 import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
+import { gh as runGh } from "./lib/gh-exec.js";
 import { resolveProjectPaths, type ProjectPaths } from "./lib/resolve-project-root.js";
 
 // ── Types ──
@@ -55,6 +56,7 @@ interface BranchSummary {
 
 export interface Deps {
   exec: (cmd: string) => string;
+  gh: (args: string[], timeoutMs?: number) => string;
   pidAlive: (pid: number) => boolean;
   now: () => number;
   readFile: (path: string) => string;
@@ -69,6 +71,7 @@ export interface Deps {
 export function defaultDeps(): Deps {
   return {
     exec: (cmd) => execSync(cmd, { encoding: "utf8" }).trim(),
+    gh: (args, timeoutMs) => runGh(args, timeoutMs),
     pidAlive: (pid) => {
       try { process.kill(pid, 0); return true; } catch { return false; }
     },
@@ -678,22 +681,36 @@ function dockerCmd(deps: Deps): string {
   }
 }
 
+export function listOpenPullRequests(paths: ProjectPaths, deps: Deps): string {
+  let repo: string;
+  try {
+    repo = JSON.parse(deps.readFile(join(paths.projectRoot, "kaizen.config.json"))).host?.repo ?? "";
+  } catch {
+    repo = deps.exec(`git -C "${paths.projectRoot}" remote get-url origin`)
+      .replace(/.*github\.com[:/]/, "").replace(/\.git$/, "");
+  }
+
+  return deps.gh([
+    "pr",
+    "list",
+    "--repo",
+    repo,
+    "--state",
+    "open",
+    "--json",
+    "number,title,headBranch",
+    "--jq",
+    '.[] | "  #\\(.number)  \\(.headBranch)  \\(.title)"',
+  ]);
+}
+
 function printExternalAnalysis(paths: ProjectPaths, deps: Deps) {
   // PRs
   console.log("");
   console.log(`${BOLD}Open PRs${NC}`);
   console.log("");
   try {
-    let repo: string;
-    try {
-      repo = JSON.parse(deps.readFile(join(paths.projectRoot, "kaizen.config.json"))).host?.repo ?? "";
-    } catch {
-      repo = deps.exec(`git -C "${paths.projectRoot}" remote get-url origin`)
-        .replace(/.*github\.com[:/]/, "").replace(/\.git$/, "");
-    }
-    const prs = deps.exec(
-      `gh pr list --repo "${repo}" --state open --json number,title,headBranch --jq '.[] | "  #\\(.number)  \\(.headBranch)  \\(.title)"'`,
-    );
+    const prs = listOpenPullRequests(paths, deps);
     console.log(prs || "  (none)");
   } catch {
     console.log("  (none)");
