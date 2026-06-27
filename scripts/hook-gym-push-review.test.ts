@@ -50,38 +50,47 @@ function createState(filename: string, fields: Record<string, string>): void {
 const PR_URL = 'https://github.com/Garsson-io/kaizen/pull/999';
 const STATE_KEY = 'Garsson-io_kaizen_999';
 const BRANCH = 'worktree-feat+test';
+const REVIEWED_SHA = 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111';
+
+// Seed the review-loop state file for round 1 with a valid reviewed SHA.
+// Only STATUS differs across scenarios ('passed' = review happened,
+// 'needs_review' = PR just created, no review yet).
+function seedReviewState(status: string): void {
+  createState(STATE_KEY, {
+    PR_URL,
+    ROUND: '1',
+    STATUS: status,
+    BRANCH,
+    LAST_REVIEWED_SHA: REVIEWED_SHA,
+    LAST_FULL_REVIEW_SHA: REVIEWED_SHA,
+  });
+}
+
+// Simulate a successful `git push`. The SHA always exists; only the diff
+// size varies (under SMALL_PUSH_THRESHOLD of 15 = small, above = large).
+function simulatePush(diffLines: number) {
+  return processHookInput(
+    {
+      tool_input: { command: 'git push' },
+      tool_response: { stdout: 'To github.com:...', stderr: '', exit_code: '0' },
+    },
+    {
+      stateDir,
+      branch: BRANCH,
+      checkShaExists: () => true,
+      computeDiffLines: () => diffLines,
+    },
+  );
+}
 
 describe('push after review should trigger new review round', () => {
 
   it('small push after round 1 PASSED should still require review (not auto-pass)', () => {
-    // Setup: Round 1 review has passed, state file has a valid LAST_REVIEWED_SHA.
-    createState(STATE_KEY, {
-      PR_URL,
-      ROUND: '1',
-      STATUS: 'passed',
-      BRANCH,
-      LAST_REVIEWED_SHA: 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111',
-      LAST_FULL_REVIEW_SHA: 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111',
-    });
+    // Round 1 review has passed; a small push (5 lines, under SMALL_PUSH_THRESHOLD)
+    // should still require review because it lands AFTER a review round.
+    seedReviewState('passed');
+    const decision = simulatePush(5);
 
-    // Simulate: git push with a small diff (5 lines — under SMALL_PUSH_THRESHOLD of 15)
-    const decision = processHookInput(
-      {
-        tool_input: { command: 'git push' },
-        tool_response: { stdout: 'To github.com:...', stderr: '', exit_code: '0' },
-      },
-      {
-        stateDir,
-        branch: BRANCH,
-        // Mock: SHA exists but diff is small (5 lines)
-        checkShaExists: () => true,
-        computeDiffLines: () => 5,
-      },
-    );
-
-    // Expectation: Even though the push is small, it should require review
-    // because this is a push AFTER a review round, not a trivial push
-    // before any review has happened.
     expect(decision.action).toBe('needs_review');
     expect(decision.reason).toBe('push_exceeds_threshold');
 
@@ -92,57 +101,17 @@ describe('push after review should trigger new review round', () => {
   });
 
   it('auto-pass SHOULD be allowed for first push (no prior review)', () => {
-    // Setup: PR was just created, round 1 is needs_review (no review happened yet).
-    // A git push happens (e.g., hook auto-fixed formatting).
-    // This is NOT a review fix — auto-pass is appropriate.
-    createState(STATE_KEY, {
-      PR_URL,
-      ROUND: '1',
-      STATUS: 'needs_review',
-      BRANCH,
-      LAST_REVIEWED_SHA: 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111',
-      LAST_FULL_REVIEW_SHA: 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111',
-    });
+    // PR was just created, round 1 is needs_review (no review happened yet).
+    // A small supplementary push (e.g., hook auto-fixed formatting) may auto-pass.
+    seedReviewState('needs_review');
+    const decision = simulatePush(5);
 
-    const decision = processHookInput(
-      {
-        tool_input: { command: 'git push' },
-        tool_response: { stdout: 'To github.com:...', stderr: '', exit_code: '0' },
-      },
-      {
-        stateDir,
-        branch: BRANCH,
-        checkShaExists: () => true,
-        computeDiffLines: () => 5,
-      },
-    );
-
-    // Auto-pass is OK here — no prior review, just a small supplementary push
     expect(decision.action).toBe('auto_pass');
   });
 
   it('large push after review should also require review', () => {
-    createState(STATE_KEY, {
-      PR_URL,
-      ROUND: '1',
-      STATUS: 'passed',
-      BRANCH,
-      LAST_REVIEWED_SHA: 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111',
-      LAST_FULL_REVIEW_SHA: 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111',
-    });
-
-    const decision = processHookInput(
-      {
-        tool_input: { command: 'git push' },
-        tool_response: { stdout: 'To github.com:...', stderr: '', exit_code: '0' },
-      },
-      {
-        stateDir,
-        branch: BRANCH,
-        checkShaExists: () => true,
-        computeDiffLines: () => 50,
-      },
-    );
+    seedReviewState('passed');
+    const decision = simulatePush(50);
 
     // Large push always requires review
     expect(decision.action).toBe('needs_review');
