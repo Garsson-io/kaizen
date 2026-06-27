@@ -501,6 +501,22 @@ export function effectiveIssuesClosed(score: BatchScore): number {
   return score.reconciled_issues_closed ?? score.total_issues_closed;
 }
 
+/**
+ * The "Issues closed:" display line for the batch summary. When reconciliation
+ * ran (#1173), its result is authoritative even when empty — an empty
+ * authoritative set means "no issues were actually closed", which must NOT fall
+ * back to the scraped refs (that would reintroduce the scrape-vs-truth divergence
+ * this fix removes). Only fall back to the scraped set when reconcile did not run
+ * (`reconciledRefs === null`, e.g. no PRs or a gh failure).
+ */
+export function formatIssuesClosedLine(
+  reconciledRefs: string[] | null,
+  scrapedRefs: string[],
+): string {
+  const refs = reconciledRefs ?? scrapedRefs;
+  return refs.length > 0 ? refs.join(' ') : 'none';
+}
+
 /** Format a BatchScore as a multi-line summary table. */
 export function formatBatchScoreTable(score: BatchScore): string {
   // Compute mode distribution from per-run scores

@@ -9,6 +9,7 @@ import {
   formatRunScoreLine,
   formatBatchScoreTable,
   effectiveIssuesClosed,
+  formatIssuesClosedLine,
   formatModeBreakdown,
   postHocScoreBatch,
   formatPostHocLine,
@@ -1390,5 +1391,25 @@ describe('effectiveIssuesClosed / reconciled count (#1173)', () => {
     const table = formatBatchScoreTable(score);
     expect(table).toContain('| **Issues closed** | 6 |');
     expect(table).not.toContain('| **Issues closed** | 2 |');
+  });
+});
+
+describe('formatIssuesClosedLine (#1173 display wiring)', () => {
+  it('uses reconciled refs when reconcile ran', () => {
+    expect(formatIssuesClosedLine(['#5', '#6'], ['#5'])).toBe('#5 #6');
+  });
+
+  it('shows "none" when reconcile ran and returned empty — does NOT fall back to scraped', () => {
+    // The divergence bug: an empty authoritative result must override the
+    // scraped set, not be overridden by it.
+    expect(formatIssuesClosedLine([], ['#12', '#34'])).toBe('none');
+  });
+
+  it('falls back to scraped refs only when reconcile did not run (null)', () => {
+    expect(formatIssuesClosedLine(null, ['#12', '#34'])).toBe('#12 #34');
+  });
+
+  it('shows "none" when reconcile did not run and there are no scraped refs', () => {
+    expect(formatIssuesClosedLine(null, [])).toBe('none');
   });
 });

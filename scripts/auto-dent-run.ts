@@ -25,7 +25,7 @@ import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, renameSync, copyFileSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
-import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
+import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { firstHookReason } from './hook-signals.js';
 import { claimNextItem, markItem, resetAssignedItems, readPlan, themeProgress } from './auto-dent-plan.js';
 import { writeAttachment, addSection } from '../src/section-editor.js';
@@ -1292,7 +1292,9 @@ export function closeBatchProgressIssue(
   // union of verified ∪ force-closed — so the summary, score table, and
   // batch-outcome attachment all report the true count instead of the scrape.
   // Best-effort: a gh failure must never block batch close.
-  let reconciledClosed: string[] = [];
+  // null until reconcile runs; an empty array means "reconcile ran, nothing
+  // closed" (authoritative) — distinct from null ("reconcile did not run").
+  let reconciledClosed: string[] | null = null;
   if (state.prs.length > 0) {
     try {
       reconciledClosed = reconcileBatchClosedIssues(state.prs, kaizenRepo);
@@ -1318,7 +1320,7 @@ export function closeBatchProgressIssue(
     '',
     `**PRs:** ${state.prs.length > 0 ? state.prs.join(', ') : 'none'}`,
     `**Issues filed:** ${state.issues_filed.length > 0 ? state.issues_filed.join(', ') : 'none'}`,
-    `**Issues closed:** ${reconciledClosed.length > 0 ? reconciledClosed.join(' ') : state.issues_closed.length > 0 ? state.issues_closed.join(' ') : 'none'}`,
+    `**Issues closed:** ${formatIssuesClosedLine(reconciledClosed, state.issues_closed)}`,
   ].join('\n');
 
   ghExec(
