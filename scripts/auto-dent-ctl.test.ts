@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -21,6 +21,7 @@ import {
   computeAggregateStats,
   formatAggregateStats,
   buildSteerOutput,
+  discoverBatches,
   DEFAULT_WATCHDOG_THRESHOLD_SEC,
   type BatchInfo,
   type WatchdogResult,
@@ -39,6 +40,39 @@ function makeBatchInfo(overrides: Partial<BatchInfo> = {}): BatchInfo {
     ...overrides,
   };
 }
+
+describe('discoverBatches', () => {
+  it('uses the canonical auto-dent state reader with backup fallback (#1264)', () => {
+    const logsDir = mkdtempSync(join(tmpdir(), 'ctl-state-test-'));
+    try {
+      const batchDir = join(logsDir, 'batch-corrupt-primary');
+      const stateFile = join(batchDir, 'state.json');
+      const state = makeBatchState({
+        batch_id: 'batch-from-backup',
+        guidance: 'fallback control state',
+      });
+      mkdirSync(batchDir, { recursive: true });
+      writeFileSync(stateFile, '{corrupt json');
+      writeFileSync(`${stateFile}.bak`, JSON.stringify(state));
+
+      const batches = discoverBatches(logsDir);
+
+      expect(batches).toHaveLength(1);
+      expect(batches[0].batchId).toBe('batch-from-backup');
+      expect(batches[0].state.guidance).toBe('fallback control state');
+
+      const source = readFileSync(
+        new URL('./auto-dent-ctl.ts', import.meta.url),
+        'utf8',
+      );
+      expect(source).not.toContain("JSON.parse(readFileSync(stateFile, 'utf8'))");
+      expect(source).toMatch(/readState,/);
+      expect(source).toContain("from './auto-dent-run.js'");
+    } finally {
+      rmSync(logsDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('formatBatchStatus', () => {
   it('shows basic batch info', () => {

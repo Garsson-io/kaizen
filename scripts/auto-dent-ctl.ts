@@ -23,7 +23,7 @@ import { readdirSync, readFileSync, existsSync, writeFileSync, appendFileSync } 
 import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BatchState, RunMetrics } from './auto-dent-run.js';
-import { checkMergeStatus, cleanupSupersededPRs, loadPromptTemplate, renderTemplate } from './auto-dent-run.js';
+import { checkMergeStatus, cleanupSupersededPRs, loadPromptTemplate, readState, renderTemplate } from './auto-dent-run.js';
 import {
   scoreBatch,
   scoreRunMetrics,
@@ -116,7 +116,7 @@ export function discoverBatches(logsDir: string): BatchInfo[] {
     if (!existsSync(stateFile)) continue;
 
     try {
-      const state: BatchState = JSON.parse(readFileSync(stateFile, 'utf8'));
+      const state = readState(stateFile);
       const haltFile = join(dir, 'HALT');
       batches.push({
         batchId: state.batch_id || entry,
@@ -1331,7 +1331,7 @@ Cross-batch learning (#586):
         console.error('Usage: auto-dent-ctl.ts halt-state <state-file>');
         process.exit(1);
       }
-      const state: BatchState = JSON.parse(readFileSync(stateFile, 'utf8'));
+      const state = readState(stateFile);
       console.log(formatLastState(state));
       break;
     }
