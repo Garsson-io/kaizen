@@ -14,6 +14,7 @@ import {
   formatPlanSummary,
   buildPlanPrompt,
   buildPlanningCommand,
+  buildPlanningSchemaFile,
   titleTokens,
   deriveThemes,
   ensureThemes,
@@ -138,11 +139,13 @@ describe('provider-aware planning (#1146)', () => {
   });
 
   it('builds a Codex exec planning command with prompt on stdin', () => {
+    const schemaFile = '/tmp/auto-dent-plan-schema.json';
     const command = buildPlanningCommand(
       { provider: 'codex', billing: 'subscription-cli' },
       'plan prompt',
       makeState(),
       '/repo',
+      schemaFile,
     );
 
     expect(command.command).toBe('codex');
@@ -156,9 +159,28 @@ describe('provider-aware planning (#1146)', () => {
       '--dangerously-bypass-approvals-and-sandbox',
       '--color',
       'never',
+      '--output-schema',
+      schemaFile,
       '-',
     ]);
     expect(command.stdin).toBe('plan prompt');
+  });
+
+  it('writes a Codex planning schema file derived from the plan contract', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'plan-schema-test-'));
+    try {
+      const schemaFile = buildPlanningSchemaFile(tmpDir);
+      const schema = JSON.parse(readFileSync(schemaFile, 'utf8'));
+
+      expect(schema.type).toBe('object');
+      expect(schema.required).toContain('items');
+      expect(schema.properties.items.type).toBe('array');
+      expect(schema.properties.items.items.required).toEqual(
+        expect.arrayContaining(['issue', 'title']),
+      );
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it('extracts provider output text from Claude stream-json and Codex JSONL', () => {
@@ -174,6 +196,46 @@ describe('provider-aware planning (#1146)', () => {
 
     expect(validatePlan(extractPlanJson(claudeText))).not.toBeNull();
     expect(validatePlan(extractPlanJson(codexText))).not.toBeNull();
+  });
+
+  it('validates schema-constrained Codex JSONL into a Codex-attributed plan (#1215)', () => {
+    const codexJsonl = [
+      JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'item_0',
+          type: 'agent_message',
+          text: JSON.stringify({
+            created_at: '2026-06-27T22:20:00Z',
+            guidance: 'codex planning',
+            items: [
+              {
+                issue: '#1215',
+                title: 'Codex planning pre-pass JSON validation fallback',
+                score: 9.25,
+                approach: 'Harden the Codex planning boundary with schema output.',
+                status: 'pending',
+                item_type: 'leaf',
+              },
+            ],
+            wip_excluded: [],
+            epics_scanned: ['#1134 Enable Codex as an auto-dent agent'],
+            decomposition_candidates: [],
+          }),
+        },
+      }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1 } }),
+    ].join('\n');
+
+    const parsed = extractPlanJson(extractPlanningText('codex', codexJsonl));
+    const plan = validatePlan(parsed);
+
+    expect(withPlanningProvider(plan!, { provider: 'codex', billing: 'subscription-cli' })).toMatchObject({
+      planning_provider: { provider: 'codex', billing: 'subscription-cli' },
+      items: [{ issue: '#1215', status: 'pending', item_type: 'leaf' }],
+    });
   });
 
   it('attaches planning provider metadata to created plans', () => {
