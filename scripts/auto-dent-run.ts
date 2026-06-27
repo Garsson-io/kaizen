@@ -37,7 +37,7 @@ import {
   renderTemplate,
 } from '../src/review-battery.js';
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
-import { runFixLoop, type CliArgs as ReviewFixArgs } from './review-fix.js';
+import { defaultReviewFixProviders, runFixLoop } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
 import {
@@ -47,6 +47,15 @@ import {
   computeSteeringRecommendations,
 } from './batch-outcome.js';
 import { defaultPhaseProviders, type PhaseProviderRecord } from './auto-dent-provider.js';
+import {
+  buildKaizenCycleSteps,
+  formatIssueForDisplay,
+  formatIssueUrl,
+  formatProgressStepsMarkdown,
+  formatReviewForDisplay,
+  upsertProgressStep,
+  type RunProgressStep,
+} from './auto-dent-progress.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -321,13 +330,6 @@ export interface RunResult {
   finalClaimWarnings?: string[];
 }
 
-export interface RunProgressStep {
-  phase: string;
-  state: string;
-  detail: string;
-  url?: string;
-}
-
 type RunMetricsBaseField =
   | 'run'
   | 'start_epoch'
@@ -384,7 +386,6 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     ...metadata,
   };
 }
-
 import { extractPlanText } from '../src/structured-data.js';
 export { extractPlanText };
 
@@ -1865,7 +1866,7 @@ async function runClaude(
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolvePromise({ exitCode: 1, duration, result, mode: modeSelection.mode, promptMeta });
+      resolvePromise({ exitCode: 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, promptMeta });
     });
   });
 }
@@ -1957,127 +1958,6 @@ function printRunSummary(
     `  \u2514${'─'.repeat(54)}`,
   );
   console.log('');
-}
-
-function formatIssueUrl(issue: string | undefined, repo: string): string {
-  if (!issue) return '';
-  if (/^https?:\/\//.test(issue)) return issue;
-  const match = issue.match(/#?(\d+)/);
-  if (!match || !repo) return issue;
-  return `https://github.com/${repo}/issues/${match[1]}`;
-}
-
-function formatIssueForDisplay(issue: string | undefined, repo: string, title?: string): string {
-  const url = formatIssueUrl(issue, repo);
-  if (!url) return 'unknown';
-  return title ? `${url} — ${title}` : url;
-}
-
-function formatReviewForDisplay(result: RunResult): string {
-  if (result.pickedIssue === 'not applicable') {
-    const urls = result.prs.length > 0 ? ` (${result.prs.join(', ')})` : '';
-    return `not applicable${urls}`;
-  }
-  const verdict = result.reviewVerdict ?? (result.prs.length > 0 ? 'pending' : 'skipped');
-  const urls = result.reviewUrls && result.reviewUrls.length > 0 ? result.reviewUrls : result.prs;
-  return urls.length > 0 ? `${verdict} (${urls.join(', ')})` : verdict;
-}
-
-function formatProgressStepsMarkdown(result: RunResult): string {
-  const lines = [
-    `#### Kaizen Work Cycle`,
-    '',
-    `| Step | State | Detail | Link |`,
-    `|------|-------|--------|------|`,
-  ];
-  for (const step of buildKaizenCycleSteps(result)) {
-    lines.push(`| ${step.phase} | ${step.state} | ${step.detail || '-'} | ${step.url || '-'} |`);
-  }
-  return lines.join('\n');
-}
-
-const PROGRESS_PHASE_ORDER = ['PICK', 'PLAN', 'EVALUATE', 'CASE', 'IMPLEMENT', 'TEST', 'PR', 'REVIEW', 'FIX', 'MERGE', 'REFLECT', 'CLEANUP', 'STOP'];
-
-function orderedProgressSteps(steps: RunProgressStep[]): RunProgressStep[] {
-  return [...steps].sort((a, b) => {
-    const ai = PROGRESS_PHASE_ORDER.indexOf(a.phase);
-    const bi = PROGRESS_PHASE_ORDER.indexOf(b.phase);
-    const ao = ai === -1 ? PROGRESS_PHASE_ORDER.length : ai;
-    const bo = bi === -1 ? PROGRESS_PHASE_ORDER.length : bi;
-    return ao - bo;
-  });
-}
-
-function buildKaizenCycleSteps(result: RunResult, repo = ''): RunProgressStep[] {
-  const existing = new Map<string, RunProgressStep>();
-  for (const step of result.progressSteps || []) {
-    existing.set(step.phase, step);
-  }
-  const synthetic = result.pickedIssue === 'not applicable';
-  const issueDetail = formatIssueForDisplay(result.pickedIssue, repo, result.pickedIssueTitle);
-  const prDetail = result.prs.join(', ');
-  const caseDetail = result.cases.join(', ');
-
-  const defaults: RunProgressStep[] = [
-    {
-      phase: 'PICK',
-      state: synthetic ? 'not applicable' : result.pickedIssue ? 'selected' : 'not observed',
-      detail: synthetic ? (result.pickedIssueTitle || 'synthetic task') : (result.pickedIssue ? issueDetail : ''),
-      url: synthetic ? undefined : formatIssueUrl(result.pickedIssue, repo),
-    },
-    { phase: 'PLAN', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
-    { phase: 'EVALUATE', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
-    {
-      phase: 'CASE',
-      state: synthetic ? 'not applicable' : result.cases.length > 0 ? 'created' : 'not observed',
-      detail: synthetic ? 'synthetic test task' : caseDetail,
-    },
-    { phase: 'IMPLEMENT', state: synthetic && result.prs.length > 0 ? 'done' : 'not observed', detail: synthetic && result.prs.length > 0 ? 'synthetic file committed' : '' },
-    { phase: 'TEST', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'pipeline probe, not product tests' : '' },
-    {
-      phase: 'PR',
-      state: result.prs.length > 0 ? 'created' : 'not observed',
-      detail: prDetail,
-      url: result.prs[0],
-    },
-    {
-      phase: 'REVIEW',
-      state: synthetic ? 'not applicable' : result.reviewVerdict || (result.prs.length > 0 ? 'pending' : 'not observed'),
-      detail: formatReviewForDisplay(result),
-      url: result.reviewUrls?.[0] || result.prs[0],
-    },
-    {
-      phase: 'FIX',
-      state: synthetic ? 'not applicable' : result.reviewVerdict === 'pass' || result.reviewVerdict === 'skipped' ? 'not needed' : 'not observed',
-      detail: synthetic ? 'synthetic test task' : '',
-    },
-    { phase: 'MERGE', state: result.prs.length > 0 ? 'not observed' : 'not applicable', detail: prDetail, url: result.prs[0] },
-    { phase: 'REFLECT', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
-    { phase: 'CLEANUP', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
-    { phase: 'STOP', state: result.stopRequested ? 'requested' : 'not requested', detail: result.stopReason || '' },
-  ];
-
-  for (const step of defaults) {
-    const observed = existing.get(step.phase);
-    if (observed) {
-      step.state = observed.state || step.state;
-      step.detail = observed.detail || step.detail;
-      step.url = observed.url || step.url;
-    }
-  }
-  return orderedProgressSteps(defaults);
-}
-
-function upsertProgressStep(result: RunResult, step: RunProgressStep): void {
-  result.progressSteps = result.progressSteps || [];
-  const existing = result.progressSteps.find((s) => s.phase === step.phase);
-  if (existing) {
-    existing.state = step.state || existing.state;
-    existing.detail = step.detail || existing.detail;
-    existing.url = step.url || existing.url;
-  } else {
-    result.progressSteps.push(step);
-  }
 }
 
 function phaseProvidersForState(state: BatchState): PhaseProviderRecord {
@@ -2209,10 +2089,13 @@ export async function runReviewWiring(
           } as AutoDentEvent);
 
           try {
+            const reviewFixProviders = defaultReviewFixProviders();
             const fixState = await deps.runFixLoop({
               prUrl,
               issueNum: input.pickedIssue,
               repo: input.repo,
+              reviewProvider: reviewFixProviders.reviewProvider,
+              fixProvider: reviewFixProviders.fixProvider,
               dryRun: false,
               maxRounds: 2, // fix loop runs up to 2 fix+re-review rounds internally
               budgetCap: remainingBudget,
