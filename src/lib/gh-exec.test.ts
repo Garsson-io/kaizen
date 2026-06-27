@@ -79,6 +79,39 @@ describe('ghResult — non-throwing shared GitHub CLI helper', () => {
       expect.objectContaining({ timeout: 15_000 }),
     );
   });
+
+  it('forwards stdin input to spawnSync alongside a positional timeout', () => {
+    mockSpawn.mockReturnValueOnce({
+      status: 0,
+      stdout: '',
+      stderr: '',
+      signal: null,
+      pid: 0,
+      output: [],
+    } as any);
+
+    ghResult(['pr', 'comment', '7', '--body-file', '-'], 15_000, 'hello body');
+    expect(mockSpawn).toHaveBeenCalledWith(
+      'gh',
+      ['pr', 'comment', '7', '--body-file', '-'],
+      expect.objectContaining({ timeout: 15_000, input: 'hello body' }),
+    );
+  });
+
+  it('omits the input key entirely when no stdin is provided', () => {
+    mockSpawn.mockReturnValueOnce({
+      status: 0,
+      stdout: 'ok',
+      stderr: '',
+      signal: null,
+      pid: 0,
+      output: [],
+    } as any);
+
+    ghResult(['issue', 'list']);
+    const opts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
+    expect('input' in opts).toBe(false);
+  });
 });
 
 describe('gh — shared GitHub CLI helper', () => {
@@ -112,6 +145,16 @@ describe('gh — shared GitHub CLI helper', () => {
   it('returns empty string when stdout is null/undefined', () => {
     mockSpawn.mockReturnValueOnce({ status: 0, stdout: null, stderr: '', signal: null, pid: 0, output: [] } as any);
     expect(gh(['issue', 'view', '1'])).toBe('');
+  });
+
+  it('forwards stdin input through to spawnSync', () => {
+    mockSpawn.mockReturnValueOnce({ status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any);
+    gh(['pr', 'comment', '7', '--body-file', '-'], 15_000, 'reflection body');
+    expect(mockSpawn).toHaveBeenCalledWith(
+      'gh',
+      ['pr', 'comment', '7', '--body-file', '-'],
+      expect.objectContaining({ timeout: 15_000, input: 'reflection body' }),
+    );
   });
 });
 

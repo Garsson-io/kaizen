@@ -422,15 +422,13 @@ export function formatReflectionComment(
 }
 
 /** Post reflection as a PR comment (best-effort). */
-function defaultPostComment(prUrl: string, comment: string): void {
+export function defaultPostComment(prUrl: string, comment: string): void {
   const prNum = prUrl.match(/(\d+)$/)?.[1];
   const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
   if (!prNum || !repo) return;
-  execSync(`gh pr comment ${prNum} --repo "${repo}" --body-file -`, {
-    input: comment,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    timeout: 15000,
-  });
+  // Route through the shared gh-exec argv boundary (no shell-string interpolation
+  // of prNum/repo); the comment body is fed on stdin via `--body-file -`.
+  gh(['pr', 'comment', prNum, '--repo', repo, '--body-file', '-'], 15000, comment);
 }
 
 // ── PRD detection (kaizen #694) ───────────────────────────────────────
@@ -757,7 +755,7 @@ export function processHookInput(
 }
 
 /** Auto-close kaizen issues referenced in a merged PR body. */
-function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void {
+export function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void {
   const prNum = prUrl.match(/(\d+)$/)?.[1];
   const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
   if (!prNum || !repo) return;
@@ -807,20 +805,31 @@ function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void {
 
   for (const num of issueNums) {
     try {
-      const state = execSync(
-        `gh issue view ${num} --repo Garsson-io/kaizen --json state --jq .state`,
-        {
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        },
-      ).trim();
+      // Route through the injected ghRun argv boundary (no shell strings). The
+      // issue refs are extracted by a kaizen-scoped regex above, so these calls
+      // stay pinned to the kaizen repo (NOT the PR-derived repo, which differs
+      // in host-project mode) — behavior-preserving with the pre-migration code.
+      const state = ghRun([
+        'issue',
+        'view',
+        num,
+        '--repo',
+        'Garsson-io/kaizen',
+        '--json',
+        'state',
+        '--jq',
+        '.state',
+      ]).trim();
       if (state === 'OPEN') {
-        execSync(
-          `gh issue close ${num} --repo Garsson-io/kaizen --comment "Auto-closed: PR merged (${prUrl})"`,
-          {
-            stdio: ['pipe', 'pipe', 'pipe'],
-          },
-        );
+        ghRun([
+          'issue',
+          'close',
+          num,
+          '--repo',
+          'Garsson-io/kaizen',
+          '--comment',
+          `Auto-closed: PR merged (${prUrl})`,
+        ]);
       }
     } catch {}
   }
