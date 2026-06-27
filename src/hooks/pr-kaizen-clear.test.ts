@@ -1049,6 +1049,33 @@ describe('detectPrdWithoutFiledIssues', () => {
 });
 
 describe('processHookInput PRD blocking gate (kaizen #683, upgraded from #694)', () => {
+  it('loads PR files through the gh argv seam when no getPrFiles override is supplied', () => {
+    const gh = vi.fn((args: string[]) => {
+      if (args[0] === 'pr' && args[1] === 'diff') {
+        return 'docs/prd-agent-diagnosis.md\nsrc/foo.ts';
+      }
+      return '';
+    });
+    const input = noActionInput('docs-only', 'PRD creation only');
+
+    const result = processHookInput(input, {
+      stateDir: testStateDir,
+      postComment: () => {},
+      gh,
+    });
+
+    expect(result).toContain('BLOCKED');
+    expect(result).toContain('PRD but filed no actionable issues');
+    expect(gh).toHaveBeenCalledWith([
+      'pr',
+      'diff',
+      '42',
+      '--repo',
+      'Garsson-io/kaizen',
+      '--name-only',
+    ]);
+  });
+
   it('blocks gate when PRD in diff and KAIZEN_NO_ACTION', () => {
     const input = noActionInput('docs-only', 'PRD creation only');
     const result = processHookInput(input, {
@@ -1110,6 +1137,54 @@ describe('processHookInput PRD blocking gate (kaizen #683, upgraded from #694)',
       'utf-8',
     );
     expect(stateContent).toContain('needs_pr_kaizen');
+  });
+});
+
+describe('processHookInput auto-close PR metadata gh seam', () => {
+  it('loads merged PR state and body through the gh argv seam after clearing', () => {
+    const gh = vi.fn((args: string[]) => {
+      if (args[0] === 'pr' && args[1] === 'diff') {
+        return 'src/hooks/pr-kaizen-clear.ts';
+      }
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('state')) {
+        return 'MERGED';
+      }
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('body')) {
+        return 'No linked kaizen issues in this fixture';
+      }
+      return '';
+    });
+    const input = noActionInput('trivial-refactor', 'metadata path only');
+
+    const result = processHookInput(input, {
+      stateDir: testStateDir,
+      postComment: () => {},
+      gh,
+    });
+
+    expect(result).toContain('gate cleared');
+    expect(gh).toHaveBeenCalledWith([
+      'pr',
+      'view',
+      '42',
+      '--repo',
+      'Garsson-io/kaizen',
+      '--json',
+      'state',
+      '--jq',
+      '.state',
+    ]);
+    expect(gh).toHaveBeenCalledWith([
+      'pr',
+      'view',
+      '42',
+      '--repo',
+      'Garsson-io/kaizen',
+      '--json',
+      'body',
+      '--jq',
+      '.body',
+    ]);
   });
 });
 
