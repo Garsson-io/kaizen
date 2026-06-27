@@ -182,7 +182,8 @@ export function validateReviewSentinel(
   }
 
   for (const key of ['findingCount', 'totalDone', 'totalPartial', 'totalMissing'] as const) {
-    if (!Number.isInteger(record[key]) || record[key]! < 0) {
+    const min = key === 'findingCount' ? 1 : 0;
+    if (!Number.isInteger(record[key]) || record[key]! < min) {
       return { ok: false, reason: `invalid_${key}` };
     }
   }
