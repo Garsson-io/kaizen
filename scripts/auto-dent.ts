@@ -668,13 +668,13 @@ async function main(): Promise<void> {
     if (await cooldown(afterRun.current_cooldown || afterRun.cooldown, haltFile, stateFile, () => shuttingDown)) break;
   }
 
+  const summaryPath = writeBatchSummary(stateFile);
   const finalStateBeforeClose = readState(stateFile);
   postStructuredSummary(scriptDir, logDir, finalStateBeforeClose.progress_issue || '', finalStateBeforeClose.kaizen_repo || '');
   spawnSync('npx', ['tsx', join(scriptDir, 'auto-dent-run.ts'), '--close-batch', stateFile], {
     stdio: 'ignore',
   });
 
-  const summaryPath = writeBatchSummary(stateFile);
   const finalState = readState(stateFile);
   console.log(formatBatchSummary(finalState));
   console.log(`State: ${stateFile}`);

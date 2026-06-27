@@ -223,6 +223,19 @@ After a batch completes:
    jq '.progress_issue' logs/auto-dent/<batch-id>/state.json
    ```
 
+   At close the harness writes two durable attachments on the progress issue
+   (both idempotent marker comments — re-running finalize edits in place):
+   - `batch-outcome` (`scripts/batch-outcome.ts`) — schema-validated summary for
+     cross-batch learning (#1108, #940).
+   - `batch-artifacts` (`scripts/batch-artifacts-upload.ts`) — the RAW forensic
+     dump: `events.jsonl` + `state.json` inlined, size-capped to GitHub's 65,536-char
+     comment limit, truncated head+tail with a pointer to the on-disk copy when a
+     large batch overflows (#696, epic #842). Read it from the cloud with:
+     ```bash
+     npx tsx src/cli-section-editor.ts read-attachment --issue <progress-issue> \
+       --repo Garsson-io/kaizen --name batch-artifacts
+     ```
+
 ## Scoring
 
 The `auto-dent-score.ts` module scores run quality. Per-run scores consider:

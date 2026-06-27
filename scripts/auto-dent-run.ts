@@ -39,6 +39,7 @@ import {
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
 import { runFixLoop, type CliArgs as ReviewFixArgs } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
+import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
 import {
   buildBatchOutcome,
   writeBatchOutcomeAttachment,
@@ -1162,6 +1163,7 @@ export function closeBatchProgressIssue(
   progressIssue: string,
   kaizenRepo: string,
   state: BatchState,
+  batchDir?: string,
 ): void {
   if (!progressIssue || !kaizenRepo) return;
   const m = progressIssue.match(/issues\/(\d+)/);
@@ -1206,6 +1208,19 @@ export function closeBatchProgressIssue(
     console.log(`  [intelligence] stored batch-outcome attachment on #${m[1]}`);
   } catch (err) {
     console.log(`  [intelligence] batch-outcome write skipped: ${(err as Error).message}`);
+  }
+
+  // Durable RAW artifacts (#696, epic #842): inline the on-disk events.jsonl +
+  // state.json into an idempotent attachment so the cloud has the forensic data,
+  // not just the summary. Best-effort — must never block close (abnormal exits too).
+  if (batchDir) {
+    try {
+      const url = uploadBatchArtifacts(m[1], kaizenRepo, batchDir, new Date().toISOString());
+      if (url) console.log(`  [intelligence] uploaded raw batch artifacts to #${m[1]}`);
+      else console.log(`  [intelligence] no raw artifacts on disk to upload`);
+    } catch (err) {
+      console.log(`  [intelligence] batch-artifacts upload skipped: ${(err as Error).message}`);
+    }
   }
 
   ghExec(`gh issue close ${m[1]} --repo ${kaizenRepo} --reason completed`);
@@ -2223,7 +2238,9 @@ function closeBatch(): void {
   }
   const state = readState(stateFile);
   if (state.progress_issue) {
-    closeBatchProgressIssue(state.progress_issue, state.kaizen_repo, state);
+    // state.json lives inside the batch directory; its parent is the batch dir
+    // that holds events.jsonl + the raw artifacts (#696).
+    closeBatchProgressIssue(state.progress_issue, state.kaizen_repo, state, dirname(stateFile));
   }
 }
 
