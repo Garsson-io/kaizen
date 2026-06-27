@@ -46,6 +46,7 @@ import {
   readBatchOutcomesFromGithub,
   computeSteeringRecommendations,
 } from './batch-outcome.js';
+import { defaultPhaseProviders, type PhaseProviderRecord } from './auto-dent-provider.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -229,6 +230,13 @@ export interface RunMetrics {
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Review battery cost (USD) */
   review_cost_usd?: number;
+  /**
+   * Provider + billing mode used for each lifecycle phase (#1143, epic #1134).
+   * Absent on older runs (treated as unknown). Defaults to Claude-under-subscription
+   * for the agent phases and provider-independent for validation — see
+   * `defaultPhaseProviders()` in scripts/auto-dent-provider.ts.
+   */
+  phase_providers?: PhaseProviderRecord;
 }
 
 export interface RunResult {
@@ -2036,6 +2044,7 @@ async function main(): Promise<void> {
       lifecycle_critical: lifecycleCriticalCount,
       review_verdict: reviewVerdict,
       review_cost_usd: reviewCostUsd,
+      phase_providers: defaultPhaseProviders(),
       outcome,
       mode: runMode,
     });
@@ -2197,6 +2206,7 @@ async function main(): Promise<void> {
     lifecycle_health: lifecycleHealth,
     review_verdict: reviewVerdict,
     review_cost_usd: reviewCostUsd,
+    phase_providers: defaultPhaseProviders(),
   };
   // Classify failure: wall-clock timeout is authoritative (#686), then heuristics.
   // Feed the run log so the log-based branch (hook_rejection, infrastructure,

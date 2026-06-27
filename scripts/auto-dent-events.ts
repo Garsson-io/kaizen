@@ -72,6 +72,11 @@ export interface RunCompleteEvent extends BaseEvent {
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Review battery cost (USD) */
   review_cost_usd?: number;
+  /**
+   * Provider + billing mode per lifecycle phase (#1143, epic #1134).
+   * Absent on older events. Keyed by phase → { provider, billing }.
+   */
+  phase_providers?: Record<string, { provider: string; billing: string }>;
 }
 
 export interface BatchReflectEvent extends BaseEvent {
