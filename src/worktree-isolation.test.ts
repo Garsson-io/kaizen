@@ -69,7 +69,15 @@ describe('kaizen-review-pr SKILL.md — review findings storage contract (#966)'
     // pending, failing, absent, or stale-head CI before writing the sentinel.
     const skill = readFileSync(REVIEW_PR_SKILL, 'utf8');
     expect(skill).toMatch(/--head-sha "\$\(git rev-parse HEAD\)"/);
-    expect(skill).toMatch(/Pending, failing, absent, or stale-head CI refuses storage/);
+    expect(skill).toMatch(/Failing or stale-head CI is still a real block/);
+  });
+
+  it('instructs --wait-ci so pending CI is a wait, not a review FAIL (#1221)', () => {
+    // INVARIANT: storing a summary right after a push must poll CI, not false-FAIL
+    // the fix loop while CI is still running.
+    const skill = readFileSync(REVIEW_PR_SKILL, 'utf8');
+    expect(skill).toMatch(/--wait-ci/);
+    expect(skill).toMatch(/not a review FAIL/i);
   });
 });
 

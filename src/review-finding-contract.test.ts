@@ -5,6 +5,7 @@ import {
   normalizeReviewFindingData,
   makeReviewFindingMeta,
   extractReviewFindingMeta,
+  extractMetaBlock,
   validateReviewFindingPayload,
   deriveRoundVerdict,
   summarizeRound,
@@ -48,6 +49,32 @@ describe('review-finding-contract', () => {
     });
     const content = `<!-- meta:${JSON.stringify(meta)} -->\n### correctness — FAIL`;
     expect(extractReviewFindingMeta(content)).toEqual(meta);
+  });
+
+  // I29 (#1222.3): one shared meta accessor; no second bespoke greedy regex.
+  describe('extractMetaBlock — single shared meta accessor (#1222.3 / I29)', () => {
+    it('extracts the meta object as a plain record', () => {
+      const content = `<!-- meta:{"round":5,"round_verdict":"PASS","verdict":"pass"} -->\n## Review Round 5 — PASS`;
+      expect(extractMetaBlock(content)).toEqual({ round: 5, round_verdict: 'PASS', verdict: 'pass' });
+    });
+
+    it('does NOT over-match a later `}` in the body — the greedy-regex trap (#1222.3)', () => {
+      // A round summary: meta on line 1, then a markdown body that itself contains braces.
+      // The old greedy `\{.*\}` could swallow up to a later `}`; the anchored lazy form must not.
+      const content =
+        `<!-- meta:{"round":2,"round_verdict":"FAIL","verdict":"fail"} -->\n` +
+        `## Review Round 2 — FAIL\n` +
+        `| dim | note |\n| x | uses \`{placeholder}\` and {another} |`;
+      expect(extractMetaBlock(content)).toEqual({ round: 2, round_verdict: 'FAIL', verdict: 'fail' });
+    });
+
+    it('returns null when no meta block is present', () => {
+      expect(extractMetaBlock('## Review Round 1 — PASS')).toBeNull();
+    });
+
+    it('returns null on malformed meta JSON instead of throwing', () => {
+      expect(extractMetaBlock('<!-- meta:{not json} -->')).toBeNull();
+    });
   });
 });
 

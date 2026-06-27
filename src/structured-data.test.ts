@@ -25,7 +25,13 @@ import {
   retrieveIterationState,
   updatePrSection,
   normalizeReviewFindingData,
+  evaluateCiProof,
+  waitForCiTerminal,
+  ReviewCiPendingError,
+  ReviewCiNotPassedError,
   type ReviewFindingData,
+  type CiProofRunner,
+  type GhCheck,
 } from './structured-data.js';
 
 vi.mock('node:child_process', () => ({
@@ -387,6 +393,143 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
       expect(() => storeReviewSummary(pr, 8, undefined, { expectedHeadSha: head }))
         .toThrow(/stale|HEAD|#1070/i);
     });
+  });
+});
+
+// ── #1225: CI-proof redo — injectable runner, pending≠fail, non-PR skip, wait ──
+describe('evaluateCiProof — pure, structured, no shell-out (#1222)', () => {
+  const head = 'sha-current';
+  const check = (bucket: string, name = 'TypeScript tests + coverage'): GhCheck => ({ name, bucket, state: bucket.toUpperCase() });
+  const runner = (over: Partial<{ reviewed: string; prHead: string; checks: GhCheck[] }>): CiProofRunner => ({
+    reviewedHead: (expected) => over.reviewed ?? expected ?? head,
+    prHead: () => over.prHead ?? head,
+    prChecks: () => over.checks ?? [],
+  });
+
+  it('skips (never throws) for non-PR issue targets (#1222.1)', () => {
+    const result = evaluateCiProof(issue, {}, runner({ checks: [check('pending')] }));
+    expect(result.status).toBe('skipped_non_pr');
+  });
+
+  it('classifies green CI as pass', () => {
+    expect(evaluateCiProof(pr, {}, runner({ checks: [check('pass'), check('skipping', 'auto-merge')] })).status).toBe('pass');
+  });
+
+  it('classifies a still-running check as pending — distinct from failing (#1221)', () => {
+    expect(evaluateCiProof(pr, {}, runner({ checks: [check('pending')] })).status).toBe('pending');
+  });
+
+  it('classifies a failing check as failing even when another is pending', () => {
+    const r = evaluateCiProof(pr, {}, runner({ checks: [check('pending', 'a'), check('fail', 'b')] }));
+    expect(r.status).toBe('failing');
+  });
+
+  it('classifies absent checks as no_checks', () => {
+    expect(evaluateCiProof(pr, {}, runner({ checks: [] })).status).toBe('no_checks');
+  });
+
+  it('classifies a mismatched reviewed head as stale_head', () => {
+    const r = evaluateCiProof(pr, { expectedHeadSha: 'sha-reviewed' }, runner({ prHead: 'sha-different' }));
+    expect(r.status).toBe('stale_head');
+    expect(r.reviewedHead).toBe('sha-reviewed');
+    expect(r.currentHead).toBe('sha-different');
+  });
+
+  it('does NOT shell out: evaluating never touches spawnSync (#1222.2)', () => {
+    evaluateCiProof(pr, {}, runner({ checks: [check('pass')] }));
+    expect(mockGh).not.toHaveBeenCalled();
+  });
+});
+
+describe('storeReviewSummary — CI proof via injected runner (#1225)', () => {
+  const dimComment = (round: number, dim: string, verdict: string, done: number, partial: number, missing: number) =>
+    JSON.stringify({
+      url: `https://github.com/x/pull/903#issuecomment-${dim}`,
+      body: `<!-- kaizen:review/r${round}/${dim} -->\n<!-- meta:{"round":${round},"dimension":"${dim}","verdict":"${verdict}","done":${done},"partial":${partial},"missing":${missing}} -->`,
+    });
+  const makeRunner = (checks: GhCheck[], head = 'h'): CiProofRunner => ({
+    reviewedHead: () => head,
+    prHead: () => head,
+    prChecks: () => checks,
+  });
+  const greenChecks: GhCheck[] = [{ name: 'ci', bucket: 'pass', state: 'SUCCESS' }];
+
+  it('stores a PASS on a non-PR (issue) target without throwing (#1222.1 regression)', () => {
+    const ok = dimComment(3, 'correctness', 'pass', 2, 0, 0);
+    ghReturns(ok); // compose: list
+    ghReturns(ok); // compose: read
+    ghReturns(''); // writeAttachment: read existing
+    ghReturns('https://...#issuecomment-iss');
+    expect(() => storeReviewSummary(issue, 3, undefined, { ciRunner: makeRunner([]) })).not.toThrow();
+  });
+
+  it('stores a PASS via injected green runner without shelling out for CI (#1222.2)', () => {
+    const ok = dimComment(4, 'correctness', 'pass', 2, 0, 0);
+    ghReturns(ok); // compose: list
+    ghReturns(ok); // compose: read
+    ghReturns(''); // writeAttachment: read existing
+    ghReturns('https://...#issuecomment-sum');
+    storeReviewSummary(pr, 4, undefined, { ciRunner: makeRunner(greenChecks) });
+    // Only the 4 storage gh calls happened — no `gh pr view` / `gh pr checks` for CI proof.
+    expect(mockGh).toHaveBeenCalledTimes(4);
+  });
+
+  it('throws ReviewCiPendingError (not generic) when CI is pending (#1221)', () => {
+    const ok = dimComment(6, 'correctness', 'pass', 2, 0, 0);
+    ghReturns(ok); ghReturns(ok);
+    try {
+      storeReviewSummary(pr, 6, undefined, { ciRunner: makeRunner([{ name: 'ci', bucket: 'pending' }]) });
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ReviewCiPendingError);
+      expect((err as ReviewCiPendingError).result.status).toBe('pending');
+    }
+  });
+
+  it('throws ReviewCiNotPassedError when CI is failing (#1221 distinction)', () => {
+    const ok = dimComment(7, 'correctness', 'pass', 2, 0, 0);
+    ghReturns(ok); ghReturns(ok);
+    try {
+      storeReviewSummary(pr, 7, undefined, { ciRunner: makeRunner([{ name: 'ci', bucket: 'fail' }]) });
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ReviewCiNotPassedError);
+    }
+  });
+});
+
+describe('waitForCiTerminal — wait-not-fail on pending (#1221)', () => {
+  const head = 'h';
+  const mk = (queue: GhCheck[][]): CiProofRunner => {
+    let i = 0;
+    return {
+      reviewedHead: () => head,
+      prHead: () => head,
+      prChecks: () => queue[Math.min(i++, queue.length - 1)],
+    };
+  };
+  const noSleep = async () => {};
+
+  it('resolves to pass after CI transitions pending → pending → pass', async () => {
+    const runner = mk([
+      [{ bucket: 'pending' }],
+      [{ bucket: 'pending' }],
+      [{ bucket: 'pass' }],
+    ]);
+    const result = await waitForCiTerminal(pr, { ciRunner: runner, pollMs: 1, sleep: noSleep });
+    expect(result.status).toBe('pass');
+  });
+
+  it('returns the last pending result on timeout — never throws', async () => {
+    const runner = mk([[{ bucket: 'pending' }]]);
+    const result = await waitForCiTerminal(pr, { ciRunner: runner, timeoutMs: 0, pollMs: 1, sleep: noSleep });
+    expect(result.status).toBe('pending');
+  });
+
+  it('returns immediately on a failing terminal state', async () => {
+    const runner = mk([[{ bucket: 'fail' }]]);
+    const result = await waitForCiTerminal(pr, { ciRunner: runner, pollMs: 1, sleep: noSleep });
+    expect(result.status).toBe('failing');
   });
 });
 

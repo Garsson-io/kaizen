@@ -58,6 +58,8 @@ import {
   updatePrSection,
   storeIterationState,
   retrieveIterationState,
+  waitForCiTerminal,
+  ReviewCiPendingError,
   type ReviewFindingData,
   type StoreReviewSummaryOptions,
 } from './structured-data.js';
@@ -74,7 +76,7 @@ type Handler = (a: CliArgs) => Promise<void>;
  * Flags that are booleans — no value follows, presence means true.
  * Keeps `--stdin` usable without the trap of consuming the next arg.
  */
-const BOOLEAN_FLAGS = new Set(['stdin']);
+const BOOLEAN_FLAGS = new Set(['stdin', 'wait-ci']);
 
 export function parseArgs(argv?: string[]): CliArgs {
   const args = argv ?? process.argv.slice(2);
@@ -270,17 +272,50 @@ async function handleQuickPass(a: CliArgs): Promise<void> {
   console.log(`Quick pass stored (round ${r}): ${url}`);
 }
 
+// EX_TEMPFAIL — exit code for "CI still pending", distinct from a real failure (1) so the
+// review-fix loop can treat a pending wait as a retry-later, not an exhausting FAIL round (#1221).
+const EXIT_CI_PENDING = 75;
+
 async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
   // The verdict is ALWAYS derived from stored findings (#1019). Any supplied text (--note, or
   // legacy --text/--file) is non-authoritative commentary appended below the derived block.
   const note = (a.note ?? resolveContent(a)) || undefined;
   const r = resolveRound(a);
+  const target = prTarget(a.pr, a.repo);
+  const opts = reviewSummaryOptions(a);
+  const waitCi = a['wait-ci'] === 'true';
+
+  const store = (): string => storeReviewSummary(target, r, note, opts);
+
   let url: string;
   try {
-    url = storeReviewSummary(prTarget(a.pr, a.repo), r, note, reviewSummaryOptions(a));
+    url = store();
   } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
+    // #1221: with --wait-ci, a PASS blocked only because CI is still pending is a WAIT, not a
+    // FAIL. Poll until CI is terminal, then retry once. A genuine block (failing/stale head)
+    // surfaces as ReviewCiNotPassedError and exits 1 as before.
+    if (waitCi && err instanceof ReviewCiPendingError) {
+      const timeoutMs = a['ci-timeout-sec'] ? parseInt(a['ci-timeout-sec'], 10) * 1000 : undefined;
+      const pollMs = a['ci-poll-sec'] ? parseInt(a['ci-poll-sec'], 10) * 1000 : undefined;
+      console.error(`store-review-summary: ${err.message} — waiting for CI to finish (not a review FAIL)...`);
+      const result = await waitForCiTerminal(target, { ...opts, timeoutMs, pollMs });
+      if (result.status === 'pending' || result.status === 'no_checks') {
+        console.error(
+          `store-review-summary: CI still pending after wait (${result.detail ?? result.status}). ` +
+          `This is NOT a review FAIL — re-run store-review-summary once CI completes. Sentinel not written.`,
+        );
+        process.exit(EXIT_CI_PENDING);
+      }
+      try {
+        url = store();
+      } catch (err2) {
+        console.error(err2 instanceof Error ? err2.message : String(err2));
+        process.exit(1);
+      }
+    } else {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
   }
   // #920: Write review sentinel so pr-review-loop.ts can verify outcome
   writeReviewSentinel(a.repo, a.pr, r);

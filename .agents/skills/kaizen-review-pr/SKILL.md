@@ -226,13 +226,18 @@ follow-up issue. If any dimension still has MISSING findings, the round is FAIL 
 Store the round summary (required to advance to next round or close the gate):
 ```bash
 npx tsx src/cli-structured-data.ts store-review-summary \
-  --pr <PR_NUMBER> --repo <owner/repo> --round <N> --head-sha "$(git rev-parse HEAD)"
+  --pr <PR_NUMBER> --repo <owner/repo> --round <N> --head-sha "$(git rev-parse HEAD)" --wait-ci
 ```
 
 For a derived PASS or PASS-with-partials verdict, `store-review-summary` now verifies the PR's
 current HEAD matches `--head-sha` and that `gh pr checks` is green for that HEAD before it writes
-the summary/sentinel (#1070). Pending, failing, absent, or stale-head CI refuses storage; re-run
-review on the current head after CI passes.
+the summary/sentinel (#1070). **Always pass `--wait-ci`** when storing right after a push: CI is
+usually still running, and `--wait-ci` makes the command *poll* `gh pr checks` until terminal
+instead of treating a still-pending check as a failure (#1221). On a genuine timeout it exits with
+the distinct code `75` ("CI still pending — not a review FAIL") so the fix loop retries later rather
+than counting an exhausting fix round. Failing or stale-head CI is still a real block (exit 1);
+re-run review on the current head after CI passes. Tune the wait with `--ci-timeout-sec N` /
+`--ci-poll-sec N`. A review summary on a non-PR (issue) target skips the CI proof entirely (#1222).
 
 Add `--note "<context>"` only for non-verdict commentary (e.g. "rebased onto main, re-ran tests").
 Read back the derived verdict with `read-review-summary --pr <N> --repo <repo> --round <N>` — the

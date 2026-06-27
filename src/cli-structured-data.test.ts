@@ -7,6 +7,8 @@ import {
   storeMetadata,
   storeReviewFinding,
   storeReviewSummary,
+  waitForCiTerminal,
+  ReviewCiPendingError,
 } from './structured-data.js';
 
 vi.mock('node:fs', () => ({
@@ -44,6 +46,19 @@ vi.mock('./structured-data.js', () => ({
   updatePrSection: vi.fn(),
   storeIterationState: vi.fn().mockReturnValue('https://example.com/iteration'),
   retrieveIterationState: vi.fn().mockReturnValue({ round: 1 }),
+  waitForCiTerminal: vi.fn(),
+  ReviewCiPendingError: class ReviewCiPendingError extends Error {
+    constructor(public readonly result: { status: string; detail?: string }) {
+      super(result.detail ?? 'ci pending');
+      this.name = 'ReviewCiPendingError';
+    }
+  },
+  ReviewCiNotPassedError: class ReviewCiNotPassedError extends Error {
+    constructor(public readonly result: { status: string; detail?: string }) {
+      super(result.detail ?? 'ci not green');
+      this.name = 'ReviewCiNotPassedError';
+    }
+  },
 }));
 
 beforeEach(() => vi.clearAllMocks());
@@ -284,6 +299,77 @@ describe('store-review-summary — CI head proof', () => {
     expect(payload.findingCount).toBeGreaterThanOrEqual(0);
     expect(payload.integrity).toMatch(/^sha256:/);
     log.mockRestore();
+  });
+});
+
+// ── store-review-summary --wait-ci: pending is a wait, not a FAIL (#1221) ────
+
+describe('store-review-summary --wait-ci', () => {
+  const baseArgs: CliArgs = {
+    command: 'store-review-summary',
+    pr: '903',
+    repo: 'Garsson-io/kaizen',
+    round: '5',
+    ['wait-ci']: 'true',
+  };
+  function spyExit() {
+    return vi.spyOn(process, 'exit').mockImplementation((code?: number | string | null) => {
+      throw new Error(`process.exit(${code})`);
+    });
+  }
+
+  it('waits for CI then retries store when CI was pending then went green', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = vi.mocked(storeReviewSummary);
+    store.mockReset();
+    // First store throws pending; after wait, second store succeeds.
+    store
+      .mockImplementationOnce(() => { throw new ReviewCiPendingError({ status: 'pending', detail: 'CI is still pending' }); })
+      .mockReturnValueOnce('https://example.com/summary');
+    vi.mocked(waitForCiTerminal).mockResolvedValueOnce({ status: 'pass' });
+
+    await handlers['store-review-summary']({ ...baseArgs });
+
+    expect(vi.mocked(waitForCiTerminal)).toHaveBeenCalledTimes(1);
+    expect(store).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/Review summary stored/));
+    log.mockRestore();
+    errLog.mockRestore();
+  });
+
+  it('exits with the distinct pending code (75) — NOT a FAIL — when CI never finishes', async () => {
+    const errLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = spyExit();
+    const store = vi.mocked(storeReviewSummary);
+    store.mockReset();
+    store.mockImplementationOnce(() => { throw new ReviewCiPendingError({ status: 'pending', detail: 'CI is still pending' }); });
+    vi.mocked(waitForCiTerminal).mockResolvedValueOnce({ status: 'pending', detail: 'still pending' });
+
+    await expect(handlers['store-review-summary']({ ...baseArgs })).rejects.toThrow('process.exit(75)');
+    expect(errLog).toHaveBeenCalledWith(expect.stringMatching(/NOT a review FAIL/));
+    // Sentinel must NOT be written on a pending timeout.
+    const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === 'string' && path.includes('.reviewed-r5'),
+    );
+    expect(sentinelCall).toBeUndefined();
+    errLog.mockRestore();
+    exit.mockRestore();
+  });
+
+  it('does NOT wait when --wait-ci is absent — a pending error exits 1 immediately', async () => {
+    const errLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = spyExit();
+    const store = vi.mocked(storeReviewSummary);
+    store.mockReset();
+    store.mockImplementationOnce(() => { throw new ReviewCiPendingError({ status: 'pending', detail: 'CI is still pending' }); });
+
+    await expect(handlers['store-review-summary']({
+      command: 'store-review-summary', pr: '903', repo: 'Garsson-io/kaizen', round: '5',
+    })).rejects.toThrow('process.exit(1)');
+    expect(vi.mocked(waitForCiTerminal)).not.toHaveBeenCalled();
+    errLog.mockRestore();
+    exit.mockRestore();
   });
 });
 

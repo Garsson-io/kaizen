@@ -301,12 +301,30 @@ export function parseReviewFindingMeta(value: unknown): ReviewFindingMeta | null
   };
 }
 
-export function extractReviewFindingMeta(content: string): ReviewFindingMeta | null {
+/**
+ * Single meta-block accessor for `<!-- meta:{...} -->` comments (I29).
+ *
+ * Every consumer of a stored kaizen meta block (per-dimension findings AND round
+ * summaries) goes through this one non-greedy, suffix-anchored regex + JSON.parse,
+ * so we never grow a second bespoke parser. The lazy `\{.*?\}` plus the literal
+ * ` -->` terminator stops at the meta block's own close — it cannot over-match a
+ * later `}` elsewhere in the body the way a greedy `\{.*\}` would (#1222 / I29).
+ */
+export function extractMetaBlock(content: string): Record<string, unknown> | null {
   const match = content.match(/<!-- meta:(\{.*?\}) -->/);
   if (!match) return null;
   try {
-    return parseReviewFindingMeta(JSON.parse(match[1]));
+    const parsed = JSON.parse(match[1]);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
+}
+
+export function extractReviewFindingMeta(content: string): ReviewFindingMeta | null {
+  const raw = extractMetaBlock(content);
+  if (!raw) return null;
+  return parseReviewFindingMeta(raw);
 }
