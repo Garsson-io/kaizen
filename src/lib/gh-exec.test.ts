@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { gh, ghExec, parseGhCommandArgs } from './gh-exec.js';
+import { gh, ghExec, ghResult, parseGhCommandArgs } from './gh-exec.js';
 
 vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
@@ -9,6 +9,77 @@ vi.mock('node:child_process', () => ({
 const mockSpawn = vi.mocked(spawnSync);
 
 beforeEach(() => vi.clearAllMocks());
+
+describe('ghResult — non-throwing shared GitHub CLI helper', () => {
+  it('returns normalized status/stdout/stderr on success', () => {
+    mockSpawn.mockReturnValueOnce({
+      status: 0,
+      stdout: '  hello world  \n',
+      stderr: '  note  \n',
+      signal: null,
+      pid: 0,
+      output: [],
+    } as any);
+
+    expect(ghResult(['issue', 'view', '1'])).toEqual({
+      status: 0,
+      stdout: 'hello world',
+      stderr: 'note',
+    });
+  });
+
+  it('preserves non-zero status without throwing', () => {
+    mockSpawn.mockReturnValueOnce({
+      status: 2,
+      stdout: '  partial  \n',
+      stderr: '  permission denied  \n',
+      signal: null,
+      pid: 0,
+      output: [],
+    } as any);
+
+    expect(ghResult(['issue', 'view', '999'])).toEqual({
+      status: 2,
+      stdout: 'partial',
+      stderr: 'permission denied',
+    });
+  });
+
+  it('normalizes timeout/null status to status 1', () => {
+    mockSpawn.mockReturnValueOnce({
+      status: null,
+      stdout: '',
+      stderr: '',
+      signal: 'SIGTERM',
+      pid: 0,
+      output: [],
+    } as any);
+
+    expect(ghResult(['issue', 'view', '1'])).toEqual({
+      status: 1,
+      stdout: '',
+      stderr: '',
+    });
+  });
+
+  it('passes custom timeout to spawnSync', () => {
+    mockSpawn.mockReturnValueOnce({
+      status: 0,
+      stdout: 'ok',
+      stderr: '',
+      signal: null,
+      pid: 0,
+      output: [],
+    } as any);
+
+    ghResult(['issue', 'list'], 15_000);
+    expect(mockSpawn).toHaveBeenCalledWith(
+      'gh',
+      ['issue', 'list'],
+      expect.objectContaining({ timeout: 15_000 }),
+    );
+  });
+});
 
 describe('gh — shared GitHub CLI helper', () => {
   it('returns trimmed stdout on success', () => {
