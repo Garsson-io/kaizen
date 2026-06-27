@@ -7,6 +7,7 @@ import {
   analyzeWorktrees,
   analyzeBranches,
   cleanupWorktrees,
+  listOpenPullRequests,
   parseCliArgs,
   type Deps,
   type LockFile,
@@ -18,6 +19,7 @@ import type { ProjectPaths } from "./lib/resolve-project-root.js";
 function makeDeps(overrides: Partial<Deps> = {}): Deps {
   return {
     exec: () => "",
+    gh: () => "",
     pidAlive: () => false,
     now: () => Date.now(),
     readFile: () => "",
@@ -30,6 +32,60 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
     ...overrides,
   };
 }
+
+describe("listOpenPullRequests", () => {
+  it("uses configured host repo with argv-style gh args", () => {
+    let ghArgs: string[] = [];
+    const deps = makeDeps({
+      readFile: (path) => {
+        if (path.endsWith("kaizen.config.json")) {
+          return JSON.stringify({ host: { repo: "Garsson-io/kaizen" } });
+        }
+        return "";
+      },
+      gh: (args) => {
+        ghArgs = args;
+        return "  #1  main  Test PR";
+      },
+    });
+
+    expect(listOpenPullRequests(makePaths("/repo"), deps)).toBe("  #1  main  Test PR");
+    expect(ghArgs).toEqual([
+      "pr",
+      "list",
+      "--repo",
+      "Garsson-io/kaizen",
+      "--state",
+      "open",
+      "--json",
+      "number,title,headBranch",
+      "--jq",
+      '.[] | "  #\\(.number)  \\(.headBranch)  \\(.title)"',
+    ]);
+  });
+
+  it("falls back to normalized origin remote when config cannot be read", () => {
+    let ghArgs: string[] = [];
+    const deps = makeDeps({
+      readFile: () => {
+        throw new Error("missing config");
+      },
+      exec: (cmd) => {
+        if (cmd.includes("remote get-url origin")) {
+          return "git@github.com:Garsson-io/kaizen.git";
+        }
+        return "";
+      },
+      gh: (args) => {
+        ghArgs = args;
+        return "";
+      },
+    });
+
+    expect(listOpenPullRequests(makePaths("/repo"), deps)).toBe("");
+    expect(ghArgs).toContain("Garsson-io/kaizen");
+  });
+});
 
 function makePaths(root = "/project"): ProjectPaths {
   return {
@@ -464,4 +520,3 @@ describe("cleanupWorktrees — deletion sentinel", () => {
     expect(sentinel).toContain("wt-abc");
   });
 });
-
