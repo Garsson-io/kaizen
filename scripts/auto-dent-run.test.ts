@@ -1489,10 +1489,14 @@ describe('RunMetrics type', () => {
       issues_closed: ['#451'],
       cases: ['260322-1200-k451-hook-fix'],
       stop_requested: false,
+      process_verdict: 'pass',
+      process_issue_count: 0,
+      process_summary: 'process verdict pass (durable evidence complete)',
     };
     expect(metrics.run).toBe(1);
     expect(metrics.cost_usd).toBe(2.5);
     expect(metrics.prs).toHaveLength(1);
+    expect(metrics.process_verdict).toBe('pass');
   });
 
   it('supports run_history in BatchState', () => {

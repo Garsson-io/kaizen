@@ -165,6 +165,171 @@ export interface EvidenceVerification {
   processComplete: boolean;
 }
 
+export type ProcessVerdict = 'pass' | 'process-incomplete' | 'fail-open-warning';
+export type ProcessCheckStatus = 'pass' | 'fail' | 'warning' | 'not-applicable';
+export type MergeReadinessEvidence = 'ready' | 'not-ready' | 'unknown' | 'not-applicable';
+
+export interface ProcessEvidence {
+  /** Durable plan or claimed-plan assignment evidence exists. */
+  planEvidence?: boolean;
+  /** Durable implementation evidence exists (case/worktree or equivalent). */
+  implementationEvidence?: boolean;
+  /** Durable PR evidence exists. */
+  prEvidence?: boolean;
+  /** Durable test evidence exists. */
+  testEvidence?: boolean;
+  /** Review-battery verdict exists (pass/fail both count as evidence). */
+  reviewEvidence?: boolean;
+  /** Durable reflection output exists. */
+  reflectionEvidence?: boolean;
+  /** Merge readiness signal for PR-producing runs. */
+  mergeReadiness?: MergeReadinessEvidence;
+}
+
+export interface ProcessCheck {
+  id: 'plan' | 'implementation' | 'pr' | 'test' | 'review' | 'reflection' | 'merge-readiness';
+  status: ProcessCheckStatus;
+  reason: string;
+  remediation?: string;
+}
+
+export interface ProcessValidation {
+  verdict: ProcessVerdict;
+  checks: ProcessCheck[];
+  failedChecks: ProcessCheck[];
+  warningChecks: ProcessCheck[];
+}
+
+function addCheck(
+  checks: ProcessCheck[],
+  id: ProcessCheck['id'],
+  required: boolean,
+  present: boolean | undefined,
+  failReason: string,
+  passReason: string,
+  remediation?: string,
+): void {
+  if (!required) {
+    checks.push({ id, status: 'not-applicable', reason: 'not required for this run' });
+    return;
+  }
+  if (present === true) {
+    checks.push({ id, status: 'pass', reason: passReason });
+    return;
+  }
+  checks.push({ id, status: 'fail', reason: failReason, remediation });
+}
+
+/**
+ * Validate durable process evidence for a run. This is the richer #1149 layer:
+ * marker claims describe what the worker says happened; `ProcessEvidence`
+ * describes what the harness can corroborate through durable artifacts.
+ */
+export function validateProcessEvidence(
+  validation: LifecycleValidation,
+  evidence: ProcessEvidence,
+): ProcessValidation {
+  const present = new Set(validation.phasesPresent);
+  const checks: ProcessCheck[] = [];
+  const hasWorkClaim =
+    present.has('EVALUATE') ||
+    present.has('IMPLEMENT') ||
+    present.has('TEST') ||
+    present.has('PR') ||
+    present.has('MERGE') ||
+    present.has('REFLECT') ||
+    evidence.implementationEvidence === true ||
+    evidence.prEvidence === true;
+
+  const needsImplementation =
+    present.has('IMPLEMENT') || present.has('TEST') || present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
+  const needsPr = present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
+  const needsTest = present.has('TEST') || present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
+  const needsReview = present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
+  const needsReflection = present.has('REFLECT');
+  const needsMergeReadiness = present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
+
+  addCheck(
+    checks,
+    'plan',
+    hasWorkClaim,
+    evidence.planEvidence,
+    'work was claimed or produced without durable plan evidence',
+    'durable plan evidence exists',
+    'store or claim a concrete plan before implementation',
+  );
+  addCheck(
+    checks,
+    'implementation',
+    needsImplementation,
+    evidence.implementationEvidence,
+    'implementation/PR progress was claimed without durable implementation evidence',
+    'durable implementation evidence exists',
+    'create or record the case/worktree or other implementation artifact before claiming implementation',
+  );
+  addCheck(
+    checks,
+    'pr',
+    needsPr,
+    evidence.prEvidence,
+    'PR/MERGE was claimed but no durable PR evidence exists',
+    'durable PR evidence exists',
+    'create the PR or avoid claiming PR/MERGE',
+  );
+  addCheck(
+    checks,
+    'test',
+    needsTest,
+    evidence.testEvidence,
+    'tests were claimed or a PR was produced without durable test evidence',
+    'durable test evidence exists',
+    'run tests and record a non-empty test result before claiming TEST/PR success',
+  );
+  addCheck(
+    checks,
+    'review',
+    needsReview,
+    evidence.reviewEvidence,
+    'a PR exists or was claimed without review evidence',
+    'review evidence exists',
+    'run the review battery and store a pass/fail verdict',
+  );
+  addCheck(
+    checks,
+    'reflection',
+    needsReflection,
+    evidence.reflectionEvidence,
+    'REFLECT was claimed without durable reflection output',
+    'durable reflection evidence exists',
+    'file/close the follow-up issue or record the durable reflection artifact',
+  );
+
+  if (!needsMergeReadiness) {
+    checks.push({ id: 'merge-readiness', status: 'not-applicable', reason: 'no PR-producing phase required merge readiness' });
+  } else if (evidence.mergeReadiness === 'ready') {
+    checks.push({ id: 'merge-readiness', status: 'pass', reason: 'merge readiness evidence is ready' });
+  } else if (evidence.mergeReadiness === 'not-applicable') {
+    checks.push({ id: 'merge-readiness', status: 'not-applicable', reason: 'merge readiness not applicable' });
+  } else {
+    const state = evidence.mergeReadiness ?? 'unknown';
+    checks.push({
+      id: 'merge-readiness',
+      status: 'warning',
+      reason: `merge readiness is ${state}`,
+      remediation: 'treat as fail-open steering and re-check PR merge readiness next run',
+    });
+  }
+
+  const failedChecks = checks.filter((check) => check.status === 'fail');
+  const warningChecks = checks.filter((check) => check.status === 'warning');
+  const verdict: ProcessVerdict =
+    failedChecks.length > 0 ? 'process-incomplete'
+      : warningChecks.length > 0 ? 'fail-open-warning'
+        : 'pass';
+
+  return { verdict, checks, failedChecks, warningChecks };
+}
+
 /**
  * Cross-check a run's claimed lifecycle phases against the external outcomes the
  * harness extracted. Returns the unsupported claims (process gaps). Conservative
@@ -237,6 +402,13 @@ export function foldEvidenceIntoHealth(
 export function summarizeEvidence(v: EvidenceVerification): string {
   if (v.processComplete) return 'process complete (claims corroborated by outcomes)';
   return `process-incomplete: ${v.processGaps.map((g) => g.reason).join('; ')}`;
+}
+
+/** One-line summary of the #1149 durable process verdict, for logs and steering. */
+export function summarizeProcessValidation(v: ProcessValidation): string {
+  if (v.verdict === 'pass') return 'process verdict pass (durable evidence complete)';
+  const actionable = [...v.failedChecks, ...v.warningChecks];
+  return `${v.verdict}: ${actionable.map((check) => `${check.id}: ${check.reason}`).join('; ')}`;
 }
 
 /**

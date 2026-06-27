@@ -17,6 +17,7 @@
 
 import { appendFileSync } from 'fs';
 import { resolve } from 'path';
+import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 
 // Event type definitions
 
@@ -65,6 +66,12 @@ export interface RunCompleteEvent extends BaseEvent {
   lifecycle_health?: 'clean' | 'degraded' | 'critical';
   /** Count of critical lifecycle findings (gaps + phantom phases) (#1103) */
   lifecycle_critical?: number;
+  /** Durable process-evidence verdict (#1149) */
+  process_verdict?: ProcessVerdict;
+  /** Count of failed/warning process evidence checks (#1149) */
+  process_issue_count?: number;
+  /** Compact human-readable process evidence summary (#1149) */
+  process_summary?: string;
   outcome: 'success' | 'empty_success' | 'failure' | 'stop';
   /** Cognitive mode used, for context in analysis */
   mode?: string;

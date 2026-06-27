@@ -16,6 +16,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import type { EventEnvelope, RunCompleteEvent, RunIssuePickedEvent, RunPrCreatedEvent } from './auto-dent-events.js';
+import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 
 export interface BatchSummary {
   batch_id: string;
@@ -53,6 +54,11 @@ export interface BatchSummary {
    * provider metadata (legacy batches), so old history formats without crashing.
    */
   phase_provider_distribution: Record<string, Record<string, number>>;
+  /**
+   * Durable process-evidence verdict distribution (#1149).
+   * Empty for legacy events that do not record process verdicts.
+   */
+  process_verdict_distribution: Partial<Record<ProcessVerdict, number>>;
 }
 
 export interface ModeOutcome {
@@ -173,6 +179,13 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     }
   }
 
+  const processVerdictDistribution: Partial<Record<ProcessVerdict, number>> = {};
+  for (const e of completeEvents) {
+    const verdict = e.event.process_verdict;
+    if (!verdict) continue;
+    processVerdictDistribution[verdict] = (processVerdictDistribution[verdict] ?? 0) + 1;
+  }
+
   const runCount = completeEvents.length || 1;
   const totalDurationMinutes = Math.round(totalDurationMs / 60000 * 10) / 10;
 
@@ -202,6 +215,7 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     mode_distribution: modeDistribution,
     mode_outcomes: modeOutcomes,
     phase_provider_distribution: phaseProviderDistribution,
+    process_verdict_distribution: processVerdictDistribution,
   };
 }
 
@@ -319,6 +333,15 @@ export function formatPlainLanguage(summary: BatchSummary): string {
         .sort((a, b) => b[1] - a[1])
         .map(([key, count]) => `${key}: ${count}`);
       lines.push(`- **${phase}:** ${parts.join(', ')}`);
+    }
+  }
+
+  const processEntries = Object.entries(summary.process_verdict_distribution ?? {});
+  if (processEntries.length > 0) {
+    lines.push('');
+    lines.push('### Process Verdicts');
+    for (const [verdict, count] of processEntries.sort((a, b) => b[1] - a[1])) {
+      lines.push(`- ${verdict}: ${count} run${count > 1 ? 's' : ''}`);
     }
   }
 

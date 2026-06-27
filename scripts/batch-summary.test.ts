@@ -383,6 +383,43 @@ describe('formatPlainLanguage', () => {
   });
 });
 
+describe('process verdict distribution (#1149)', () => {
+  it('keeps legacy events without process verdicts sparse', () => {
+    const summary = summarizeEvents([makeCompleteEvent({ run_num: 1 })]);
+    expect(summary.process_verdict_distribution).toEqual({});
+
+    const text = formatPlainLanguage(summary);
+    expect(text).not.toContain('Process Verdicts');
+  });
+
+  it('aggregates process verdicts from run.complete events', () => {
+    const summary = summarizeEvents([
+      makeCompleteEvent({ run_num: 1, process_verdict: 'pass' }),
+      makeCompleteEvent({ run_num: 2, process_verdict: 'process-incomplete' }),
+      makeCompleteEvent({ run_num: 3, process_verdict: 'process-incomplete' }),
+      makeCompleteEvent({ run_num: 4, process_verdict: 'fail-open-warning' }),
+    ]);
+
+    expect(summary.process_verdict_distribution).toEqual({
+      pass: 1,
+      'process-incomplete': 2,
+      'fail-open-warning': 1,
+    });
+  });
+
+  it('includes process verdict distribution in the plain-language summary', () => {
+    const summary = summarizeEvents([
+      makeCompleteEvent({ run_num: 1, process_verdict: 'pass' }),
+      makeCompleteEvent({ run_num: 2, process_verdict: 'process-incomplete' }),
+    ]);
+    const text = formatPlainLanguage(summary);
+
+    expect(text).toContain('### Process Verdicts');
+    expect(text).toContain('pass: 1 run');
+    expect(text).toContain('process-incomplete: 1 run');
+  });
+});
+
 describe('provider-per-phase distribution (#1143)', () => {
   const claudePhases = {
     planning: { provider: 'claude', billing: 'subscription-cli' },

@@ -6,12 +6,15 @@ import {
   validateRunLifecycle,
   summarizeLifecycle,
   verifyLifecycleEvidence,
+  validateProcessEvidence,
   foldEvidenceIntoHealth,
   summarizeEvidence,
+  summarizeProcessValidation,
   LIFECYCLE_ORDER,
   REQUIRED_PREDECESSORS,
   type LifecycleValidation,
   type LifecycleEvidence,
+  type ProcessEvidence,
 } from './auto-dent-lifecycle.js';
 
 /**
@@ -363,5 +366,120 @@ describe('summarizeEvidence', () => {
     expect(s).toMatch(/incomplete/i);
     expect(s).toContain('0 PRs');
     expect(s).toContain('no issues were filed');
+  });
+});
+
+describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', () => {
+  const validationWith = (phasesPresent: string[]): LifecycleValidation => ({
+    valid: true,
+    phasesPresent,
+    phasesMissing: [],
+    violations: [],
+    criticalGaps: [],
+    phantomPhases: [],
+    health: 'clean',
+  });
+
+  const fullEvidence = (over: Partial<ProcessEvidence> = {}): ProcessEvidence => ({
+    planEvidence: true,
+    implementationEvidence: true,
+    prEvidence: true,
+    testEvidence: true,
+    reviewEvidence: true,
+    reflectionEvidence: true,
+    mergeReadiness: 'ready',
+    ...over,
+  });
+
+  it('returns process-incomplete when a PR claim lacks implementation evidence', () => {
+    const result = validateProcessEvidence(
+      validationWith(['PICK', 'EVALUATE', 'PR']),
+      fullEvidence({ implementationEvidence: false, prEvidence: true }),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'implementation',
+      status: 'fail',
+    }));
+  });
+
+  it('returns process-incomplete when tests are claimed green without test evidence', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({ testEvidence: false }),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'test',
+      status: 'fail',
+    }));
+  });
+
+  it('checks for missing durable plan evidence', () => {
+    const result = validateProcessEvidence(
+      validationWith(['PICK', 'EVALUATE', 'IMPLEMENT']),
+      fullEvidence({ planEvidence: false }),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'plan',
+      status: 'fail',
+    }));
+  });
+
+  it('checks for missing review evidence when a PR exists', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({ reviewEvidence: false }),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'review',
+      status: 'fail',
+    }));
+  });
+
+  it('checks for missing reflection evidence when reflection is claimed', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR', 'REFLECT']),
+      fullEvidence({ reflectionEvidence: false }),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'reflection',
+      status: 'fail',
+    }));
+  });
+
+  it('returns fail-open-warning when merge readiness is explicitly not ready', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR', 'MERGE']),
+      fullEvidence({ mergeReadiness: 'not-ready' }),
+    );
+    expect(result.verdict).toBe('fail-open-warning');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'merge-readiness',
+      status: 'warning',
+    }));
+  });
+
+  it('can pass with durable plan, implementation, PR, test, review, reflection, and merge-readiness evidence', () => {
+    const result = validateProcessEvidence(
+      validationWith(['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']),
+      fullEvidence(),
+    );
+    expect(result.verdict).toBe('pass');
+    expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
+  });
+
+  it('summarizes failed checks as steering-ready text', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({ planEvidence: false, testEvidence: false }),
+    );
+    const summary = summarizeProcessValidation(result);
+    expect(summary).toContain('process-incomplete');
+    expect(summary).toContain('plan');
+    expect(summary).toContain('test');
   });
 });
