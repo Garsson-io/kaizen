@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import {
   parseReviewOutput,
   formatBatteryReport,
+  selectReviewProvider,
   loadReviewPrompt,
   resolvePromptsDir,
   discoverDimensions,
@@ -164,12 +165,27 @@ That concludes my review.`;
 
 // Tier 1: Battery report formatting
 
+describe('selectReviewProvider (#1147)', () => {
+  it('defaults to Claude review under subscription billing', () => {
+    expect(selectReviewProvider()).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+  });
+
+  it('preserves an explicit Claude review provider for hybrid mode', () => {
+    expect(selectReviewProvider({ provider: 'claude', billing: 'subscription-cli' })).toEqual({
+      provider: 'claude',
+      billing: 'subscription-cli',
+    });
+  });
+});
+
 describe('formatBatteryReport', () => {
   it('formats a passing battery', () => {
     const result: BatteryResult = {
+      reviewProvider: { provider: 'claude', billing: 'subscription-cli' },
       dimensions: [{
         dimension: 'requirements',
         verdict: 'pass',
+        provider: { provider: 'claude', billing: 'subscription-cli' },
         findings: [
           { requirement: 'R1', status: 'DONE', detail: 'ok' },
           { requirement: 'R2', status: 'DONE', detail: 'ok' },
@@ -190,6 +206,8 @@ describe('formatBatteryReport', () => {
     expect(report).toContain('[x] **R1**');
     expect(report).toContain('[x] **R2**');
     expect(report).toContain('$0.13');
+    expect(report).toContain('| Review provider | claude (subscription-cli) |');
+    expect(report).toContain('_Provider: claude (subscription-cli)_');
   });
 
   it('formats a failing battery with MISSING items', () => {
@@ -569,8 +587,40 @@ describe('spawnReview', () => {
     const { review, costUsd } = await spawnReview({ dimension: 'requirements', prUrl: 'https://github.com/test/test/pull/1', repo: 'test/test' });
     expect(review).not.toBeNull();
     expect(review!.verdict).toBe('pass');
+    expect(review!.provider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
     expect(review!.findings[0].status).toBe('DONE');
     expect(costUsd).toBeCloseTo(0.12);
+  });
+
+  it('can explicitly request Claude review for hybrid mode', async () => {
+    const text = JSON.stringify({
+      dimension: 'requirements',
+      summary: 'all good',
+      findings: [],
+    });
+    mockClaude(streamJsonPayload(text, 0.06));
+
+    const { review, provider } = await spawnReview({
+      dimension: 'requirements',
+      repo: 'test/test',
+      reviewProvider: { provider: 'claude', billing: 'subscription-cli' },
+    });
+
+    expect(provider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(review?.provider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+  });
+
+  it('classifies explicit Codex review as unsupported without calling Claude', async () => {
+    const { review, provider, failureClass } = await spawnReview({
+      dimension: 'requirements',
+      repo: 'test/test',
+      reviewProvider: { provider: 'codex', billing: 'subscription-cli' },
+    });
+
+    expect(review).toBeNull();
+    expect(provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(failureClass).toBe('codex_review_unsupported');
+    expect(vi.mocked(spawn)).not.toHaveBeenCalled();
   });
 
   it('returns null review when claude exits non-zero', async () => {
@@ -632,6 +682,36 @@ describe('reviewBattery', () => {
       return proc;
     });
   }
+
+  it('defaults the battery review provider to Claude', async () => {
+    const passingOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [] }),
+      0.10,
+    );
+    mockClaude([{ stdout: passingOutput }]);
+
+    const result = await reviewBattery({ dimensions: ['requirements'] });
+
+    expect(result.reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(result.dimensions[0].provider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+  });
+
+  it('classifies Codex review provider failures separately', async () => {
+    const result = await reviewBattery({
+      dimensions: ['requirements'],
+      reviewProvider: { provider: 'codex', billing: 'subscription-cli' },
+    });
+
+    expect(result.failedDimensions).toEqual(['requirements']);
+    expect(result.failedDimensionFailures).toEqual([
+      {
+        dimension: 'requirements',
+        provider: { provider: 'codex', billing: 'subscription-cli' },
+        failureClass: 'codex_review_unsupported',
+      },
+    ]);
+    expect(result.verdict).toBe('fail');
+  });
 
   const passingOutput = streamJsonPayload(
     JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }] }),
