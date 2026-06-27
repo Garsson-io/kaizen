@@ -27,7 +27,7 @@ import {
   type BatchPlan,
   type PlanItem,
 } from './auto-dent-plan.js';
-import type { BatchState } from './auto-dent-run.js';
+import { readState, type BatchState } from './auto-dent-run.js';
 import { makeBatchState } from './auto-dent-test-utils.js';
 
 function mkItem(overrides: Partial<PlanItem> & { issue: string; title: string }): PlanItem {
@@ -260,6 +260,35 @@ describe('provider-aware planning (#1146)', () => {
     expect(formatPlanningFailure({ provider: 'codex', billing: 'subscription-cli' }, 'could not extract plan JSON')).toBe(
       '  [plan:codex] could not extract plan JSON',
     );
+  });
+});
+
+describe('state reading', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'plan-state-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('uses the canonical auto-dent state reader with backup fallback (#1262)', () => {
+    const stateFile = join(tmpDir, 'state.json');
+    const fallback = makeState({ guidance: 'fallback state' });
+    writeFileSync(stateFile, '{corrupt json');
+    writeFileSync(`${stateFile}.bak`, JSON.stringify(fallback));
+
+    expect(readState(stateFile).guidance).toBe('fallback state');
+
+    const source = readFileSync(
+      new URL('./auto-dent-plan.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).not.toMatch(/function readState\(/);
+    expect(source).toMatch(/readState,/);
+    expect(source).toContain("from './auto-dent-run.js'");
   });
 });
 
