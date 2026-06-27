@@ -19,3 +19,62 @@ export function gh(args: string[], timeoutMs: number = 30_000): string {
   }
   return result.stdout?.trim() ?? '';
 }
+
+/**
+ * Parse a shell-style `gh ...` command string into argv without invoking a shell.
+ *
+ * Handles single quotes, double quotes, and common JSON-style escapes inside
+ * double quotes. It deliberately treats backticks and `$()` as literal text.
+ */
+export function parseGhCommandArgs(cmd: string): string[] {
+  const args: string[] = [];
+  let current = '';
+  let i = 0;
+  while (i < cmd.length) {
+    const c = cmd[i];
+    if (c === ' ' || c === '\t') {
+      if (current !== '') { args.push(current); current = ''; }
+      i++;
+    } else if (c === '"') {
+      i++;
+      while (i < cmd.length && cmd[i] !== '"') {
+        if (cmd[i] === '\\' && i + 1 < cmd.length) {
+          const esc = cmd[i + 1];
+          if (esc === '"' || esc === '\\' || esc === '/') { current += esc; i += 2; }
+          else if (esc === 'n') { current += '\n'; i += 2; }
+          else if (esc === 'r') { current += '\r'; i += 2; }
+          else if (esc === 't') { current += '\t'; i += 2; }
+          else { current += '\\'; current += esc; i += 2; }
+        } else {
+          current += cmd[i]; i++;
+        }
+      }
+      i++;
+    } else if (c === "'") {
+      i++;
+      while (i < cmd.length && cmd[i] !== "'") { current += cmd[i]; i++; }
+      i++;
+    } else {
+      current += c; i++;
+    }
+  }
+  if (current !== '') args.push(current);
+  return args;
+}
+
+/**
+ * Tolerant `gh ...` command-string adapter. Prefer `gh(args)` for new code; use
+ * this when migrating older command-string call sites that must remain best-effort.
+ */
+export function ghExec(cmd: string): string {
+  const args = parseGhCommandArgs(cmd);
+  const [_bin, ...rest] = args;
+  try {
+    return gh(rest);
+  } catch (e: any) {
+    console.log(
+      `  [gh] warning: ${cmd.slice(0, 80)}... -> ${e.message?.split('\n')[0] || 'failed'}`,
+    );
+    return '';
+  }
+}

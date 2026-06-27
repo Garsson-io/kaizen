@@ -8,71 +8,11 @@
  * (logging warnings rather than throwing).
  */
 
-import { gh } from '../src/lib/gh-exec.js';
+import { ghExec, parseGhCommandArgs } from '../src/lib/gh-exec.js';
 import type { RunResult } from './auto-dent-run.js';
 
-// GitHub CLI wrapper (tolerant of failures)
-
-/**
- * Parse a shell-style command string into an array of arguments.
- * Handles double-quoted strings (with JSON/shell escape sequences) and
- * single-quoted strings. Does NOT interpret backticks or $() substitutions —
- * that is exactly the point: user-controlled data (e.g. markdown backtick
- * code-spans in --body) never reaches a shell.
- */
-export function parseShellArgs(cmd: string): string[] {
-  const args: string[] = [];
-  let current = '';
-  let i = 0;
-  while (i < cmd.length) {
-    const c = cmd[i];
-    if (c === ' ' || c === '\t') {
-      if (current !== '') { args.push(current); current = ''; }
-      i++;
-    } else if (c === '"') {
-      i++;
-      while (i < cmd.length && cmd[i] !== '"') {
-        if (cmd[i] === '\\' && i + 1 < cmd.length) {
-          const esc = cmd[i + 1];
-          if (esc === '"' || esc === '\\' || esc === '/') { current += esc; i += 2; }
-          else if (esc === 'n') { current += '\n'; i += 2; }
-          else if (esc === 'r') { current += '\r'; i += 2; }
-          else if (esc === 't') { current += '\t'; i += 2; }
-          else { current += '\\'; current += esc; i += 2; }
-        } else {
-          current += cmd[i]; i++;
-        }
-      }
-      i++;
-    } else if (c === "'") {
-      i++;
-      while (i < cmd.length && cmd[i] !== "'") { current += cmd[i]; i++; }
-      i++;
-    } else {
-      current += c; i++;
-    }
-  }
-  if (current !== '') args.push(current);
-  return args;
-}
-
-/**
- * Execute a gh CLI command without going through a shell.
- * Parses the command string into args, then delegates to gh() from
- * gh-exec.ts. Swallows errors (returns '') for backward compatibility.
- */
-export function ghExec(cmd: string): string {
-  const args = parseShellArgs(cmd);
-  const [_bin, ...rest] = args;
-  try {
-    return gh(rest);
-  } catch (e: any) {
-    console.log(
-      `  [hygiene] warning: ${cmd.slice(0, 80)}... -> ${e.message?.split('\n')[0] || 'failed'}`,
-    );
-    return '';
-  }
-}
+export { ghExec };
+export const parseShellArgs = parseGhCommandArgs;
 
 // Issue label lookup
 
