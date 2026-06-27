@@ -13,13 +13,19 @@ import {
   resetAssignedItems,
   formatPlanSummary,
   buildPlanPrompt,
+  buildPlanningCommand,
   titleTokens,
   deriveThemes,
   ensureThemes,
+  extractPlanningText,
+  formatPlanningFailure,
+  selectPlanningProvider,
+  withPlanningProvider,
   themeProgress,
   type BatchPlan,
   type PlanItem,
 } from './auto-dent-plan.js';
+import type { BatchState } from './auto-dent-run.js';
 
 function mkItem(overrides: Partial<PlanItem> & { issue: string; title: string }): PlanItem {
   return {
@@ -60,6 +66,131 @@ function makePlanWithDecompose(): BatchPlan {
     decomposition_candidates: ['#506 Auto-Dent Experimentation Framework — no child issues filed'],
   };
 }
+
+function makeState(overrides: Partial<BatchState> = {}): BatchState {
+  return {
+    batch_id: 'batch-260627-1608-k1146',
+    batch_start: 0,
+    guidance: 'provider-aware planning',
+    max_runs: 5,
+    cooldown: 30,
+    budget: '3.00',
+    max_failures: 3,
+    kaizen_repo: 'Garsson-io/kaizen',
+    host_repo: 'Garsson-io/kaizen',
+    run: 0,
+    prs: [],
+    issues_filed: [],
+    issues_closed: [],
+    cases: [],
+    consecutive_failures: 0,
+    current_cooldown: 30,
+    stop_reason: '',
+    last_issue: '',
+    last_pr: '',
+    last_case: '',
+    last_branch: '',
+    last_worktree: '',
+    ...overrides,
+  };
+}
+
+describe('provider-aware planning (#1146)', () => {
+  it('defaults planning to Claude under subscription billing', () => {
+    expect(selectPlanningProvider(makeState())).toEqual({
+      provider: 'claude',
+      billing: 'subscription-cli',
+    });
+  });
+
+  it('selects Codex planning only for explicit synthetic Codex batches', () => {
+    expect(selectPlanningProvider(makeState({ provider: 'codex', test_task: true }))).toEqual({
+      provider: 'codex',
+      billing: 'subscription-cli',
+    });
+    expect(selectPlanningProvider(makeState({ provider: 'codex', test_task: false }))).toEqual({
+      provider: 'claude',
+      billing: 'subscription-cli',
+    });
+  });
+
+  it('builds the existing Claude planning command shape', () => {
+    const command = buildPlanningCommand(
+      { provider: 'claude', billing: 'subscription-cli' },
+      'plan prompt',
+      makeState({ budget: '3.00' }),
+      '/repo',
+    );
+
+    expect(command.command).toBe('claude');
+    expect(command.args).toEqual([
+      '-p',
+      'plan prompt',
+      '--dangerously-skip-permissions',
+      '--output-format',
+      'stream-json',
+      '--max-turns',
+      '5',
+      '--max-budget-usd',
+      '1.00',
+    ]);
+    expect(command.stdin).toBeUndefined();
+  });
+
+  it('builds a Codex exec planning command with prompt on stdin', () => {
+    const command = buildPlanningCommand(
+      { provider: 'codex', billing: 'subscription-cli' },
+      'plan prompt',
+      makeState(),
+      '/repo',
+    );
+
+    expect(command.command).toBe('codex');
+    expect(command.args).toEqual([
+      'exec',
+      '--json',
+      '--cd',
+      '/repo',
+      '--sandbox',
+      'danger-full-access',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--color',
+      'never',
+      '-',
+    ]);
+    expect(command.stdin).toBe('plan prompt');
+  });
+
+  it('extracts provider output text from Claude stream-json and Codex JSONL', () => {
+    const planJson = '{"items":[{"issue":"#1146","title":"Plan","score":5,"approach":"do","status":"pending"}]}';
+    const claudeText = extractPlanningText('claude', [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'prefix ' }] } }),
+      JSON.stringify({ type: 'result', result: `\n${planJson}` }),
+    ].join('\n'));
+    const codexText = extractPlanningText('codex', JSON.stringify({
+      type: 'final_message',
+      message: `prefix\n${planJson}`,
+    }));
+
+    expect(validatePlan(extractPlanJson(claudeText))).not.toBeNull();
+    expect(validatePlan(extractPlanJson(codexText))).not.toBeNull();
+  });
+
+  it('attaches planning provider metadata to created plans', () => {
+    const plan = withPlanningProvider(makePlan(), { provider: 'codex', billing: 'subscription-cli' });
+
+    expect(plan.planning_provider).toEqual({
+      provider: 'codex',
+      billing: 'subscription-cli',
+    });
+  });
+
+  it('formats planning failure messages with provider identity', () => {
+    expect(formatPlanningFailure({ provider: 'codex', billing: 'subscription-cli' }, 'could not extract plan JSON')).toBe(
+      '  [plan:codex] could not extract plan JSON',
+    );
+  });
+});
 
 describe('extractPlanJson', () => {
   it('extracts JSON from fenced code block', () => {
