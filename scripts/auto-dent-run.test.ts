@@ -32,6 +32,7 @@ import {
   banditExplorationC,
   modeSuccess,
   deriveRunOutcome,
+  buildRunMetrics,
   weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
@@ -2612,6 +2613,89 @@ describe('deriveRunOutcome — verdict binding (#1224, meta #1227)', () => {
 
   it('stop precedence: stopRequested wins over a nonzero exit code', () => {
     expect(deriveRunOutcome({ ...cleanWin, stopRequested: true, exitCode: 1 })).toBe('stop');
+  });
+});
+
+describe('buildRunMetrics', () => {
+  it('maps shared RunResult fields into RunMetrics once', () => {
+    const result = makeRunResult({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1'],
+      issuesFiled: ['#10'],
+      issuesClosed: ['#11'],
+      cases: ['case-1'],
+      cost: 1.25,
+      toolCalls: 7,
+      stopRequested: true,
+      linesDeleted: 42,
+      issuesPruned: 2,
+    });
+
+    const metrics = buildRunMetrics({
+      runNum: 3,
+      runStartEpoch: 1742680800,
+      duration: 91,
+      exitCode: 0,
+      runMode: 'subtract',
+      result,
+    });
+
+    expect(metrics).toMatchObject({
+      run: 3,
+      start_epoch: 1742680800,
+      duration_seconds: 91,
+      exit_code: 0,
+      cost_usd: 1.25,
+      tool_calls: 7,
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1'],
+      issues_filed: ['#10'],
+      issues_closed: ['#11'],
+      cases: ['case-1'],
+      stop_requested: true,
+      mode: 'subtract',
+      lines_deleted: 42,
+      issues_pruned: 2,
+    });
+  });
+
+  it('adds persisted metadata without duplicating the base mapping', () => {
+    const metrics = buildRunMetrics({
+      runNum: 4,
+      runStartEpoch: 1742680900,
+      duration: 30,
+      exitCode: 0,
+      runMode: 'exploit',
+      result: makeRunResult({
+        finalClaimStatus: 'valid',
+        finalClaimPath: '/tmp/final-claim.json',
+        finalClaimWarnings: ['warning'],
+      }),
+      metadata: {
+        prompt_template: 'make-a-dent.md',
+        prompt_hash: 'abc123',
+        lifecycle_violations: 1,
+        lifecycle_health: 'degraded',
+        process_verdict: 'pass',
+        process_issue_count: 0,
+        process_summary: 'ok',
+        review_verdict: 'pass',
+        review_cost_usd: 0.12,
+      },
+    });
+
+    expect(metrics).toMatchObject({
+      prompt_template: 'make-a-dent.md',
+      prompt_hash: 'abc123',
+      lifecycle_violations: 1,
+      lifecycle_health: 'degraded',
+      process_verdict: 'pass',
+      process_issue_count: 0,
+      process_summary: 'ok',
+      review_verdict: 'pass',
+      review_cost_usd: 0.12,
+      final_claim_status: 'valid',
+      final_claim_path: '/tmp/final-claim.json',
+      final_claim_warnings: ['warning'],
+    });
   });
 });
 
