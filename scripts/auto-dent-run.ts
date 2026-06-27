@@ -37,7 +37,7 @@ import {
   renderTemplate,
 } from '../src/review-battery.js';
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
-import { runFixLoop, type CliArgs as ReviewFixArgs } from './review-fix.js';
+import { defaultReviewFixProviders, runFixLoop } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
 import {
@@ -47,6 +47,15 @@ import {
   computeSteeringRecommendations,
 } from './batch-outcome.js';
 import { defaultPhaseProviders, type PhaseProviderRecord } from './auto-dent-provider.js';
+import {
+  buildKaizenCycleSteps,
+  formatIssueForDisplay,
+  formatIssueUrl,
+  formatProgressStepsMarkdown,
+  formatReviewForDisplay,
+  upsertProgressStep,
+  type RunProgressStep,
+} from './auto-dent-progress.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -152,13 +161,6 @@ import {
   extractCodexPhaseMarkers,
   parseCodexJsonl,
 } from './auto-dent-codex.js';
-import {
-  formatIssueForDisplay,
-  formatProgressStepsMarkdown,
-  formatReviewForDisplay,
-  upsertProgressStep,
-  type RunProgressStep,
-} from './auto-dent-progress.js';
 import {
   compareFinalClaimToEvidence,
   foldFinalClaimWarningsIntoProcess,
@@ -384,7 +386,6 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     ...metadata,
   };
 }
-
 import { extractPlanText } from '../src/structured-data.js';
 export { extractPlanText };
 
@@ -1865,7 +1866,7 @@ async function runClaude(
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolvePromise({ exitCode: 1, duration, result, mode: modeSelection.mode, promptMeta });
+      resolvePromise({ exitCode: 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, promptMeta });
     });
   });
 }
@@ -2088,10 +2089,13 @@ export async function runReviewWiring(
           } as AutoDentEvent);
 
           try {
+            const reviewFixProviders = defaultReviewFixProviders();
             const fixState = await deps.runFixLoop({
               prUrl,
               issueNum: input.pickedIssue,
               repo: input.repo,
+              reviewProvider: reviewFixProviders.reviewProvider,
+              fixProvider: reviewFixProviders.fixProvider,
               dryRun: false,
               maxRounds: 2, // fix loop runs up to 2 fix+re-review rounds internally
               budgetCap: remainingBudget,
