@@ -187,6 +187,25 @@ describe('pr-review-loop: PR create', () => {
     expect(decision.action).toBe('ignore');
     expect(decision.reason).toBe('no_pr_url_from_create');
   });
+
+  it('does not run branch PR fallback when KAIZEN_PR_LOOKUP_DISABLED=1', () => {
+    const previous = process.env.KAIZEN_PR_LOOKUP_DISABLED;
+    process.env.KAIZEN_PR_LOOKUP_DISABLED = '1';
+    try {
+      const decision = processHookInput(
+        {
+          tool_input: { command: 'gh pr create --title test' },
+          tool_response: { stdout: '', stderr: '', exit_code: '0' },
+        },
+        { stateDir: testStateDir, branch: 'case/test-disabled', repoFromGit: 'Garsson-io/kaizen' },
+      );
+      expect(decision.action).toBe('ignore');
+      expect(decision.reason).toBe('no_pr_url_from_create');
+    } finally {
+      if (previous === undefined) delete process.env.KAIZEN_PR_LOOKUP_DISABLED;
+      else process.env.KAIZEN_PR_LOOKUP_DISABLED = previous;
+    }
+  });
 });
 
 describe('pr-review-loop: two repos', () => {

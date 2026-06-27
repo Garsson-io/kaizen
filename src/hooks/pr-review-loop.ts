@@ -30,6 +30,7 @@ import {
   type ReviewSentinelInput,
   type ReviewSentinelValidation,
 } from '../review-sentinel.js';
+import { findOpenPrUrlForBranch } from '../lib/github-pr.js';
 import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import {
@@ -211,16 +212,7 @@ function findStateByStatuses(
  *  Set KAIZEN_PR_LOOKUP_DISABLED=1 to skip (for testing environments). */
 function defaultLookupPrUrlForBranch(branch: string): string | undefined {
   if (process.env.KAIZEN_PR_LOOKUP_DISABLED === '1') return undefined;
-  try {
-    const out = execSync(
-      `gh pr list --head "${branch}" --state open --json url --limit 1`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-    ).trim();
-    const parsed = JSON.parse(out) as Array<{ url: string }>;
-    return parsed[0]?.url;
-  } catch {
-    return undefined;
-  }
+  return findOpenPrUrlForBranch({ branch });
 }
 
 // ── Core logic (extracted for testability) ───────────────────────────
@@ -237,7 +229,7 @@ export interface ProcessOptions {
   /** Override review sentinel check for testing (#920) */
   checkReviewSentinel?: (prUrl: string, round: string, stateDir: string) => boolean;
   /** Fallback: look up PR URL for branch when stdout/stderr are empty (#973).
-   *  Default: `gh pr list --head <branch> --json url --limit 1` */
+   *  Default uses the shared open-PR branch lookup helper. */
   lookupPrUrlForBranch?: (branch: string) => string | undefined;
 }
 
