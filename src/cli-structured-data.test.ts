@@ -251,8 +251,10 @@ describe('store-review-batch — review sentinel', () => {
   });
 });
 
-describe('store-review-summary — CI head proof', () => {
-  it('passes --head-sha through to summary storage before writing the sentinel (#1070)', async () => {
+describe('store-review-summary — pure storage, then sentinel', () => {
+  // Post-#1225 revert: the CLI no longer threads a `--head-sha` / CI-proof option into storage.
+  // storeReviewSummary is invoked with (target, round, note) only, then the sentinel is written.
+  it('calls storeReviewSummary with no CI option and writes the sentinel', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await handlers['store-review-summary']({
@@ -260,14 +262,12 @@ describe('store-review-summary — CI head proof', () => {
       pr: '903',
       repo: 'Garsson-io/kaizen',
       round: '5',
-      ['head-sha']: 'abc123',
     } as CliArgs);
 
     expect(vi.mocked(storeReviewSummary)).toHaveBeenCalledWith(
       { kind: 'pr', number: 903, repo: 'Garsson-io/kaizen' },
       5,
       undefined,
-      { expectedHeadSha: 'abc123' },
     );
     const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r5'),

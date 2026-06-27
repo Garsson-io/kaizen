@@ -305,88 +305,56 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     const ok = dimComment(2, 'correctness', 'pass', 3, 0, 0); // all DONE → PASS
     ghReturns(ok); // compose: list
     ghReturns(ok); // compose: read
-    ghReturns('abc123'); // gh pr view: current PR head
-    ghReturns(JSON.stringify([{ name: 'TypeScript tests + coverage', bucket: 'pass', state: 'SUCCESS' }])); // gh pr checks
     ghReturns(''); // writeAttachment: readAttachment (no existing)
     ghReturns('https://...#issuecomment-sum');
 
-    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes', { expectedHeadSha: 'abc123' });
+    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes');
     const body = bodyOfLastCreate();
     expect(body).toContain('## Review Round 2 — PASS');
     expect(body).toContain('### Reviewer notes (non-authoritative');
     expect(body).toContain('rebased onto main');
   });
 
-  describe('CI proof gate (#1070)', () => {
-    const head = 'abc123';
-    const passChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'pass', state: 'SUCCESS' },
-      { name: 'auto-merge', bucket: 'skipping', state: 'SKIPPED' },
-    ]);
-    const pendingChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'pending', state: 'IN_PROGRESS' },
-    ]);
-    const failChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'fail', state: 'FAILURE' },
-    ]);
+  // The #1070 CI-proof gate that previously lived here was reverted (#1225): storing a derived PASS
+  // is a pure, deterministic local-storage operation again — it does NOT shell out to `gh pr view`
+  // or `gh pr checks`, and never throws on a passing verdict or a non-PR target. CI-proof belongs in
+  // the review-fix loop (which can poll/wait for CI), not in this storage primitive (#1221/#1222).
+  it('stores a derived PASS with no network/process side-effects (post-#1225 revert)', () => {
+    const ok = dimComment(4, 'correctness', 'pass', 2, 0, 0);
+    ghReturns(ok); // compose: list
+    ghReturns(ok); // compose: read
+    ghReturns(''); // writeAttachment: readAttachment (no existing) — only storage calls, no pr view/checks
+    ghReturns('https://...#issuecomment-sum');
 
-    it('stores a derived PASS only when current-head CI is passing', () => {
-      const ok = dimComment(4, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view: current PR head
-      ghReturns(passChecks); // gh pr checks
-      ghReturns(''); // writeAttachment: readAttachment (no existing)
-      ghReturns('https://...#issuecomment-sum');
+    storeReviewSummary(pr, 4);
 
-      storeReviewSummary(pr, 4, undefined, { expectedHeadSha: head });
+    const body = bodyOfLastCreate();
+    expect(body).toContain('## Review Round 4 — PASS');
 
-      const body = bodyOfLastCreate();
-      expect(body).toContain('## Review Round 4 — PASS');
+    // The reverted #1070 gate shelled out to `gh pr view --json headRefOid`, `gh pr checks`,
+    // and `git rev-parse HEAD` on every PASS store (#1221/#1222). Assert directly that NONE of
+    // those CI-proof calls were made — only attachment read/write gh calls are allowed.
+    const ciProofCall = mockGh.mock.calls.find(([cmd, args]) => {
+      if (!Array.isArray(args)) return false;
+      if (cmd === 'git' && args.includes('rev-parse') && args.includes('HEAD')) return true;
+      if (args.includes('checks')) return true; // gh pr checks
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('headRefOid')) return true;
+      return false;
     });
+    expect(ciProofCall).toBeUndefined();
+  });
 
-    it('refuses to store a derived PASS while CI is pending', () => {
-      const ok = dimComment(6, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns(pendingChecks); // gh pr checks
+  it('stores a derived PASS on a non-PR (issue) target without throwing (#1222 defect 1)', () => {
+    // The reverted gate did `if (target.kind !== 'pr') throw`, so storing a PASS summary on an
+    // issue target — a valid AttachmentTarget — regressed to a throw. The revert restores it.
+    const ok = dimComment(3, 'correctness', 'pass', 2, 0, 0);
+    ghReturns(ok); // compose: list
+    ghReturns(ok); // compose: read
+    ghReturns(''); // writeAttachment: readAttachment (no existing)
+    ghReturns('https://...#issuecomment-sum'); // createComment
 
-      expect(() => storeReviewSummary(pr, 6, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*pending|pending.*CI|#1070/i);
-    });
-
-    it('refuses to store a derived PASS when CI is failing', () => {
-      const ok = dimComment(7, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns(failChecks); // gh pr checks
-
-      expect(() => storeReviewSummary(pr, 7, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*fail|fail.*CI|#1070/i);
-    });
-
-    it('refuses to store a derived PASS before CI has produced checks', () => {
-      const ok = dimComment(9, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns('[]'); // gh pr checks: CI has not started
-
-      expect(() => storeReviewSummary(pr, 9, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*not produced checks|#1070/i);
-    });
-
-    it('refuses to store a derived PASS when the reviewed head is stale', () => {
-      const ok = dimComment(8, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns('def456'); // gh pr view: current PR head differs from reviewed head
-
-      expect(() => storeReviewSummary(pr, 8, undefined, { expectedHeadSha: head }))
-        .toThrow(/stale|HEAD|#1070/i);
-    });
+    // Pre-revert this threw via `if (target.kind !== 'pr') throw`; now it stores like any target.
+    expect(() => storeReviewSummary(issue, 3)).not.toThrow();
   });
 });
 
