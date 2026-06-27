@@ -115,7 +115,7 @@ Output a JSON plan with ranked work items. Format:
 }
 
 export function selectPlanningProvider(state: BatchState): PhaseProvider {
-  if (state.provider === 'codex' && state.test_task === true) {
+  if (state.provider === 'codex') {
     return { provider: 'codex', billing: 'subscription-cli' };
   }
   return { provider: 'claude', billing: 'subscription-cli' };

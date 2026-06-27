@@ -105,16 +105,17 @@ describe('parseAutoDentArgs', () => {
     expect(parseAutoDentArgs(['focus']).provider).toBe('claude');
   });
 
-  it('accepts codex provider only for test-task mode', () => {
+  it('accepts codex provider for normal batches', () => {
+    const opts = parseAutoDentArgs(['--provider', 'codex', 'real work']);
+    expect(opts.provider).toBe('codex');
+    expect(opts.testTask).toBe(false);
+    expect(opts.guidance).toBe('real work');
+  });
+
+  it('still accepts codex provider for test-task mode', () => {
     const opts = parseAutoDentArgs(['--provider', 'codex', '--test-task']);
     expect(opts.provider).toBe('codex');
     expect(opts.testTask).toBe(true);
-  });
-
-  it('rejects codex provider for non-synthetic batches', () => {
-    expect(() => parseAutoDentArgs(['--provider', 'codex', 'real work'])).toThrow(
-      'Codex provider is restricted to --test-task synthetic runs',
-    );
   });
 
   it('rejects unknown options', () => {
@@ -151,9 +152,8 @@ describe('createInitialState', () => {
   });
 
   it('stores selected provider in initial state for dry-run inspection', () => {
-    const state = createInitialState('batch-1', 'synthetic', 1, {
+    const state = createInitialState('batch-1', 'real work', 1, {
       ...baseOpts,
-      testTask: true,
       provider: 'codex',
     }, {
       kaizenRepo: 'Garsson-io/kaizen',
@@ -161,7 +161,7 @@ describe('createInitialState', () => {
     });
 
     expect(state.provider).toBe('codex');
-    expect(state.test_task).toBe(true);
+    expect(state.test_task).toBe(false);
   });
 });
 

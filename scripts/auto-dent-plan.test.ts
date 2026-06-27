@@ -103,13 +103,13 @@ describe('provider-aware planning (#1146)', () => {
     });
   });
 
-  it('selects Codex planning only for explicit synthetic Codex batches', () => {
+  it('selects Codex planning for explicit Codex batches', () => {
     expect(selectPlanningProvider(makeState({ provider: 'codex', test_task: true }))).toEqual({
       provider: 'codex',
       billing: 'subscription-cli',
     });
     expect(selectPlanningProvider(makeState({ provider: 'codex', test_task: false }))).toEqual({
-      provider: 'claude',
+      provider: 'codex',
       billing: 'subscription-cli',
     });
   });
