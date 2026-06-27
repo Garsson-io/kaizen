@@ -175,6 +175,7 @@ describe('rescueTarget orchestration', () => {
     expect(gitLog.some((a) => a.includes('add'))).toBe(true);
     expect(gitLog.some((a) => a.includes('commit'))).toBe(true);
     expect(gitLog.some((a) => a.includes('push') && a.includes('--no-verify'))).toBe(true);
+    expect(ghLog.some((a) => a[0] === 'pr' && a[1] === 'list' && a.includes('--repo') && a.includes('owner/repo'))).toBe(true);
     expect(ghLog.some((a) => a[1] === 'create' && a.includes('--draft'))).toBe(true);
   });
 
