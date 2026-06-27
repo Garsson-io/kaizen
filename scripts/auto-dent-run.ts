@@ -124,6 +124,7 @@ export {
   type ProcessGap,
   type ProcessVerdict,
 } from './auto-dent-lifecycle.js';
+import { deriveRunOutcome } from './auto-dent-outcome.js';
 
 // Import for internal use
 import {
@@ -2307,10 +2308,19 @@ async function main(): Promise<void> {
       lines_deleted: result.linesDeleted,
       issues_pruned: result.issuesPruned,
     };
-    const outcome = result.stopRequested ? 'stop' as const
+    const baseOutcome = result.stopRequested ? 'stop' as const
       : (exitCode === 0 && modeSuccess(runMode, runMetricsForOutcome) > 0) ? 'success' as const
       : (exitCode === 0) ? 'empty_success' as const
       : 'failure' as const;
+    // #1224/#1227: bind the terminal outcome to the quality verdicts this run
+    // already computed. A base `success` with a red review/process/lifecycle
+    // verdict is a false green — downgrade it to `failure` so batch summaries
+    // and downstream merge decisions can't act on a run the rubric failed.
+    const outcome = deriveRunOutcome(baseOutcome, {
+      reviewVerdict,
+      processVerdict,
+      lifecycleHealth,
+    });
     events.emit({
       type: 'run.complete',
       run_id: runId,
