@@ -37,7 +37,7 @@
  */
 
 import { z } from 'zod';
-import { parseHookOutput } from '../src/hooks/lib/gate-signal.js';
+import { parseHookOutputs } from '../src/hooks/lib/gate-signal.js';
 
 export type HookSignalSource = 'permission-decision' | 'stop-decision' | 'canonical-yaml';
 
@@ -106,12 +106,7 @@ function jsonSignalFromText(text: string): HookSignal | null {
  */
 function yamlSignals(log: string): HookSignal[] {
   const signals: HookSignal[] = [];
-  // Match each `---\n...\n---` fenced block; parseHookOutput validates content.
-  const fenceRe = /^---\n[\s\S]*?\n---/gm;
-  const blocks = log.match(fenceRe);
-  if (!blocks) return signals;
-  for (const block of blocks) {
-    const output = parseHookOutput(block);
+  for (const output of parseHookOutputs(log)) {
     if (output && (output.type === 'deny' || output.type === 'block')) {
       signals.push({
         kind: output.type,

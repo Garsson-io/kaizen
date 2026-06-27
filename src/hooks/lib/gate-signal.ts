@@ -83,5 +83,17 @@ export function parseHookOutput(text: string): HookOutput | null {
   }
 }
 
+/**
+ * Extract every valid HookOutput YAML block from mixed hook output text.
+ */
+export function parseHookOutputs(text: string): HookOutput[] {
+  const outputs: HookOutput[] = [];
+  for (const match of text.matchAll(/^---\n[\s\S]*?\n---/gm)) {
+    const parsed = parseHookOutput(match[0]);
+    if (parsed) outputs.push(parsed);
+  }
+  return outputs;
+}
+
 // Convenience alias
 export const parseGateSignal = parseHookOutput;

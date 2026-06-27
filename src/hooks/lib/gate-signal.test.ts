@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatHookOutput, parseHookOutput, formatGateSignal, parseGateSignal, type HookOutput } from './gate-signal.js';
+import { formatHookOutput, parseHookOutput, parseHookOutputs, formatGateSignal, parseGateSignal, type HookOutput } from './gate-signal.js';
 
 describe('formatHookOutput', () => {
   it('produces a YAML block delimited by ---', () => {
@@ -103,6 +103,28 @@ describe('parseHookOutput', () => {
 
   it('rejects unknown gate names', () => {
     expect(parseHookOutput('---\nhook: x\ntype: gate-set\ngate: unknown_gate\nreason: test\n---\n')).toBeNull();
+  });
+});
+
+describe('parseHookOutputs', () => {
+  it('extracts every valid YAML hook output block from mixed text', () => {
+    const text = [
+      'prefix',
+      formatHookOutput({ hook: 'pr-review-loop', type: 'gate-set', gate: 'needs_review', reason: 'PR created' }),
+      'middle',
+      '---\nhook: invalid\n---',
+      formatHookOutput({ hook: 'pr-kaizen-clear', type: 'gate-clear', gate: 'needs_pr_kaizen', reason: 'cleared' }),
+      'suffix',
+    ].join('\n');
+
+    expect(parseHookOutputs(text)).toEqual([
+      { hook: 'pr-review-loop', type: 'gate-set', gate: 'needs_review', reason: 'PR created' },
+      { hook: 'pr-kaizen-clear', type: 'gate-clear', gate: 'needs_pr_kaizen', reason: 'cleared' },
+    ]);
+  });
+
+  it('returns an empty array when no valid hook output blocks exist', () => {
+    expect(parseHookOutputs('plain\n---\nhook: invalid\n---')).toEqual([]);
   });
 });
 

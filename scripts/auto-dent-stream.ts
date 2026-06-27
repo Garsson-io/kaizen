@@ -11,7 +11,7 @@
 import type { RunResult } from './auto-dent-run.js';
 import { parseFinalRunClaim } from './auto-dent-final-claim.js';
 import { ghExec } from './auto-dent-github.js';
-import { parseHookOutput, type HookOutput } from '../src/hooks/lib/gate-signal.js';
+import { parseHookOutputs, type HookOutput } from '../src/hooks/lib/gate-signal.js';
 
 // ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
 
@@ -317,15 +317,6 @@ function mergeProgressStep(result: RunResult, step: ProgressStep): void {
   existing.state = step.state || existing.state;
   existing.detail = step.detail || existing.detail;
   existing.url = step.url || existing.url;
-}
-
-function parseHookOutputs(text: string): HookOutput[] {
-  const outputs: HookOutput[] = [];
-  for (const match of text.matchAll(/^---\n[\s\S]*?\n---/gm)) {
-    const parsed = parseHookOutput(match[0]);
-    if (parsed) outputs.push(parsed);
-  }
-  return outputs;
 }
 
 function updateProgressFromHookOutput(output: HookOutput, result: RunResult): void {
