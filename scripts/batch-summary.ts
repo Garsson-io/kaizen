@@ -47,6 +47,12 @@ export interface BatchSummary {
   mode_distribution: Record<string, number>;
   /** Outcome breakdown by cognitive mode — which modes produce PRs vs failures */
   mode_outcomes: Record<string, ModeOutcome>;
+  /**
+   * Provider + billing usage per lifecycle phase (#1143, epic #1134).
+   * phase → "provider (billing)" → count of runs. Empty when no run recorded
+   * provider metadata (legacy batches), so old history formats without crashing.
+   */
+  phase_provider_distribution: Record<string, Record<string, number>>;
 }
 
 export interface ModeOutcome {
@@ -153,6 +159,20 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     else if (e.event.outcome === 'stop') mo.stop++;
   }
 
+  // Provider + billing usage per lifecycle phase (#1143). Runs without
+  // phase_providers (legacy events) contribute nothing — the map stays sparse.
+  const phaseProviderDistribution: Record<string, Record<string, number>> = {};
+  for (const e of completeEvents) {
+    const phaseProviders = e.event.phase_providers;
+    if (!phaseProviders) continue;
+    for (const [phase, pp] of Object.entries(phaseProviders)) {
+      if (!pp) continue;
+      const key = `${pp.provider} (${pp.billing})`;
+      const byProvider = (phaseProviderDistribution[phase] ??= {});
+      byProvider[key] = (byProvider[key] ?? 0) + 1;
+    }
+  }
+
   const runCount = completeEvents.length || 1;
   const totalDurationMinutes = Math.round(totalDurationMs / 60000 * 10) / 10;
 
@@ -181,8 +201,19 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     area_distribution: areaDistribution,
     mode_distribution: modeDistribution,
     mode_outcomes: modeOutcomes,
+    phase_provider_distribution: phaseProviderDistribution,
   };
 }
+
+/** Lifecycle phase display order for the provider-per-phase summary block (#1143). */
+const PHASE_DISPLAY_ORDER = [
+  'planning',
+  'implementation',
+  'review',
+  'fix',
+  'reflection',
+  'validation',
+];
 
 /**
  * Format a BatchSummary as plain-language text suitable for posting
@@ -269,6 +300,25 @@ export function formatPlainLanguage(summary: BatchSummary): string {
     if (modeEntries.length === 1) {
       lines.push('');
       lines.push('*Single-mode batch — consider enabling mode diversity for strategic balance.*');
+    }
+  }
+
+  // Provider per phase (#1143, epic #1134) — auditable provider/billing usage.
+  // Backward compatible: legacy batches have an empty distribution and skip this block.
+  const providerPhases = Object.keys(summary.phase_provider_distribution ?? {});
+  if (providerPhases.length > 0) {
+    lines.push('');
+    lines.push('### Provider per Phase');
+    const ordered = [
+      ...PHASE_DISPLAY_ORDER.filter((p) => providerPhases.includes(p)),
+      ...providerPhases.filter((p) => !PHASE_DISPLAY_ORDER.includes(p)).sort(),
+    ];
+    for (const phase of ordered) {
+      const byProvider = summary.phase_provider_distribution[phase];
+      const parts = Object.entries(byProvider)
+        .sort((a, b) => b[1] - a[1])
+        .map(([key, count]) => `${key}: ${count}`);
+      lines.push(`- **${phase}:** ${parts.join(', ')}`);
     }
   }
 

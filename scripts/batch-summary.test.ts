@@ -382,3 +382,55 @@ describe('formatPlainLanguage', () => {
     expect(text).not.toContain('Single-mode batch');
   });
 });
+
+describe('provider-per-phase distribution (#1143)', () => {
+  const claudePhases = {
+    planning: { provider: 'claude', billing: 'subscription-cli' },
+    implementation: { provider: 'claude', billing: 'subscription-cli' },
+    validation: { provider: 'provider-independent', billing: 'local-only' },
+  };
+
+  it('formats a legacy run with no provider metadata without crashing', () => {
+    const summary = summarizeEvents([makeCompleteEvent({ run_num: 1 })]);
+    expect(summary.phase_provider_distribution).toEqual({});
+    const text = formatPlainLanguage(summary);
+    expect(text).not.toContain('Provider per Phase');
+    expect(text).toContain('Batch Summary');
+  });
+
+  it('aggregates a Claude-only run into the phase distribution', () => {
+    const summary = summarizeEvents([
+      makeCompleteEvent({ run_num: 1, phase_providers: claudePhases }),
+    ]);
+    expect(summary.phase_provider_distribution.planning).toEqual({ 'claude (subscription-cli)': 1 });
+    expect(summary.phase_provider_distribution.validation).toEqual({
+      'provider-independent (local-only)': 1,
+    });
+    const text = formatPlainLanguage(summary);
+    expect(text).toContain('### Provider per Phase');
+    expect(text).toContain('**planning:** claude (subscription-cli): 1');
+  });
+
+  it('aggregates a hybrid Claude/Codex/provider-independent batch', () => {
+    const summary = summarizeEvents([
+      makeCompleteEvent({ run_num: 1, phase_providers: {
+        implementation: { provider: 'claude', billing: 'subscription-cli' },
+        validation: { provider: 'provider-independent', billing: 'local-only' },
+      } }),
+      makeCompleteEvent({ run_num: 2, phase_providers: {
+        implementation: { provider: 'codex', billing: 'subscription-cli' },
+        validation: { provider: 'provider-independent', billing: 'local-only' },
+      } }),
+    ]);
+    expect(summary.phase_provider_distribution.implementation).toEqual({
+      'claude (subscription-cli)': 1,
+      'codex (subscription-cli)': 1,
+    });
+    expect(summary.phase_provider_distribution.validation).toEqual({
+      'provider-independent (local-only)': 2,
+    });
+    const text = formatPlainLanguage(summary);
+    expect(text).toContain('### Provider per Phase');
+    expect(text).toContain('**implementation:**');
+  });
+});
