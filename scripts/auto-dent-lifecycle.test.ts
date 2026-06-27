@@ -472,6 +472,23 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
   });
 
+  it('treats provider review fail as completed review evidence, not missing evidence', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({
+        providerReviewEvidence: {
+          claude: 'pass',
+          codex: 'fail',
+        },
+      }),
+    );
+    expect(result.verdict).toBe('pass');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'review-provider',
+      status: 'pass',
+    }));
+  });
+
   it('summarizes failed checks as steering-ready text', () => {
     const result = validateProcessEvidence(
       validationWith(['IMPLEMENT', 'TEST', 'PR']),
@@ -482,4 +499,130 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     expect(summary).toContain('plan');
     expect(summary).toContain('test');
   });
+});
+
+describe('adversarial false-success fixtures (#1150)', () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'false-success-'));
+  });
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const writeLog = (name: string, lines: string[]) => {
+    const f = join(tmpDir, `${name}.log`);
+    writeFileSync(f, lines.join('\n'));
+    return f;
+  };
+
+  const fullEvidence = (over: Partial<ProcessEvidence> = {}): ProcessEvidence => ({
+    planEvidence: true,
+    implementationEvidence: true,
+    prEvidence: true,
+    testEvidence: true,
+    reviewEvidence: true,
+    reflectionEvidence: true,
+    mergeReadiness: 'ready',
+    ...over,
+  });
+
+  const fixtures: Array<{
+    name: string;
+    logShape: 'claude' | 'codex' | 'provider-neutral';
+    lines: string[];
+    evidence: ProcessEvidence;
+    expectedFailedIds: string[];
+  }> = [
+    {
+      name: 'claude-claims-tests-passed-without-durable-test-evidence',
+      logShape: 'claude',
+      lines: [
+        'Claude run completed',
+        'AUTO_DENT_PHASE: IMPLEMENT | case=case-1',
+        'AUTO_DENT_PHASE: TEST | result=pass | count=12',
+        'AUTO_DENT_PHASE: PR | url=https://github.com/test/repo/pull/1',
+      ],
+      evidence: fullEvidence({ testEvidence: false }),
+      expectedFailedIds: ['test'],
+    },
+    {
+      name: 'claude-claims-review-passed-without-review-attachment',
+      logShape: 'claude',
+      lines: [
+        'AUTO_DENT_PHASE: IMPLEMENT | case=case-2',
+        'AUTO_DENT_PHASE: TEST | result=pass | count=5',
+        'AUTO_DENT_PHASE: PR | url=https://github.com/test/repo/pull/2',
+        'review: pass',
+      ],
+      evidence: fullEvidence({ reviewEvidence: false }),
+      expectedFailedIds: ['review'],
+    },
+    {
+      name: 'codex-claims-reflection-done-without-durable-reflection-output',
+      logShape: 'codex',
+      lines: [
+        '[provider] codex synthetic test-task',
+        '[provider] raw_jsonl=run-3-codex.jsonl',
+        '--- codex final text ---',
+        'AUTO_DENT_PHASE: IMPLEMENT | case=case-3',
+        'AUTO_DENT_PHASE: TEST | result=pass | count=4',
+        'AUTO_DENT_PHASE: PR | url=https://github.com/test/repo/pull/3',
+        'AUTO_DENT_PHASE: REFLECT | issues_filed=1',
+      ],
+      evidence: fullEvidence({ reflectionEvidence: false }),
+      expectedFailedIds: ['reflection'],
+    },
+    {
+      name: 'provider-neutral-pr-created-outside-case-worktree',
+      logShape: 'provider-neutral',
+      lines: [
+        'AUTO_DENT_PHASE: TEST | result=pass | count=3',
+        'AUTO_DENT_PHASE: PR | url=https://github.com/test/repo/pull/4',
+      ],
+      evidence: fullEvidence({ implementationEvidence: false, prEvidence: true }),
+      expectedFailedIds: ['implementation'],
+    },
+    {
+      name: 'provider-neutral-resume-lost-plan-state',
+      logShape: 'provider-neutral',
+      lines: [
+        'resume: restored run after interruption; plan_state=missing',
+        'AUTO_DENT_PHASE: IMPLEMENT | case=case-5',
+        'AUTO_DENT_PHASE: TEST | result=pass | count=2',
+      ],
+      evidence: fullEvidence({ planEvidence: false, prEvidence: false, mergeReadiness: 'not-applicable' }),
+      expectedFailedIds: ['plan'],
+    },
+    {
+      name: 'hybrid-review-never-completes-but-worker-claims-success',
+      logShape: 'provider-neutral',
+      lines: [
+        'AUTO_DENT_PHASE: IMPLEMENT | case=case-6',
+        'AUTO_DENT_PHASE: TEST | result=pass | count=9',
+        'AUTO_DENT_PHASE: PR | url=https://github.com/test/repo/pull/6',
+        'AUTO_DENT_PHASE: REFLECT | issues_filed=1',
+      ],
+      evidence: fullEvidence({
+        reviewEvidence: true,
+        providerReviewEvidence: {
+          claude: 'pass',
+          codex: 'pending',
+        },
+      }),
+      expectedFailedIds: ['review-provider'],
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    it(`${fixture.logShape}: ${fixture.name}`, () => {
+      const validation = validateRunLifecycle(writeLog(fixture.name, fixture.lines));
+      const result = validateProcessEvidence(validation, fixture.evidence);
+
+      expect(result.verdict).toBe('process-incomplete');
+      for (const id of fixture.expectedFailedIds) {
+        expect(result.failedChecks.map((check) => check.id)).toContain(id);
+      }
+    });
+  }
 });
