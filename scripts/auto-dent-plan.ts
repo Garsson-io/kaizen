@@ -132,6 +132,10 @@ const RawPlanThemeInputSchema = z.object({
   issues: z.array(z.unknown()).min(1),
 }).passthrough();
 
+export function validatePlanningOutputContract(raw: unknown): boolean {
+  return PlanningOutputSchema.safeParse(raw).success;
+}
+
 function readState(stateFile: string): BatchState {
   return JSON.parse(readFileSync(stateFile, 'utf8'));
 }

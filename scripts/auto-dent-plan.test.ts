@@ -21,6 +21,7 @@ import {
   extractPlanningText,
   formatPlanningFailure,
   selectPlanningProvider,
+  validatePlanningOutputContract,
   withPlanningProvider,
   themeProgress,
   type BatchPlan,
@@ -199,6 +200,26 @@ describe('provider-aware planning (#1146)', () => {
   });
 
   it('validates schema-constrained Codex JSONL into a Codex-attributed plan (#1215)', () => {
+    const providerPlan = {
+      created_at: '2026-06-27T22:20:00Z',
+      guidance: 'codex planning',
+      items: [
+        {
+          issue: '#1215',
+          title: 'Codex planning pre-pass JSON validation fallback',
+          score: 9.25,
+          approach: 'Harden the Codex planning boundary with schema output.',
+          status: 'pending',
+          item_type: 'leaf',
+          parent_epic: null,
+          theme: null,
+        },
+      ],
+      themes: [],
+      wip_excluded: [],
+      epics_scanned: ['#1134 Enable Codex as an auto-dent agent'],
+      decomposition_candidates: [],
+    };
     const codexJsonl = [
       JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
       JSON.stringify({ type: 'turn.started' }),
@@ -207,35 +228,41 @@ describe('provider-aware planning (#1146)', () => {
         item: {
           id: 'item_0',
           type: 'agent_message',
-          text: JSON.stringify({
-            created_at: '2026-06-27T22:20:00Z',
-            guidance: 'codex planning',
-            items: [
-              {
-                issue: '#1215',
-                title: 'Codex planning pre-pass JSON validation fallback',
-                score: 9.25,
-                approach: 'Harden the Codex planning boundary with schema output.',
-                status: 'pending',
-                item_type: 'leaf',
-              },
-            ],
-            wip_excluded: [],
-            epics_scanned: ['#1134 Enable Codex as an auto-dent agent'],
-            decomposition_candidates: [],
-          }),
+          text: JSON.stringify(providerPlan),
         },
       }),
       JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1 } }),
     ].join('\n');
 
     const parsed = extractPlanJson(extractPlanningText('codex', codexJsonl));
+    expect(validatePlanningOutputContract(parsed)).toBe(true);
+
     const plan = validatePlan(parsed);
 
     expect(withPlanningProvider(plan!, { provider: 'codex', billing: 'subscription-cli' })).toMatchObject({
       planning_provider: { provider: 'codex', billing: 'subscription-cli' },
       items: [{ issue: '#1215', status: 'pending', item_type: 'leaf' }],
     });
+  });
+
+  it('rejects Codex provider payloads that omit required nullable schema fields (#1215)', () => {
+    expect(validatePlanningOutputContract({
+      created_at: '2026-06-27T22:20:00Z',
+      guidance: 'codex planning',
+      items: [
+        {
+          issue: '#1215',
+          title: 'Codex planning pre-pass JSON validation fallback',
+          score: 9.25,
+          approach: 'Harden the Codex planning boundary with schema output.',
+          status: 'pending',
+          item_type: 'leaf',
+        },
+      ],
+      wip_excluded: [],
+      epics_scanned: ['#1134 Enable Codex as an auto-dent agent'],
+      decomposition_candidates: [],
+    })).toBe(false);
   });
 
   it('attaches planning provider metadata to created plans', () => {
