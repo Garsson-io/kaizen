@@ -92,6 +92,21 @@ describe('runReviewWiring', () => {
     expect(deps.runFixLoop).not.toHaveBeenCalled();
   });
 
+  it('returns the review attachment URL when a pass report is stored', async () => {
+    const deps = makeDeps({
+      writeAttachment: vi.fn().mockReturnValue('https://github.com/test/repo/pull/1#issuecomment-9'),
+    });
+    const result = await runReviewWiring(makeInput(), deps);
+
+    expect(result.reviewVerdict).toBe('pass');
+    expect(result.reviewUrls).toEqual(['https://github.com/test/repo/pull/1#issuecomment-9']);
+    expect(deps.writeAttachment).toHaveBeenCalledWith(
+      { kind: 'pr', number: '1', repo: 'test/repo' },
+      'review-battery',
+      'report',
+    );
+  });
+
   it('INVARIANT: review fail with gaps triggers fix loop with correct args', async () => {
     const deps = makeDeps({
       reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult({
