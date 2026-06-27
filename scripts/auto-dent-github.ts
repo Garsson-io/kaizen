@@ -125,89 +125,17 @@ export function checkMergeStatus(prUrl: string): MergeStatus {
   }
 }
 
-// Branch sweep
-
-export type SweepAction = 'updated' | 'already_current' | 'merged' | 'closed' | 'failed';
-
-export interface SweepResult {
-  pr: string;
-  action: SweepAction;
-}
-
-/**
- * Sweep all batch PRs: update stale branches so auto-merge can proceed.
- *
- * When strict branch protection is enabled and main advances (from a
- * previous run's PR merging), subsequent PRs fall BEHIND and auto-merge
- * stalls silently. This sweep detects BEHIND branches and calls the
- * GitHub API to update them.
- *
- * See issue #368, hypothesis H1/H4.
- */
-export function sweepBatchPRs(allPrUrls: string[]): SweepResult[] {
-  const results: SweepResult[] = [];
-
-  for (const prUrl of allPrUrls) {
-    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (!m) continue;
-
-    const [, repo, prNum] = m;
-
-    try {
-      const json = ghExec(
-        `gh pr view ${prNum} --repo ${repo} --json state,mergeStateStatus,autoMergeRequest`,
-      );
-      if (!json) {
-        results.push({ pr: prUrl, action: 'failed' });
-        continue;
-      }
-
-      const data = JSON.parse(json);
-
-      if (data.state === 'MERGED') {
-        results.push({ pr: prUrl, action: 'merged' });
-        continue;
-      }
-      if (data.state === 'CLOSED') {
-        results.push({ pr: prUrl, action: 'closed' });
-        continue;
-      }
-
-      // Only update if branch is behind and auto-merge is queued
-      if (
-        data.mergeStateStatus === 'BEHIND' &&
-        data.autoMergeRequest
-      ) {
-        const updateOut = ghExec(
-          `gh api repos/${repo}/pulls/${prNum}/update-branch -X PUT -f expected_head_sha=""`,
-        );
-        if (updateOut && !updateOut.includes('error')) {
-          console.log(`  [sweep] updated stale branch for PR #${prNum}`);
-          results.push({ pr: prUrl, action: 'updated' });
-        } else {
-          console.log(`  [sweep] failed to update branch for PR #${prNum}`);
-          results.push({ pr: prUrl, action: 'failed' });
-        }
-      } else {
-        results.push({ pr: prUrl, action: 'already_current' });
-      }
-    } catch {
-      results.push({ pr: prUrl, action: 'failed' });
-    }
-  }
-
-  return results;
-}
-
 // Active merge babysitter (#1129)
 //
-// queueAutoMerge() fires `gh pr merge --auto` and exits; sweepBatchPRs() updates
-// BEHIND branches exactly ONCE. Neither drives a queued PR to a terminal state.
-// When main advances AFTER that single sweep, a PR falls BEHIND again and the
-// queued merge stalls silently — reported as "queued" forever (#368). This
+// queueAutoMerge() fires `gh pr merge --auto` and exits. That alone leaves
+// queued PRs to stall: when main advances (a sibling PR merges), a PR falls
+// BEHIND and its queued merge waits forever, while a blocked/conflicting PR
+// just sits open — both reported as "queued" with no reason (#368). This
 // babysitter polls each PR until it merges, closes, is classified stuck (with a
-// reason), or a bounded attempt budget is exhausted. It only REPORTS — the
-// `--auto` queue stays in place, so GitHub may still merge server-side later.
+// reason), or a bounded attempt budget is exhausted, re-updating BEHIND branches
+// across attempts. It only REPORTS — the `--auto` queue stays in place, so
+// GitHub may still merge server-side later. (Supersedes the earlier one-shot
+// branch sweep, which updated BEHIND branches exactly once; #368 H1/H4.)
 
 export type DriveStatus = 'merged' | 'closed' | 'stuck';
 export type DriveReason =
@@ -300,7 +228,7 @@ export function driveBatchToMerge(
   const states: PrPollState[] = [];
   for (const pr of prUrls) {
     const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (!m) continue; // skip invalid URLs (consistent with sweepBatchPRs)
+    if (!m) continue; // skip invalid URLs (best-effort, module convention)
     states.push({ pr, repo: m[1], num: m[2], status: 'pending', attempts: 0 });
   }
   if (states.length === 0) return [];

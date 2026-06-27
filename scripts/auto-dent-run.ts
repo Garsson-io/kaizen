@@ -50,7 +50,6 @@ import {
 export {
   ghExec,
   checkMergeStatus,
-  sweepBatchPRs,
   driveBatchToMerge,
   labelArtifacts,
   queueAutoMerge,
@@ -61,8 +60,6 @@ export {
   syncEpicChecklists,
   verifyIssuesClosed,
   type MergeStatus,
-  type SweepAction,
-  type SweepResult,
   type DriveStatus,
   type DriveReason,
   type DriveResult,
@@ -1978,13 +1975,15 @@ async function main(): Promise<void> {
         `  [babysit] ${merged} merged, ${stuck.length} stuck of ${driveResults.length} batch PR(s)`,
       );
     }
-    if (state.experiment) {
-      for (const r of driveResults) {
-        appendFileSync(
-          logFile,
-          `merge_drive=${r.pr} ${r.status}${r.reason ? ':' + r.reason : ''} attempts=${r.attempts}\n`,
-        );
-      }
+    // Persist the per-PR drive outcome to the run log UNCONDITIONALLY (not just
+    // in experiment mode): the stuck signal must be durable so downstream
+    // observability (#842/#940) can consume it from normal headless runs, not
+    // only experiments. The run log always exists. (review: improvement-lifecycle)
+    for (const r of driveResults) {
+      appendFileSync(
+        logFile,
+        `merge_drive=${r.pr} ${r.status}${r.reason ? ':' + r.reason : ''} attempts=${r.attempts}\n`,
+      );
     }
   }
 
