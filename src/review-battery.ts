@@ -50,12 +50,31 @@ export interface DimensionReview {
   findings: ReviewFinding[];
   /** One-line summary of the review */
   summary: string;
+  /** Provider that produced or attempted this review dimension (#1147). */
+  provider?: ReviewProvider;
+}
+
+export type ReviewFailureClass =
+  | 'claude_review_failed'
+  | 'codex_review_unsupported';
+
+export interface ReviewProvider {
+  provider: 'claude' | 'codex';
+  billing: 'subscription-cli';
+}
+
+export interface ReviewDimensionFailure {
+  dimension: string;
+  provider: ReviewProvider;
+  failureClass: ReviewFailureClass;
 }
 
 /** Aggregated result from running multiple review dimensions */
 export interface BatteryResult {
   /** Results per dimension */
   dimensions: DimensionReview[];
+  /** Provider selected for this battery (#1147). */
+  reviewProvider?: ReviewProvider;
   /** Overall: pass only if ALL dimensions pass */
   verdict: 'pass' | 'fail';
   /** Total findings with status MISSING */
@@ -68,6 +87,8 @@ export interface BatteryResult {
   costUsd: number;
   /** Dimensions that returned null (timeout or claude error) */
   failedDimensions: string[];
+  /** Provider-aware failure classification per failed dimension (#1147). */
+  failedDimensionFailures?: ReviewDimensionFailure[];
   /** Dimensions auto-skipped due to missing required data (e.g. no plan text) */
   skippedDimensions: string[];
 }
@@ -89,6 +110,14 @@ export const BUDGET_CAP_USD = 2.0;
  * This matches the verdict logic in reviewBattery().
  */
 export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
+
+export function selectReviewProvider(provider?: ReviewProvider): ReviewProvider {
+  return provider ?? { provider: 'claude', billing: 'subscription-cli' };
+}
+
+function providerLabel(provider: ReviewProvider): string {
+  return `${provider.provider} (${provider.billing})`;
+}
 
 // ── Review Dimensions ───────────────────────────────────────────────
 //
@@ -427,6 +456,8 @@ export interface SpawnReviewOptions {
   cwd?: string;
   /** Timeout in ms (default: 120000) */
   timeoutMs?: number;
+  /** Review provider. Defaults to Claude subscription CLI (#1147). */
+  reviewProvider?: ReviewProvider;
 }
 
 // ── Claude Subprocess Helper ─────────────────────────────────────────
@@ -497,7 +528,25 @@ async function runClaude(
  * Spawn a single review agent via `claude -p`.
  * Returns the parsed DimensionReview, or null if the review failed.
  */
-export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: DimensionReview | null; costUsd: number; durationMs: number }> {
+export async function spawnReview(opts: SpawnReviewOptions): Promise<{
+  review: DimensionReview | null;
+  costUsd: number;
+  durationMs: number;
+  provider: ReviewProvider;
+  failureClass?: ReviewFailureClass;
+}> {
+  const provider = selectReviewProvider(opts.reviewProvider);
+  if (provider.provider === 'codex') {
+    console.error(`  [review:${provider.provider}] ${opts.dimension}: unsupported review provider`);
+    return {
+      review: null,
+      costUsd: 0,
+      durationMs: 0,
+      provider,
+      failureClass: 'codex_review_unsupported',
+    };
+  }
+
   const vars: Record<string, string> = {
     pr_url: opts.prUrl ?? '',
     issue_num: opts.issueNum ?? '',
@@ -513,7 +562,7 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: D
     prompt = loadReviewPrompt(opts.dimension, vars);
   } catch (e: any) {
     console.error(`  [review] failed to load prompt for ${opts.dimension}: ${e.message}`);
-    return { review: null, costUsd: 0, durationMs: 0 };
+    return { review: null, costUsd: 0, durationMs: 0, provider, failureClass: 'claude_review_failed' };
   }
 
   const { text, costUsd, durationMs, exitCode } = await runClaude(prompt, {
@@ -523,11 +572,18 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{ review: D
 
   if (exitCode !== 0) {
     console.error(`  [review] claude -p failed for ${opts.dimension}: exit ${exitCode}`);
-    return { review: null, costUsd: 0, durationMs };
+    return { review: null, costUsd: 0, durationMs, provider, failureClass: 'claude_review_failed' };
   }
 
   const review = parseReviewOutput(text, opts.dimension);
-  return { review, costUsd, durationMs };
+  if (review) review.provider = provider;
+  return {
+    review,
+    costUsd,
+    durationMs,
+    provider,
+    failureClass: review ? undefined : 'claude_review_failed',
+  };
 }
 
 // ── Batch Review ─────────────────────────────────────────────────────
@@ -577,7 +633,25 @@ export function groupByDataNeeds(
  */
 export async function spawnBatchReview(
   opts: SpawnBatchReviewOptions,
-): Promise<Array<{ review: DimensionReview | null; costUsd: number; durationMs: number }>> {
+): Promise<Array<{
+  review: DimensionReview | null;
+  costUsd: number;
+  durationMs: number;
+  provider: ReviewProvider;
+  failureClass?: ReviewFailureClass;
+}>> {
+  const provider = selectReviewProvider(opts.reviewProvider);
+  if (provider.provider === 'codex') {
+    console.error(`  [review:${provider.provider}] batch: unsupported review provider`);
+    return opts.dimensions.map(() => ({
+      review: null,
+      costUsd: 0,
+      durationMs: 0,
+      provider,
+      failureClass: 'codex_review_unsupported',
+    }));
+  }
+
   const vars: Record<string, string> = {
     pr_url: opts.prUrl ?? '',
     issue_num: opts.issueNum ?? '',
@@ -600,7 +674,7 @@ export async function spawnBatchReview(
   }
 
   if (prompts.length === 0) {
-    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs: 0 }));
+    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs: 0, provider, failureClass: 'claude_review_failed' }));
   }
 
   const batchPrompt =
@@ -615,17 +689,23 @@ export async function spawnBatchReview(
 
   if (exitCode !== 0) {
     console.error(`  [review] batch claude -p failed: exit ${exitCode}`);
-    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs }));
+    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs, provider, failureClass: 'claude_review_failed' }));
   }
 
   const reviews = parseAllReviewOutputs(text, loadedDims);
   const costPerDim = costUsd / Math.max(loadedDims.length, 1);
 
-  return opts.dimensions.map(dim => ({
-    review: reviews.find(r => r.dimension === dim) ?? null,
-    costUsd: costPerDim,
-    durationMs,
-  }));
+  return opts.dimensions.map(dim => {
+    const review = reviews.find(r => r.dimension === dim) ?? null;
+    if (review) review.provider = provider;
+    return {
+      review,
+      costUsd: costPerDim,
+      durationMs,
+      provider,
+      failureClass: review ? undefined : 'claude_review_failed' as const,
+    };
+  });
 }
 
 // ── Battery Orchestration ───────────────────────────────────────────
@@ -651,6 +731,8 @@ export interface BatteryOptions {
   cwd?: string;
   /** Timeout per review in ms */
   timeoutMs?: number;
+  /** Review provider. Defaults to Claude subscription CLI (#1147). */
+  reviewProvider?: ReviewProvider;
 }
 
 /**
@@ -661,6 +743,7 @@ export interface BatteryOptions {
  */
 export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult> {
   const start = Date.now();
+  const reviewProvider = selectReviewProvider(opts.reviewProvider);
 
   // Auto-load planText from GitHub issue when not provided (kaizen #902).
   // Use a local variable to avoid mutating the caller's opts object.
@@ -688,6 +771,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
       skippedResults.push({
         dimension: dim,
         verdict: 'fail',
+        provider: reviewProvider,
         findings: [{
           requirement: `${DATA_GAP_PREFIX} Plan text available for review`,
           status: 'MISSING',
@@ -709,7 +793,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   const sharedOpts = {
     prUrl: opts.prUrl, issueNum: opts.issueNum, repo: opts.repo,
     issueBody: opts.issueBody, prBody: opts.prBody, prDiffStat: opts.prDiffStat,
-    planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs,
+    planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs, reviewProvider,
   };
 
   const batchResultGroups = await Promise.all(
@@ -721,7 +805,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   );
 
   // Map results back to effective dimension order
-  const resultMap = new Map<string, { review: DimensionReview | null; costUsd: number; durationMs: number }>();
+  const resultMap = new Map<string, { review: DimensionReview | null; costUsd: number; durationMs: number; provider: ReviewProvider; failureClass?: ReviewFailureClass }>();
   for (let i = 0; i < batches.length; i++) {
     for (let j = 0; j < batches[i].length; j++) {
       resultMap.set(batches[i][j], batchResultGroups[i][j]);
@@ -731,10 +815,14 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
 
   // Log per-dim timing and collect failures
   const failedDimensions: string[] = [];
+  const failedDimensionFailures: ReviewDimensionFailure[] = [];
   for (const [i, dim] of effective.entries()) {
     const r = results[i];
     if (r.review === null) {
       failedDimensions.push(dim);
+      if (r.failureClass) {
+        failedDimensionFailures.push({ dimension: dim, provider: r.provider, failureClass: r.failureClass });
+      }
       console.error(`  [review] ${dim}: FAILED in ${Math.round(r.durationMs / 1000)}s`);
     } else {
       console.log(`  [review] ${dim}: ${r.review.verdict.toUpperCase()} in ${Math.round(r.durationMs / 1000)}s ($${r.costUsd.toFixed(3)})`);
@@ -758,12 +846,14 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
 
   return {
     dimensions,
+    reviewProvider,
     verdict: missingCount === 0 && dimensions.length === (effective.length + skippedDimensions.length) ? 'pass' : 'fail',
     missingCount,
     partialCount,
     durationMs,
     costUsd,
     failedDimensions,
+    failedDimensionFailures,
     skippedDimensions,
   };
 }
@@ -786,11 +876,13 @@ export function formatBatteryReport(result: BatteryResult): string {
     `| Partial | ${result.partialCount} |`,
     `| Duration | ${(result.durationMs / 1000).toFixed(1)}s |`,
     `| Cost | $${result.costUsd.toFixed(2)} |`,
+    ...(result.reviewProvider ? [`| Review provider | ${providerLabel(result.reviewProvider)} |`] : []),
     '',
   ];
 
   for (const dim of result.dimensions) {
     lines.push(`#### ${dim.dimension}: ${dim.verdict}`);
+    if (dim.provider) lines.push(`_Provider: ${providerLabel(dim.provider)}_`);
     if (dim.summary) lines.push(`> ${dim.summary}`);
     lines.push('');
 
