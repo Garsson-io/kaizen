@@ -208,28 +208,44 @@ export function formatPhaseMarker(marker: PhaseMarker): string {
 
 // Artifact extraction from agent output
 
+function pushUnique<T>(items: T[], item: T): void {
+  if (!items.includes(item)) items.push(item);
+}
+
+function extractIssueRefs(value: string): string[] {
+  const refs: string[] = [];
+  for (const m of value.matchAll(/#\d+/g)) {
+    pushUnique(refs, m[0]);
+  }
+  for (const m of value.matchAll(/https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+/g)) {
+    pushUnique(refs, m[0]);
+  }
+  return refs;
+}
+
 export function extractArtifacts(text: string, result: RunResult): void {
-  for (const m of text.matchAll(
-    /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/g,
-  )) {
-    if (!result.prs.includes(m[0])) result.prs.push(m[0]);
-  }
-  for (const m of text.matchAll(
-    /https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+/g,
-  )) {
-    if (!result.issuesFiled.includes(m[0])) result.issuesFiled.push(m[0]);
-  }
-  for (const m of text.matchAll(
-    /(?:closes?|closed|fix(?:es|ed)?|resolves?)\s+(#\d+)/gi,
-  )) {
-    if (!result.issuesClosed.includes(m[1])) result.issuesClosed.push(m[1]);
-  }
-  for (const m of text.matchAll(/kaizen\s+#(\d+)/gi)) {
-    const ref = `#${m[1]}`;
-    if (!result.issuesClosed.includes(ref)) result.issuesClosed.push(ref);
+  for (const marker of parsePhaseMarkers(text)) {
+    if (marker.phase === 'PR' && marker.fields.url) {
+      pushUnique(result.prs, marker.fields.url);
+    }
+    if (marker.phase === 'IMPLEMENT' && marker.fields.case) {
+      pushUnique(result.cases, marker.fields.case);
+    }
+    for (const key of ['issues_filed', 'issues_created']) {
+      if (!marker.fields[key]) continue;
+      for (const ref of extractIssueRefs(marker.fields[key])) {
+        pushUnique(result.issuesFiled, ref);
+      }
+    }
+    for (const key of ['issues_closed', 'closed']) {
+      if (!marker.fields[key]) continue;
+      for (const ref of extractIssueRefs(marker.fields[key])) {
+        pushUnique(result.issuesClosed, ref);
+      }
+    }
   }
   for (const m of text.matchAll(/case[:\s]+(\d{6}-\d{4}-[\w-]+)/g)) {
-    if (!result.cases.includes(m[1])) result.cases.push(m[1]);
+    pushUnique(result.cases, m[1]);
   }
   // Extract issues pruned (closed as not-planned/wontfix/duplicate)
   for (const _m of text.matchAll(
