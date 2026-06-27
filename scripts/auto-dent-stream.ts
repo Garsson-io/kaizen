@@ -11,6 +11,12 @@
 import type { RunResult } from './auto-dent-run.js';
 import { parseFinalRunClaim } from './auto-dent-final-claim.js';
 import { ghExec } from './auto-dent-github.js';
+import {
+  buildKaizenCycleSteps,
+  formatIssueForDisplay,
+  upsertProgressStep,
+  type RunProgressStep,
+} from './auto-dent-progress.js';
 
 // ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
 
@@ -275,38 +281,21 @@ export function extractArtifacts(text: string, result: RunResult): void {
 
 function pushPr(result: RunResult, prUrl: string): void {
   pushUnique(result.prs, prUrl);
-  if (!result.progressSteps) result.progressSteps = [];
-  const existing = result.progressSteps.find((s) => s.phase === 'PR');
-  const step = {
+  upsertProgressStep(result, {
     phase: 'PR',
     state: 'created',
     detail: prUrl,
     url: prUrl,
-  };
-  if (existing) {
-    existing.state = step.state;
-    existing.detail = step.detail;
-    existing.url = step.url;
-  } else {
-    result.progressSteps.push(step);
-  }
+  });
 }
 
 function updateProgressFromMarker(marker: PhaseMarker, result: RunResult): void {
   const step = progressStepFromMarker(marker);
   if (!step) return;
-  if (!result.progressSteps) result.progressSteps = [];
-  const existing = result.progressSteps.find((s) => s.phase === step.phase);
-  if (existing) {
-    existing.state = step.state || existing.state;
-    existing.detail = step.detail || existing.detail;
-    existing.url = step.url || existing.url;
-  } else {
-    result.progressSteps.push(step);
-  }
+  upsertProgressStep(result, step);
 }
 
-function progressStepFromMarker(marker: PhaseMarker): NonNullable<RunResult['progressSteps']>[number] | null {
+function progressStepFromMarker(marker: PhaseMarker): RunProgressStep | null {
   const f = marker.fields;
   switch (marker.phase) {
     case 'PICK':
@@ -457,7 +446,7 @@ export function buildInFlightComment(
     `| **Tool calls** | ${result.toolCalls} |`,
     `| **Cost so far** | $${result.cost.toFixed(2)} |`,
     `| **Status** | ${status} |`,
-    `| **Issue worked** | ${formatIssueForComment(result.pickedIssue, result.pickedIssueTitle, repo)} |`,
+    `| **Issue worked** | ${formatIssueForDisplay(result.pickedIssue, repo, result.pickedIssueTitle)} |`,
     `| **PR generated** | ${result.prs.length > 0 ? result.prs.join(', ') : 'none yet'} |`,
     `| **Review state** | ${synthetic ? 'not applicable' : result.reviewVerdict ?? (result.prs.length > 0 ? 'pending' : 'not started')} |`,
   ];
@@ -483,73 +472,6 @@ export function buildInFlightComment(
   }
 
   return lines.join('\n');
-}
-
-function formatIssueForComment(issue: string | undefined, title: string | undefined, repo: string): string {
-  if (!issue) return 'unknown';
-  const url = issue.startsWith('http') ? issue : issue.replace(/^#?(\d+)$/, repo ? `https://github.com/${repo}/issues/$1` : issue);
-  return title ? `${url} — ${title}` : url;
-}
-
-const PROGRESS_PHASE_ORDER = ['PICK', 'PLAN', 'EVALUATE', 'CASE', 'IMPLEMENT', 'TEST', 'PR', 'REVIEW', 'FIX', 'MERGE', 'REFLECT', 'CLEANUP', 'STOP'];
-
-function orderedProgressSteps(steps: NonNullable<RunResult['progressSteps']>): NonNullable<RunResult['progressSteps']> {
-  return [...steps].sort((a, b) => {
-    const ai = PROGRESS_PHASE_ORDER.indexOf(a.phase);
-    const bi = PROGRESS_PHASE_ORDER.indexOf(b.phase);
-    const ao = ai === -1 ? PROGRESS_PHASE_ORDER.length : ai;
-    const bo = bi === -1 ? PROGRESS_PHASE_ORDER.length : bi;
-    return ao - bo;
-  });
-}
-
-function buildKaizenCycleSteps(result: RunResult, repo: string): NonNullable<RunResult['progressSteps']> {
-  const existing = new Map<string, NonNullable<RunResult['progressSteps']>[number]>();
-  for (const step of result.progressSteps || []) existing.set(step.phase, step);
-  const synthetic = result.pickedIssue === 'not applicable';
-  const issueDetail = formatIssueForComment(result.pickedIssue, result.pickedIssueTitle, repo);
-  const prDetail = result.prs.join(', ');
-  const defaults: NonNullable<RunResult['progressSteps']> = [
-    {
-      phase: 'PICK',
-      state: synthetic ? 'not applicable' : result.pickedIssue ? 'selected' : 'not observed',
-      detail: synthetic ? (result.pickedIssueTitle || 'synthetic task') : (result.pickedIssue ? issueDetail : ''),
-      url: synthetic || !result.pickedIssue ? undefined : formatIssueForComment(result.pickedIssue, undefined, repo),
-    },
-    { phase: 'PLAN', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
-    { phase: 'EVALUATE', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
-    {
-      phase: 'CASE',
-      state: synthetic ? 'not applicable' : result.cases.length > 0 ? 'created' : 'not observed',
-      detail: synthetic ? 'synthetic test task' : result.cases.join(', '),
-    },
-    { phase: 'IMPLEMENT', state: synthetic && result.prs.length > 0 ? 'done' : 'not observed', detail: synthetic && result.prs.length > 0 ? 'synthetic file committed' : '' },
-    { phase: 'TEST', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'pipeline probe, not product tests' : '' },
-    { phase: 'PR', state: result.prs.length > 0 ? 'created' : 'not observed', detail: prDetail, url: result.prs[0] },
-    {
-      phase: 'REVIEW',
-      state: synthetic ? 'not applicable' : result.reviewVerdict || (result.prs.length > 0 ? 'pending' : 'not observed'),
-      detail: synthetic ? 'synthetic test task' : result.reviewVerdict || result.prs.length > 0 ? [result.reviewVerdict, result.prs[0]].filter(Boolean).join(' ') : '',
-      url: result.reviewUrls?.[0] || result.prs[0],
-    },
-    {
-      phase: 'FIX',
-      state: synthetic ? 'not applicable' : result.reviewVerdict === 'pass' || result.reviewVerdict === 'skipped' ? 'not needed' : 'not observed',
-      detail: synthetic ? 'synthetic test task' : '',
-    },
-    { phase: 'MERGE', state: result.prs.length > 0 ? 'not observed' : 'not applicable', detail: prDetail, url: result.prs[0] },
-    { phase: 'REFLECT', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
-    { phase: 'CLEANUP', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
-    { phase: 'STOP', state: result.stopRequested ? 'requested' : 'not requested', detail: result.stopReason || '' },
-  ];
-  for (const step of defaults) {
-    const observed = existing.get(step.phase);
-    if (!observed) continue;
-    step.state = observed.state || step.state;
-    step.detail = observed.detail || step.detail;
-    step.url = observed.url || step.url;
-  }
-  return orderedProgressSteps(defaults);
 }
 
 /**
