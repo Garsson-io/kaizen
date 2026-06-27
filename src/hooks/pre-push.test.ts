@@ -473,8 +473,8 @@ describe('defaultQueryPrState — error handling', () => {
 
   it('security: does NOT execute shell metacharacters in branch name', () => {
     // Branch name containing $() would execute if interpolated into a shell.
-    // With execFileSync + args array, the metacharacters are passed verbatim
-    // to gh as a literal arg — gh returns an empty PR list or error.
+    // The shared gh helper uses an argv array, so metacharacters are passed
+    // verbatim to gh as a literal arg — gh returns an empty PR list or error.
     const maliciousBranch = 'feat/$(touch /tmp/.kaizen-pre-push-injection-test)';
     const result = defaultQueryPrState('owner/repo', maliciousBranch);
     // Assertion: function returns cleanly (no exception, empty result — gh either
