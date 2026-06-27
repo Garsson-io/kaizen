@@ -102,6 +102,21 @@ describe('buildBatchOutcome — pure derivation', () => {
     expect(outcome.prs).toEqual(['https://github.com/Garsson-io/kaizen/pull/1108']);
   });
 
+  it('sources issues_closed from the reconciled count when present (#1173)', () => {
+    // The scraped per-run sum (total_issues_closed) undercounts; the durable
+    // record must carry the authoritative reconciled count, not the scrape.
+    const score = makeScore({ total_issues_closed: 2, reconciled_issues_closed: 6 });
+    const outcome = buildBatchOutcome(makeState(), score, 1_600);
+    expect(outcome.totals.issues_closed).toBe(6);
+  });
+
+  it('falls back to the per-run sum when no reconciled count (backward compat)', () => {
+    const score = makeScore({ total_issues_closed: 2 });
+    expect(score.reconciled_issues_closed).toBeUndefined();
+    const outcome = buildBatchOutcome(makeState(), score, 1_600);
+    expect(outcome.totals.issues_closed).toBe(2);
+  });
+
   it('defaults stop_reason to "completed" when blank', () => {
     expect(buildBatchOutcome(makeState({ stop_reason: '' }), makeScore(), 1_600).stop_reason).toBe('completed');
   });

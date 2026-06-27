@@ -6,6 +6,7 @@ import {
   prettifyPath,
   stripCdPrefix,
   formatToolUse,
+  collapseWhitespace,
   type StreamContext,
 } from './auto-dent-stream.js';
 import * as github from './auto-dent-github.js';
@@ -198,5 +199,37 @@ describe('formatToolUse (#1157 semantic budget)', () => {
 
   it('Bash falls back to description when no command, with prefix handling', () => {
     expect(formatToolUse('Bash', { description: 'run tests' })).toBe('$ run tests');
+  });
+
+  // #1170 — one tool event must render as exactly one stream line. A heredoc /
+  // multiline script body previously spilled onto following lines with no
+  // timestamp/tool prefix, so it looked like separate auto-dent events.
+  it('Bash: collapses a multiline heredoc command to a single line', () => {
+    const cmd = `cat > /tmp/analyze.sh << 'EOF'\n#!/bin/bash\n\n# get files\nall=$(find src -name '*.ts')\nEOF`;
+    const out = formatToolUse('Bash', { command: cmd });
+    expect(out).not.toContain('\n');
+    expect(out.startsWith('$ ')).toBe(true);
+  });
+
+  it('formatToolUse output never contains a newline for any free-text field', () => {
+    const multiline = 'line one\nline two\n\tindented';
+    for (const [name, input] of [
+      ['Bash', { command: multiline }],
+      ['Grep', { pattern: multiline }],
+      ['Agent', { description: multiline }],
+      ['TaskCreate', { subject: multiline }],
+    ] as const) {
+      expect(formatToolUse(name, input)).not.toContain('\n');
+    }
+  });
+});
+
+describe('collapseWhitespace (#1170)', () => {
+  it('collapses newlines, tabs, and runs of spaces to a single space and trims', () => {
+    expect(collapseWhitespace('  a\n\nb\t c   d  ')).toBe('a b c d');
+  });
+
+  it('leaves a single-line string unchanged', () => {
+    expect(collapseWhitespace('sed -n 1,40p scripts/x.ts')).toBe('sed -n 1,40p scripts/x.ts');
   });
 });

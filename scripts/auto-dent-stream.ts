@@ -52,7 +52,23 @@ function formatElapsed(startMs: number): string {
 }
 
 function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max - 1) + '\u2026' : s;
+  // Collapse first so the one-event-one-line stream contract holds for ANY
+  // free-text field (#1170), not just Bash commands, and so the length budget
+  // is spent on visible content rather than on whitespace we'd drop anyway.
+  const oneLine = collapseWhitespace(s);
+  return oneLine.length > max ? oneLine.slice(0, max - 1) + '\u2026' : oneLine;
+}
+
+/**
+ * Collapse internal whitespace \u2014 newlines, tabs, runs of spaces \u2014 to a single
+ * space and trim (#1170). The live terminal stream's contract is one tool event
+ * per readable line; a multiline command (heredoc, script body) otherwise spills
+ * its body onto following lines with no timestamp/tool prefix, so the body looks
+ * like separate auto-dent events. Display-only: the machine-readable logs keep
+ * the original command verbatim.
+ */
+export function collapseWhitespace(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
 }
 
 // Semantic line budget (#1157)
@@ -108,7 +124,7 @@ export function formatToolUse(
     case 'Write':
       return `Write ${truncate(prettifyPath(input?.file_path || '?'), 60)}`;
     case 'Bash':
-      return `$ ${truncate(prettifyPath(stripCdPrefix(input?.command || input?.description || '?')), 90)}`;
+      return `$ ${truncate(prettifyPath(stripCdPrefix(collapseWhitespace(input?.command || input?.description || '?'))), 90)}`;
     case 'Grep':
       return `Grep "${truncate(input?.pattern || '?', 30)}" ${prettifyPath(input?.path || '')}`;
     case 'Glob':

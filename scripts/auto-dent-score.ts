@@ -172,8 +172,15 @@ export interface BatchScore {
   total_cost_usd: number;
   /** Total PRs created */
   total_prs: number;
-  /** Total issues closed */
+  /** Total issues closed (per-run sum of stream-scraped closures — best-effort) */
   total_issues_closed: number;
+  /**
+   * Authoritative count of issues actually closed by the batch's merged PRs,
+   * deduped across the whole batch (reconciled from PR bodies at finalize, #1173).
+   * Preferred over `total_issues_closed` for display/observability when present;
+   * absent until finalize so per-run scoring stays backward-compatible.
+   */
+  reconciled_issues_closed?: number;
   /** Total duration in seconds */
   total_duration_seconds: number;
   /** Total net lines deleted across all runs */
@@ -486,6 +493,30 @@ export function formatRunScoreLine(score: RunScore): string {
   return parts.join(' | ');
 }
 
+/**
+ * The count to report for "issues closed": the authoritative reconciled count
+ * when finalize has computed it (#1173), else the per-run scraped sum.
+ */
+export function effectiveIssuesClosed(score: BatchScore): number {
+  return score.reconciled_issues_closed ?? score.total_issues_closed;
+}
+
+/**
+ * The "Issues closed:" display line for the batch summary. When reconciliation
+ * ran (#1173), its result is authoritative even when empty — an empty
+ * authoritative set means "no issues were actually closed", which must NOT fall
+ * back to the scraped refs (that would reintroduce the scrape-vs-truth divergence
+ * this fix removes). Only fall back to the scraped set when reconcile did not run
+ * (`reconciledRefs === null`, e.g. no PRs or a gh failure).
+ */
+export function formatIssuesClosedLine(
+  reconciledRefs: string[] | null,
+  scrapedRefs: string[],
+): string {
+  const refs = reconciledRefs ?? scrapedRefs;
+  return refs.length > 0 ? refs.join(' ') : 'none';
+}
+
 /** Format a BatchScore as a multi-line summary table. */
 export function formatBatchScoreTable(score: BatchScore): string {
   // Compute mode distribution from per-run scores
@@ -504,7 +535,7 @@ export function formatBatchScoreTable(score: BatchScore): string {
     `| **Success rate** | ${(score.success_rate * 100).toFixed(0)}% |`,
     `| **Total cost** | $${score.total_cost_usd.toFixed(2)} |`,
     `| **Total PRs** | ${score.total_prs} |`,
-    `| **Issues closed** | ${score.total_issues_closed} |`,
+    `| **Issues closed** | ${effectiveIssuesClosed(score)} |`,
     `| **Lines deleted** | ${score.total_lines_deleted} |`,
     `| **Issues pruned** | ${score.total_issues_pruned} |`,
     `| **Avg cost/success** | ${isNaN(score.avg_cost_per_success) ? 'N/A' : '$' + score.avg_cost_per_success.toFixed(2)} |`,

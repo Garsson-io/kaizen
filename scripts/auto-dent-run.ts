@@ -25,7 +25,7 @@ import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, renameSync, copyFileSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
-import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
+import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { firstHookReason } from './hook-signals.js';
 import { claimNextItem, markItem, resetAssignedItems, readPlan, themeProgress } from './auto-dent-plan.js';
 import { writeAttachment, addSection } from '../src/section-editor.js';
@@ -61,6 +61,7 @@ export {
   fetchIssueLabels,
   syncEpicChecklists,
   verifyIssuesClosed,
+  reconcileBatchClosedIssues,
   type MergeStatus,
   type DriveStatus,
   type DriveReason,
@@ -133,6 +134,7 @@ import {
   queueAutoMerge,
   fetchIssueLabels,
   verifyIssuesClosed,
+  reconcileBatchClosedIssues,
   syncEpicChecklists,
 } from './auto-dent-github.js';
 import {
@@ -1284,6 +1286,24 @@ export function closeBatchProgressIssue(
 
   const batchScore = scoreBatch(state.run_history || []);
 
+  // Authoritative "issues closed" count (#1173): the per-run sum in batchScore is
+  // scraped from agent narration and undercounts (it never saw GitHub's verified
+  // auto-closures). Reconcile once here from the merged PR bodies — the deduped
+  // union of verified ∪ force-closed — so the summary, score table, and
+  // batch-outcome attachment all report the true count instead of the scrape.
+  // Best-effort: a gh failure must never block batch close.
+  // null until reconcile runs; an empty array means "reconcile ran, nothing
+  // closed" (authoritative) — distinct from null ("reconcile did not run").
+  let reconciledClosed: string[] | null = null;
+  if (state.prs.length > 0) {
+    try {
+      reconciledClosed = reconcileBatchClosedIssues(state.prs, kaizenRepo);
+      batchScore.reconciled_issues_closed = reconciledClosed.length;
+    } catch (err) {
+      console.log(`  [intelligence] issues-closed reconcile skipped: ${(err as Error).message}`);
+    }
+  }
+
   // Post-hoc: check final merge status for all PRs
   if (state.prs.length > 0) {
     const postHoc = runPostHocScoring(state.prs, batchScore.total_cost_usd);
@@ -1300,7 +1320,7 @@ export function closeBatchProgressIssue(
     '',
     `**PRs:** ${state.prs.length > 0 ? state.prs.join(', ') : 'none'}`,
     `**Issues filed:** ${state.issues_filed.length > 0 ? state.issues_filed.join(', ') : 'none'}`,
-    `**Issues closed:** ${state.issues_closed.length > 0 ? state.issues_closed.join(' ') : 'none'}`,
+    `**Issues closed:** ${formatIssuesClosedLine(reconciledClosed, state.issues_closed)}`,
   ].join('\n');
 
   ghExec(
