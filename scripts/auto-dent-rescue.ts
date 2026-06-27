@@ -16,8 +16,13 @@
  * output clearly as NOT-VALIDATED. A rescue failure is recorded but never
  * hides the original run failure.
  *
- * DRY (#1164): reuses `readDirtyFiles`/`GitExec` from src/hooks/lib/git-state.ts
- * and `gh` from src/lib/gh-exec.ts — no new porcelain parser or gh wrapper.
+ * DRY (#1164): reuses `readDirtyFiles`/`GitExec` from src/hooks/lib/git-state.ts,
+ * `gh` from src/lib/gh-exec.ts, and `queryBranchPrState` from src/lib/github-pr.ts
+ * — no new porcelain parser, gh wrapper, or second branch-PR query mechanism.
+ *
+ * Gate correctness (#1284): the branch-PR query also surfaces the I7 "merged
+ * branch" state, so the rescue path refuses to open a redundant PR on a branch
+ * whose PR already merged (the #1282/#1280 supersede race).
  */
 
 import { existsSync } from 'node:fs';
@@ -29,7 +34,7 @@ import {
   type DirtyState,
 } from '../src/hooks/lib/git-state.js';
 import { gh as defaultGh } from '../src/lib/gh-exec.js';
-import { findOpenPrUrlForBranch } from '../src/lib/github-pr.js';
+import { queryBranchPrState } from '../src/lib/github-pr.js';
 
 /** Quality gates a rescue deliberately skips — surfaced in the rescue report. */
 export const SKIPPED_GATES: readonly string[] = [
@@ -82,6 +87,15 @@ export interface RescueDecisionInput {
   dirtyTotal: number;
   /** URL of an open PR already targeting this branch, or null. */
   existingOpenPr: string | null;
+  /**
+   * True when the most-recent PR for the branch is MERGED and there is no open
+   * PR — the I7 "merged branch" state. Pushing to or opening a PR on such a
+   * branch is forbidden (CLAUDE.md branch hygiene), and in the rescue path it
+   * is the #1282 supersede race: the branch's PR merged seconds before the
+   * rescue ran, so an open-only lookup saw no PR and would manufacture a
+   * redundant draft. Defaults to false.
+   */
+  mostRecentMerged?: boolean;
 }
 
 export interface RescueAction {
@@ -111,6 +125,19 @@ export function decideRescueAction(input: RescueDecisionInput): RescueAction {
           reason: `extend existing PR ${input.existingOpenPr} (${input.unpushedCommits} unpushed, ${input.dirtyTotal} dirty)`,
         }
       : { kind: 'none', commitDirty: false, reason: 'open PR already has all work; nothing to rescue' };
+  }
+  // I7 supersede guard: a branch whose most-recent PR merged with no newer open
+  // PR must never be pushed to or get a fresh PR (CLAUDE.md branch hygiene). This
+  // is the #1282 race — the branch's PR (#1280) merged 12s before the rescue ran,
+  // so an open-only lookup saw no PR and would otherwise manufacture a redundant
+  // draft for work already on main. The open-PR path above keeps precedence (an
+  // open PR means mostRecentMerged is false), so a healthy PR is unaffected.
+  if (input.mostRecentMerged) {
+    return {
+      kind: 'none',
+      commitDirty: false,
+      reason: 'branch already has a merged PR and no open PR — work shipped; not pushing to a merged branch (I7)',
+    };
   }
   const hasWork = input.commitsAheadBase > 0 || input.dirtyTotal > 0;
   return hasWork
@@ -240,9 +267,13 @@ export function rescueTarget(target: RescueTarget, ctx: RescueContext, deps: Res
 
   const commitsAheadBase = countRevList(git, target.worktree, `${base}..HEAD`);
   const unpushedCommits = countRevList(git, target.worktree, '@{u}..HEAD');
-  const existingOpenPr = findOpenPrUrlForBranch({ gh, repo: ctx.repo, branch: target.branch }) ?? null;
+  // One branch-PR query (shared helper) yields BOTH the open-PR push target and
+  // the merged-branch supersede signal — no second, open-only query mechanism.
+  const prState = queryBranchPrState({ gh, repo: ctx.repo, branch: target.branch });
+  const existingOpenPr = prState.openUrl ?? null;
+  const mostRecentMerged = prState.mostRecent?.state === 'MERGED' && !prState.hasOpen;
 
-  const action = decideRescueAction({ commitsAheadBase, unpushedCommits, dirtyTotal, existingOpenPr });
+  const action = decideRescueAction({ commitsAheadBase, unpushedCommits, dirtyTotal, existingOpenPr, mostRecentMerged });
   outcome.action = action.kind;
   if (action.kind === 'none') {
     log?.(`${target.branch}: ${action.reason}`);

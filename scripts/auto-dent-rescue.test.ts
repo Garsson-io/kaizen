@@ -77,6 +77,47 @@ describe('decideRescueAction', () => {
     expect(a.kind).toBe('push-existing');
     expect(a.commitDirty).toBe(true);
   });
+
+  // #1284 supersede guard / #1282 regression: a branch whose most-recent PR
+  // merged with no open PR must NOT get a fresh rescue PR even with work ahead
+  // of base — pushing to a merged branch violates I7.
+  it('does nothing when the most-recent PR merged with no open PR (I7 supersede)', () => {
+    const a = decideRescueAction({
+      commitsAheadBase: 3,
+      unpushedCommits: 0,
+      dirtyTotal: 2,
+      existingOpenPr: null,
+      mostRecentMerged: true,
+    });
+    expect(a.kind).toBe('none');
+    expect(a.commitDirty).toBe(false);
+    expect(a.reason).toMatch(/merged|I7/i);
+  });
+
+  // The supersede guard must not fire when an open PR exists — that path keeps
+  // precedence and still extends the open PR.
+  it('still extends an open PR even if mostRecentMerged is mistakenly set', () => {
+    const a = decideRescueAction({
+      commitsAheadBase: 5,
+      unpushedCommits: 2,
+      dirtyTotal: 0,
+      existingOpenPr: 'https://x/pr/1',
+      mostRecentMerged: true,
+    });
+    expect(a.kind).toBe('push-existing');
+  });
+
+  // A merged branch with NO work is also `none` — same outcome, distinct reason.
+  it('does nothing for a merged branch with no work', () => {
+    const a = decideRescueAction({
+      commitsAheadBase: 0,
+      unpushedCommits: 0,
+      dirtyTotal: 0,
+      existingOpenPr: null,
+      mostRecentMerged: true,
+    });
+    expect(a.kind).toBe('none');
+  });
 });
 
 describe('formatRescueReport', () => {
@@ -135,11 +176,27 @@ function makeFakeGit(cfg: FakeGitConfig, log: string[][]): GitExec {
   };
 }
 
-function makeFakeGh(prList: string | null, ghLog: string[][]): (args: string[]) => string {
+/**
+ * Fake `gh`. `pr` describes the most-recent PR on the branch as `queryBranchPrState`
+ * sees it (`{ number, state, url }`):
+ *   - a bare string  → an OPEN PR at that url (back-compat for existing callers)
+ *   - an object      → an explicit state (e.g. MERGED) for supersede-guard tests
+ *   - null           → no PR on the branch
+ */
+function makeFakeGh(
+  pr: string | { number?: number; state: 'OPEN' | 'MERGED' | 'CLOSED'; url: string } | null,
+  ghLog: string[][],
+): (args: string[]) => string {
+  const summary =
+    pr == null
+      ? null
+      : typeof pr === 'string'
+        ? { number: 1, state: 'OPEN' as const, url: pr }
+        : { number: pr.number ?? 1, state: pr.state, url: pr.url };
   return (args) => {
     ghLog.push([...args]);
     if (args[0] === 'pr' && args[1] === 'list') {
-      return prList ? JSON.stringify([{ url: prList }]) : '[]';
+      return summary ? JSON.stringify([summary]) : '[]';
     }
     if (args[0] === 'pr' && args[1] === 'create') return 'https://github.com/x/pull/999';
     if (args[0] === 'pr' && args[1] === 'comment') return '';
@@ -205,6 +262,28 @@ describe('rescueTarget orchestration', () => {
     );
     expect(out.action).toBe('none');
     expect(out.pushed).toBe(false);
+    expect(gitLog.some((a) => a.includes('push'))).toBe(false);
+    expect(ghLog.some((a) => a[1] === 'create' || a[1] === 'comment')).toBe(false);
+  });
+
+  // #1282 end-to-end: a branch whose most-recent PR already MERGED (and no open
+  // PR) must produce NO push and NO PR create — the rescue declines to add a
+  // redundant draft on a merged branch.
+  it('does nothing when the branch already has a merged PR (no open PR)', () => {
+    const gitLog: string[][] = [];
+    const ghLog: string[][] = [];
+    const out = rescueTarget(
+      { worktree, branch: 'case/x' },
+      ctx,
+      {
+        git: makeFakeGit({ aheadBase: 3 }, gitLog),
+        gh: makeFakeGh({ state: 'MERGED', url: 'https://x/pr/1280' }, ghLog),
+        readDirty: makeReadDirty(2),
+      },
+    );
+    expect(out.action).toBe('none');
+    expect(out.pushed).toBe(false);
+    expect(out.prUrl).toBeUndefined();
     expect(gitLog.some((a) => a.includes('push'))).toBe(false);
     expect(ghLog.some((a) => a[1] === 'create' || a[1] === 'comment')).toBe(false);
   });
