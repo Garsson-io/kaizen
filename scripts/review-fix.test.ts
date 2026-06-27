@@ -17,7 +17,11 @@ import {
   saveState,
   parseArgs,
   buildFixPrompt,
+  buildFixProviderCommand,
+  defaultReviewFixProviders,
+  normalizeReviewFixState,
   runFixLoop,
+  validateReviewFixProviderPlan,
   type StreamJsonResult,
   type FixRunningAction,
   type CliArgs,
@@ -209,6 +213,114 @@ describe('resolveMaxRounds', () => {
   });
 });
 
+// ── provider-aware review-fix state (#1148) ─────────────────────────
+
+describe('provider-aware review-fix loop (#1148)', () => {
+  it('defaults review and fix providers to Claude subscription CLI', () => {
+    expect(defaultReviewFixProviders()).toEqual({
+      reviewProvider: { provider: 'claude', billing: 'subscription-cli' },
+      fixProvider: { provider: 'claude', billing: 'subscription-cli' },
+    });
+  });
+
+  it('normalizes legacy state files that lack provider fields', () => {
+    const legacy: ReviewFixState = {
+      prUrl: 'https://github.com/org/repo/pull/1',
+      issueNum: '1',
+      repo: 'org/repo',
+      maxRounds: 3,
+      budgetCap: 2,
+      currentRound: 2,
+      totalCostUsd: 0.25,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      phase: 'fix_running',
+      activeFix: { pid: 123, logFile: '/tmp/fix.log', promptFile: '/tmp/fix.prompt' },
+      rounds: [
+        { round: 1, phase: 'review', verdict: 'fail', gaps: 1, reviewCost: 0.10, fixCost: 0 },
+      ],
+    };
+
+    const normalized = normalizeReviewFixState(legacy);
+
+    expect(normalized.reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(normalized.fixProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(normalized.activeFix?.provider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(normalized.rounds[0].reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+  });
+
+  it('builds the default Claude fix command without changing existing behavior', () => {
+    const command = buildFixProviderCommand({
+      provider: { provider: 'claude', billing: 'subscription-cli' },
+      repoRoot: '/repo',
+    });
+
+    expect(command.command).toBe('claude');
+    expect(command.args).toEqual([
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--dangerously-skip-permissions',
+      '--model',
+      'sonnet',
+    ]);
+  });
+
+  it('builds a Codex subscription CLI fix command through the existing Codex argv helper', () => {
+    const command = buildFixProviderCommand({
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      repoRoot: '/repo',
+    });
+
+    expect(command.command).toBe('codex');
+    expect(command.args).toEqual([
+      'exec',
+      '--json',
+      '--cd',
+      '/repo',
+      '--sandbox',
+      'danger-full-access',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--color',
+      'never',
+      '-',
+    ]);
+  });
+
+  it('rejects subscription-incompatible fix strategies with a provider/phase reason', () => {
+    const result = validateReviewFixProviderPlan(
+      {
+        reviewProvider: { provider: 'claude', billing: 'subscription-cli' },
+        fixProvider: { provider: 'codex', billing: 'subscription-cli' },
+      },
+      [
+        {
+          provider: 'codex',
+          phase: 'fix',
+          billingMode: 'api-token',
+          fit: 'avoid',
+          acceptedForUnattended: false,
+          rationale: 'api-token only',
+        },
+        {
+          provider: 'claude',
+          phase: 'review',
+          billingMode: 'subscription-cli',
+          fit: 'best',
+          acceptedForUnattended: true,
+          rationale: 'ok',
+        },
+      ],
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.violations[0].phase).toBe('fix');
+    expect(result.violations[0].provider).toBe('codex');
+    expect(result.violations[0].reason).toContain('api-token');
+    expect(result.violations[0].reason).toContain('subscription-compatible');
+  });
+});
+
 // ── checkFixResult — integration tests with real temp files ──────────
 //
 // These tests exercise the full chain: write JSONL to a temp file → call
@@ -282,6 +394,23 @@ describe('checkFixResult (integration: real temp files)', () => {
       expect(r.success).toBe(false);
     } finally { teardown(); }
   });
+
+  it('reads a completed Codex JSONL log when the fix provider is Codex', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      const lines = [
+        JSON.stringify({ type: 'event', message: { content: [{ type: 'text', text: 'Applying fix' }] } }),
+        JSON.stringify({ type: 'result', final_message: 'Fix committed and pushed' }),
+      ];
+      writeFileSync(logFile, lines.join('\n') + '\n');
+      const r = checkFixResult(logFile, DEAD_PID, { provider: 'codex', billing: 'subscription-cli' });
+      expect(r.done).toBe(true);
+      expect(r.success).toBe(true);
+      expect(r.costUsd).toBe(0);
+      expect(r.output).toContain('Fix committed and pushed');
+    } finally { teardown(); }
+  });
 });
 
 // ── stateKey ─────────────────────────────────────────────────────────
@@ -340,7 +469,7 @@ describe('loadState / saveState (integration: real temp files)', () => {
       };
       saveState(state, dir);
       const loaded = loadState(state.prUrl, dir);
-      expect(loaded).toEqual(state);
+      expect(loaded).toEqual(normalizeReviewFixState(state));
     } finally { teardown(); }
   });
 
@@ -391,6 +520,8 @@ describe('parseArgs', () => {
       '--resume',
       '--max-rounds', '5',
       '--budget', '3.5',
+      '--review-provider', 'claude',
+      '--fix-provider', 'codex',
     ]);
     expect(result.prUrl).toBe('https://github.com/org/repo/pull/1');
     expect(result.issueNum).toBe('42');
@@ -399,6 +530,8 @@ describe('parseArgs', () => {
     expect(result.resume).toBe(true);
     expect(result.maxRounds).toBe(5);
     expect(result.budgetCap).toBeCloseTo(3.5);
+    expect(result.reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(result.fixProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
   });
 
   it('exits 1 when --pr is missing', () => {
@@ -431,6 +564,20 @@ describe('parseArgs', () => {
     expect(result.resume).toBe(false);
     expect(result.maxRounds).toBeGreaterThan(0);
     expect(result.budgetCap).toBeGreaterThan(0);
+    expect(result.reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(result.fixProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+  });
+
+  it('exits 1 when --fix-provider is unknown', () => {
+    vi.spyOn(process, 'exit').mockImplementation((_code?: number | string) => { throw new Error('exit'); });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => parseArgs([
+      'node', 'review-fix.ts',
+      '--pr', 'https://github.com/org/repo/pull/1',
+      '--issue', '1',
+      '--repo', 'org/repo',
+      '--fix-provider', 'api-token',
+    ])).toThrow('exit');
   });
 });
 
@@ -611,6 +758,69 @@ describe('runFixLoop', () => {
       expect(launchFixMock).toHaveBeenCalledTimes(1);
       expect(state.phase).toBe('fix_running');
       expect(state.activeFix?.pid).toBe(12345);
+      expect(state.reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+      expect(state.fixProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+      expect(state.activeFix?.provider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+      expect(state.rounds[0].reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    } finally { teardown(); }
+  });
+
+  it('hybrid provider path: passes explicit review provider to reviewBattery and records explicit fix provider', async () => {
+    const dir = setup();
+    try {
+      const launchFixMock = vi.fn().mockReturnValue({ pid: 12345, logFile: join(dir, 'fix.log'), promptFile: join(dir, 'fix.prompt') });
+      const runReviewMock = vi.fn().mockResolvedValue({
+        ...makeFailBattery(),
+        reviewProvider: { provider: 'claude', billing: 'subscription-cli' },
+      });
+      const state = await runFixLoop({
+        ...baseOpts,
+        reviewProvider: { provider: 'claude', billing: 'subscription-cli' },
+        fixProvider: { provider: 'codex', billing: 'subscription-cli' },
+      }, {
+        prefetch: mockPrefetch,
+        runReview: runReviewMock,
+        launchFix: launchFixMock,
+        getStateDir: () => dir,
+      });
+
+      expect(runReviewMock).toHaveBeenCalledWith(expect.objectContaining({
+        reviewProvider: { provider: 'claude', billing: 'subscription-cli' },
+      }));
+      expect(state.fixProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+      expect(state.activeFix?.provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+      expect(state.rounds[0].reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    } finally { teardown(); }
+  });
+
+  it('review-failed path: records the attempted review provider even when no dimensions return', async () => {
+    const dir = setup();
+    try {
+      const emptyBattery: BatteryResult = {
+        verdict: 'fail',
+        costUsd: 0,
+        missingCount: 0,
+        partialCount: 0,
+        durationMs: 180_000,
+        failedDimensions: ['requirements'],
+        skippedDimensions: [],
+        dimensions: [],
+        reviewProvider: { provider: 'codex', billing: 'subscription-cli' },
+      };
+
+      const state = await runFixLoop({
+        ...baseOpts,
+        maxRounds: 1,
+        reviewProvider: { provider: 'codex', billing: 'subscription-cli' },
+      }, {
+        prefetch: mockPrefetch,
+        runReview: async () => emptyBattery,
+        launchFix: vi.fn(),
+        getStateDir: () => dir,
+      });
+
+      expect(state.rounds[0].verdict).toBe('review_failed');
+      expect(state.rounds[0].reviewProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
     } finally { teardown(); }
   });
 
@@ -748,6 +958,9 @@ describe('runFixLoop', () => {
       });
       expect(state.phase).toBe('fix_running');
       expect(runReviewMock).not.toHaveBeenCalled();
+      expect(state.reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+      expect(state.fixProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+      expect(state.activeFix?.provider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
     } finally { teardown(); }
   });
 
