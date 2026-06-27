@@ -28,7 +28,7 @@ import {
   type GitExec,
   type DirtyState,
 } from '../src/hooks/lib/git-state.js';
-import { gh as defaultGh } from '../src/lib/gh-exec.js';
+import { gh as defaultGh, findOpenPrUrlForBranch } from '../src/lib/gh-exec.js';
 
 /** Quality gates a rescue deliberately skips — surfaced in the rescue report. */
 export const SKIPPED_GATES: readonly string[] = [
@@ -209,16 +209,6 @@ function countRevList(git: GitExec, worktree: string, range: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function findOpenPrForBranch(gh: (args: string[]) => string, repo: string, branch: string): string | null {
-  try {
-    const out = gh(['pr', 'list', '--repo', repo, '--head', branch, '--state', 'open', '--json', 'url']);
-    const arr = JSON.parse(out || '[]') as Array<{ url?: string }>;
-    return arr[0]?.url ?? null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Rescue a single run worktree. Best-effort: every git/gh step is guarded so a
  * rescue failure is recorded in the outcome but never thrown — the original run
@@ -249,7 +239,8 @@ export function rescueTarget(target: RescueTarget, ctx: RescueContext, deps: Res
 
   const commitsAheadBase = countRevList(git, target.worktree, `${base}..HEAD`);
   const unpushedCommits = countRevList(git, target.worktree, '@{u}..HEAD');
-  const existingOpenPr = findOpenPrForBranch(gh, ctx.repo, target.branch);
+  // Shared lookup (#1271); rescue policy maps "no PR" to null.
+  const existingOpenPr = findOpenPrUrlForBranch(target.branch, { repo: ctx.repo, ghExec: gh }) ?? null;
 
   const action = decideRescueAction({ commitsAheadBase, unpushedCommits, dirtyTotal, existingOpenPr });
   outcome.action = action.kind;

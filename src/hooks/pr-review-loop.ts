@@ -46,6 +46,7 @@ import {
   prUrlToStateKey,
   writeStateFile,
 } from './state-utils.js';
+import { findOpenPrUrlForBranch } from '../lib/gh-exec.js';
 
 export const MAX_ROUNDS = 4;
 export const SMALL_PUSH_THRESHOLD = 15;
@@ -208,19 +209,13 @@ function findStateByStatuses(
 }
 
 /** Query gh for the open PR URL on the given branch. Returns undefined on failure.
- *  Set KAIZEN_PR_LOOKUP_DISABLED=1 to skip (for testing environments). */
+ *  Set KAIZEN_PR_LOOKUP_DISABLED=1 to skip (for testing environments).
+ *  Command construction + parsing are shared with the rescue path via
+ *  `findOpenPrUrlForBranch` (#1271); this wrapper keeps the env opt-out and the
+ *  ambient-repo policy. */
 function defaultLookupPrUrlForBranch(branch: string): string | undefined {
   if (process.env.KAIZEN_PR_LOOKUP_DISABLED === '1') return undefined;
-  try {
-    const out = execSync(
-      `gh pr list --head "${branch}" --state open --json url --limit 1`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-    ).trim();
-    const parsed = JSON.parse(out) as Array<{ url: string }>;
-    return parsed[0]?.url;
-  } catch {
-    return undefined;
-  }
+  return findOpenPrUrlForBranch(branch);
 }
 
 // ── Core logic (extracted for testability) ───────────────────────────
