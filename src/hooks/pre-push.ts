@@ -11,7 +11,7 @@
  *     → agent-env gate (exit 0 for humans; shell-level shortcut)
  *     → exec npx tsx src/hooks/pre-push.ts
  *       → parseStdin (git pre-push protocol)
- *       → queryPrState (gh pr list)
+ *       → queryPrState (shared branch PR-state query)
  *       → decide → { allow_silent | allow_gate | deny }
  *       → writeStateFile + emit GateSignal on allow_gate
  *       → exit non-zero with recovery message on deny
@@ -26,10 +26,11 @@
  */
 
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { execFileSync, execSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { DEFAULT_STATE_DIR, ensureStateDir, parseStateFile, prUrlToStateKey, writeStateFile } from './state-utils.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
+import { queryBranchPrState, type BranchPrQueryResult } from '../lib/github-pr.js';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -67,12 +68,8 @@ export interface PrePushDecision {
   context?: Record<string, unknown>;
 }
 
-/** Result of `gh pr list --state all` on a branch. */
-export interface PrQueryResult {
-  mostRecent: { number: number; state: 'MERGED' | 'CLOSED' | 'OPEN'; url: string } | null;
-  hasOpen: boolean;
-  openUrl?: string;
-}
+/** Branch PR-state query result used by the pre-push decision. */
+export type PrQueryResult = BranchPrQueryResult;
 
 export interface PrePushOptions {
   stateDir?: string;
@@ -249,47 +246,11 @@ export function getCurrentBranch(): string {
 }
 
 /**
- * Default PR-state query via `gh`. Returns empty result on any failure.
- *
- * Uses execFileSync with explicit arg array (not shell interpolation) so
- * branch names containing shell metacharacters (`$`, backticks, `$()`)
- * cannot trigger command injection. Git refname rules forbid space/colon/
- * tilde/caret/backslash/glob but permit `$` and backticks — so the attack
- * surface via a maliciously-named branch is real without this guard.
+ * Default PR-state query via the shared argv-based gh helper. Returns an
+ * empty result on any failure.
  */
 export function defaultQueryPrState(repo: string, branch: string): PrQueryResult {
-  if (!repo || !branch) return { mostRecent: null, hasOpen: false };
-  try {
-    const out = execFileSync(
-      'gh',
-      [
-        'pr', 'list',
-        '--repo', repo,
-        '--head', branch,
-        '--state', 'all',
-        '--json', 'number,state,url',
-        '--limit', '5',
-      ],
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-    ).trim();
-    const prs = JSON.parse(out) as Array<{ number: number; state: string; url: string }>;
-    if (prs.length === 0) return { mostRecent: null, hasOpen: false };
-
-    const open = prs.find(p => p.state === 'OPEN');
-    const mostRecent = prs[0]; // gh returns newest first
-
-    return {
-      mostRecent: {
-        number: mostRecent.number,
-        state: mostRecent.state as 'MERGED' | 'CLOSED' | 'OPEN',
-        url: mostRecent.url,
-      },
-      hasOpen: !!open,
-      openUrl: open?.url,
-    };
-  } catch {
-    return { mostRecent: null, hasOpen: false };
-  }
+  return queryBranchPrState({ repo, branch });
 }
 
 // ── Trace ─────────────────────────────────────────────────────────────
