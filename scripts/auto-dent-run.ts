@@ -328,6 +328,63 @@ export interface RunProgressStep {
   url?: string;
 }
 
+type RunMetricsBaseField =
+  | 'run'
+  | 'start_epoch'
+  | 'duration_seconds'
+  | 'exit_code'
+  | 'cost_usd'
+  | 'tool_calls'
+  | 'prs'
+  | 'issues_filed'
+  | 'issues_closed'
+  | 'cases'
+  | 'stop_requested'
+  | 'mode'
+  | 'lines_deleted'
+  | 'issues_pruned'
+  | 'final_claim_status'
+  | 'final_claim'
+  | 'final_claim_path'
+  | 'final_claim_warnings';
+
+export type RunMetricsMetadata = Partial<Omit<RunMetrics, RunMetricsBaseField>>;
+
+export interface BuildRunMetricsInput {
+  runNum: number;
+  runStartEpoch: number;
+  duration: number;
+  exitCode: number;
+  runMode: string;
+  result: RunResult;
+  metadata?: RunMetricsMetadata;
+}
+
+export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
+  const { runNum, runStartEpoch, duration, exitCode, runMode, result, metadata = {} } = input;
+  return {
+    run: runNum,
+    start_epoch: runStartEpoch,
+    duration_seconds: duration,
+    exit_code: exitCode,
+    cost_usd: result.cost,
+    tool_calls: result.toolCalls,
+    prs: result.prs,
+    issues_filed: result.issuesFiled,
+    issues_closed: result.issuesClosed,
+    cases: result.cases,
+    stop_requested: result.stopRequested,
+    mode: runMode,
+    lines_deleted: result.linesDeleted,
+    issues_pruned: result.issuesPruned,
+    final_claim_status: result.finalClaimStatus,
+    final_claim: result.finalClaim,
+    final_claim_path: result.finalClaimPath,
+    final_claim_warnings: result.finalClaimWarnings,
+    ...metadata,
+  };
+}
+
 import { extractPlanText } from '../src/structured-data.js';
 export { extractPlanText };
 
@@ -2548,22 +2605,14 @@ async function main(): Promise<void> {
   // Uses mode-aware success: explore/reflect runs that file issues count as success,
   // not just runs that produce PRs.
   {
-    const runMetricsForOutcome: RunMetrics = {
-      run: runNum,
-      start_epoch: runStartEpoch,
-      duration_seconds: duration,
-      exit_code: exitCode,
-      cost_usd: result.cost,
-      tool_calls: result.toolCalls,
-      prs: result.prs,
-      issues_filed: result.issuesFiled,
-      issues_closed: result.issuesClosed,
-      cases: result.cases,
-      stop_requested: result.stopRequested,
-      mode: runMode,
-      lines_deleted: result.linesDeleted,
-      issues_pruned: result.issuesPruned,
-    };
+    const runMetricsForOutcome = buildRunMetrics({
+      runNum,
+      runStartEpoch,
+      duration,
+      exitCode,
+      runMode,
+      result,
+    });
     // Bind the run-success stamp to the verdicts this run already recorded
     // (#1224, meta #1227): a review FAIL / process-incomplete / critical
     // lifecycle gap must never roll up to `success` — red runs cannot read as
@@ -2748,36 +2797,26 @@ async function main(): Promise<void> {
   freshState.run = runNum;
 
   // Append per-run metrics for batch observability
-  const runMetrics: RunMetrics = {
-    run: runNum,
-    start_epoch: runStartEpoch,
-    duration_seconds: duration,
-    exit_code: exitCode,
-    cost_usd: result.cost,
-    tool_calls: result.toolCalls,
-    prs: result.prs,
-    issues_filed: result.issuesFiled,
-    issues_closed: result.issuesClosed,
-    cases: result.cases,
-    stop_requested: result.stopRequested,
-    mode: runMode,
-    lines_deleted: result.linesDeleted,
-    issues_pruned: result.issuesPruned,
-    prompt_template: promptMeta.template,
-    prompt_hash: promptMeta.hash,
-    lifecycle_violations: lifecycleViolationCount,
-    lifecycle_health: lifecycleHealth,
-    process_verdict: processVerdict,
-    process_issue_count: processIssueCount,
-    process_summary: processSummary,
-    review_verdict: reviewVerdict,
-    review_cost_usd: reviewCostUsd,
-    phase_providers: phaseProvidersForState(state),
-    final_claim_status: result.finalClaimStatus,
-    final_claim: result.finalClaim,
-    final_claim_path: result.finalClaimPath,
-    final_claim_warnings: result.finalClaimWarnings,
-  };
+  const runMetrics = buildRunMetrics({
+    runNum,
+    runStartEpoch,
+    duration,
+    exitCode,
+    runMode,
+    result,
+    metadata: {
+      prompt_template: promptMeta.template,
+      prompt_hash: promptMeta.hash,
+      lifecycle_violations: lifecycleViolationCount,
+      lifecycle_health: lifecycleHealth,
+      process_verdict: processVerdict,
+      process_issue_count: processIssueCount,
+      process_summary: processSummary,
+      review_verdict: reviewVerdict,
+      review_cost_usd: reviewCostUsd,
+      phase_providers: phaseProvidersForState(state),
+    },
+  });
   // Classify failure: wall-clock timeout is authoritative (#686), then heuristics.
   // Feed the run log so the log-based branch (hook_rejection, infrastructure,
   // etc.) actually runs — without this argument it was dead code (#1102).
