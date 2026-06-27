@@ -5,8 +5,13 @@ import { tmpdir } from 'os';
 import {
   validateRunLifecycle,
   summarizeLifecycle,
+  verifyLifecycleEvidence,
+  foldEvidenceIntoHealth,
+  summarizeEvidence,
   LIFECYCLE_ORDER,
   REQUIRED_PREDECESSORS,
+  type LifecycleValidation,
+  type LifecycleEvidence,
 } from './auto-dent-lifecycle.js';
 
 /**
@@ -224,5 +229,139 @@ describe('summarizeLifecycle', () => {
     // mentions both the phantom test and the PR-without-IMPLEMENT gap
     expect(s).toMatch(/phantom|TEST/i);
     expect(s).toMatch(/IMPLEMENT/);
+  });
+});
+
+/**
+ * Evidence verification (#1138, epic #1134) is the "auto-dent is the judge" layer:
+ * it cross-checks the agent's claimed phases against the outcomes the harness
+ * extracted independently (PRs, cases, filed/closed issues, the review verdict).
+ * A claimed phase with no corroborating external evidence is process-incomplete.
+ * The verifier reads only phasesPresent + evidence, so it is provider-independent
+ * by construction. Helper builds a minimal validation with a given phase set.
+ */
+describe('verifyLifecycleEvidence — claims vs external outcomes', () => {
+  const validationWith = (phasesPresent: string[]): LifecycleValidation => ({
+    valid: true,
+    phasesPresent,
+    phasesMissing: [],
+    violations: [],
+    criticalGaps: [],
+    phantomPhases: [],
+    health: 'clean',
+  });
+
+  const evidence = (over: Partial<LifecycleEvidence> = {}): LifecycleEvidence => ({
+    prsCreated: 0,
+    casesCreated: 0,
+    issuesFiledOrClosed: 0,
+    reviewVerdict: null,
+    ...over,
+  });
+
+  it('flags PR claimed but zero PRs created', () => {
+    const r = verifyLifecycleEvidence(validationWith(['IMPLEMENT', 'PR']), evidence());
+    expect(r.processComplete).toBe(false);
+    expect(r.processGaps.some((g) => g.phase === 'PR')).toBe(true);
+  });
+
+  it('flags MERGE claimed but zero PRs created', () => {
+    const r = verifyLifecycleEvidence(validationWith(['IMPLEMENT', 'PR', 'MERGE']), evidence());
+    expect(r.processGaps.some((g) => g.phase === 'MERGE')).toBe(true);
+  });
+
+  it('flags IMPLEMENT claimed but no case and no PR', () => {
+    const r = verifyLifecycleEvidence(validationWith(['IMPLEMENT']), evidence());
+    expect(r.processGaps.some((g) => g.phase === 'IMPLEMENT')).toBe(true);
+  });
+
+  it('does NOT flag IMPLEMENT when a case exists (work happened, PR may be next run)', () => {
+    const r = verifyLifecycleEvidence(validationWith(['IMPLEMENT']), evidence({ casesCreated: 1 }));
+    expect(r.processGaps.some((g) => g.phase === 'IMPLEMENT')).toBe(false);
+  });
+
+  it('flags REFLECT claimed but nothing filed or closed', () => {
+    const r = verifyLifecycleEvidence(validationWith(['REFLECT']), evidence());
+    expect(r.processGaps.some((g) => g.phase === 'REFLECT')).toBe(true);
+  });
+
+  it('does NOT flag REFLECT when an issue was closed (durable output)', () => {
+    const r = verifyLifecycleEvidence(validationWith(['REFLECT']), evidence({ issuesFiledOrClosed: 1 }));
+    expect(r.processGaps.some((g) => g.phase === 'REFLECT')).toBe(false);
+  });
+
+  it('flags a created PR with a missing review verdict', () => {
+    const r = verifyLifecycleEvidence(
+      validationWith(['IMPLEMENT', 'PR']),
+      evidence({ prsCreated: 1, reviewVerdict: null }),
+    );
+    expect(r.processGaps.some((g) => g.phase === 'PR' && /review/.test(g.reason))).toBe(true);
+  });
+
+  it('flags a created PR with a skipped review', () => {
+    const r = verifyLifecycleEvidence(
+      validationWith(['IMPLEMENT', 'PR']),
+      evidence({ prsCreated: 1, reviewVerdict: 'skipped' }),
+    );
+    expect(r.processGaps.some((g) => /review/.test(g.reason))).toBe(true);
+  });
+
+  it('a fully corroborated run is process-complete (PR built, reviewed)', () => {
+    const r = verifyLifecycleEvidence(
+      validationWith(['PICK', 'IMPLEMENT', 'TEST', 'PR']),
+      evidence({ prsCreated: 1, casesCreated: 1, reviewVerdict: 'pass' }),
+    );
+    expect(r.processComplete).toBe(true);
+    expect(r.processGaps).toEqual([]);
+  });
+
+  it('a review verdict of fail still counts as review evidence (not a gap)', () => {
+    const r = verifyLifecycleEvidence(
+      validationWith(['IMPLEMENT', 'PR']),
+      evidence({ prsCreated: 1, reviewVerdict: 'fail' }),
+    );
+    expect(r.processGaps.some((g) => /review/.test(g.reason))).toBe(false);
+  });
+
+  it('an explore/reflect-only run with no PR claim and a filed issue is process-complete', () => {
+    const r = verifyLifecycleEvidence(
+      validationWith(['PICK', 'REFLECT']),
+      evidence({ issuesFiledOrClosed: 2 }),
+    );
+    expect(r.processComplete).toBe(true);
+  });
+});
+
+describe('foldEvidenceIntoHealth', () => {
+  it('raises clean to degraded when process-incomplete', () => {
+    expect(foldEvidenceIntoHealth('clean', { processGaps: [{ phase: 'PR', reason: 'x' }], processComplete: false })).toBe('degraded');
+  });
+
+  it('keeps critical as critical when process-incomplete', () => {
+    expect(foldEvidenceIntoHealth('critical', { processGaps: [{ phase: 'PR', reason: 'x' }], processComplete: false })).toBe('critical');
+  });
+
+  it('leaves health untouched when process-complete', () => {
+    expect(foldEvidenceIntoHealth('clean', { processGaps: [], processComplete: true })).toBe('clean');
+    expect(foldEvidenceIntoHealth('degraded', { processGaps: [], processComplete: true })).toBe('degraded');
+  });
+});
+
+describe('summarizeEvidence', () => {
+  it('reports process complete when there are no gaps', () => {
+    expect(summarizeEvidence({ processGaps: [], processComplete: true })).toMatch(/complete/i);
+  });
+
+  it('names each gap reason when process-incomplete', () => {
+    const s = summarizeEvidence({
+      processGaps: [
+        { phase: 'PR', reason: 'claimed PR but the harness extracted 0 PRs from the run' },
+        { phase: 'REFLECT', reason: 'claimed REFLECT but no issues were filed or closed' },
+      ],
+      processComplete: false,
+    });
+    expect(s).toMatch(/incomplete/i);
+    expect(s).toContain('0 PRs');
+    expect(s).toContain('no issues were filed');
   });
 });

@@ -107,11 +107,17 @@ export {
 export {
   validateRunLifecycle,
   summarizeLifecycle,
+  verifyLifecycleEvidence,
+  foldEvidenceIntoHealth,
+  summarizeEvidence,
   LIFECYCLE_ORDER,
   FLOATING_PHASES,
   REQUIRED_PREDECESSORS,
   type LifecycleValidation,
   type LifecycleHealth,
+  type LifecycleEvidence,
+  type EvidenceVerification,
+  type ProcessGap,
 } from './auto-dent-lifecycle.js';
 
 // Import for internal use
@@ -137,7 +143,11 @@ import {
 import {
   validateRunLifecycle,
   summarizeLifecycle,
+  verifyLifecycleEvidence,
+  foldEvidenceIntoHealth,
+  summarizeEvidence,
   type LifecycleHealth,
+  type LifecycleEvidence,
 } from './auto-dent-lifecycle.js';
 
 // Types
@@ -1912,15 +1922,47 @@ async function main(): Promise<void> {
   let lifecycleSteeringNote: string | null = null;
   try {
     const lifecycle = validateRunLifecycle(logFile);
+
+    // External evidence cross-check (#1138, epic #1134): the markers above are
+    // the agent's self-report; here we judge them against the outcomes the
+    // harness extracted independently (PRs, cases, filed/closed issues, the
+    // review verdict). A run that *claims* PR/MERGE/REFLECT without durable
+    // evidence is process-incomplete. Provider-independent — the same evidence
+    // is assembled for a Codex run.
+    const evidence: LifecycleEvidence = {
+      prsCreated: result.prs.length,
+      casesCreated: result.cases.length,
+      issuesFiledOrClosed: result.issuesFiled.length + result.issuesClosed.length,
+      reviewVerdict: result.reviewVerdict,
+    };
+    const evidenceCheck = verifyLifecycleEvidence(lifecycle, evidence);
+
     lifecycleViolationCount = lifecycle.violations.length;
-    lifecycleHealth = lifecycle.health;
+    lifecycleHealth = foldEvidenceIntoHealth(lifecycle.health, evidenceCheck);
     lifecycleCriticalCount = lifecycle.criticalGaps.length + lifecycle.phantomPhases.length;
     const summary = summarizeLifecycle(lifecycle);
+
+    // Surface process-completeness for observability/telemetry regardless of health.
+    appendFileSync(
+      logFile,
+      `\nlifecycle_process_complete=${evidenceCheck.processComplete}\n`,
+    );
+    if (!evidenceCheck.processComplete) {
+      const evidenceSummary = summarizeEvidence(evidenceCheck);
+      console.log(`  ${color.yellow('[lifecycle]')} ${evidenceSummary}`);
+      appendFileSync(logFile, `lifecycle_evidence: ${evidenceSummary}\n`);
+      // Steer the next run: the agent's narrative wasn't backed by outcomes.
+      lifecycleSteeringNote =
+        `Prior run was PROCESS-INCOMPLETE (${evidenceSummary}). ` +
+        `Don't emit a lifecycle phase you didn't actually complete — auto-dent verifies claims against real PRs, cases, filed issues, and the review verdict, not against your markers.`;
+    }
+
     if (lifecycle.health === 'critical') {
       // Claimed-to-ship-without-building, or claimed-green-but-ran-nothing.
       console.log(`  ${color.red('[lifecycle]')} ${summary}`);
       appendFileSync(logFile, `\nlifecycle_health=critical: ${summary}\n`);
       // Steer the next run: warn the agent that this run's narrative didn't hold.
+      // A critical marker problem takes precedence over an evidence note.
       lifecycleSteeringNote =
         `Prior run had a CRITICAL lifecycle problem (${summary}). ` +
         `Do not emit PR/MERGE without a real IMPLEMENT, and never emit TEST result=pass with count=0 — run the tests.`;
