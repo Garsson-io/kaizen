@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { handlers, parseArgs, resolveContent, resolveRound, type CliArgs } from './cli-structured-data.js';
 import {
@@ -7,6 +7,9 @@ import {
   storeMetadata,
   storeReviewFinding,
   storeReviewSummary,
+  storeReviewBatch,
+  waitForCiProof,
+  deriveStoredRoundVerdict,
 } from './structured-data.js';
 
 vi.mock('node:fs', () => ({
@@ -44,6 +47,8 @@ vi.mock('./structured-data.js', () => ({
   updatePrSection: vi.fn(),
   storeIterationState: vi.fn().mockReturnValue('https://example.com/iteration'),
   retrieveIterationState: vi.fn().mockReturnValue({ round: 1 }),
+  deriveStoredRoundVerdict: vi.fn().mockReturnValue('PASS'),
+  waitForCiProof: vi.fn().mockResolvedValue({ status: 'pass', reason: 'ci green (mock)' }),
 }));
 
 beforeEach(() => vi.clearAllMocks());
@@ -251,39 +256,132 @@ describe('store-review-batch — review sentinel', () => {
   });
 });
 
-describe('store-review-summary — CI head proof', () => {
-  it('passes --head-sha through to summary storage before writing the sentinel (#1070)', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+// ── store-review CI proof at the action boundary (#1070 redone, #1221/#1222) ─
+// The proof now runs in the CLI handler — NOT inside the side-effect-free storage
+// layer. These tests prove the gate BLOCKS at the irreversible "record PASS" action
+// (the #1227 verdict-binding shape) and distinguishes retriable pending from a FAIL.
 
-    await handlers['store-review-summary']({
-      command: 'store-review-summary',
-      pr: '903',
-      repo: 'Garsson-io/kaizen',
-      round: '5',
-      ['head-sha']: 'abc123',
-    } as CliArgs);
+describe('store-review-summary — CI proof gate (#1070/#1221/#1222)', () => {
+  const baseArgs = {
+    command: 'store-review-summary',
+    pr: '903',
+    repo: 'Garsson-io/kaizen',
+    round: '5',
+    ['head-sha']: 'abc123',
+    ['wait-ci-secs']: '0',
+  } as CliArgs;
 
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    vi.mocked(deriveStoredRoundVerdict).mockReturnValue('PASS');
+  });
+  afterEach(() => {
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it('threads the reviewed --head-sha into the CI proof and stores when CI is green', async () => {
+    vi.mocked(waitForCiProof).mockResolvedValue({ status: 'pass', reason: 'green' });
+
+    await handlers['store-review-summary'](baseArgs);
+
+    // Proof was consulted with the reviewed head before storage.
+    expect(vi.mocked(waitForCiProof)).toHaveBeenCalledWith(
+      { kind: 'pr', number: 903, repo: 'Garsson-io/kaizen' },
+      { expectedHeadSha: 'abc123' },
+      expect.objectContaining({ timeoutMs: 0 }),
+    );
+    // Storage is side-effect-free: called WITHOUT a CI-options arg (#1222).
     expect(vi.mocked(storeReviewSummary)).toHaveBeenCalledWith(
       { kind: 'pr', number: 903, repo: 'Garsson-io/kaizen' },
       5,
       undefined,
-      { expectedHeadSha: 'abc123' },
     );
     const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r5'),
     );
     expect(sentinelCall).toBeDefined();
-    const payload = JSON.parse(String(sentinelCall![1]));
-    expect(payload).toMatchObject({
-      schemaVersion: 1,
-      prUrl: 'https://github.com/Garsson-io/kaizen/pull/903',
-      round: 5,
-      dimensionsReviewed: ['correctness', 'security'],
-      dimensionCount: 2,
-    });
-    expect(payload.findingCount).toBeGreaterThanOrEqual(0);
-    expect(payload.integrity).toMatch(/^sha256:/);
-    log.mockRestore();
+    expect(JSON.parse(String(sentinelCall![1]))).toMatchObject({ schemaVersion: 1, round: 5 });
+  });
+
+  it('refuses to store a PASS summary and exits 1 when CI is failing', async () => {
+    vi.mocked(waitForCiProof).mockResolvedValue({ status: 'fail', reason: 'TypeScript tests: fail' });
+
+    await expect(handlers['store-review-summary'](baseArgs)).rejects.toThrow('process.exit(1)');
+    expect(vi.mocked(storeReviewSummary)).not.toHaveBeenCalled();
+    expect(vi.mocked(writeFileSync)).not.toHaveBeenCalled();
+  });
+
+  it('refuses to store a PASS summary and exits 1 when the reviewed head is stale', async () => {
+    vi.mocked(waitForCiProof).mockResolvedValue({ status: 'stale', reason: 'reviewed abc123, now def456' });
+
+    await expect(handlers['store-review-summary'](baseArgs)).rejects.toThrow('process.exit(1)');
+    expect(vi.mocked(storeReviewSummary)).not.toHaveBeenCalled();
+  });
+
+  it('exits 2 (ci_pending, retriable — NOT a review FAIL) when CI is still pending', async () => {
+    vi.mocked(waitForCiProof).mockResolvedValue({ status: 'pending', reason: '1 check still running' });
+
+    await expect(handlers['store-review-summary'](baseArgs)).rejects.toThrow('process.exit(2)');
+    expect(vi.mocked(storeReviewSummary)).not.toHaveBeenCalled();
+    // The message must mark this as retriable, not a failure, so the loop doesn't burn a fix round.
+    const errOut = errSpy.mock.calls.map(c => String(c[0])).join('\n');
+    expect(errOut).toMatch(/ci_pending/);
+    expect(errOut).toMatch(/NOT a review FAIL/i);
+  });
+
+  it('does NOT gate a FAIL round — stores it without consulting CI', async () => {
+    vi.mocked(deriveStoredRoundVerdict).mockReturnValue('FAIL');
+
+    await handlers['store-review-summary'](baseArgs);
+
+    expect(vi.mocked(waitForCiProof)).not.toHaveBeenCalled();
+    expect(vi.mocked(storeReviewSummary)).toHaveBeenCalled();
+  });
+});
+
+describe('store-review-batch — CI proof gate (#1070/#1221/#1222)', () => {
+  const passBatch = JSON.stringify([{ dimension: 'correctness', verdict: 'pass', summary: 'ok', findings: [] }]);
+
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+  });
+  afterEach(() => { logSpy.mockRestore(); errSpy.mockRestore(); exitSpy.mockRestore(); });
+
+  it('gates BEFORE any storage — failing CI stores neither findings nor summary', async () => {
+    vi.mocked(waitForCiProof).mockResolvedValue({ status: 'fail', reason: 'red' });
+
+    await expect(handlers['store-review-batch']({
+      command: 'store-review-batch', pr: '903', repo: 'org/repo', round: '1', text: passBatch,
+    } as CliArgs)).rejects.toThrow('process.exit(1)');
+
+    expect(vi.mocked(storeReviewBatch)).not.toHaveBeenCalled();
+    expect(vi.mocked(writeFileSync)).not.toHaveBeenCalled();
+  });
+
+  it('stores the batch when CI proof passes', async () => {
+    vi.mocked(waitForCiProof).mockResolvedValue({ status: 'pass', reason: 'green' });
+
+    await handlers['store-review-batch']({
+      command: 'store-review-batch', pr: '903', repo: 'org/repo', round: '1', text: passBatch,
+    } as CliArgs);
+
+    expect(vi.mocked(storeReviewBatch)).toHaveBeenCalled();
   });
 });
 

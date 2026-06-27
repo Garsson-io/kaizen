@@ -63,13 +63,16 @@ describe('kaizen-review-pr SKILL.md — review findings storage contract (#966)'
     expect(skill).toMatch(/store-review-summary/);
   });
 
-  it('requires current-head CI proof when storing a pass summary (#1070)', () => {
+  it('requires current-head CI proof when storing a pass summary (#1070/#1221/#1222)', () => {
     // INVARIANT: the skill must not regress to instruction-only CI checking.
-    // The storage command carries the reviewed head so the CLI can reject
-    // pending, failing, absent, or stale-head CI before writing the sentinel.
+    // The storage command carries the reviewed head so the CLI can verify CI at the
+    // action boundary: refuse on failing/stale CI, WAIT on pending CI, and surface a
+    // retriable ci_pending signal (not a review FAIL) if CI never finishes (#1221/#1222).
     const skill = readFileSync(REVIEW_PR_SKILL, 'utf8');
     expect(skill).toMatch(/--head-sha "\$\(git rev-parse HEAD\)"/);
-    expect(skill).toMatch(/Pending, failing, absent, or stale-head CI refuses storage/);
+    expect(skill).toMatch(/Failing or stale-head CI/);
+    expect(skill).toMatch(/ci_pending/);
+    expect(skill).toMatch(/retriable, \*\*NOT a review FAIL\*\*|retriable, NOT a review FAIL/);
   });
 });
 

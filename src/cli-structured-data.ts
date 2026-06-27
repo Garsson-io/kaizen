@@ -58,14 +58,17 @@ import {
   updatePrSection,
   storeIterationState,
   retrieveIterationState,
+  deriveStoredRoundVerdict,
+  waitForCiProof,
   type ReviewFindingData,
   type StoreReviewSummaryOptions,
 } from './structured-data.js';
+import type { AttachmentTarget } from './section-editor.js';
 import {
   buildReviewSentinelRecord,
   serializeReviewSentinel,
 } from './review-sentinel.js';
-import { normalizeReviewFindingData, validateReviewFindingPayload, summarizeFindingStatuses } from './review-finding-contract.js';
+import { normalizeReviewFindingData, validateReviewFindingPayload, summarizeFindingStatuses, summarizeRound, type RoundVerdict, type RoundRow } from './review-finding-contract.js';
 
 export type CliArgs = Record<string, string> & { command: string };
 type Handler = (a: CliArgs) => Promise<void>;
@@ -183,6 +186,61 @@ function reviewSummaryOptions(a: CliArgs): StoreReviewSummaryOptions {
   };
 }
 
+/** Max seconds the CI proof waits for in-flight CI before treating it as ci_pending. */
+function waitCiSecs(a: CliArgs): number {
+  const raw = a['wait-ci-secs'];
+  if (raw == null) return 300; // default: wait for CI rather than false-fail (#1221)
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 300;
+}
+
+/**
+ * Enforce the CI proof at the storage *action* boundary (#1070 redone for #1221/#1222).
+ * Storage is side-effect-free; this CLI is where "record this round as PASS" actually happens,
+ * so it is the right place to bind the action to CI reality (the #1227 verdict-binding shape).
+ *
+ *   - verdict FAIL → no PASS claim is being made; the proof is irrelevant, never gated.
+ *   - pass / skipped (non-PR) → proceed.
+ *   - pending (after wait-for-CI) → exit 2 with a `ci_pending` marker. This is RETRIABLE and
+ *     must NOT be read as a review FAIL (else it burns a fix round / false-exhausts the loop, #1221).
+ *   - fail / stale → exit 1: refuse to record a PASS over red or stale-head CI.
+ */
+async function enforceCiProof(target: AttachmentTarget, verdict: RoundVerdict, a: CliArgs): Promise<void> {
+  if (verdict === 'FAIL') return;
+  const seconds = waitCiSecs(a);
+  const proof = await waitForCiProof(target, reviewSummaryOptions(a), {
+    timeoutMs: seconds * 1000,
+    intervalMs: 15_000,
+    onPending: (r, elapsed) =>
+      console.error(`store-review: CI ${r.status} (${Math.round(elapsed / 1000)}s/${seconds}s) — ${r.reason}`),
+  });
+  if (proof.status === 'pass' || proof.status === 'skipped') return;
+  if (proof.status === 'pending') {
+    console.error(
+      `store-review: ci_pending — refusing to record a PASS summary while CI is unfinished. ` +
+      `This is NOT a review FAIL: re-run store-review-* once CI completes (or pass --wait-ci-secs to wait longer). ` +
+      `${proof.reason}`,
+    );
+    process.exit(2);
+  }
+  console.error(`store-review: refusing to record a PASS summary — CI ${proof.status}: ${proof.reason}`);
+  process.exit(1);
+}
+
+/**
+ * Derive the round verdict from a validated batch payload WITHOUT storing anything,
+ * so the CI proof can gate the round before the summary is written. Normalizes each
+ * finding the same way storeReviewBatch does, so the gated verdict matches what storage derives.
+ */
+function deriveBatchVerdict(findings: ReviewFindingData[]): RoundVerdict {
+  const rows: RoundRow[] = findings.map(raw => {
+    const f = normalizeReviewFindingData(raw);
+    const s = summarizeFindingStatuses(f.findings);
+    return { dim: f.dimension, verdict: f.verdict, done: s.done, partial: s.partial, missing: s.missing };
+  });
+  return summarizeRound(rows).verdict;
+}
+
 // Review handlers
 
 async function handleNextRound(a: CliArgs): Promise<void> {
@@ -254,7 +312,10 @@ async function handleStoreReviewBatch(a: CliArgs): Promise<void> {
     }
   }
   const findings = parsedBatch as ReviewFindingData[];
-  const result = storeReviewBatch(pr, r, findings, reviewSummaryOptions(a));
+  // CI proof BEFORE any storage (#1070 redone, #1221/#1222): refuse to record a PASS round over
+  // red/stale CI, wait on pending CI. A FAIL round makes no PASS claim and is never gated.
+  await enforceCiProof(pr, deriveBatchVerdict(findings), a);
+  const result = storeReviewBatch(pr, r, findings);
   // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
   // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
   writeReviewSentinel(a.repo, a.pr, r);
@@ -275,9 +336,13 @@ async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
   // legacy --text/--file) is non-authoritative commentary appended below the derived block.
   const note = (a.note ?? resolveContent(a)) || undefined;
   const r = resolveRound(a);
+  const target = prTarget(a.pr, a.repo);
+  // CI proof at the action boundary (#1070 redone, #1221/#1222). Verdict is derived from the
+  // already-stored findings — never from caller text (#1019).
+  await enforceCiProof(target, deriveStoredRoundVerdict(target, r), a);
   let url: string;
   try {
-    url = storeReviewSummary(prTarget(a.pr, a.repo), r, note, reviewSummaryOptions(a));
+    url = storeReviewSummary(target, r, note);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

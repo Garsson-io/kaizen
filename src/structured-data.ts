@@ -64,10 +64,9 @@ export function storeReviewBatch(
   target: AttachmentTarget,
   round: number,
   findings: ReviewFindingData[],
-  options: StoreReviewSummaryOptions = {},
 ): { urls: string[]; summaryUrl: string } {
   const urls = findings.map(f => storeReviewFinding(target, round, f));
-  const summaryUrl = storeReviewSummary(target, round, undefined, options);
+  const summaryUrl = storeReviewSummary(target, round, undefined);
   return { urls, summaryUrl };
 }
 
@@ -123,54 +122,46 @@ type GhCheck = {
   link?: string;
 };
 
-function spawnText(command: string, args: string[], failureContext: string): string {
+// ── CI proof for passing review summaries (#1070, redone for #1221/#1222) ────
+//
+// PR #1212 (#1070) baked this proof *inside* storeReviewSummary as a throwing
+// side-effect: every pass store shelled out to gh/git, threw on non-PR targets,
+// and false-FAILed the review-fix loop when CI was merely pending. The redo keeps
+// the storage layer side-effect-free and exposes a structured, injectable verifier
+// that the CLI/action boundary consumes (see verifyReviewCiProof / waitForCiProof):
+//   - never throws — the caller branches on the returned status;
+//   - 'pending' is distinct from 'fail', so in-flight CI is *waited on*, not failed (#1221);
+//   - non-PR targets are 'skipped', not thrown (#1222);
+//   - the command runner is injectable, so the proof is unit-testable without shelling out (#1222).
+
+/** Terminal/interim states of the CI proof for a passing review summary. */
+export type CiProofStatus = 'pass' | 'fail' | 'stale' | 'pending' | 'skipped';
+
+export interface CiProofResult {
+  status: CiProofStatus;
+  /** Human-readable explanation — surfaced by the CLI on refusal. */
+  reason: string;
+  /** Reviewed/current HEAD SHAs when resolved (stale diagnostics). */
+  reviewedHead?: string;
+  currentHead?: string;
+  /** Formatted non-green checks (fail/pending diagnostics). */
+  blocking?: string[];
+}
+
+export interface CiRunResult { status: number; stdout: string; stderr: string; }
+
+/** Injectable command runner — lets the proof run without real gh/git in tests. */
+export type CiProofRunner = (command: string, args: string[]) => CiRunResult;
+
+export const defaultCiProofRunner: CiProofRunner = (command, args) => {
   const result = spawnSync(command, args, { encoding: 'utf8' });
-  if (result.error) {
-    throw new Error(`${failureContext}: ${result.error.message}`);
-  }
-  const stdout = (result.stdout ?? '').trim();
-  if ((result.status ?? 0) !== 0 && !stdout) {
-    const stderr = (result.stderr ?? '').trim();
-    throw new Error(`${failureContext}: ${stderr || `${command} exited ${result.status}`}`);
-  }
-  return stdout;
-}
-
-function resolveReviewedHeadSha(expectedHeadSha: string | undefined): string {
-  const explicit = expectedHeadSha?.trim();
-  if (explicit) return explicit;
-  return spawnText(
-    'git',
-    ['rev-parse', 'HEAD'],
-    'store-review-summary: #1070 unable to determine reviewed HEAD; pass --head-sha explicitly',
-  );
-}
-
-function readPrHeadSha(target: AttachmentTarget): string {
-  return spawnText(
-    'gh',
-    ['pr', 'view', String(target.number), '--repo', target.repo, '--json', 'headRefOid', '--jq', '.headRefOid'],
-    'store-review-summary: #1070 unable to read current PR head',
-  );
-}
-
-function readPrChecks(target: AttachmentTarget): GhCheck[] {
-  const stdout = spawnText(
-    'gh',
-    ['pr', 'checks', String(target.number), '--repo', target.repo, '--json', 'name,bucket,state,workflow,link'],
-    'store-review-summary: #1070 unable to read PR checks',
-  );
-  try {
-    const parsed = JSON.parse(stdout);
-    if (!Array.isArray(parsed)) {
-      throw new Error('JSON was not an array');
-    }
-    return parsed as GhCheck[];
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`store-review-summary: #1070 unable to parse PR checks JSON (${msg})`);
-  }
-}
+  if (result.error) return { status: 1, stdout: '', stderr: result.error.message };
+  return {
+    status: result.status ?? 0,
+    stdout: (result.stdout ?? '').trim(),
+    stderr: (result.stderr ?? '').trim(),
+  };
+};
 
 function formatCheck(check: GhCheck): string {
   const workflow = check.workflow ? `${check.workflow} / ` : '';
@@ -180,54 +171,126 @@ function formatCheck(check: GhCheck): string {
   return `${workflow}${name}: ${bucket}${state}`;
 }
 
-function assertReviewSummaryCiPassed(target: AttachmentTarget, options: StoreReviewSummaryOptions): void {
+/**
+ * Verify that a PR's CI proves a passing review summary is safe to store — WITHOUT
+ * throwing and WITHOUT touching the storage layer. Callers (the CLI/action boundary)
+ * branch on the returned status. Pure given an injected runner.
+ *
+ * Status meaning:
+ *   - 'skipped' — non-PR target; CI proof not applicable (#1222).
+ *   - 'stale'   — the reviewed HEAD no longer matches the PR's current HEAD.
+ *   - 'fail'    — at least one check failed/cancelled. Terminal — refuse.
+ *   - 'pending' — CI not finished (or a transient gh hiccup). Retriable — *wait*, don't fail (#1221).
+ *   - 'pass'    — all checks pass/skipping for the reviewed HEAD.
+ */
+export function verifyReviewCiProof(
+  target: AttachmentTarget,
+  options: StoreReviewSummaryOptions = {},
+  runner: CiProofRunner = defaultCiProofRunner,
+): CiProofResult {
   if (target.kind !== 'pr') {
-    throw new Error('store-review-summary: #1070 CI proof requires a PR target');
+    return { status: 'skipped', reason: 'CI proof not applicable for a non-PR target' };
   }
 
-  const reviewedHead = resolveReviewedHeadSha(options.expectedHeadSha);
-  const currentHead = readPrHeadSha(target);
+  let reviewedHead = options.expectedHeadSha?.trim();
+  if (!reviewedHead) {
+    const rev = runner('git', ['rev-parse', 'HEAD']);
+    reviewedHead = rev.stdout.trim();
+    if (rev.status !== 0 || !reviewedHead) {
+      return {
+        status: 'fail',
+        reason: 'unable to determine the reviewed HEAD; pass --head-sha "$(git rev-parse HEAD)" explicitly',
+      };
+    }
+  }
+
+  const view = runner('gh', ['pr', 'view', String(target.number), '--repo', target.repo, '--json', 'headRefOid', '--jq', '.headRefOid']);
+  const currentHead = view.stdout.trim();
+  if (view.status !== 0 || !currentHead) {
+    // Transient gh/network hiccup — retriable, not a real review failure (#1221).
+    return { status: 'pending', reason: `unable to read PR #${target.number} head (${view.stderr || 'no output'}); will retry`, reviewedHead };
+  }
   if (currentHead !== reviewedHead) {
-    throw new Error(
-      `store-review-summary: #1070 refusing to store a passing review summary for stale HEAD. ` +
-      `Reviewed ${reviewedHead}, but PR #${target.number} is currently ${currentHead}. ` +
-      `Re-review the current head before storing a pass summary.`,
-    );
+    return {
+      status: 'stale',
+      reason: `reviewed ${reviewedHead}, but PR #${target.number} is currently ${currentHead}; re-review the current head before storing a pass summary`,
+      reviewedHead,
+      currentHead,
+    };
   }
 
-  const checks = readPrChecks(target);
-  if (checks.length === 0) {
-    throw new Error(
-      `store-review-summary: #1070 refusing to store a passing review summary because CI has not produced checks for ${currentHead}.`,
-    );
+  const checksRun = runner('gh', ['pr', 'checks', String(target.number), '--repo', target.repo, '--json', 'name,bucket,state,workflow,link']);
+  let checks: GhCheck[] = [];
+  if (checksRun.stdout) {
+    try {
+      const parsed = JSON.parse(checksRun.stdout);
+      if (Array.isArray(parsed)) checks = parsed as GhCheck[];
+    } catch {
+      // Unparseable output — treat as not-ready (retriable), never a hard FAIL.
+      return { status: 'pending', reason: `CI checks for ${currentHead} are not readable yet; will retry`, reviewedHead, currentHead };
+    }
   }
 
-  const blocking = checks.filter(check => {
-    const bucket = check.bucket;
-    return bucket !== 'pass' && bucket !== 'skipping';
-  });
-  if (blocking.length > 0) {
-    const details = blocking.map(formatCheck).join('; ');
-    throw new Error(
-      `store-review-summary: #1070 refusing to store a passing review summary because CI is not green for ${currentHead}: ${details}`,
-    );
+  // A real failure dominates and is terminal; pending never masks a failed check.
+  const failing = checks.filter(c => c.bucket !== 'pass' && c.bucket !== 'skipping' && c.bucket !== 'pending');
+  if (failing.length > 0) {
+    return {
+      status: 'fail',
+      reason: `CI is not green for ${currentHead}: ${failing.map(formatCheck).join('; ')}`,
+      reviewedHead, currentHead, blocking: failing.map(formatCheck),
+    };
   }
+
+  // No failures: either nothing reported yet, or some checks still running → wait (#1221).
+  const pending = checks.filter(c => c.bucket === 'pending');
+  if (checks.length === 0 || pending.length > 0) {
+    const detail = checks.length === 0 ? 'CI has not produced checks yet' : `${pending.length} check(s) still running`;
+    return {
+      status: 'pending',
+      reason: `${detail} for ${currentHead}`,
+      reviewedHead, currentHead, blocking: pending.map(formatCheck),
+    };
+  }
+
+  return { status: 'pass', reason: `CI green for ${currentHead}`, reviewedHead, currentHead };
 }
 
-function extractSummaryRoundVerdict(summary: string): RoundVerdict | null {
-  const match = summary.match(/^<!-- meta:(\{.*\}) -->/);
-  if (!match) return null;
-  try {
-    const meta = JSON.parse(match[1]) as { round_verdict?: RoundVerdict; verdict?: string };
-    if (meta.round_verdict === 'PASS' || meta.round_verdict === 'PASS_WITH_PARTIALS' || meta.round_verdict === 'FAIL') {
-      return meta.round_verdict;
-    }
-    if (meta.verdict === 'fail') return 'FAIL';
-    if (meta.verdict === 'pass') return 'PASS';
-    return null;
-  } catch {
-    return null;
+export interface WaitForCiProofOptions {
+  runner?: CiProofRunner;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  /** Max time to wait for in-flight CI before returning the last 'pending'. Default 0 = no wait. */
+  timeoutMs?: number;
+  /** Poll interval while CI is pending. Default 15s. */
+  intervalMs?: number;
+  /** Optional progress reporter (the CLI prints to stderr). */
+  onPending?: (result: CiProofResult, elapsedMs: number) => void;
+}
+
+/**
+ * Poll {@link verifyReviewCiProof} while the status is 'pending' until it becomes
+ * terminal or the timeout elapses. This is the wait-for-CI step (#1221): in-flight
+ * CI is a *wait*, not a *fail*. Returns the final (possibly still-'pending') result.
+ */
+export async function waitForCiProof(
+  target: AttachmentTarget,
+  options: StoreReviewSummaryOptions = {},
+  wait: WaitForCiProofOptions = {},
+): Promise<CiProofResult> {
+  const runner = wait.runner ?? defaultCiProofRunner;
+  const sleep = wait.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  const now = wait.now ?? (() => Date.now());
+  const timeoutMs = wait.timeoutMs ?? 0;
+  const intervalMs = wait.intervalMs ?? 15_000;
+
+  const start = now();
+  let result = verifyReviewCiProof(target, options, runner);
+  while (result.status === 'pending' && now() - start < timeoutMs) {
+    wait.onPending?.(result, now() - start);
+    await sleep(intervalMs);
+    result = verifyReviewCiProof(target, options, runner);
   }
+  return result;
 }
 
 /**
@@ -322,14 +385,13 @@ export function storeReviewFinding(
 }
 
 /**
- * Compose a round summary from all stored dimension findings.
- * Reads each dimension's attachment, parses meta, builds a summary table.
+ * Gather the per-dimension rows for a round from stored findings — the single read
+ * point shared by composeReviewSummary, deriveStoredRoundVerdict, and storeReviewSummary,
+ * so a single store never reads the findings twice.
  */
-export function composeReviewSummary(target: AttachmentTarget, round: number): string {
-  const dims = listReviewDimensions(target, round);
+function gatherRoundRows(target: AttachmentTarget, round: number): RoundRow[] {
   const rows: RoundRow[] = [];
-
-  for (const dim of dims) {
+  for (const dim of listReviewDimensions(target, round)) {
     const content = readReviewFinding(target, round, dim);
     if (!content) continue;
     const meta = parseFindingMeta(content);
@@ -337,7 +399,11 @@ export function composeReviewSummary(target: AttachmentTarget, round: number): s
       rows.push({ dim: meta.dimension, verdict: meta.verdict, done: meta.done, partial: meta.partial, missing: meta.missing });
     }
   }
+  return rows;
+}
 
+/** Render a round summary from pre-gathered rows (no I/O). */
+function composeReviewSummaryFromRows(round: number, rows: RoundRow[]): string {
   const roll = summarizeRound(rows);
   // Header verdict mirrors the three-state rule; the `verdict` field in meta stays pass|fail so
   // downstream consumers (gates, parsers) keep a binary signal — PASS_WITH_PARTIALS maps to pass.
@@ -366,18 +432,19 @@ export function composeReviewSummary(target: AttachmentTarget, round: number): s
 }
 
 /**
+ * Compose a round summary from all stored dimension findings.
+ * Reads each dimension's attachment, parses meta, builds a summary table.
+ */
+export function composeReviewSummary(target: AttachmentTarget, round: number): string {
+  return composeReviewSummaryFromRows(round, gatherRoundRows(target, round));
+}
+
+/**
  * Compute the authoritative round verdict from stored findings — never from caller text.
  * Exposed so the storeReviewSummary guard and external callers share one derivation.
  */
 export function deriveStoredRoundVerdict(target: AttachmentTarget, round: number): RoundVerdict {
-  const rows: RoundRow[] = [];
-  for (const dim of listReviewDimensions(target, round)) {
-    const content = readReviewFinding(target, round, dim);
-    if (!content) continue;
-    const meta = parseFindingMeta(content);
-    if (meta) rows.push({ dim: meta.dimension, verdict: meta.verdict, done: meta.done, partial: meta.partial, missing: meta.missing });
-  }
-  return summarizeRound(rows).verdict;
+  return summarizeRound(gatherRoundRows(target, round)).verdict;
 }
 
 /**
@@ -397,13 +464,15 @@ export function storeReviewSummary(
   target: AttachmentTarget,
   round: number,
   note?: string,
-  options: StoreReviewSummaryOptions = {},
 ): string {
-  const derived = composeReviewSummary(target, round);
-  const roundVerdict = extractSummaryRoundVerdict(derived) ?? deriveStoredRoundVerdict(target, round);
-  if (roundVerdict !== 'FAIL') {
-    assertReviewSummaryCiPassed(target, options);
-  }
+  // Read the findings ONCE; derive both the rendered block and the verdict from the same rows
+  // (no double read, no extra I/O). Verdict is authoritative from stored findings (#1019). The CI
+  // proof that a PASS summary is safe to store lives at the CLI/action boundary (verifyReviewCiProof),
+  // NOT here — storage stays side-effect-free (#1222). No regex parse of the meta block: the
+  // structured derivation via summarizeRound is the single source of truth (#1222 / I29).
+  const rows = gatherRoundRows(target, round);
+  const derived = composeReviewSummaryFromRows(round, rows);
+  const roundVerdict = summarizeRound(rows).verdict;
 
   let content = derived;
 

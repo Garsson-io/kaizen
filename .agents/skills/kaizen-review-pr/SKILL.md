@@ -229,10 +229,16 @@ npx tsx src/cli-structured-data.ts store-review-summary \
   --pr <PR_NUMBER> --repo <owner/repo> --round <N> --head-sha "$(git rev-parse HEAD)"
 ```
 
-For a derived PASS or PASS-with-partials verdict, `store-review-summary` now verifies the PR's
-current HEAD matches `--head-sha` and that `gh pr checks` is green for that HEAD before it writes
-the summary/sentinel (#1070). Pending, failing, absent, or stale-head CI refuses storage; re-run
-review on the current head after CI passes.
+For a derived PASS or PASS-with-partials verdict, the CLI verifies — at the storage *action*
+boundary — that the PR's current HEAD matches `--head-sha` and that `gh pr checks` is green for
+that HEAD before it writes the summary/sentinel (#1070; redone side-effect-free in #1221/#1222).
+Behavior by CI state:
+- **Failing or stale-head CI** → storage is refused (exit 1). Fix CI or re-review the current head.
+- **Pending CI** → the CLI *waits* for CI to finish (default up to 300s; tune with `--wait-ci-secs`).
+  If still unfinished after the wait, it exits with a distinct `ci_pending` marker (exit 2) — this
+  is **retriable, NOT a review FAIL**: re-run `store-review-summary` once CI completes; do not treat
+  it as a failed round or burn a fix iteration on it.
+- **Green CI** → the summary/sentinel is written.
 
 Add `--note "<context>"` only for non-verdict commentary (e.g. "rebased onto main, re-ran tests").
 Read back the derived verdict with `read-review-summary --pr <N> --repo <repo> --round <N>` — the

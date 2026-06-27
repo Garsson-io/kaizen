@@ -25,7 +25,11 @@ import {
   retrieveIterationState,
   updatePrSection,
   normalizeReviewFindingData,
+  verifyReviewCiProof,
+  waitForCiProof,
   type ReviewFindingData,
+  type CiProofRunner,
+  type CiRunResult,
 } from './structured-data.js';
 
 vi.mock('node:child_process', () => ({
@@ -305,88 +309,168 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     const ok = dimComment(2, 'correctness', 'pass', 3, 0, 0); // all DONE → PASS
     ghReturns(ok); // compose: list
     ghReturns(ok); // compose: read
-    ghReturns('abc123'); // gh pr view: current PR head
-    ghReturns(JSON.stringify([{ name: 'TypeScript tests + coverage', bucket: 'pass', state: 'SUCCESS' }])); // gh pr checks
     ghReturns(''); // writeAttachment: readAttachment (no existing)
     ghReturns('https://...#issuecomment-sum');
 
-    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes', { expectedHeadSha: 'abc123' });
+    // Storage is side-effect-free now: no CI proof, no --head-sha needed (#1222).
+    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes');
     const body = bodyOfLastCreate();
     expect(body).toContain('## Review Round 2 — PASS');
     expect(body).toContain('### Reviewer notes (non-authoritative');
     expect(body).toContain('rebased onto main');
   });
 
-  describe('CI proof gate (#1070)', () => {
-    const head = 'abc123';
-    const passChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'pass', state: 'SUCCESS' },
-      { name: 'auto-merge', bucket: 'skipping', state: 'SKIPPED' },
-    ]);
-    const pendingChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'pending', state: 'IN_PROGRESS' },
-    ]);
-    const failChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'fail', state: 'FAILURE' },
-    ]);
+  // ── Storage layer is side-effect-free (#1222 defect 2) ─────────────────────
+  it('stores a PASS summary WITHOUT shelling out to gh pr checks or git (#1222)', () => {
+    const ok = dimComment(4, 'correctness', 'pass', 2, 0, 0);
+    ghReturns(ok); // compose: list
+    ghReturns(ok); // compose: read
+    ghReturns(''); // writeAttachment: readAttachment (no existing)
+    ghReturns('https://...#issuecomment-sum');
 
-    it('stores a derived PASS only when current-head CI is passing', () => {
-      const ok = dimComment(4, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view: current PR head
-      ghReturns(passChecks); // gh pr checks
-      ghReturns(''); // writeAttachment: readAttachment (no existing)
-      ghReturns('https://...#issuecomment-sum');
+    storeReviewSummary(pr, 4);
 
-      storeReviewSummary(pr, 4, undefined, { expectedHeadSha: head });
+    // No call shells out to CI proof: `gh pr checks` or `git rev-parse` are the CI-only verbs.
+    const calls = mockGh.mock.calls;
+    const ranChecks = calls.some(([cmd, args]) => Array.isArray(args) && (args as string[]).includes('checks'));
+    const ranGit = calls.some(([cmd]) => cmd === 'git');
+    expect(ranChecks).toBe(false);
+    expect(ranGit).toBe(false);
+  });
+});
 
-      const body = bodyOfLastCreate();
-      expect(body).toContain('## Review Round 4 — PASS');
+// ── verifyReviewCiProof — structured, injectable, never throws (#1070/#1221/#1222) ──
+describe('verifyReviewCiProof', () => {
+  const HEAD = 'abc123';
+  // Build a runner that answers each gh/git invocation from a small spec.
+  function runner(spec: { rev?: CiRunResult; view?: CiRunResult; checks?: CiRunResult }): CiProofRunner {
+    return (command, args) => {
+      if (command === 'git') return spec.rev ?? { status: 0, stdout: HEAD, stderr: '' };
+      if (args.includes('view')) return spec.view ?? { status: 0, stdout: HEAD, stderr: '' };
+      if (args.includes('checks')) return spec.checks ?? { status: 0, stdout: '[]', stderr: '' };
+      return { status: 0, stdout: '', stderr: '' };
+    };
+  }
+  const checks = (entries: Array<{ bucket: string; name?: string }>): CiRunResult =>
+    ({ status: 0, stdout: JSON.stringify(entries.map(e => ({ name: e.name ?? 'check', bucket: e.bucket, state: 'X' }))), stderr: '' });
+
+  it('skips (does not run) for a non-PR target — runner never invoked (#1222)', () => {
+    const calls: string[] = [];
+    const spy: CiProofRunner = (cmd) => { calls.push(cmd); return { status: 0, stdout: '', stderr: '' }; };
+    const res = verifyReviewCiProof(issue, {}, spy);
+    expect(res.status).toBe('skipped');
+    expect(calls).toEqual([]);
+  });
+
+  it('returns pass when all checks are pass/skipping for the reviewed head', () => {
+    const res = verifyReviewCiProof(pr, { expectedHeadSha: HEAD },
+      runner({ checks: checks([{ bucket: 'pass' }, { bucket: 'skipping' }]) }));
+    expect(res.status).toBe('pass');
+  });
+
+  it('returns pending (NOT fail) when a check is still running (#1221)', () => {
+    const res = verifyReviewCiProof(pr, { expectedHeadSha: HEAD },
+      runner({ checks: checks([{ bucket: 'pass' }, { bucket: 'pending' }]) }));
+    expect(res.status).toBe('pending');
+  });
+
+  it('returns pending (NOT fail) when CI has not produced checks yet (#1221)', () => {
+    const res = verifyReviewCiProof(pr, { expectedHeadSha: HEAD },
+      runner({ checks: { status: 0, stdout: '[]', stderr: '' } }));
+    expect(res.status).toBe('pending');
+  });
+
+  it('returns fail when any check failed (a failure dominates a pending one)', () => {
+    const res = verifyReviewCiProof(pr, { expectedHeadSha: HEAD },
+      runner({ checks: checks([{ bucket: 'fail' }, { bucket: 'pending' }]) }));
+    expect(res.status).toBe('fail');
+  });
+
+  it('returns stale when the PR head moved past the reviewed head', () => {
+    const res = verifyReviewCiProof(pr, { expectedHeadSha: HEAD },
+      runner({ view: { status: 0, stdout: 'def456', stderr: '' } }));
+    expect(res.status).toBe('stale');
+    expect(res).toMatchObject({ reviewedHead: HEAD, currentHead: 'def456' });
+  });
+
+  it('treats a transient gh error as pending, not a false FAIL (#1221)', () => {
+    const res = verifyReviewCiProof(pr, { expectedHeadSha: HEAD },
+      runner({ view: { status: 1, stdout: '', stderr: 'network error' } }));
+    expect(res.status).toBe('pending');
+  });
+
+  it('falls back to git rev-parse for the reviewed head when none is passed', () => {
+    const res = verifyReviewCiProof(pr, {},
+      runner({ rev: { status: 0, stdout: HEAD, stderr: '' }, checks: checks([{ bucket: 'pass' }]) }));
+    expect(res.status).toBe('pass');
+  });
+
+  it('never throws on any path (adversarial)', () => {
+    const specs = [
+      runner({ checks: checks([{ bucket: 'fail' }]) }),
+      runner({ view: { status: 1, stdout: '', stderr: 'boom' } }),
+      runner({ checks: { status: 0, stdout: 'not-json', stderr: '' } }),
+      runner({ rev: { status: 1, stdout: '', stderr: 'no git' } }),
+    ];
+    for (const r of specs) {
+      expect(() => verifyReviewCiProof(pr, {}, r)).not.toThrow();
+    }
+  });
+});
+
+// ── waitForCiProof — poll pending until terminal (#1221) ───────────────────────
+describe('waitForCiProof', () => {
+  const HEAD = 'abc123';
+  function scriptedRunner(checkSequence: string[]): CiProofRunner {
+    let i = 0;
+    return (command, args) => {
+      if (command === 'git') return { status: 0, stdout: HEAD, stderr: '' };
+      if (args.includes('view')) return { status: 0, stdout: HEAD, stderr: '' };
+      if (args.includes('checks')) {
+        const bucket = checkSequence[Math.min(i++, checkSequence.length - 1)];
+        return { status: 0, stdout: JSON.stringify([{ name: 'ci', bucket, state: 'X' }]), stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+  }
+
+  it('polls while pending and resolves pass once CI turns green', async () => {
+    let clock = 0;
+    const sleeps: number[] = [];
+    const res = await waitForCiProof(pr, { expectedHeadSha: HEAD }, {
+      runner: scriptedRunner(['pending', 'pending', 'pass']),
+      now: () => clock,
+      sleep: async (ms) => { sleeps.push(ms); clock += ms; },
+      timeoutMs: 100_000,
+      intervalMs: 1000,
     });
+    expect(res.status).toBe('pass');
+    expect(sleeps.length).toBe(2); // slept through the two pending polls
+  });
 
-    it('refuses to store a derived PASS while CI is pending', () => {
-      const ok = dimComment(6, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns(pendingChecks); // gh pr checks
-
-      expect(() => storeReviewSummary(pr, 6, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*pending|pending.*CI|#1070/i);
+  it('gives up gracefully and returns pending after the timeout', async () => {
+    let clock = 0;
+    const res = await waitForCiProof(pr, { expectedHeadSha: HEAD }, {
+      runner: scriptedRunner(['pending']),
+      now: () => clock,
+      sleep: async (ms) => { clock += ms; },
+      timeoutMs: 5000,
+      intervalMs: 2000,
     });
+    expect(res.status).toBe('pending');
+  });
 
-    it('refuses to store a derived PASS when CI is failing', () => {
-      const ok = dimComment(7, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns(failChecks); // gh pr checks
-
-      expect(() => storeReviewSummary(pr, 7, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*fail|fail.*CI|#1070/i);
+  it('returns immediately on a terminal result without sleeping', async () => {
+    const sleeps: number[] = [];
+    const res = await waitForCiProof(pr, { expectedHeadSha: HEAD }, {
+      runner: scriptedRunner(['fail']),
+      now: () => 0,
+      sleep: async (ms) => { sleeps.push(ms); },
+      timeoutMs: 100_000,
+      intervalMs: 1000,
     });
-
-    it('refuses to store a derived PASS before CI has produced checks', () => {
-      const ok = dimComment(9, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns('[]'); // gh pr checks: CI has not started
-
-      expect(() => storeReviewSummary(pr, 9, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*not produced checks|#1070/i);
-    });
-
-    it('refuses to store a derived PASS when the reviewed head is stale', () => {
-      const ok = dimComment(8, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns('def456'); // gh pr view: current PR head differs from reviewed head
-
-      expect(() => storeReviewSummary(pr, 8, undefined, { expectedHeadSha: head }))
-        .toThrow(/stale|HEAD|#1070/i);
-    });
+    expect(res.status).toBe('fail');
+    expect(sleeps.length).toBe(0);
   });
 });
 
