@@ -714,14 +714,18 @@ export function computeBanditWeights(
   // Normalize the exploitation term to [0,1] so it is comparable to the bonus.
   const maxMean = Math.max(...SCHEDULABLE_MODES.map(m => meanReward[m]), 0);
 
+  // Compute each mode's UCB once; reuse the exact same terms when building the
+  // breakdown so the reported detail can never diverge from the real decision.
+  const exploitTerm: Record<string, number> = {};
+  const exploreBonus: Record<string, number> = {};
   const ucb: Record<string, number> = {};
   for (const mode of SCHEDULABLE_MODES) {
-    const exploitTerm = maxMean > 0 ? meanReward[mode] / maxMean : 0;
+    exploitTerm[mode] = maxMean > 0 ? meanReward[mode] / maxMean : 0;
     // max(plays,1): a never-chosen mode gets the largest finite bonus, guaranteeing
     // it is revisited rather than starved (the fixed schedule has already seeded
     // every mode once before the bandit activates, so plays>=1 in practice).
-    const exploreBonus = explorationC * Math.sqrt(Math.log(totalPlays + 1) / Math.max(plays[mode], 1));
-    ucb[mode] = exploitTerm + exploreBonus;
+    exploreBonus[mode] = explorationC * Math.sqrt(Math.log(totalPlays + 1) / Math.max(plays[mode], 1));
+    ucb[mode] = exploitTerm[mode] + exploreBonus[mode];
   }
 
   // Normalize UCB scores to selection weights summing to 1.0. exploreBonus > 0
@@ -737,8 +741,8 @@ export function computeBanditWeights(
     mode,
     plays: plays[mode],
     meanReward: meanReward[mode],
-    exploitTerm: maxMean > 0 ? meanReward[mode] / maxMean : 0,
-    exploreBonus: explorationC * Math.sqrt(Math.log(totalPlays + 1) / Math.max(plays[mode], 1)),
+    exploitTerm: exploitTerm[mode],
+    exploreBonus: exploreBonus[mode],
     ucb: ucb[mode],
     weight: weights[mode],
   }));
