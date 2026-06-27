@@ -34,9 +34,17 @@ import {
   DATA_GAP_PREFIX,
   type BatteryResult,
   type ReviewFinding,
+  type ReviewProvider,
 } from '../src/review-battery.js';
 import { addSection, writeAttachment } from '../src/section-editor.js';
 import { ghExec } from './auto-dent-github.js';
+import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
+import {
+  CAPABILITY_INVENTORY,
+  validateProviderPlan,
+  type ProviderCapability,
+  type PlanValidation,
+} from './auto-dent-provider.js';
 
 // ── Stream-JSON parsing ─────────────────────────────────────────────
 
@@ -93,13 +101,14 @@ export type FixRunningAction = 'wait' | 'continue' | 'reset';
  */
 export function applyFixRunningPhase(
   state: ReviewFixState,
-  checkFn: (logFile: string, pid: number) => { done: boolean; success: boolean; costUsd: number; output: string },
+  checkFn: (logFile: string, pid: number, provider?: ReviewFixProvider) => { done: boolean; success: boolean; costUsd: number; output: string },
 ): { action: FixRunningAction; state: ReviewFixState } {
   if (!state.activeFix) {
     return { action: 'reset', state: { ...state, phase: 'needs_review' } };
   }
   const { pid, logFile } = state.activeFix;
-  const result = checkFn(logFile, pid);
+  const provider = state.activeFix.provider ?? state.fixProvider ?? DEFAULT_REVIEW_FIX_PROVIDER;
+  const result = checkFn(logFile, pid, provider);
   if (!result.done) {
     return { action: 'wait', state };
   }
@@ -112,7 +121,15 @@ export function applyFixRunningPhase(
     activeFix: undefined,
     rounds: [
       ...state.rounds,
-      { round: state.currentRound, phase: 'fix', verdict: result.success ? 'fixed' : 'fix_failed', gaps: 0, reviewCost: 0, fixCost: result.costUsd },
+      {
+        round: state.currentRound,
+        phase: 'fix',
+        verdict: result.success ? 'fixed' : 'fix_failed',
+        gaps: 0,
+        reviewCost: 0,
+        fixCost: result.costUsd,
+        fixProvider: provider,
+      },
     ],
   };
   return { action: 'continue', state: newState };
@@ -142,18 +159,106 @@ export type PrefetchResult = {
 
 export interface RunFixLoopDeps {
   prefetch?: (prUrl: string, issueNum: string, repo: string) => PrefetchResult;
-  launchFix?: (prompt: string, logDir: string, round: number) => { pid: number; logFile: string; promptFile: string };
-  checkFix?: (logFile: string, pid: number) => { done: boolean; success: boolean; costUsd: number; output: string };
-  runReview?: (params: { dimensions: string[]; prUrl: string; issueNum: string; repo: string; timeoutMs: number }) => Promise<BatteryResult>;
+  launchFix?: (prompt: string, logDir: string, round: number, provider: ReviewFixProvider) => { pid: number; logFile: string; promptFile: string; provider?: ReviewFixProvider };
+  checkFix?: (logFile: string, pid: number, provider?: ReviewFixProvider) => { done: boolean; success: boolean; costUsd: number; output: string };
+  runReview?: (params: { dimensions: string[]; prUrl: string; issueNum: string; repo: string; timeoutMs: number; reviewProvider?: ReviewProvider }) => Promise<BatteryResult>;
   getStateDir?: () => string;
 }
 
 // ── State persistence ───────────────────────────────────────────────
 
+export type ReviewFixProvider = ReviewProvider;
+
+const DEFAULT_REVIEW_FIX_PROVIDER: ReviewFixProvider = { provider: 'claude', billing: 'subscription-cli' };
+
+export function defaultReviewFixProviders(): {
+  reviewProvider: ReviewFixProvider;
+  fixProvider: ReviewFixProvider;
+} {
+  return {
+    reviewProvider: DEFAULT_REVIEW_FIX_PROVIDER,
+    fixProvider: DEFAULT_REVIEW_FIX_PROVIDER,
+  };
+}
+
+export function validateReviewFixProviderPlan(
+  providers: { reviewProvider: ReviewFixProvider; fixProvider: ReviewFixProvider },
+  inventory: readonly ProviderCapability[] = CAPABILITY_INVENTORY,
+): PlanValidation {
+  return validateProviderPlan({
+    review: providers.reviewProvider.provider,
+    fix: providers.fixProvider.provider,
+  }, inventory);
+}
+
+function parseProviderName(value: string, flag: string): ReviewFixProvider {
+  if (value === 'claude' || value === 'codex') {
+    return { provider: value, billing: 'subscription-cli' };
+  }
+  console.error(`Invalid ${flag}: "${value}". Valid providers: claude, codex. API-token-only repair strategies are not subscription-compatible.`);
+  process.exit(1);
+}
+
+function providerLabel(provider: ReviewFixProvider): string {
+  return `${provider.provider} (${provider.billing})`;
+}
+
+export interface FixProviderCommand {
+  command: string;
+  args: string[];
+}
+
+export function buildFixProviderCommand(input: {
+  provider: ReviewFixProvider;
+  repoRoot?: string;
+}): FixProviderCommand {
+  if (input.provider.provider === 'claude') {
+    return {
+      command: 'claude',
+      args: ['-p', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--model', 'sonnet'],
+    };
+  }
+  return {
+    command: 'codex',
+    args: buildCodexExecArgs(input.repoRoot ?? process.cwd()),
+  };
+}
+
+function normalizeRoundProvider(
+  round: ReviewFixState['rounds'][number],
+  stateProviders: { reviewProvider: ReviewFixProvider; fixProvider: ReviewFixProvider },
+): ReviewFixState['rounds'][number] {
+  if (round.phase === 'review') {
+    return { ...round, reviewProvider: round.reviewProvider ?? stateProviders.reviewProvider };
+  }
+  if (round.phase === 'fix') {
+    return { ...round, fixProvider: round.fixProvider ?? stateProviders.fixProvider };
+  }
+  return round;
+}
+
+export function normalizeReviewFixState(state: ReviewFixState): ReviewFixState {
+  const defaults = defaultReviewFixProviders();
+  const reviewProvider = state.reviewProvider ?? defaults.reviewProvider;
+  const fixProvider = state.fixProvider ?? defaults.fixProvider;
+  const normalized: ReviewFixState = {
+    ...state,
+    reviewProvider,
+    fixProvider,
+    rounds: state.rounds.map((round) => normalizeRoundProvider(round, { reviewProvider, fixProvider })),
+  };
+  if (state.activeFix) {
+    normalized.activeFix = { ...state.activeFix, provider: state.activeFix.provider ?? fixProvider };
+  }
+  return normalized;
+}
+
 export interface ReviewFixState {
   prUrl: string;
   issueNum: string;
   repo: string;
+  reviewProvider?: ReviewFixProvider;
+  fixProvider?: ReviewFixProvider;
   maxRounds: number;
   budgetCap: number;
   currentRound: number;
@@ -162,7 +267,7 @@ export interface ReviewFixState {
   /** Current phase within a round */
   phase: 'needs_review' | 'needs_fix' | 'fix_running' | 'done';
   /** Active fix session (when phase is fix_running) */
-  activeFix?: { pid: number; logFile: string; promptFile: string };
+  activeFix?: { pid: number; logFile: string; promptFile: string; provider?: ReviewFixProvider };
   rounds: Array<{
     round: number;
     phase: 'review' | 'fix' | 'done';
@@ -170,6 +275,8 @@ export interface ReviewFixState {
     gaps: number;
     reviewCost: number;
     fixCost: number;
+    reviewProvider?: ReviewFixProvider;
+    fixProvider?: ReviewFixProvider;
     findings?: ReviewFinding[];
   }>;
   outcome?: string;
@@ -218,7 +325,7 @@ export function loadState(prUrl: string, dir?: string): ReviewFixState | null {
   const path = join(d, `${stateKey(prUrl)}.json`);
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    return normalizeReviewFixState(JSON.parse(readFileSync(path, 'utf8')) as ReviewFixState);
   } catch {
     return null;
   }
@@ -273,6 +380,8 @@ export interface CliArgs {
   prUrl: string;
   issueNum: string;
   repo: string;
+  reviewProvider: ReviewFixProvider;
+  fixProvider: ReviewFixProvider;
   dryRun: boolean;
   maxRounds: number;
   budgetCap: number;
@@ -283,12 +392,17 @@ export function parseArgs(argv = process.argv): CliArgs {
   const args = argv.slice(2);
   let prUrl = '', issueNum = '', repo = '';
   let dryRun = false, resume = false, maxRounds = MAX_FIX_ROUNDS, budgetCap = BUDGET_CAP_USD;
+  const defaults = defaultReviewFixProviders();
+  let reviewProvider = defaults.reviewProvider;
+  let fixProvider = defaults.fixProvider;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case '--pr': prUrl = args[++i] ?? ''; break;
       case '--issue': issueNum = args[++i] ?? ''; break;
       case '--repo': repo = args[++i] ?? ''; break;
+      case '--review-provider': reviewProvider = parseProviderName(args[++i] ?? '', '--review-provider'); break;
+      case '--fix-provider': fixProvider = parseProviderName(args[++i] ?? '', '--fix-provider'); break;
       case '--dry-run': dryRun = true; break;
       case '--resume': resume = true; break;
       case '--max-rounds': maxRounds = parseInt(args[++i] ?? '3', 10); break;
@@ -307,6 +421,10 @@ Options:
   --resume        Resume from last saved state (skips completed rounds)
   --max-rounds N  Max review-fix rounds (default: ${MAX_FIX_ROUNDS})
   --budget N      Budget cap in USD (default: ${BUDGET_CAP_USD})
+  --review-provider claude|codex
+                  Review provider to record/pass to the review battery (default: claude)
+  --fix-provider claude|codex
+                  Fix provider for spawned repair sessions (default: claude)
 
 State is saved to .claude/review-fix/pr-<N>.json after each phase.
 Use --resume to pick up where you left off after a crash/timeout.
@@ -318,7 +436,13 @@ Example:
     process.exit(1);
   }
 
-  return { prUrl, issueNum, repo, dryRun, maxRounds, budgetCap, resume };
+  const validation = validateReviewFixProviderPlan({ reviewProvider, fixProvider });
+  if (!validation.ok) {
+    console.error(`Provider plan rejected: ${validation.violations.map((v) => v.reason).join('; ')}`);
+    process.exit(1);
+  }
+
+  return { prUrl, issueNum, repo, reviewProvider, fixProvider, dryRun, maxRounds, budgetCap, resume };
 }
 
 // ── Pre-fetch context ───────────────────────────────────────────────
@@ -411,23 +535,22 @@ Be surgical. Fix gaps, don't refactor. Minimum viable fix for each finding.`;
  * The caller should save these to state and exit.
  * On --resume, call checkFixResult() to see if it's done.
  */
-function launchFix(prompt: string, logDir: string, round: number): { pid: number; logFile: string; promptFile: string } {
+function launchFix(prompt: string, logDir: string, round: number, provider: ReviewFixProvider): { pid: number; logFile: string; promptFile: string; provider: ReviewFixProvider } {
   const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
   const promptFile = join(logDir, `fix-round${round}-${timestamp}.prompt.txt`);
   const logFile = join(logDir, `fix-round${round}-${timestamp}.log`);
 
   writeFileSync(promptFile, prompt);
 
-  // Spawn claude as a detached process — survives parent exit
+  // Spawn the selected fix provider as a detached process — survives parent exit.
   const out = openSync(logFile, 'w');
   const err = openSync(logFile + '.stderr', 'w');
+  const stdin = openSync(promptFile, 'r');
+  const command = buildFixProviderCommand({ provider, repoRoot: process.cwd() });
 
-  const child = asyncSpawn('bash', [
-    '-c',
-    `cat "${promptFile}" | claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model sonnet`,
-  ], {
+  const child = asyncSpawn(command.command, command.args, {
     detached: true,
-    stdio: ['pipe', out, err],
+    stdio: [stdin, out, err],
   });
 
   child.unref();
@@ -437,19 +560,20 @@ function launchFix(prompt: string, logDir: string, round: number): { pid: number
   writeFileSync(logFile + '.pid', String(pid));
 
   console.log(`  Fix session launched (detached)`);
+  console.log(`  Provider: ${providerLabel(provider)}`);
   console.log(`  PID: ${pid}`);
   console.log(`  Prompt: ${promptFile}`);
   console.log(`  Log: ${logFile}`);
   console.log(`  Monitor: tail -f ${logFile}`);
 
-  return { pid, logFile, promptFile };
+  return { pid, logFile, promptFile, provider };
 }
 
 /**
  * Check if a detached fix session has completed.
  * Returns null if still running, or the result if done.
  */
-export function checkFixResult(logFile: string, pid: number): { done: boolean; success: boolean; costUsd: number; output: string } {
+export function checkFixResult(logFile: string, pid: number, provider: ReviewFixProvider = DEFAULT_REVIEW_FIX_PROVIDER): { done: boolean; success: boolean; costUsd: number; output: string } {
   // Check if process is still running
   let running = false;
   try {
@@ -470,7 +594,25 @@ export function checkFixResult(logFile: string, pid: number): { done: boolean; s
     return { done: false, success: false, costUsd: 0, output: '' };
   }
 
-  // Parse stream-json JSONL — look for the result message
+  // Parse provider-specific JSONL — look for the final result message.
+  if (provider.provider === 'codex') {
+    const parsedCodex = parseCodexJsonl(stdout);
+    const output = parsedCodex.finalText || parsedCodex.text;
+    if (output || (!running && parsedCodex.events.length > 0)) {
+      return {
+        done: true,
+        success: parsedCodex.malformedLines.length === 0,
+        costUsd: 0,
+        output,
+      };
+    }
+    if (running) {
+      return { done: false, success: false, costUsd: 0, output: '' };
+    }
+    const malformed = parsedCodex.malformedLines.slice(0, 3).join('\n');
+    return { done: true, success: false, costUsd: 0, output: malformed || stdout.slice(0, 500) };
+  }
+
   const parsed = parseStreamJsonResult(stdout);
   if (parsed.found) {
     return { done: true, success: parsed.success, costUsd: parsed.costUsd, output: parsed.output };
@@ -495,12 +637,21 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
   const doCheckFix = deps.checkFix ?? checkFixResult;
   const doRunReview = deps.runReview ?? reviewBattery;
   const doStateDir = deps.getStateDir ?? stateDir;
+  const providerDefaults = defaultReviewFixProviders();
+  const requestedProviders = {
+    reviewProvider: opts.reviewProvider ?? providerDefaults.reviewProvider,
+    fixProvider: opts.fixProvider ?? providerDefaults.fixProvider,
+  };
+  const providerValidation = validateReviewFixProviderPlan(requestedProviders);
+  if (!providerValidation.ok) {
+    throw new Error(`Provider plan rejected: ${providerValidation.violations.map((v) => v.reason).join('; ')}`);
+  }
 
   // Resume or start fresh
   let state: ReviewFixState;
   const existing = loadState(opts.prUrl, doStateDir());
   if (opts.resume && existing && !existing.outcome) {
-    state = existing;
+    state = normalizeReviewFixState(existing);
     console.log(`\n=== review-fix: RESUMING ===`);
     console.log(`  Phase: ${state.phase} | Round: ${state.currentRound}`);
     console.log(`  Previous cost: $${state.totalCostUsd.toFixed(2)} | Rounds completed: ${state.rounds.length}`);
@@ -509,6 +660,8 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       prUrl: opts.prUrl,
       issueNum: opts.issueNum,
       repo: opts.repo,
+      reviewProvider: requestedProviders.reviewProvider,
+      fixProvider: requestedProviders.fixProvider,
       maxRounds: opts.maxRounds,
       budgetCap: opts.budgetCap,
       currentRound: 1,
@@ -518,8 +671,11 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       rounds: [],
     };
   }
+  state = normalizeReviewFixState(state);
 
   console.log(`\n=== review-fix: ${opts.prUrl} vs #${opts.issueNum} ===\n`);
+  console.log(`  Review provider: ${providerLabel(state.reviewProvider ?? providerDefaults.reviewProvider)}`);
+  console.log(`  Fix provider: ${providerLabel(state.fixProvider ?? providerDefaults.fixProvider)}`);
 
   const statePath = join(doStateDir(), stateKey(opts.prUrl) + '.json');
   const ctx = doPrefetch(opts.prUrl, opts.issueNum, opts.repo);
@@ -571,9 +727,11 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       issueNum: opts.issueNum,
       repo: opts.repo,
       timeoutMs: 180_000,
+      reviewProvider: state.reviewProvider,
     });
 
     state.totalCostUsd += battery.costUsd;
+    state.reviewProvider = battery.reviewProvider ?? state.reviewProvider;
     const allFindings = battery.dimensions.flatMap(d => d.findings);
     const gaps = allFindings.filter(f => f.status !== 'DONE');
 
@@ -586,7 +744,15 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
     // ── REVIEW FAILED? ──
     if (battery.dimensions.length === 0) {
       console.log('  Review failed (timeout or parse). Run with --resume to retry.');
-      state.rounds.push({ round, phase: 'review', verdict: 'review_failed', gaps: -1, reviewCost: battery.costUsd, fixCost: 0 });
+      state.rounds.push({
+        round,
+        phase: 'review',
+        verdict: 'review_failed',
+        gaps: -1,
+        reviewCost: battery.costUsd,
+        fixCost: 0,
+        reviewProvider: battery.reviewProvider ?? state.reviewProvider,
+      });
       saveState(state, doStateDir());
       continue;
     }
@@ -594,6 +760,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
     state.rounds.push({
       round, phase: 'review', verdict: battery.verdict,
       gaps: gaps.length, reviewCost: battery.costUsd, fixCost: 0,
+      reviewProvider: battery.reviewProvider ?? state.reviewProvider,
       findings: allFindings,
     });
     saveState(state, doStateDir());
@@ -668,9 +835,10 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
     const fixPrompt = buildFixPrompt(
       opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged,
     );
-    const fixInfo = doLaunchFix(fixPrompt, doStateDir(), round);
+    const fixProvider = state.fixProvider ?? providerDefaults.fixProvider;
+    const fixInfo = doLaunchFix(fixPrompt, doStateDir(), round, fixProvider);
     state.phase = 'fix_running';
-    state.activeFix = fixInfo;
+    state.activeFix = { ...fixInfo, provider: fixInfo.provider ?? fixProvider };
     saveState(state, doStateDir());
 
     console.log(`\n  Fix session is running in the background.`);
