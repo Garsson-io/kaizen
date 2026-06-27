@@ -20,8 +20,6 @@ const CANONICAL_HELPER = 'src/lib/gh-exec.ts';
 const OPT_OUT = new Set<string>([
   // stdin-based PR comment posting; migrate after gh-exec grows stdin support.
   'src/hooks/pr-kaizen-clear.ts',
-  // PR quality hook still shells through an injected exec seam for gh metadata.
-  'src/hooks/pr-quality-checks.ts',
 ]);
 
 function repoRelative(path: string): string {
