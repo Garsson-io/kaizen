@@ -246,6 +246,21 @@ The `auto-dent-score.ts` module scores run quality. Per-run scores consider:
 
 Batch scores aggregate per-run scores with a post-hoc analysis that checks actual merge status of PRs.
 
+## Provider Comparison Matrix
+
+Use the deterministic provider matrix when comparing Claude, Codex, and hybrid
+auto-dent strategies without invoking provider CLIs or API-token billing:
+
+```bash
+npx tsx scripts/auto-dent-provider-matrix.ts --dry-run
+npx tsx scripts/auto-dent-provider-matrix.ts --write logs/auto-dent/<batch-id>
+npx tsx scripts/auto-dent-provider-matrix.ts --report logs/auto-dent/<batch-id>/provider-comparison.json
+```
+
+The artifact records phase-level provider/billing choices, process verdicts,
+failure classes, review quality, cost-signal availability, hook rejections, and
+operator inspectability, then recommends a default strategy for the next stage.
+
 ## Extending the System
 
 ### Adding a new prompt template
@@ -268,6 +283,7 @@ Add to the batch loop in `auto-dent.ts` (between runs) or to `auto-dent-run.ts` 
 | `scripts/auto-dent-run.ts` | Single-run TypeScript runner (prompt building, stream-json parsing, state updates) |
 | `scripts/auto-dent-ctl.ts` | Control plane (status, halt) |
 | `scripts/auto-dent-score.ts` | Run and batch quality scoring |
+| `scripts/auto-dent-provider-matrix.ts` | Synthetic Claude/Codex/hybrid provider comparison matrix |
 | `scripts/auto-dent-harness.ts` | Harness utilities (auto-merge, labeling) |
 | `prompts/deep-dive-default.md` | Default prompt template |
 | `prompts/test-task.md` | Synthetic test task template |
