@@ -79,6 +79,81 @@ export function deriveVerdictFromFindings(findings: Array<{ status: FindingStatu
   return stats.partial > 0 || stats.missing > 0 ? 'fail' : 'pass';
 }
 
+/**
+ * Round-level verdict — three-state, distinct from the per-dimension rule.
+ *
+ * The per-dimension rule (`deriveVerdictFromFindings`) treats any PARTIAL as fail. At the
+ * *round* level we surface PARTIAL loudly but do not auto-block on it: a PARTIAL is a real
+ * gap the author/admin can choose to carry forward (#1067), whereas a MISSING is a blocking
+ * gap. So:
+ *   - any MISSING  → FAIL
+ *   - PARTIAL but no MISSING → PASS_WITH_PARTIALS  (passes, but never silently)
+ *   - else → PASS
+ */
+export type RoundVerdict = 'PASS' | 'PASS_WITH_PARTIALS' | 'FAIL';
+
+export interface RoundRow extends FindingStats {
+  dim: string;
+  // The per-dimension stored verdict string (informational only — the round rollup is derived
+  // from done/partial/missing counts, never from this field).
+  verdict: string;
+}
+
+export interface RoundRollup {
+  verdict: RoundVerdict;
+  dimensions: number;
+  passDims: number;
+  failDims: number;
+  partialDims: number;
+  totalDone: number;
+  totalPartial: number;
+  totalMissing: number;
+}
+
+export function deriveRoundVerdict(rows: Array<FindingStats>): RoundVerdict {
+  const totalMissing = rows.reduce((s, r) => s + r.missing, 0);
+  const totalPartial = rows.reduce((s, r) => s + r.partial, 0);
+  if (totalMissing > 0) return 'FAIL';
+  if (totalPartial > 0) return 'PASS_WITH_PARTIALS';
+  return 'PASS';
+}
+
+/**
+ * Single source of truth for the round-level rollup that `composeReviewSummary` and the
+ * `storeReviewSummary` contradiction-guard both consume. Derives every count + the verdict
+ * from the per-dimension rows — never from caller-supplied free text.
+ */
+export function summarizeRound(rows: Array<RoundRow>): RoundRollup {
+  const totalDone = rows.reduce((s, r) => s + r.done, 0);
+  const totalPartial = rows.reduce((s, r) => s + r.partial, 0);
+  const totalMissing = rows.reduce((s, r) => s + r.missing, 0);
+  return {
+    verdict: deriveRoundVerdict(rows),
+    dimensions: rows.length,
+    passDims: rows.filter(r => r.missing === 0 && r.partial === 0).length,
+    failDims: rows.filter(r => r.missing > 0).length,
+    partialDims: rows.filter(r => r.missing === 0 && r.partial > 0).length,
+    totalDone,
+    totalPartial,
+    totalMissing,
+  };
+}
+
+/**
+ * Does a caller-supplied free-text summary overtly assert the round PASSED?
+ *
+ * Used as a fail-closed guard: a hand-written "REVIEW PASSED" note alongside findings that
+ * derive FAIL is exactly the #1019 fabrication. We only flag an OVERT pass claim — conservative
+ * by design so genuine commentary ("fixed 3 lint nits") is never rejected. The derived verdict
+ * is authoritative regardless; this guard only stops a *misleading* note from riding along.
+ */
+export function assertsPass(text: string): boolean {
+  const t = text.toLowerCase();
+  // "review passed", "all dimensions pass", "✅ pass", "passes review", "lgtm", "all green"
+  return /\b(review\s+passed|all\s+(dimensions?|checks?|dims?)\s+pass(ed)?|passes?\s+review|verdict[:\s]+pass|lgtm|all\s+green)\b/.test(t)
+    || /✅\s*pass/.test(t);
+}
+
 function normalizeVerdict(value: unknown): 'pass' | 'fail' | undefined {
   const raw = asString(value).toLowerCase().trim();
   if (raw === 'pass' || raw === 'passed' || raw === 'ok' || raw === 'success') return 'pass';

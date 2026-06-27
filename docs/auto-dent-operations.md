@@ -5,14 +5,13 @@ The auto-dent system is kaizen's autonomous batch runner. It picks issues from t
 ## Architecture
 
 ```
-auto-dent.sh (trampoline)
+auto-dent.sh (compatibility wrapper)
   │
-  ├── pulls main between runs (self-update)
-  ├── manages state.json (cross-run persistence)
-  ├── enforces stop conditions (max runs, consecutive failures, halt file)
-  │
-  └── auto-dent-run.sh (thin wrapper)
-        └── auto-dent-run.ts (TypeScript runner)
+  └── auto-dent.ts (TypeScript batch runner)
+        ├── pulls main between runs (self-update)
+        ├── manages state.json (cross-run persistence)
+        ├── enforces stop conditions (max runs, consecutive failures, halt file)
+        └── auto-dent-run.ts (single-run TypeScript runner)
               ├── builds prompt from templates (prompts/*.md)
               ├── spawns claude with --output-format stream-json
               ├── parses real-time milestones (PRs, issues, costs)
@@ -30,7 +29,7 @@ auto-dent-score.ts (scoring)
 
 ### Self-Update Mechanism
 
-The trampoline (`auto-dent.sh`) runs `git pull --ff-only origin main` before each run. Because `auto-dent-run.sh` is re-read from disk each iteration, merged PRs that improve the runner take effect on the next run. This is how the system improves itself overnight.
+The batch runner (`auto-dent.ts`) runs `git pull --ff-only origin main` before each run. It invokes `auto-dent-run.ts` from the main checkout on every iteration, so merged PRs that improve the single-run runner take effect on the next run. `auto-dent.sh` remains only as the stable operator entrypoint.
 
 ### Cross-Run State
 
@@ -254,19 +253,19 @@ Create `prompts/my-template.md` with `{{variable}}` placeholders. Template selec
 
 ### Adding new state fields
 1. Add the field to `BatchState` interface in `auto-dent-run.ts`
-2. Initialize it in `auto-dent.sh` state file creation
+2. Initialize it in `auto-dent.ts` state creation
 3. Update it in the appropriate phase of `auto-dent-run.ts`
 
 ### Adding new stop conditions
-Add to the trampoline's main loop in `auto-dent.sh` (between runs) or to `auto-dent-run.ts` (during a run, via stream-json parsing).
+Add to the batch loop in `auto-dent.ts` (between runs) or to `auto-dent-run.ts` (during a run, via stream-json parsing).
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `scripts/auto-dent.sh` | Trampoline (outer loop, self-update, stop conditions) |
-| `scripts/auto-dent-run.sh` | Thin bash wrapper for TS runner |
-| `scripts/auto-dent-run.ts` | TypeScript runner (prompt building, stream-json parsing, state updates) |
+| `scripts/auto-dent.sh` | Compatibility wrapper for the TS batch runner |
+| `scripts/auto-dent.ts` | TypeScript batch runner (outer loop, self-update, stop conditions, summaries) |
+| `scripts/auto-dent-run.ts` | Single-run TypeScript runner (prompt building, stream-json parsing, state updates) |
 | `scripts/auto-dent-ctl.ts` | Control plane (status, halt) |
 | `scripts/auto-dent-score.ts` | Run and batch quality scoring |
 | `scripts/auto-dent-harness.ts` | Harness utilities (auto-merge, labeling) |

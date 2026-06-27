@@ -176,6 +176,8 @@ When proposing to do less than the full solution, you must provide **at least on
 
 **Without one of these three, do not reduce scope.**
 
+**No circular deferral (kaizen #1014):** the follow-up issue in (3) must be an *independent* mechanism — not a symptom of the issue you are currently planning. Deferring a test level to an issue that exists *because that very test level is missing* (e.g., deferring E2E/System coverage to the open "no E2E coverage" issue that is itself listed among this issue's symptoms) is circular: it defers the fix to the problem. If the only candidate deferral target is a symptom of the current work, the work is **in scope** — write the test now.
+
 ---
 
 ## Phase 4: Critique the spec (if one exists)
@@ -284,6 +286,8 @@ For each behavior, determine the minimum test level needed to avoid false confid
   - **Agentic** — result depends on real LLM non-determinism or a real AI/ML model call (e.g., classification, scoring, generation APIs). This includes: does the test verify that an AI agent makes the right DECISION (e.g., choosing to use a tool, following instructions, reading output correctly)? Agent decisions are LLM-dependent.
   - **Workflow** — multiple agentic steps in sequence, or a full agent pipeline
 
+- **COST NOTE — System ≠ expensive E2E (kaizen #1014):** "Session-level" or "lifecycle" does NOT mean "expensive LLM test." Subprocess-based hook and session tests — `SessionSimulator`, `src/e2e/hook-runner.ts`, `spawnSync` on a hook script, `synthetic-workflow.test.ts` — are **System** level: they fire real hooks/CLIs in a subprocess with **zero LLM/API calls**, so they are deterministic, cost ~$0, and run in <1s. Only **Agentic/Workflow** tests (real `claude -p`) carry per-run LLM cost. Therefore: never downgrade a session/hook seam to `Unit`, and never defer it to a follow-up issue, on cost grounds. If Step 5 named `SessionSimulator`/`hook-runner` as the seam, the level is at least **System** and the test ships in this PR.
+
 - **KEY-QUESTIONS** per behavior:
   - **MOCK-MISS**: Does THIS SPECIFIC BEHAVIOR describe a failure that only appears when multiple modules interact — not just a failure that could theoretically exist somewhere in the feature? If the behavior tests one function's logic, parsing, or algorithm, Unit is acceptable only when higher-level checks add no new reality signal. If the bug appears when local modules hand off data/state, elevate to Integration. Then still apply REAL-INFRA, LLM-DEP, and MULTI-STEP.
     Do not escalate based on generic "could miss wiring" language alone. Escalation requires behavior-text evidence of a concrete handoff/contract/order/state-boundary failure (for example: cross-module state propagation, ordering guarantees, durability/persistence boundary).
@@ -349,8 +353,10 @@ Rejected because: ...
 | 1 | ... | code | Unit | ... | ... |
 | 2 | ... | agent | Agentic | ... | ... |
 
-[For deferred behaviors (e.g., Agentic tests out of scope), state what they are, why they're deferred, and which issue tracks them.]
+[For deferred behaviors (e.g., Agentic tests out of scope), state what they are, why they're deferred, and which issue tracks them. The deferral target must satisfy the Scope Reduction Discipline gate — in particular, **No circular deferral**: it may not be a symptom of this issue.]
 ```
+
+**Seam-map coverage gate (kaizen #1014):** before storing the plan, scan every `BEHAVIOR` from Step 5. Each must appear as a row in the table above at the level Step 6 assigned it. A seam named in Step 5 (e.g., `SessionSimulator`) that has no row — or appears only at `Unit` when Step 6 said System/Agentic — is a contradiction between the seam map and the test plan. Resolve it (add the row at the right level, or apply COST NOTE) before storing. A correct seam map plus a unit-only test plan in the same document is exactly the #1014 failure.
 
 Store the plan on the issue. The plan MUST contain a `## Seam Map & Test Plan` section — review dimensions retrieve it from there automatically.
 

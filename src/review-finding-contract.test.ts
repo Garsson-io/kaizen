@@ -6,6 +6,9 @@ import {
   makeReviewFindingMeta,
   extractReviewFindingMeta,
   validateReviewFindingPayload,
+  deriveRoundVerdict,
+  summarizeRound,
+  assertsPass,
 } from './review-finding-contract.js';
 
 describe('review-finding-contract', () => {
@@ -128,6 +131,54 @@ describe('validateReviewFindingPayload (#1039)', () => {
       findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }],
     });
     expect(res.ok).toBe(true);
+  });
+});
+
+describe('deriveRoundVerdict — round-level three-state rule (#1019, #1067)', () => {
+  it('any MISSING → FAIL', () => {
+    expect(deriveRoundVerdict([{ done: 2, partial: 0, missing: 1 }])).toBe('FAIL');
+    expect(deriveRoundVerdict([{ done: 5, partial: 3, missing: 2 }])).toBe('FAIL');
+  });
+  it('PARTIAL but no MISSING → PASS_WITH_PARTIALS', () => {
+    expect(deriveRoundVerdict([{ done: 4, partial: 1, missing: 0 }])).toBe('PASS_WITH_PARTIALS');
+  });
+  it('all DONE → PASS', () => {
+    expect(deriveRoundVerdict([{ done: 4, partial: 0, missing: 0 }])).toBe('PASS');
+  });
+  it('empty rows → PASS (nothing failed)', () => {
+    expect(deriveRoundVerdict([])).toBe('PASS');
+  });
+});
+
+describe('summarizeRound — authoritative rollup from rows', () => {
+  it('computes per-state dimension counts and totals', () => {
+    const roll = summarizeRound([
+      { dim: 'correctness', verdict: 'pass', done: 3, partial: 0, missing: 0 },
+      { dim: 'security', verdict: 'fail', done: 1, partial: 0, missing: 2 },
+      { dim: 'perf', verdict: 'fail', done: 2, partial: 1, missing: 0 },
+    ]);
+    expect(roll.verdict).toBe('FAIL'); // security has MISSING
+    expect(roll.dimensions).toBe(3);
+    expect(roll.passDims).toBe(1);     // correctness
+    expect(roll.failDims).toBe(1);     // security (missing)
+    expect(roll.partialDims).toBe(1);  // perf (partial, no missing)
+    expect(roll.totalDone).toBe(6);
+    expect(roll.totalPartial).toBe(1);
+    expect(roll.totalMissing).toBe(2);
+  });
+});
+
+describe('assertsPass — conservative overt-PASS detection (#1019 guard)', () => {
+  it('flags overt PASS claims', () => {
+    expect(assertsPass('REVIEW PASSED — 5 rounds, 3 findings fixed')).toBe(true);
+    expect(assertsPass('all dimensions pass')).toBe(true);
+    expect(assertsPass('✅ PASS')).toBe(true);
+    expect(assertsPass('LGTM')).toBe(true);
+  });
+  it('does NOT flag genuine non-verdict commentary', () => {
+    expect(assertsPass('fixed 3 lint nits and a typo')).toBe(false);
+    expect(assertsPass('carried the PARTIAL on perf forward to #1234')).toBe(false);
+    expect(assertsPass('re-ran the security dimension after the TOCTOU fix')).toBe(false);
   });
 });
 

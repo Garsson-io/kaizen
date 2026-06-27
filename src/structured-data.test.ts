@@ -237,8 +237,84 @@ describe('composeReviewSummary — auto-generates from stored findings', () => {
     expect(summary).toContain('## Review Round 2');
     expect(summary).toContain('| correctness | ✅ PASS | 3 | 0 | 0 |');
     expect(summary).toContain('| security | ❌ FAIL | 1 | 0 | 2 |');
-    expect(summary).toContain('1 PASS, 1 FAIL');
+    expect(summary).toContain('1 PASS, 0 PARTIAL, 1 FAIL');
     expect(summary).toContain('"verdict":"fail"'); // overall fails due to MISSING
+  });
+
+  it('surfaces PARTIAL distinctly — header, ⚠️ row, and rollup count (#1067)', () => {
+    // One dimension with a PARTIAL finding and zero MISSING — must PASS but loudly.
+    const c1 = JSON.stringify({ url: 'u', body: `<!-- kaizen:review/r3/correctness -->\n<!-- meta:{"round":3,"dimension":"correctness","verdict":"pass","done":3,"partial":0,"missing":0} -->` });
+    const c2 = JSON.stringify({ url: 'u', body: `<!-- kaizen:review/r3/perf -->\n<!-- meta:{"round":3,"dimension":"perf","verdict":"fail","done":2,"partial":1,"missing":0} -->` });
+    ghReturns(`${c1}\n${c2}`); // listAttachments
+    ghReturns(c1);
+    ghReturns(c2);
+
+    const summary = composeReviewSummary(pr, 3);
+    expect(summary).toContain('## Review Round 3 — PASS — 1 PARTIAL'); // header surfaces it
+    expect(summary).toContain('| perf | ⚠️ PARTIAL | 2 | 1 | 0 |');    // distinct row icon
+    expect(summary).toContain('"round_verdict":"PASS_WITH_PARTIALS"');
+    expect(summary).toContain('"verdict":"pass"'); // binary signal stays pass (non-blocking)
+    expect(summary).toContain('1 PARTIAL findings across 2 dimensions');
+  });
+});
+
+describe('storeReviewSummary — derived verdict is authoritative (#1019)', () => {
+  // Build a stored dimension-finding comment with the given meta counts.
+  const dimComment = (round: number, dim: string, verdict: string, done: number, partial: number, missing: number) =>
+    JSON.stringify({
+      url: `https://github.com/x/pull/903#issuecomment-${dim}`,
+      body: `<!-- kaizen:review/r${round}/${dim} -->\n<!-- meta:{"round":${round},"dimension":"${dim}","verdict":"${verdict}","done":${done},"partial":${partial},"missing":${missing}} -->`,
+    });
+
+  const bodyOfLastCreate = (): string => {
+    // createComment is the final gh call; its args carry body=<content>.
+    for (let i = mockGh.mock.calls.length - 1; i >= 0; i--) {
+      const args = mockGh.mock.calls[i][1] as string[];
+      const body = args?.find?.(a => typeof a === 'string' && a.startsWith('body='));
+      if (body) return body;
+    }
+    return '';
+  };
+
+  it('PREVENTION: hand-written "REVIEW PASSED" note while findings derive FAIL → throws (#1019)', () => {
+    const sec = dimComment(5, 'security', 'fail', 1, 0, 2); // MISSING=2 → derived FAIL
+    ghReturns(sec); // composeReviewSummary: listReviewDimensions
+    ghReturns(sec); // composeReviewSummary: readReviewFinding(security)
+    ghReturns(sec); // deriveStoredRoundVerdict: listReviewDimensions
+    ghReturns(sec); // deriveStoredRoundVerdict: readReviewFinding(security)
+
+    expect(() =>
+      storeReviewSummary(pr, 5, 'REVIEW PASSED — 5 rounds, all dimensions ✅'),
+    ).toThrow(/#1019|fabrication|PASSED/i);
+  });
+
+  it('stores the DERIVED FAIL verdict even when no note is supplied', () => {
+    const sec = dimComment(5, 'security', 'fail', 1, 0, 2);
+    ghReturns(sec); // compose: list
+    ghReturns(sec); // compose: read
+    ghReturns(''); // writeAttachment: readAttachment (no existing summary) → create
+    ghReturns('https://...#issuecomment-sum');
+
+    storeReviewSummary(pr, 5);
+    const body = bodyOfLastCreate();
+    expect(body).toContain('## Review Round 5 — FAIL');
+    expect(body).toContain('| security | ❌ FAIL | 1 | 0 | 2 |');
+  });
+
+  it('appends a benign note as non-authoritative, derived verdict intact', () => {
+    const ok = dimComment(2, 'correctness', 'pass', 3, 0, 0); // all DONE → PASS
+    ghReturns(ok); // compose: list
+    ghReturns(ok); // compose: read
+    ghReturns(ok); // deriveStoredRoundVerdict: list
+    ghReturns(ok); // deriveStoredRoundVerdict: read
+    ghReturns(''); // writeAttachment: readAttachment (no existing)
+    ghReturns('https://...#issuecomment-sum');
+
+    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes');
+    const body = bodyOfLastCreate();
+    expect(body).toContain('## Review Round 2 — PASS');
+    expect(body).toContain('### Reviewer notes (non-authoritative');
+    expect(body).toContain('rebased onto main');
   });
 });
 

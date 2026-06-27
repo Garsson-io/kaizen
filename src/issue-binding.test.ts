@@ -22,6 +22,7 @@ import {
   ensureWorktreeConfig,
   makeGitRun,
   readBoundIssue,
+  selfHealBinding,
   sharedIssue,
   unsetSharedIssue,
   worktreeScopedIssue,
@@ -170,6 +171,42 @@ describe('detectLeak', () => {
   });
 });
 
+describe('selfHealBinding (#1113 L3 mechanism)', () => {
+  it('binds from the case-branch token when the worktree is unbound', () => {
+    const { run, state } = makeStub({ branch: 'case/260626-k1113-x', worktree: null });
+    const r = selfHealBinding('case/260626-k1113-x', run);
+    expect(r).toMatchObject({ healed: true, issue: 1113 });
+    expect(state.worktree).toBe(1113);
+    expect(state.worktreeConfig).toBe(true); // enabled as part of the heal
+  });
+
+  it('overrides a leaked inherited value by binding the branch token', () => {
+    // Shared config leaks #1106; the worktree is on a k1113 branch with no binding.
+    const { run, state } = makeStub({ branch: 'case/260626-k1113-x', shared: 1106, worktree: null });
+    expect(detectLeak('case/260626-k1113-x', run).leaked).toBe(true);
+    const r = selfHealBinding('case/260626-k1113-x', run);
+    expect(r.healed).toBe(true);
+    expect(r.issue).toBe(1113);
+    // Worktree value now wins the merged read — the leak is healed, not just warned.
+    expect(readBoundIssue(run)).toBe(1113);
+    expect(state.shared).toBe(1106); // shared untouched — concurrency-safe
+  });
+
+  it('is a no-op when the worktree already owns a binding (never overrides)', () => {
+    const { run, state } = makeStub({ branch: 'case/260626-k1113-x', worktree: 999 });
+    const r = selfHealBinding('case/260626-k1113-x', run);
+    expect(r).toMatchObject({ healed: false, issue: 999, reason: 'already-bound' });
+    expect(state.worktree).toBe(999); // unchanged — #1106's domain, not provisioning's
+  });
+
+  it('is a no-op on a tokenless branch (run worktree)', () => {
+    const { run, state } = makeStub({ branch: 'worktree-2606261501-3542', shared: 1106, worktree: null });
+    const r = selfHealBinding('worktree-2606261501-3542', run);
+    expect(r).toMatchObject({ healed: false, issue: null, reason: 'no-branch-token' });
+    expect(state.worktree).toBeNull(); // nothing authoritative to bind to
+  });
+});
+
 // ── Integration: real git worktrees prove cross-worktree isolation ──
 
 describe('integration: real worktrees do not leak bindings', () => {
@@ -231,5 +268,54 @@ describe('integration: real worktrees do not leak bindings', () => {
     bindIssue(777, runA);
     expect(readBoundIssue(runA)).toBe(777);
     expect(readBoundIssue(runB)).toBe(1111);
+  });
+});
+
+describe('integration: selfHealBinding heals a leaked worktree (#1113)', () => {
+  let root: string;
+  let mainRepo: string;
+  let wt: string;
+
+  const git = (cwd: string, args: string[]) => spawnSync('git', args, { cwd, encoding: 'utf-8' });
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'kaizen-selfheal-'));
+    mainRepo = join(root, 'main');
+    git(root, ['init', '-q', 'main']);
+    git(mainRepo, ['config', 'user.email', 'test@example.com']);
+    git(mainRepo, ['config', 'user.name', 'Test']);
+    writeFileSync(join(mainRepo, 'f.txt'), 'hi\n');
+    git(mainRepo, ['add', '.']);
+    git(mainRepo, ['commit', '-q', '-m', 'init']);
+    // A prior run leaked a binding into shared config.
+    git(mainRepo, ['config', 'kaizen.issue', '1106']);
+    wt = join(root, 'wt');
+    git(mainRepo, ['worktree', 'add', '-q', '-b', 'case/260626-k1113-x', wt]);
+  });
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('binds the worktree to its branch token, overriding the inherited leak', () => {
+    const run = makeGitRun(wt);
+    expect(readBoundIssue(run)).toBe(1106); // inherited leak before heal
+    expect(detectLeak('case/260626-k1113-x', run).leaked).toBe(true);
+
+    const r = selfHealBinding('case/260626-k1113-x', run);
+    expect(r).toMatchObject({ healed: true, issue: 1113 });
+
+    // After heal: worktree owns 1113, merged read is 1113, shared stays 1106,
+    // and a sibling that read shared is undisturbed.
+    expect(worktreeScopedIssue(run)).toBe(1113);
+    expect(readBoundIssue(run)).toBe(1113);
+    expect(sharedIssue(run)).toBe(1106);
+    expect(detectLeak('case/260626-k1113-x', run).leaked).toBe(false);
+  });
+
+  it('is idempotent — a second heal is a no-op', () => {
+    const run = makeGitRun(wt);
+    const r = selfHealBinding('case/260626-k1113-x', run);
+    expect(r).toMatchObject({ healed: false, issue: 1113, reason: 'already-bound' });
   });
 });

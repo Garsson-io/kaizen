@@ -1254,6 +1254,28 @@ describe('classifyFailure', () => {
     )).toBe('infrastructure');
   });
 
+  it('classifies Claude rate-limit events as infrastructure failures', () => {
+    const log = JSON.stringify({
+      type: 'rate_limit_event',
+      rate_limit_info: {
+        status: 'rejected',
+        rateLimitType: 'five_hour',
+        overageDisabledReason: 'out_of_credits',
+      },
+    });
+    expect(classifyFailure(makeRunMetrics({ exit_code: 1, prs: [] }), log)).toBe('infrastructure');
+  });
+
+  it('classifies API 429 result envelopes as infrastructure failures', () => {
+    const log = JSON.stringify({
+      type: 'result',
+      is_error: true,
+      api_error_status: 429,
+      result: "You've hit your session limit",
+    });
+    expect(classifyFailure(makeRunMetrics({ exit_code: 1, prs: [] }), log)).toBe('infrastructure');
+  });
+
   it('classifies timeout from log', () => {
     expect(classifyFailure(
       makeRunMetrics({ exit_code: 1, prs: [] }),

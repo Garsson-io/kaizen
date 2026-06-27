@@ -236,6 +236,8 @@ You may only recommend reduced scope if you also provide **at least one** of:
 
 **If none of these three exist, you must not reduce scope.** Either solve the full problem in the current case, or include building the signal infrastructure as part of the current scope.
 
+**No circular deferral (kaizen #1014):** the follow-up issue in (3) must be an *independent* mechanism — not a symptom of the issue you are currently evaluating. Deferring a test level to an issue that exists *because that very test level is missing* (e.g., deferring System/E2E coverage to the open "no E2E coverage" issue that is itself listed among this issue's symptoms) is circular: it defers the fix to the problem. If the only candidate deferral target is a symptom of the current work, the work is in scope.
+
 **Why this matters:** "Do less now, more later" without a mechanism is just "do less." The "later" never arrives because there's no signal that triggers it. The reduced scope becomes the final scope, and the problem persists silently. This has happened repeatedly in kaizen evaluations — agents propose L1 with "escalate to L2 if needed" but provide no way to detect when L1 has failed.
 
 **This gate applies to:**
@@ -310,6 +312,8 @@ SEAM: [the injection point that isolates this for testing]
 ```
 
 If you cannot name the seam, the behavior is not testable in isolation. Add an extraction task before the implementation task. Red flags requiring extraction: the target location has more than 5 imports, the location is a CLI entry point or script's global scope, or testing it would require mocking more than 3 modules. Extract first, implement second — this is never the optional step.
+
+**COST NOTE — "session-level" ≠ "expensive E2E" (kaizen #1014):** when a seam names `SessionSimulator`, `src/e2e/hook-runner.ts`, `synthetic-workflow.test.ts`, or `spawnSync` on a hook script, that is a **System** test that fires real hooks/CLIs in a subprocess with **zero LLM/API calls** — deterministic, ~$0, <1s. Only real `claude -p` tests carry LLM cost. Never downgrade such a seam to unit-only or defer it to a follow-up on cost grounds. A seam map that names `SessionSimulator` followed by a unit-only test plan is a contradiction — resolve it before storing the plan.
 
 **Write the plan.** With all five steps complete, write the plan using this structure:
 

@@ -208,8 +208,13 @@ export interface Attachment {
 
 const MARKER_RE = /^<!-- kaizen:(\S+) -->/;
 
-/** Extract comment ID from GitHub URL (#issuecomment-123 or #discussion_r123 → ID) */
-function extractCommentId(url: string): string {
+/**
+ * Extract comment ID from a GitHub comment URL (#issuecomment-123 or comments/123 → ID).
+ * Null-guards a missing/empty url (e.g. a gh CLI version that omits the field) so callers
+ * degrade to '' instead of crashing on `null.match(...)` — see #1082.
+ */
+function extractCommentId(url: string | null | undefined): string {
+  if (!url) return '';
   return url.match(/#issuecomment-(\d+)/)?.[1]
     ?? url.match(/comments\/(\d+)/)?.[1]
     ?? '';
@@ -245,20 +250,16 @@ function fetchComments(target: AttachmentTarget): Array<{ url: string; body: str
     if (cached) return cached;
   }
   try {
-    let raw: string;
-    if (target.kind === 'issue') {
-      raw = gh([
-        'issue', 'view', target.number, '--repo', target.repo,
-        '--json', 'comments',
-        '--jq', '.comments[] | {url: .url, body: .body} | @json',
-      ]);
-    } else {
-      // PR comments via the issues API (PRs are issues in GitHub's model)
-      raw = gh([
-        'api', `repos/${target.repo}/issues/${target.number}/comments`,
-        '--jq', '.[] | {url: .html_url, body: .body} | @json',
-      ]);
-    }
+    // One stable code path for BOTH issues and PRs (PRs are issues in GitHub's
+    // model). The REST API exposes `html_url` on every gh CLI version; the older
+    // `gh issue view --json comments` path omitted `url` on pre-2.x gh, which
+    // crashed extractCommentId on any commented issue (#1082). `--paginate`
+    // preserves the previous "all comments" behavior (raw REST caps at 30/page).
+    const raw = gh([
+      'api', `repos/${target.repo}/issues/${target.number}/comments`,
+      '--paginate',
+      '--jq', '.[] | {url: .html_url, body: .body} | @json',
+    ]);
     if (!raw) return [];
     const results: Array<{ url: string; body: string }> = [];
     for (const line of raw.split('\n')) {

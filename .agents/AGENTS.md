@@ -51,6 +51,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `docs/auto-dent-operations.md` | Auto-dent operational guide — how to run, monitor, debug batch operations |
 | `docs/artifact-lifecycle.md` | Artifact chain — where outputs live, who consumes them, recursive loops |
 | `scripts/review-fix.ts` | CLI: review → fix → re-review cycle with state persistence and resume. `resolveStateDir(gitCommonDir)` stores state in the **main repo** (never inside a worktree) — survives worktree deletion (#929, #934) |
+| `scripts/auto-dent.ts` | Auto-dent TypeScript batch runner — owns outer loop, state initialization, stop checks, cooldown, final summaries; `auto-dent.sh` is only a compatibility wrapper |
 | `scripts/auto-dent-artifacts.ts` | Run artifact manifest + bundle — `buildRunManifest`, `writeRunManifest`, `bundleArtifacts` (auto-called at run completion) |
 | `scripts/batch-artifacts-upload.ts` | **Cloud-side raw artifacts** (#696, epic #842) — at batch finalize, inlines `events.jsonl` + `state.json` into an idempotent `batch-artifacts` attachment on the progress issue, size-capped to GitHub's 65,536-char comment limit (truncate head+tail → on-disk pointer). Sibling of the `batch-outcome` *summary* attachment. Wired into `closeBatchProgressIssue`. Supersedes the orphaned `upload-batch-artifacts.sh`. |
 | `src/cli-dimensions.ts` | Dimension CLI: list/show/add/validate `prompts/review-*.md` files |
@@ -58,7 +59,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `src/cli-structured-data.ts` | CLI for structured data — the primary interface for skills |
 | `src/section-editor.ts` | Low-level: sections (## in bodies) + attachments (marker comments) — CRUD primitives |
 | `src/case-system.ts` | **Case FE** — single gateway for plan gate (I3, I8). Pluggable `CaseBackend`: `GitHubCaseBackend` today, Linear/custom tomorrow. Hooks and skills go through this, never call BE directly |
-| `src/hooks/enforce-plan-stored.ts` | PreToolUse hook enforcing I3/I8: Edit/Write/NotebookEdit require a stored plan on `git config kaizen.issue`; `gh pr create` adds a substance check. Cross-checks the declared issue against the canonical case-branch token (`case/<date>-k<N>-*`) and fails closed on mismatch — a stale/inherited `kaizen.issue` can't sail through the plan gate for the wrong issue (#1106; the #943/#950 command-vs-outcome category). |
+| `src/hooks/enforce-plan-stored.ts` | PreToolUse hook enforcing I3/I8: Edit/Write/NotebookEdit require a stored **and substantive** plan + test plan on `git config kaizen.issue`, and `gh pr create` applies the SAME substance bar. The substance heuristic (`checkSubstance`) runs at BOTH choke points — a rubber-stamp stub is rejected at the FIRST source edit, not deferred to PR time (#1035). Same bar both places → no new false positives, only earlier feedback. Cross-checks the declared issue against the canonical case-branch token (`case/<date>-k<N>-*`) and fails closed on mismatch — a stale/inherited `kaizen.issue` can't sail through the plan gate for the wrong issue (#1106; the #943/#950 command-vs-outcome category). |
 | `src/hooks/pre-push.ts` | **Git pre-push hook** (epic #1059) — mechanistic L3 gate: agent-env gate + merged-branch block (I7) + needs_review gate creation. Replaces fragile Bash parsing path for push detection (#909, #1057). See `docs/git-hooks-design.md`. |
 | `src/hooks/prehook-no-verify.ts` | PreToolUse hook blocking `git push --no-verify` — prevents agents from bypassing the pre-push gate |
 | `src/setup-git-hooks.ts` | `/kaizen-setup install-git-hooks` implementation — detects host framework (pre-commit/husky/lefthook/raw/none) and injects kaizen's pre-push hook idempotently |
@@ -93,6 +94,8 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `/kaizen-update` | Pull updates from kaizen repo |
 
 ## Mandatory Practices
+
+**Substantive test plan before implementation**: An issue MUST have a stored, *substantive* plan AND test plan (`retrieve-testplan` ≠ null and it passes the substance heuristic) before any source code is written — not just before the PR. A one-sentence stub cannot guide implementation, which is the whole point of writing it first. The `enforce-plan-stored` hook (I3/I8) enforces this at the FIRST source edit *and* at `gh pr create` with the identical substance bar; do not retrofit the plan at PR time. If the gate blocks you, run `/kaizen-write-plan` — don't reach for the stub. (#1035)
 
 **PR bodies**: Always use `/kaizen-write-pr` when creating or editing PR descriptions. Never write a bare `gh pr create --body` with a few bullet points. The Story Spine narrative makes PRs reviewable without reading the diff.
 

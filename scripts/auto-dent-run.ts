@@ -39,8 +39,13 @@ import {
 import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
 import { runFixLoop, type CliArgs as ReviewFixArgs } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
-import { buildBatchOutcome, writeBatchOutcomeAttachment } from './batch-outcome.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
+import {
+  buildBatchOutcome,
+  writeBatchOutcomeAttachment,
+  readBatchOutcomesFromGithub,
+  computeSteeringRecommendations,
+} from './batch-outcome.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -96,6 +101,17 @@ export {
   type StreamContext,
 } from './auto-dent-stream.js';
 
+// Lifecycle validation — re-exported for back-compat (#1103).
+export {
+  validateRunLifecycle,
+  summarizeLifecycle,
+  LIFECYCLE_ORDER,
+  FLOATING_PHASES,
+  REQUIRED_PREDECESSORS,
+  type LifecycleValidation,
+  type LifecycleHealth,
+} from './auto-dent-lifecycle.js';
+
 // Import for internal use
 import {
   ghExec,
@@ -116,6 +132,11 @@ import {
   IN_FLIGHT_UPDATE_INTERVAL_MS,
   type StreamContext,
 } from './auto-dent-stream.js';
+import {
+  validateRunLifecycle,
+  summarizeLifecycle,
+  type LifecycleHealth,
+} from './auto-dent-lifecycle.js';
 
 // Types
 
@@ -154,6 +175,12 @@ export interface BatchState {
   contemplation_recommendations?: string[];
   /** Insights from reflect-mode runs that feed back into subsequent runs (#699) */
   reflection_insights?: string[];
+  /**
+   * Cross-batch steering derived from PRIOR batches' GitHub outcomes (#940 Phase 2).
+   * Populated once per batch (fail-open) and surfaced as {{cross_batch_steering}}
+   * so observable cloud data biases this batch's choices.
+   */
+  cross_batch_steering?: string[];
 }
 
 export interface RunMetrics {
@@ -184,6 +211,8 @@ export interface RunMetrics {
   hook_rejection_reason?: string;
   /** Number of lifecycle ordering violations detected post-run */
   lifecycle_violations?: number;
+  /** Lifecycle health: clean (ok) | degraded (ordering) | critical (gaps/phantoms) (#1103) */
+  lifecycle_health?: LifecycleHealth;
   /** Review battery verdict for PRs created in this run */
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Review battery cost (USD) */
@@ -425,6 +454,12 @@ export function buildTemplateVars(
     ? contemplationRecs.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
 
+  // Cross-batch steering from prior batches' GitHub outcomes (#940 Phase 2).
+  const crossBatchSteering = [...new Set(state.cross_batch_steering || [])];
+  const crossBatchSteeringText = crossBatchSteering.length > 0
+    ? crossBatchSteering.map((r, i) => `${i + 1}. ${r}`).join('\n')
+    : '';
+
   return {
     guidance: state.guidance,
     run_tag: runTag,
@@ -441,6 +476,7 @@ export function buildTemplateVars(
     plan_assignment: planAssignment,
     claimed_plan_issue: claimedPlanIssue,
     reflection_insights: reflectionInsights,
+    cross_batch_steering: crossBatchSteeringText,
     run_history_table: runHistoryTable,
     total_cost: totalCost,
     pr_count: prCount,
@@ -756,6 +792,61 @@ export interface PromptMetadata {
 
 export function buildPrompt(state: BatchState, runNum: number, logDir?: string): string {
   return buildPromptWithMetadata(state, runNum, logDir).prompt;
+}
+
+/**
+ * Populate `state.cross_batch_steering` from PRIOR batches' GitHub outcomes,
+ * once per batch (#940 Phase 2). This is what closes the cross-batch learning
+ * loop: Phase 1 wrote durable `batch-outcome` records to GitHub; here a later
+ * batch reads them, derives steering recommendations, and persists them so every
+ * run in this batch sees them via {{cross_batch_steering}}.
+ *
+ * Fail-open and idempotent: runs only when the field is unset, and any GitHub /
+ * parse error degrades to an empty array (no steering) rather than breaking the
+ * run. The result is persisted so it is computed at most once per batch. `deps`
+ * is injectable for tests. Returns the steering strings that were stored.
+ */
+export function populateCrossBatchSteering(
+  state: BatchState,
+  stateFile: string,
+  deps: { read?: typeof readBatchOutcomesFromGithub } = {},
+): string[] {
+  // Already attempted this batch (possibly resumed) — don't refetch.
+  if (state.cross_batch_steering !== undefined) return state.cross_batch_steering;
+
+  const repo = state.kaizen_repo;
+  let steering: string[] = [];
+  if (repo && repo !== 'unknown') {
+    try {
+      const read = deps.read ?? readBatchOutcomesFromGithub;
+      const outcomes = read(repo, { excludeBatchId: state.batch_id });
+      const report = computeSteeringRecommendations(outcomes);
+      steering = report.recommendations.map((r) => r.text);
+      if (steering.length > 0) {
+        console.log(
+          `  [intelligence] cross-batch steering: ${steering.length} signal(s) from ${report.batches_analyzed} prior batch(es)`,
+        );
+      } else {
+        console.log(
+          `  [intelligence] cross-batch steering: no strong signal from ${report.batches_analyzed} prior batch(es)`,
+        );
+      }
+    } catch (err) {
+      // Fail-open: prior-batch intelligence is a nicety, never a blocker.
+      console.log(
+        `  [intelligence] cross-batch steering skipped: ${(err as Error).message?.split('\n')[0]}`,
+      );
+      steering = [];
+    }
+  }
+
+  state.cross_batch_steering = steering;
+  try {
+    writeState(stateFile, state);
+  } catch {
+    /* best-effort persistence; in-memory value still steers this run */
+  }
+  return steering;
 }
 
 export function buildPromptWithMetadata(state: BatchState, runNum: number, logDir?: string): PromptMetadata {
@@ -1412,44 +1503,10 @@ function printRunSummary(
   console.log('');
 }
 
-// Lifecycle validation
-
-const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
-const FLOATING_PHASES = new Set(['DECOMPOSE', 'STOP']);
-
-export interface LifecycleValidation {
-  valid: boolean;
-  phasesPresent: string[];
-  phasesMissing: string[];
-  violations: Array<{ phase: string; after: string }>;
-}
-
-/**
- * Validate lifecycle phase ordering from a run log file.
- * Reads the log, extracts AUTO_DENT_PHASE markers, and checks ordering.
- * Advisory only — violations are logged but don't block the batch.
- */
-export function validateRunLifecycle(logFile: string): LifecycleValidation {
-  const logContent = readFileSync(logFile, 'utf8');
-  const markers = parsePhaseMarkers(logContent);
-  const phasesPresent = markers.map(m => m.phase);
-  const orderedPhases = phasesPresent.filter(p => !FLOATING_PHASES.has(p));
-  const violations: Array<{ phase: string; after: string }> = [];
-
-  for (let i = 1; i < orderedPhases.length; i++) {
-    const prevIdx = LIFECYCLE_ORDER.indexOf(orderedPhases[i - 1]);
-    const currIdx = LIFECYCLE_ORDER.indexOf(orderedPhases[i]);
-    if (prevIdx === -1 || currIdx === -1) continue;
-    if (currIdx < prevIdx) {
-      violations.push({ phase: orderedPhases[i], after: orderedPhases[i - 1] });
-    }
-  }
-
-  const presentSet = new Set(phasesPresent);
-  const phasesMissing = LIFECYCLE_ORDER.filter(p => !presentSet.has(p));
-
-  return { valid: violations.length === 0, phasesPresent, phasesMissing, violations };
-}
+// Lifecycle validation — implementation lives in ./auto-dent-lifecycle.ts.
+// Re-exported here for back-compat (existing importers and tests reference it
+// from './auto-dent-run'). See that module for the enriched gap/phantom/health
+// detection (#1103).
 
 // Review wiring — extracted for testability (#896, #914)
 
@@ -1636,6 +1693,10 @@ async function main(): Promise<void> {
     console.log(`  [plan] reset ${resetCount} interrupted item(s) from 'assigned' to 'pending'`);
   }
 
+  // Close the cross-batch learning loop (#940 Phase 2): read prior batches'
+  // GitHub outcomes once per batch and surface steering via the prompt. Fail-open.
+  populateCrossBatchSteering(state, stateFile);
+
   const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(2, 14);
   const logFile = `${logDir}/run-${runNum}-${timestamp}.log`;
 
@@ -1654,13 +1715,14 @@ async function main(): Promise<void> {
     repoRoot,
     stateFile,
   );
+  const runId = makeRunId(state.batch_id, runNum);
 
   // Emit run.start telemetry with correct pre-run timestamp (#656)
   // Uses emitAt() to backdate the envelope timestamp to when the run actually started,
   // and includes start_epoch for explicit duration calculations.
   events.emitAt(runStartDate, {
     type: 'run.start',
-    run_id: makeRunId(state.batch_id, runNum),
+    run_id: runId,
     batch_id: state.batch_id,
     run_num: runNum,
     mode: runMode,
@@ -1697,7 +1759,6 @@ async function main(): Promise<void> {
   // Emit per-artifact events from stream results (#647)
   let pickedIssue = '';
   {
-    const runId = makeRunId(state.batch_id, runNum);
     // Extract picked issue from log phase markers
     try {
       const logContent = readFileSync(logFile, 'utf8');
@@ -1755,23 +1816,33 @@ async function main(): Promise<void> {
   result.reviewVerdict = reviewVerdict;
   result.reviewCostUsd = reviewCostUsd;
 
-  // Lifecycle validation (#639) — advisory, not blocking
+  // Lifecycle validation (#639, #1103) — observability + steering, never a hard
+  // block. Beyond ordering, this detects critical gaps (PR without IMPLEMENT,
+  // MERGE without PR) and phantom claims (TEST result=pass with count=0) — the
+  // "verify outcomes, not commands" category (#943, #950).
   let lifecycleViolationCount = 0;
+  let lifecycleHealth: LifecycleHealth = 'clean';
+  let lifecycleCriticalCount = 0;
+  let lifecycleSteeringNote: string | null = null;
   try {
     const lifecycle = validateRunLifecycle(logFile);
     lifecycleViolationCount = lifecycle.violations.length;
-    if (!lifecycle.valid) {
-      const details = lifecycle.violations
-        .map(v => `${v.phase} appeared after ${v.after}`)
-        .join(', ');
-      console.log(
-        `  ${color.yellow('[lifecycle]')} ${lifecycle.violations.length} violation(s): ${details}`,
-      );
-      appendFileSync(logFile, `\nlifecycle_violations=${lifecycle.violations.length}: ${details}\n`);
+    lifecycleHealth = lifecycle.health;
+    lifecycleCriticalCount = lifecycle.criticalGaps.length + lifecycle.phantomPhases.length;
+    const summary = summarizeLifecycle(lifecycle);
+    if (lifecycle.health === 'critical') {
+      // Claimed-to-ship-without-building, or claimed-green-but-ran-nothing.
+      console.log(`  ${color.red('[lifecycle]')} ${summary}`);
+      appendFileSync(logFile, `\nlifecycle_health=critical: ${summary}\n`);
+      // Steer the next run: warn the agent that this run's narrative didn't hold.
+      lifecycleSteeringNote =
+        `Prior run had a CRITICAL lifecycle problem (${summary}). ` +
+        `Do not emit PR/MERGE without a real IMPLEMENT, and never emit TEST result=pass with count=0 — run the tests.`;
+    } else if (lifecycle.health === 'degraded') {
+      console.log(`  ${color.yellow('[lifecycle]')} ${summary}`);
+      appendFileSync(logFile, `\nlifecycle_violations=${lifecycle.violations.length}: ${summary}\n`);
     } else {
-      console.log(
-        `  ${color.dim('[lifecycle]')} valid (${lifecycle.phasesPresent.join(' -> ')})`,
-      );
+      console.log(`  ${color.dim('[lifecycle]')} ${summary}`);
     }
     if (lifecycle.phasesMissing.length > 0) {
       console.log(
@@ -1820,7 +1891,7 @@ async function main(): Promise<void> {
       : 'failure' as const;
     events.emit({
       type: 'run.complete',
-      run_id: makeRunId(state.batch_id, runNum),
+      run_id: runId,
       batch_id: state.batch_id,
       run_num: runNum,
       duration_ms: duration * 1000,
@@ -1833,6 +1904,8 @@ async function main(): Promise<void> {
       stop_requested: result.stopRequested,
       failure_class: result.failureClass,
       lifecycle_violations: lifecycleViolationCount,
+      lifecycle_health: lifecycleHealth,
+      lifecycle_critical: lifecycleCriticalCount,
       review_verdict: reviewVerdict,
       review_cost_usd: reviewCostUsd,
       outcome,
@@ -1968,6 +2041,7 @@ async function main(): Promise<void> {
     prompt_template: promptMeta.template,
     prompt_hash: promptMeta.hash,
     lifecycle_violations: lifecycleViolationCount,
+    lifecycle_health: lifecycleHealth,
     review_verdict: reviewVerdict,
     review_cost_usd: reviewCostUsd,
   };
@@ -2006,7 +2080,7 @@ async function main(): Promise<void> {
     console.log(`  [contemplate] ${newRecs.length} new recommendation(s) stored (${result.contemplationRecs.length - newRecs.length} duplicates skipped)`);
     events.emit({
       type: 'batch.reflect',
-      run_id: makeRunId(state.batch_id, runNum),
+      run_id: runId,
       batch_id: state.batch_id,
       run_num: runNum,
       recommendations_count: result.contemplationRecs.length,
@@ -2020,6 +2094,17 @@ async function main(): Promise<void> {
     const newInsights = result.reflectionInsights.filter(r => !existing.has(r));
     freshState.reflection_insights.push(...newInsights);
     console.log(`  [reflect] ${newInsights.length} new insight(s) stored (${result.reflectionInsights.length - newInsights.length} duplicates skipped)`);
+  }
+
+  // Steer the next run on a CRITICAL lifecycle problem (#1103). Observable data
+  // must steer future runs (#940) — feed the warning into the next prompt via
+  // the same reflection-insight channel, deduped.
+  if (lifecycleSteeringNote) {
+    if (!freshState.reflection_insights) freshState.reflection_insights = [];
+    if (!freshState.reflection_insights.includes(lifecycleSteeringNote)) {
+      freshState.reflection_insights.push(lifecycleSteeringNote);
+      console.log(`  ${color.red('[lifecycle]')} steering insight added for next run`);
+    }
   }
 
   if (result.prs.length > 0) {

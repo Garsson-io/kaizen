@@ -29,9 +29,13 @@ import {
   normalizeReviewFindingData as normalizeReviewFindingDataContract,
   makeReviewFindingMeta,
   extractReviewFindingMeta,
+  summarizeRound,
+  assertsPass,
   type ReviewFinding,
   type ReviewFindingData,
   type ReviewFindingMeta,
+  type RoundRow,
+  type RoundVerdict,
 } from './review-finding-contract.js';
 
 // ── Target helpers ──────────────────────────────────────────────────
@@ -197,7 +201,7 @@ export function storeReviewFinding(
  */
 export function composeReviewSummary(target: AttachmentTarget, round: number): string {
   const dims = listReviewDimensions(target, round);
-  const rows: Array<{ dim: string; verdict: string; done: number; partial: number; missing: number }> = [];
+  const rows: RoundRow[] = [];
 
   for (const dim of dims) {
     const content = readReviewFinding(target, round, dim);
@@ -208,40 +212,83 @@ export function composeReviewSummary(target: AttachmentTarget, round: number): s
     }
   }
 
-  const totalPass = rows.filter(r => r.verdict === 'pass').length;
-  const totalFail = rows.filter(r => r.verdict === 'fail').length;
-  const totalMissing = rows.reduce((s, r) => s + r.missing, 0);
-  const totalPartial = rows.reduce((s, r) => s + r.partial, 0);
-  const overallVerdict = totalMissing === 0 ? 'PASS' : 'FAIL';
-  const summaryMeta = JSON.stringify({ round, verdict: overallVerdict.toLowerCase(), dimensions: rows.length, pass: totalPass, fail: totalFail, total_missing: totalMissing, total_partial: totalPartial });
+  const roll = summarizeRound(rows);
+  // Header verdict mirrors the three-state rule; the `verdict` field in meta stays pass|fail so
+  // downstream consumers (gates, parsers) keep a binary signal — PASS_WITH_PARTIALS maps to pass.
+  const headerVerdict = roll.verdict === 'FAIL' ? 'FAIL'
+    : roll.verdict === 'PASS_WITH_PARTIALS' ? `PASS — ${roll.totalPartial} PARTIAL`
+    : 'PASS';
+  const metaVerdict = roll.verdict === 'FAIL' ? 'fail' : 'pass';
+  const summaryMeta = JSON.stringify({ round, verdict: metaVerdict, round_verdict: roll.verdict, dimensions: roll.dimensions, pass: roll.passDims, fail: roll.failDims, partial: roll.partialDims, total_done: roll.totalDone, total_missing: roll.totalMissing, total_partial: roll.totalPartial });
 
   const lines: string[] = [
     `<!-- meta:${summaryMeta} -->`,
-    `## Review Round ${round} — ${overallVerdict}`,
+    `## Review Round ${round} — ${headerVerdict}`,
     '',
     '| Dimension | Verdict | DONE | PARTIAL | MISSING |',
     '|-----------|---------|------|---------|---------|',
   ];
 
   for (const r of rows) {
-    const icon = r.verdict === 'pass' ? '✅' : '❌';
-    lines.push(`| ${r.dim} | ${icon} ${r.verdict.toUpperCase()} | ${r.done} | ${r.partial} | ${r.missing} |`);
+    const icon = r.missing > 0 ? '❌' : r.partial > 0 ? '⚠️' : '✅';
+    const label = r.missing > 0 ? 'FAIL' : r.partial > 0 ? 'PARTIAL' : 'PASS';
+    lines.push(`| ${r.dim} | ${icon} ${label} | ${r.done} | ${r.partial} | ${r.missing} |`);
   }
 
-  lines.push('', `**Overall**: ${totalPass} PASS, ${totalFail} FAIL | ${totalMissing} MISSING, ${totalPartial} PARTIAL across ${rows.length} dimensions`);
+  lines.push('', `**Overall**: ${roll.passDims} PASS, ${roll.partialDims} PARTIAL, ${roll.failDims} FAIL | ${roll.totalMissing} MISSING, ${roll.totalPartial} PARTIAL findings across ${roll.dimensions} dimensions`);
   return lines.join('\n');
 }
 
 /**
- * Store the round summary. Prefer composeReviewSummary() to auto-generate from findings.
+ * Compute the authoritative round verdict from stored findings — never from caller text.
+ * Exposed so the storeReviewSummary guard and external callers share one derivation.
+ */
+export function deriveStoredRoundVerdict(target: AttachmentTarget, round: number): RoundVerdict {
+  const rows: RoundRow[] = [];
+  for (const dim of listReviewDimensions(target, round)) {
+    const content = readReviewFinding(target, round, dim);
+    if (!content) continue;
+    const meta = parseFindingMeta(content);
+    if (meta) rows.push({ dim: meta.dimension, verdict: meta.verdict, done: meta.done, partial: meta.partial, missing: meta.missing });
+  }
+  return summarizeRound(rows).verdict;
+}
+
+/**
+ * Store the round summary.
+ *
+ * The authoritative verdict block is ALWAYS derived from the stored per-dimension findings via
+ * composeReviewSummary() — a caller can never substitute a hand-written verdict for it (#1019).
+ * An optional `note` is appended below as clearly-labelled, non-authoritative commentary.
+ *
+ * Fail-closed guard: if the note overtly asserts the round PASSED while the derived verdict is
+ * FAIL, throw — the agent must fix the findings or escalate, not narrate a passing verdict on
+ * top of failing data (the exact #1019 bypass). The derived block stays authoritative either way.
+ *
  * Attachment name: review/r{round}/summary
  */
 export function storeReviewSummary(
   target: AttachmentTarget,
   round: number,
-  summary?: string,
+  note?: string,
 ): string {
-  const content = summary ?? composeReviewSummary(target, round);
+  const derived = composeReviewSummary(target, round);
+  let content = derived;
+
+  const trimmed = note?.trim();
+  if (trimmed) {
+    const roundVerdict = deriveStoredRoundVerdict(target, round);
+    if (roundVerdict === 'FAIL' && assertsPass(trimmed)) {
+      throw new Error(
+        `store-review-summary: refusing to store a note that asserts the round PASSED while the ` +
+        `stored findings derive FAIL (MISSING findings present). This is the #1019 fabrication ` +
+        `pattern. Either fix the findings (re-run the dimension), or escalate to a human reviewer ` +
+        `— do not narrate a passing verdict over failing data. Note was: ${JSON.stringify(trimmed)}`,
+      );
+    }
+    content = `${derived}\n\n### Reviewer notes (non-authoritative — verdict above is derived from findings)\n\n${trimmed}`;
+  }
+
   return writeAttachment(target, `review/r${round}/summary`, content);
 }
 

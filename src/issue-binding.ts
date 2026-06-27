@@ -179,3 +179,51 @@ export function currentBranch(run: GitRun): string {
   const r = run(['rev-parse', '--abbrev-ref', 'HEAD']);
   return r.code === 0 ? r.stdout : '';
 }
+
+export interface SelfHealResult {
+  /** True when this call wrote a new worktree-scoped binding. */
+  healed: boolean;
+  /** The issue bound after this call, or null when none could be derived. */
+  issue: number | null;
+  /** Why no heal happened (only set when `healed` is false). */
+  reason?: 'already-bound' | 'no-branch-token';
+  /** Whether enabling `extensions.worktreeConfig` was part of the heal. */
+  enabledWorktreeConfig?: boolean;
+}
+
+/**
+ * The L3 escalation of the #1111 advisory (#1113): instead of *warning* that a
+ * worktree would read a leaked inherited binding, set the correct per-worktree
+ * binding mechanically — before the first edit, with no manual step.
+ *
+ * The authoritative source is the canonical case branch: `case/<date>-k<N>-*`
+ * carries the issue token the #1106 edit-time hook already trusts as a
+ * cross-check, so binding *to* that token is exactly what a correct provisioning
+ * step would do. Behaviour:
+ *
+ *   - Worktree already owns a binding  → no-op (`already-bound`). An explicit
+ *     worktree-scoped value is never overridden; a mismatch there is the #1106
+ *     hook's domain, not a provisioning artifact.
+ *   - Canonical case branch, no binding → bind to the branch token (`healed`).
+ *     This also overrides any *inherited* shared value (the leak), because the
+ *     worktree-scoped value wins the merged read.
+ *   - Tokenless branch (e.g. a `worktree-*` run worktree) → no-op
+ *     (`no-branch-token`): nothing authoritative to derive the issue from. The
+ *     caller may fall back to the advisory warning.
+ *
+ * Touches only worktree scope — never shared config — so it is safe under
+ * concurrency: it cannot clobber a sibling worktree's binding.
+ */
+export function selfHealBinding(branch: string, run: GitRun): SelfHealResult {
+  const worktreeScoped = worktreeScopedIssue(run);
+  if (worktreeScoped != null) {
+    return { healed: false, issue: worktreeScoped, reason: 'already-bound' };
+  }
+  const tokenRaw = extractCaseIssueFromBranch(branch);
+  const branchToken = tokenRaw ? Number(tokenRaw) : null;
+  if (branchToken == null) {
+    return { healed: false, issue: null, reason: 'no-branch-token' };
+  }
+  const { enabledWorktreeConfig } = bindIssue(branchToken, run);
+  return { healed: true, issue: branchToken, enabledWorktreeConfig };
+}

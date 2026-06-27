@@ -7,6 +7,7 @@
  *
  * Commands:
  *   bind --issue <N>          Bind this worktree to issue N (worktree-scoped).
+ *   auto-bind                 Self-heal: bind from the canonical case-branch token (#1113).
  *   read                      Print the merged binding the hooks would see.
  *   check-leak                Detect an inherited (leaked) binding; exit 1 if leaked.
  *   ensure-worktree-config    Enable extensions.worktreeConfig (idempotent).
@@ -23,6 +24,7 @@ import {
   ensureWorktreeConfig,
   unsetSharedIssue,
   currentBranch,
+  selfHealBinding,
 } from './issue-binding.js';
 
 export function parseArgs(argv: string[]): void {
@@ -45,6 +47,24 @@ export function parseArgs(argv: string[]): void {
         `Bound this worktree to #${r.issue} (worktree-scoped).` +
           (r.enabledWorktreeConfig ? ' Enabled extensions.worktreeConfig.' : ''),
       );
+      break;
+    }
+    case 'auto-bind': {
+      const branch = currentBranch(run);
+      const r = selfHealBinding(branch, run);
+      if (r.healed) {
+        console.log(
+          `Auto-bound this worktree to #${r.issue} from its case branch (${branch}).` +
+            (r.enabledWorktreeConfig ? ' Enabled extensions.worktreeConfig.' : ''),
+        );
+      } else if (r.reason === 'already-bound') {
+        console.log(`Already bound to #${r.issue} (worktree-scoped) — nothing to do.`);
+      } else {
+        console.log(
+          `No case-branch token on '${branch || '(detached)'}' — cannot auto-derive an issue. ` +
+            `Bind explicitly: bind --issue <N>.`,
+        );
+      }
       break;
     }
     case 'read': {
@@ -82,7 +102,9 @@ export function parseArgs(argv: string[]): void {
     }
     default: {
       console.error(`Unknown command: ${command ?? '(none)'}`);
-      console.error('Commands: bind --issue <N> | read | check-leak | ensure-worktree-config | unset-shared');
+      console.error(
+        'Commands: bind --issue <N> | auto-bind | read | check-leak | ensure-worktree-config | unset-shared',
+      );
       process.exit(1);
     }
   }

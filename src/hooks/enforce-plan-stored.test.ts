@@ -115,6 +115,36 @@ describe('checkPlanBeforeEdit', () => {
     expect(result.reason).toContain('kaizen-write-plan');
   });
 
+  // #1069: the block must name the ACTUAL missing artifact, not always say
+  // "No plan stored". Each of {plan missing, testplan missing, both} gets a
+  // distinct, correct message so the author doesn't burn a diagnostic round.
+  describe('block message names the missing artifact (#1069)', () => {
+    it('plan missing → message says the plan is missing', () => {
+      const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => null }));
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toEqual(['plan']);
+      expect(result.reason).toMatch(/No implementation plan stored/);
+    });
+
+    it('only testplan missing → message says the plan exists but the test plan is missing', () => {
+      const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrieveTestPlan: () => null }));
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toEqual(['testplan']);
+      expect(result.reason).toMatch(/test plan is missing/);
+      // Must NOT mislead the author into thinking the plan is absent.
+      expect(result.reason).not.toMatch(/No plan or test plan stored/);
+    });
+
+    it('both missing → message says both are missing', () => {
+      const result = checkPlanBeforeEdit(
+        'src/thing.ts',
+        makeDeps({ retrievePlan: () => null, retrieveTestPlan: () => null }),
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/No plan or test plan stored/);
+    });
+  });
+
   it('allows non-source files even without plan', () => {
     expect(checkPlanBeforeEdit('docs/readme.md', makeDeps({ retrievePlan: () => null })).allowed).toBe(true);
   });
@@ -176,6 +206,46 @@ describe('checkPlanBeforeEdit', () => {
   it('tells agent to wait for skill to complete', () => {
     const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => null }));
     expect(result.reason).toContain('Wait for the skill to COMPLETE');
+  });
+
+  // ── #1035: substance enforced at edit time, not just PR time ──────
+  describe('substance at edit time (#1035)', () => {
+    const STUB_PLAN = '## Plan\n\nDo the thing.';
+    const STUB_TEST_PLAN = '## Test Plan\nno table';
+
+    it('B1: DENIES first source edit when plan exists but is a rubber-stamp', () => {
+      const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => STUB_PLAN }));
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('substance');
+      expect(result.reason).toContain('not substantive');
+    });
+
+    it('B2: DENIES first source edit when test plan exists but is a rubber-stamp', () => {
+      const result = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrieveTestPlan: () => STUB_TEST_PLAN }));
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('substance');
+    });
+
+    it('B3: ALLOWS first source edit when plan AND test plan are both substantive', () => {
+      expect(checkPlanBeforeEdit('src/thing.ts', makeDeps()).allowed).toBe(true);
+    });
+
+    it('B6: substance deny reason is the same at the edit gate and the PR gate', () => {
+      const editReason = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => STUB_PLAN })).reason ?? '';
+      const prReason = checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps({ retrievePlan: () => STUB_PLAN })).reason ?? '';
+      // Same heuristic, same message body — one substance bar at both choke points.
+      expect(editReason).toContain('not substantive');
+      expect(prReason).toContain('not substantive');
+      expect(editReason).toContain('Plan substance failures');
+      expect(prReason).toContain('Plan substance failures');
+    });
+
+    it('does not falsely block when both are substantive (no new false positives)', () => {
+      // Any plan that passes at PR time must pass at edit time — same heuristic.
+      const deps = makeDeps();
+      expect(checkPlanBeforeEdit('src/thing.ts', deps).allowed).toBe(true);
+      expect(checkPlanBeforePr(ghPrCreate('Closes #1055'), deps).allowed).toBe(true);
+    });
   });
 
   // ── #1106: stale/inherited kaizen.issue cross-check ───────────────

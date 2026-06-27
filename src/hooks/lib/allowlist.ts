@@ -57,12 +57,40 @@ export function isReadonlyMonitoringCommand(cmdLine: string): boolean {
 }
 
 /**
+ * Check if a command is one of the universal stop-gate escape declarations.
+ *
+ * The Stop gate advertises `echo 'KAIZEN_UNFINISHED: <reason>'` (and the
+ * sibling KAIZEN_NO_ACTION / KAIZEN_IMPEDIMENTS declarations) as the way out of
+ * ANY blocked state — see `gate-manager.ts` formatGateMessage. A PreToolUse gate
+ * that does not honor these would deadlock the author: the harness tells them to
+ * run the escape, then the allowlist blocks it as "not scoped to this gate"
+ * (kaizen #1068). This is the single source of truth so every gate allowlist
+ * accepts the same escape — see the escape-hatch invariant in allowlist.test.ts.
+ */
+export function isEscapeHatch(cmdLine: string): boolean {
+  const segments = splitSegments(cmdLine);
+  for (const seg of segments) {
+    // KAIZEN_UNFINISHED: <reason> — universal "stopping with unfinished work" escape
+    if (/^echo.*KAIZEN_UNFINISHED:/.test(seg) || /^KAIZEN_UNFINISHED:/.test(seg)) return true;
+    // KAIZEN_NO_ACTION — "nothing to do here" declaration
+    if (/^echo.*KAIZEN_NO_ACTION/.test(seg) || /^KAIZEN_NO_ACTION/.test(seg)) return true;
+    // KAIZEN_IMPEDIMENTS: — reflection escape (also used to satisfy I16)
+    if (/^echo.*KAIZEN_IMPEDIMENTS:/.test(seg) || /^KAIZEN_IMPEDIMENTS:/.test(seg)) return true;
+  }
+  return false;
+}
+
+/**
  * Check if a command is allowed during PR review gate.
- * Includes review-related PR commands + shared readonly monitoring.
+ * Includes review-related PR commands + the universal escape + shared readonly
+ * monitoring.
  */
 export function isReviewCommand(cmdLine: string): boolean {
   // gh pr diff/view/comment/edit
   if (isGhPrCommand(cmdLine, 'diff|view|comment|edit')) return true;
+
+  // Universal stop-gate escape — must work from any gate-blocked state (#1068)
+  if (isEscapeHatch(cmdLine)) return true;
 
   // Shared readonly monitoring
   if (isReadonlyMonitoringCommand(cmdLine)) return true;
@@ -81,15 +109,14 @@ export function isKaizenCommand(cmdLine: string): boolean {
     // gh issue create/list/search/comment/view
     if (/^gh\s+issue\s+(create|list|search|comment|view)/.test(seg)) return true;
 
-    // KAIZEN_IMPEDIMENTS declaration
-    if (/^echo.*KAIZEN_IMPEDIMENTS:/.test(seg) || /^KAIZEN_IMPEDIMENTS:/.test(seg) || /^cat/.test(seg)) return true;
-
-    // KAIZEN_NO_ACTION declaration
-    if (/^echo.*KAIZEN_NO_ACTION/.test(seg) || /^KAIZEN_NO_ACTION/.test(seg)) return true;
-
-    // KAIZEN_UNFINISHED declaration (kaizen #775)
-    if (/^echo.*KAIZEN_UNFINISHED:/.test(seg) || /^KAIZEN_UNFINISHED:/.test(seg)) return true;
+    // `cat` heredoc bodies for issue/reflection payloads
+    if (/^cat/.test(seg)) return true;
   }
+
+  // Universal stop-gate escape declarations (KAIZEN_UNFINISHED/NO_ACTION/IMPEDIMENTS).
+  // Single source of truth — shared with isReviewCommand so the documented escape
+  // works from every gate-blocked state (#1068, kaizen #775).
+  if (isEscapeHatch(cmdLine)) return true;
 
   // gh pr diff/view/comment/edit/checks/merge
   if (isGhPrCommand(cmdLine, 'diff|view|comment|edit|checks|merge')) return true;
