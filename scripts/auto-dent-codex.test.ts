@@ -47,6 +47,49 @@ describe('parseCodexJsonl (#1144)', () => {
     expect(parsed.malformedLines).toEqual(['{not json']);
   });
 
+  it('extracts current Codex item payloads from supervised provider runs (#1197)', () => {
+    const parsed = parseCodexJsonl([
+      JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'item_0',
+          type: 'agent_message',
+          text: 'I will create the requested probe PR.',
+        },
+      }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'item_1',
+          type: 'command_execution',
+          command: 'gh pr create',
+          aggregated_output: 'https://github.com/Garsson-io/kaizen/pull/1194\n',
+          exit_code: 0,
+          status: 'completed',
+        },
+      }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'item_2',
+          type: 'agent_message',
+          text: [
+            'Completed all requested steps.',
+            'Created and merged PR:',
+            '- https://github.com/Garsson-io/kaizen/pull/1194',
+          ].join('\n'),
+        },
+      }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1 } }),
+    ].join('\n'));
+
+    expect(parsed.events).toHaveLength(4);
+    expect(parsed.text).toContain('I will create the requested probe PR.');
+    expect(parsed.text).toContain('https://github.com/Garsson-io/kaizen/pull/1194');
+    expect(parsed.finalText).toContain('Completed all requested steps.');
+    expect(parsed.finalText).toContain('pull/1194');
+  });
+
   it('recovers AUTO_DENT_PHASE markers from parsed Codex text', () => {
     const parsed = parseCodexJsonl(JSON.stringify({
       type: 'final_message',
