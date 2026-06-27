@@ -528,8 +528,10 @@ export function loadPromptTemplate(templateName: string): string | null {
 export interface ModeSelection {
   mode: string;
   template: string;
-  /** Why this mode was selected (signal name or 'schedule') */
+  /** Why this mode was selected (signal name, 'schedule', 'guidance', or 'bandit') */
   reason: string;
+  /** Full bandit breakdown when the selection came from the UCB1 policy (reason === 'bandit') */
+  bandit?: BanditResult;
 }
 
 const MODE_TEMPLATES: Record<string, string> = {
@@ -620,28 +622,75 @@ export function modeSuccess(mode: string, metrics: RunMetrics): number {
   }
 }
 
+/** Schedulable cognitive modes (contemplate is an overlay, not bandit-scheduled). */
+export const SCHEDULABLE_MODES = ['exploit', 'explore', 'reflect', 'subtract'] as const;
+
+/** Default UCB1 exploration constant (classic value). Tunable via KAIZEN_BANDIT_C. */
+export const DEFAULT_BANDIT_C = Math.SQRT2;
+
+/** Per-mode breakdown of the bandit's decision, surfaced for observability. */
+export interface BanditDetail {
+  mode: string;
+  /** How many runs have been spent on this mode (its "pulls"). */
+  plays: number;
+  /** Raw average mode-appropriate reward (modeSuccess) over those runs. */
+  meanReward: number;
+  /** Exploitation term: meanReward normalized to [0,1] across modes. */
+  exploitTerm: number;
+  /** Exploration bonus: c · sqrt(ln(N+1) / max(plays,1)) — shrinks as a mode is tried more. */
+  exploreBonus: number;
+  /** Upper confidence bound: exploitTerm + exploreBonus. */
+  ucb: number;
+  /** Final normalized selection weight (sums to 1.0 across modes). */
+  weight: number;
+}
+
+export interface BanditResult {
+  /** Normalized selection weights, summing to 1.0. */
+  weights: Record<string, number>;
+  /** Per-mode breakdown (one entry per schedulable mode). */
+  details: BanditDetail[];
+  /** Total plays across schedulable modes (the bandit's N). */
+  totalPlays: number;
+  /** Exploration constant actually used. */
+  explorationC: number;
+}
+
 /**
- * Compute adaptive mode weights from run history.
+ * Compute cognitive-mode selection weights with a UCB1 multi-armed-bandit policy.
  *
- * For each mode, computes an effectiveness score based on mode-appropriate
- * success metrics (not just PRs). Each mode is measured by its own output:
- *   - exploit → PRs/run, PRs/$
- *   - explore/reflect → issues/run, issues/$
- *   - subtract → (lines_deleted/100 + issues_pruned)/run
- *   - contemplate → fixed baseline
+ * The mode scheduler faces the explore/exploit dilemma directly: keep using the
+ * mode that has paid off, or try one that has been tried less and might pay off
+ * more. UCB1 makes that tradeoff principled instead of an ad-hoc blend:
  *
- * Returns weights normalized so they sum to 1.0, or null if insufficient data.
- * Requires at least `minRuns` total runs with mode data to activate.
+ *   score(m) = exploitTerm(m) + c · sqrt( ln(N + 1) / plays(m) )
+ *
+ * - `exploitTerm(m)` is the mean mode-appropriate reward (`modeSuccess`),
+ *   normalized to [0,1] across modes — what we'd pick if we only exploited.
+ * - The second term is the exploration bonus: it *grows* (relatively) for modes
+ *   left untried and *shrinks* as a mode accumulates plays, so a lucky single
+ *   result can't permanently dominate and a neglected mode is always revisited.
+ *   This is the property the previous heuristic (a flat 5% floor) could not express.
+ * - `c` is the single, visible knob for "how much to explore" (default √2).
+ *
+ * Scores normalize to weights that flow through `weightedModeSelect`, preserving
+ * the existing deterministic, parallel-batch-diverging draw.
+ *
+ * Returns null when there are fewer than `minRuns` mode-tagged runs, leaving the
+ * fixed cold-start schedule in charge (it seeds every mode at least once).
  */
-export function computeAdaptiveWeights(
+export function computeBanditWeights(
   history: RunMetrics[],
-  minRuns: number = 10,
-): Record<string, number> | null {
-  // Only runs with mode data
+  opts: { minRuns?: number; explorationC?: number } = {},
+): BanditResult | null {
+  const minRuns = opts.minRuns ?? 10;
+  const explorationC = opts.explorationC ?? DEFAULT_BANDIT_C;
+
+  // Only runs with mode data count toward bandit statistics.
   const withMode = history.filter(r => r.mode);
   if (withMode.length < minRuns) return null;
 
-  // Group by mode
+  // Group runs by mode.
   const byMode = new Map<string, RunMetrics[]>();
   for (const r of withMode) {
     const group = byMode.get(r.mode!) || [];
@@ -649,48 +698,64 @@ export function computeAdaptiveWeights(
     byMode.set(r.mode!, group);
   }
 
-  // Default schedulable modes (contemplate has its own overlay)
-  const schedulableModes = ['exploit', 'explore', 'reflect', 'subtract'];
-
-  // Base weights (matching the fixed schedule proportions)
-  const baseWeights: Record<string, number> = {
-    exploit: 0.7,
-    explore: 0.1,
-    reflect: 0.1,
-    subtract: 0.1,
-  };
-
-  // Compute raw effectiveness scores using mode-appropriate metrics
-  const scores: Record<string, number> = {};
-  for (const mode of schedulableModes) {
+  // Plays + mean reward per schedulable mode.
+  const plays: Record<string, number> = {};
+  const meanReward: Record<string, number> = {};
+  for (const mode of SCHEDULABLE_MODES) {
     const runs = byMode.get(mode) || [];
-    if (runs.length === 0) {
-      // No data for this mode — use base weight as-is
-      scores[mode] = baseWeights[mode];
-      continue;
-    }
-
-    const totalSuccess = runs.reduce((s, r) => s + modeSuccess(mode, r), 0);
-    const totalCostVal = runs.reduce((s, r) => s + r.cost_usd, 0);
-    const successRate = totalSuccess / runs.length;
-    const efficiency = totalCostVal > 0 ? totalSuccess / totalCostVal : 0;
-
-    // Blend success rate and efficiency, then scale by base weight
-    // This preserves the general shape (exploit dominant) while rewarding performance
-    const rawScore = (successRate * 0.7 + efficiency * 0.3) * baseWeights[mode];
-    // Floor at 5% of base to ensure every mode gets some chance
-    scores[mode] = Math.max(rawScore, baseWeights[mode] * 0.05);
+    plays[mode] = runs.length;
+    meanReward[mode] = runs.length
+      ? runs.reduce((s, r) => s + modeSuccess(mode, r), 0) / runs.length
+      : 0;
   }
 
-  // Normalize to sum to 1.0
-  const total = Object.values(scores).reduce((s, v) => s + v, 0);
-  if (total === 0) return null;
+  // N is the total plays across schedulable modes (the bandit's horizon).
+  const totalPlays = SCHEDULABLE_MODES.reduce((s, m) => s + plays[m], 0);
+  // Normalize the exploitation term to [0,1] so it is comparable to the bonus.
+  const maxMean = Math.max(...SCHEDULABLE_MODES.map(m => meanReward[m]), 0);
 
+  // Compute each mode's UCB once; reuse the exact same terms when building the
+  // breakdown so the reported detail can never diverge from the real decision.
+  const exploitTerm: Record<string, number> = {};
+  const exploreBonus: Record<string, number> = {};
+  const ucb: Record<string, number> = {};
+  for (const mode of SCHEDULABLE_MODES) {
+    exploitTerm[mode] = maxMean > 0 ? meanReward[mode] / maxMean : 0;
+    // max(plays,1): a never-chosen mode gets the largest finite bonus, guaranteeing
+    // it is revisited rather than starved (the fixed schedule has already seeded
+    // every mode once before the bandit activates, so plays>=1 in practice).
+    exploreBonus[mode] = explorationC * Math.sqrt(Math.log(totalPlays + 1) / Math.max(plays[mode], 1));
+    ucb[mode] = exploitTerm[mode] + exploreBonus[mode];
+  }
+
+  // Normalize UCB scores to selection weights summing to 1.0. exploreBonus > 0
+  // for c > 0, so the sum is positive; if c === 0 and all rewards are 0 (no signal
+  // at all), fall back to uniform weights rather than dividing by zero.
+  const totalUcb = SCHEDULABLE_MODES.reduce((s, m) => s + ucb[m], 0);
   const weights: Record<string, number> = {};
-  for (const mode of schedulableModes) {
-    weights[mode] = scores[mode] / total;
+  for (const mode of SCHEDULABLE_MODES) {
+    weights[mode] = totalUcb > 0 ? ucb[mode] / totalUcb : 1 / SCHEDULABLE_MODES.length;
   }
-  return weights;
+
+  const details: BanditDetail[] = SCHEDULABLE_MODES.map(mode => ({
+    mode,
+    plays: plays[mode],
+    meanReward: meanReward[mode],
+    exploitTerm: exploitTerm[mode],
+    exploreBonus: exploreBonus[mode],
+    ucb: ucb[mode],
+    weight: weights[mode],
+  }));
+
+  return { weights, details, totalPlays, explorationC };
+}
+
+/** Read the bandit exploration constant from the environment, falling back to the default. */
+export function banditExplorationC(): number {
+  const raw = process.env.KAIZEN_BANDIT_C;
+  if (raw === undefined || raw === '') return DEFAULT_BANDIT_C;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BANDIT_C;
 }
 
 /**
@@ -735,7 +800,7 @@ export function weightedModeSelect(
  *   2. Test task: always exploit with test template
  *   3. Signal-driven: reactive to batch state (failures, stalls, streaks)
  *   4. Contemplate overlay: every 15th run for strategic assessment
- *   5. Adaptive selection: weighted by mode performance from run history
+ *   5. Bandit selection: UCB1 explore/exploit weighting from run history
  *   6. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
  */
 export function selectMode(state: BatchState, runNum: number): ModeSelection {
@@ -764,11 +829,11 @@ export function selectMode(state: BatchState, runNum: number): ModeSelection {
     return { mode: 'contemplate', template: MODE_TEMPLATES.contemplate, reason: 'schedule' };
   }
 
-  // Adaptive selection: use performance data when available
-  const adaptiveWeights = computeAdaptiveWeights(state.run_history || []);
-  if (adaptiveWeights) {
-    const mode = weightedModeSelect(adaptiveWeights, runNum, state.batch_id);
-    return { mode, template: MODE_TEMPLATES[mode] || MODE_TEMPLATES.exploit, reason: 'adaptive' };
+  // Bandit selection: principled UCB1 explore/exploit weighting when data allows.
+  const bandit = computeBanditWeights(state.run_history || [], { explorationC: banditExplorationC() });
+  if (bandit) {
+    const mode = weightedModeSelect(bandit.weights, runNum, state.batch_id);
+    return { mode, template: MODE_TEMPLATES[mode] || MODE_TEMPLATES.exploit, reason: 'bandit', bandit };
   }
 
   // Fallback: fixed schedule (used for first N runs before enough data)
@@ -1274,6 +1339,14 @@ async function runClaude(
   const modeSelection = selectMode(state, runNum);
   if (modeSelection.mode !== 'exploit' || modeSelection.reason !== 'schedule') {
     console.log(`  [mode] run #${runNum}: ${modeSelection.mode} (${modeSelection.reason}, template: ${modeSelection.template})`);
+  }
+  if (modeSelection.bandit) {
+    // Make the explore/exploit decision auditable: show each mode's UCB breakdown.
+    const b = modeSelection.bandit;
+    const breakdown = b.details
+      .map(d => `${d.mode} w=${d.weight.toFixed(2)} (reward=${d.meanReward.toFixed(2)}/${d.plays}p, +explore=${d.exploreBonus.toFixed(2)})`)
+      .join('  ');
+    console.log(`  [bandit] N=${b.totalPlays} c=${b.explorationC.toFixed(2)}  ${breakdown}`);
   }
   const promptMeta = buildPromptWithMetadata(state, runNum, logDir);
   const prompt = promptMeta.prompt;
