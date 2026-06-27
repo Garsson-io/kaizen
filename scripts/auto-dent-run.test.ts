@@ -26,7 +26,10 @@ import {
   formatPlanAsMarkdown,
   selectMode,
   checkSignalOverrides,
-  computeAdaptiveWeights,
+  computeBanditWeights,
+  SCHEDULABLE_MODES,
+  DEFAULT_BANDIT_C,
+  banditExplorationC,
   modeSuccess,
   weightedModeSelect,
   computeModeDistribution,
@@ -2234,119 +2237,172 @@ describe('checkSignalOverrides', () => {
   });
 });
 
-describe('computeAdaptiveWeights', () => {
+describe('computeBanditWeights', () => {
+  /** Build a history where each schedulable mode is played `plays[mode]` times,
+   *  each play credited with `reward[mode]` units of that mode's OWN success metric
+   *  (so modeSuccess === reward for every mode, not just exploit). */
+  function makeHistory(plays: Record<string, number>, reward: Record<string, number> = {}): RunMetrics[] {
+    const out: RunMetrics[] = [];
+    let i = 0;
+    const credit = (mode: string, r: number): Partial<RunMetrics> => {
+      const ids = Array.from({ length: r }, (_, j) => `#${j}`);
+      switch (mode) {
+        case 'exploit': return { prs: Array.from({ length: r }, (_, j) => `pr-${j}`) };
+        case 'explore':
+        case 'reflect': return { issues_filed: ids };
+        case 'subtract': return { lines_deleted: r * 100, issues_pruned: 0 };
+        default: return { prs: Array.from({ length: r }, (_, j) => `pr-${j}`) };
+      }
+    };
+    for (const mode of SCHEDULABLE_MODES) {
+      const n = plays[mode] ?? 0;
+      const r = reward[mode] ?? 0;
+      for (let k = 0; k < n; k++) {
+        out.push(makeRunMetrics({ run: i++, mode, cost_usd: 1.0, ...credit(mode, r) }));
+      }
+    }
+    return out;
+  }
+
   it('returns null when history has fewer than minRuns', () => {
     const history = Array.from({ length: 9 }, (_, i) =>
       makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr-1'] }),
     );
-    expect(computeAdaptiveWeights(history, 10)).toBeNull();
+    expect(computeBanditWeights(history, { minRuns: 10 })).toBeNull();
   });
 
   it('returns null when no runs have mode data', () => {
-    const history = Array.from({ length: 15 }, (_, i) =>
-      makeRunMetrics({ run: i }),
-    );
-    // mode is undefined on all — filtered out
-    expect(computeAdaptiveWeights(history)).toBeNull();
+    const history = Array.from({ length: 15 }, (_, i) => makeRunMetrics({ run: i }));
+    expect(computeBanditWeights(history)).toBeNull();
   });
 
   it('returns weights that sum to 1.0 with sufficient data', () => {
-    const history: RunMetrics[] = [];
-    for (let i = 0; i < 12; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: i < 8 ? ['pr'] : [], cost_usd: 1.5 }));
-    }
-    history.push(makeRunMetrics({ run: 12, mode: 'explore', prs: ['pr'], cost_usd: 2.0 }));
-    history.push(makeRunMetrics({ run: 13, mode: 'reflect', prs: [], cost_usd: 1.0 }));
-    history.push(makeRunMetrics({ run: 14, mode: 'subtract', prs: ['pr'], cost_usd: 0.5 }));
-
-    const weights = computeAdaptiveWeights(history, 10);
-    expect(weights).not.toBeNull();
-    const sum = Object.values(weights!).reduce((s, v) => s + v, 0);
+    const history = makeHistory(
+      { exploit: 9, explore: 1, reflect: 1, subtract: 1 },
+      { exploit: 1, explore: 1, subtract: 1 },
+    );
+    const result = computeBanditWeights(history, { minRuns: 10 });
+    expect(result).not.toBeNull();
+    const sum = Object.values(result!.weights).reduce((s, v) => s + v, 0);
     expect(sum).toBeCloseTo(1.0, 5);
+    expect(result!.details).toHaveLength(SCHEDULABLE_MODES.length);
   });
 
-  it('gives higher weight to modes with better success rates', () => {
-    const history: RunMetrics[] = [];
-    // exploit: 7 runs, 6 with PRs (high success)
-    for (let i = 0; i < 7; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: i < 6 ? ['pr'] : [], cost_usd: 1.0 }));
-    }
-    // explore: 3 runs, 0 issues filed (low success for explore)
-    for (let i = 7; i < 10; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'explore', prs: [], issues_filed: [], cost_usd: 2.0 }));
-    }
-    // reflect and subtract: 1 run each
-    history.push(makeRunMetrics({ run: 10, mode: 'reflect', issues_filed: ['#1'], cost_usd: 1.0 }));
-    history.push(makeRunMetrics({ run: 11, mode: 'subtract', prs: ['pr'], lines_deleted: 200, cost_usd: 0.5 }));
-
-    const weights = computeAdaptiveWeights(history, 10);
-    expect(weights).not.toBeNull();
-    // exploit should dominate since it has high base weight AND high success
-    expect(weights!.exploit).toBeGreaterThan(weights!.explore);
+  it('EXPLOITATION: with equal plays, the higher-reward mode gets more weight', () => {
+    // exploit and explore both played 5x; exploit earns 2/play, explore 0/play.
+    const history = makeHistory(
+      { exploit: 5, explore: 5 },
+      { exploit: 2, explore: 0 },
+    );
+    const result = computeBanditWeights(history, { minRuns: 10 })!;
+    expect(result.weights.exploit).toBeGreaterThan(result.weights.explore);
   });
 
-  it('ensures every mode gets at least 5% of its base weight', () => {
-    const history: RunMetrics[] = [];
-    // exploit: 10 runs, all with PRs
-    for (let i = 0; i < 10; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr'], cost_usd: 1.0 }));
-    }
-    // explore: 3 runs, 0 PRs, high cost
-    for (let i = 10; i < 13; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'explore', prs: [], cost_usd: 5.0 }));
-    }
-
-    const weights = computeAdaptiveWeights(history, 10);
-    expect(weights).not.toBeNull();
-    // explore should still have some weight (not zero)
-    expect(weights!.explore).toBeGreaterThan(0);
+  it('EXPLORATION: with equal reward, the less-played mode gets more weight (uncertainty bonus)', () => {
+    // Both earn the same reward/play, but exploit has been played far more.
+    // The old heuristic could not express this; UCB1 must favor the rarer mode.
+    const history = makeHistory(
+      { exploit: 9, explore: 2, reflect: 0, subtract: 0 },
+      { exploit: 1, explore: 1 },
+    );
+    const result = computeBanditWeights(history, { minRuns: 10 })!;
+    expect(result.weights.explore).toBeGreaterThan(result.weights.exploit);
   });
 
-  it('uses base weight for modes with no runs', () => {
-    const history: RunMetrics[] = [];
-    // Only exploit runs
-    for (let i = 0; i < 12; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr'], cost_usd: 1.0 }));
-    }
-    const weights = computeAdaptiveWeights(history, 10);
-    expect(weights).not.toBeNull();
-    // Modes with no data should still get some weight
-    expect(weights!.explore).toBeGreaterThan(0);
-    expect(weights!.reflect).toBeGreaterThan(0);
-    expect(weights!.subtract).toBeGreaterThan(0);
+  it('NO STARVATION: a never-played schedulable mode still gets substantial weight', () => {
+    const history = makeHistory(
+      { exploit: 12, explore: 0, reflect: 0, subtract: 0 },
+      { exploit: 2 },
+    );
+    const result = computeBanditWeights(history, { minRuns: 10 })!;
+    expect(result.weights.reflect).toBeGreaterThan(0);
+    // An unplayed mode (max bonus, zero exploit term) must be competitive with a
+    // heavily-exploited one — guaranteeing re-exploration, not a token sliver.
+    expect(result.weights.reflect).toBeGreaterThan(result.weights.exploit * 0.5);
   });
 
-  it('uses issues_filed for explore mode success (not PRs)', () => {
-    const history: RunMetrics[] = [];
-    // exploit: 7 runs, all with PRs
-    for (let i = 0; i < 7; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr'], cost_usd: 1.0 }));
-    }
-    // explore: 5 runs, 0 PRs but filed issues
-    for (let i = 7; i < 12; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'explore', prs: [], issues_filed: ['#1', '#2'], cost_usd: 1.5 }));
-    }
-
-    const weights = computeAdaptiveWeights(history, 10);
-    expect(weights).not.toBeNull();
-    // explore should get meaningful weight since it filed issues
-    expect(weights!.explore).toBeGreaterThan(0.01);
+  it('KNOB c=0 is greedy: the best-reward mode dominates and weights collapse to exploit', () => {
+    const history = makeHistory(
+      { exploit: 5, explore: 5, reflect: 1, subtract: 1 },
+      { exploit: 3, explore: 0 },
+    );
+    const greedy = computeBanditWeights(history, { minRuns: 10, explorationC: 0 })!;
+    // With no exploration bonus, only the best mean reward carries weight.
+    expect(greedy.weights.exploit).toBeCloseTo(1.0, 5);
+    expect(greedy.weights.explore).toBeCloseTo(0, 5);
   });
 
-  it('uses lines_deleted for subtract mode success', () => {
-    const history: RunMetrics[] = [];
-    for (let i = 0; i < 10; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr'], cost_usd: 1.0 }));
-    }
-    // subtract: 3 runs, 0 PRs but deleted lines
-    for (let i = 10; i < 13; i++) {
-      history.push(makeRunMetrics({ run: i, mode: 'subtract', prs: [], lines_deleted: 300, issues_pruned: 2, cost_usd: 0.8 }));
-    }
+  it('KNOB: larger c flattens the weight distribution toward uniform', () => {
+    const history = makeHistory(
+      { exploit: 5, explore: 5, reflect: 2, subtract: 2 },
+      { exploit: 3, explore: 0 },
+    );
+    const spread = (r: BanditResultLike) => {
+      const w = Object.values(r.weights);
+      return Math.max(...w) - Math.min(...w);
+    };
+    const low = computeBanditWeights(history, { minRuns: 10, explorationC: 0.5 })!;
+    const high = computeBanditWeights(history, { minRuns: 10, explorationC: 50 })!;
+    // More exploration ⇒ weights pulled toward uniform ⇒ smaller max-min spread.
+    expect(spread(high)).toBeLessThan(spread(low));
+  });
 
-    const weights = computeAdaptiveWeights(history, 10);
-    expect(weights).not.toBeNull();
-    // subtract should get meaningful weight since it deleted lines
-    expect(weights!.subtract).toBeGreaterThan(0.01);
+  it('details: exploreBonus strictly decreases as plays increase (holding N fixed)', () => {
+    const history = makeHistory(
+      { exploit: 6, explore: 3, reflect: 2, subtract: 1 },
+      { exploit: 1, explore: 1, reflect: 1, subtract: 1 },
+    );
+    const result = computeBanditWeights(history, { minRuns: 10 })!;
+    const byMode = Object.fromEntries(result.details.map(d => [d.mode, d]));
+    // exploit(6p) < explore(3p) < reflect(2p) < subtract(1p) in plays ⇒ inverse for bonus.
+    expect(byMode.exploit.exploreBonus).toBeLessThan(byMode.explore.exploreBonus);
+    expect(byMode.explore.exploreBonus).toBeLessThan(byMode.reflect.exploreBonus);
+    expect(byMode.reflect.exploreBonus).toBeLessThan(byMode.subtract.exploreBonus);
+    expect(result.totalPlays).toBe(12);
+    expect(result.explorationC).toBe(DEFAULT_BANDIT_C);
+  });
+
+  it('reward semantics: explore credited by issues_filed, subtract by lines/pruned', () => {
+    const history: RunMetrics[] = [];
+    for (let i = 0; i < 8; i++) history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: [], cost_usd: 1 }));
+    // explore files lots of issues (its reward), subtract deletes lines.
+    history.push(makeRunMetrics({ run: 8, mode: 'explore', issues_filed: ['#1', '#2', '#3'], cost_usd: 1 }));
+    history.push(makeRunMetrics({ run: 9, mode: 'explore', issues_filed: ['#4', '#5', '#6'], cost_usd: 1 }));
+    history.push(makeRunMetrics({ run: 10, mode: 'subtract', lines_deleted: 400, issues_pruned: 2, cost_usd: 1 }));
+    const result = computeBanditWeights(history, { minRuns: 10 })!;
+    const byMode = Object.fromEntries(result.details.map(d => [d.mode, d]));
+    // explore's mean reward reflects issues filed (3/play), not its zero PRs.
+    expect(byMode.explore.meanReward).toBeCloseTo(3, 5);
+    expect(byMode.subtract.meanReward).toBeGreaterThan(0);
+    // exploit produced zero PRs ⇒ zero mean reward.
+    expect(byMode.exploit.meanReward).toBe(0);
+  });
+});
+
+type BanditResultLike = { weights: Record<string, number> };
+
+describe('banditExplorationC', () => {
+  const orig = process.env.KAIZEN_BANDIT_C;
+  afterEach(() => {
+    if (orig === undefined) delete process.env.KAIZEN_BANDIT_C;
+    else process.env.KAIZEN_BANDIT_C = orig;
+  });
+
+  it('defaults to DEFAULT_BANDIT_C when unset', () => {
+    delete process.env.KAIZEN_BANDIT_C;
+    expect(banditExplorationC()).toBe(DEFAULT_BANDIT_C);
+  });
+
+  it('reads a valid non-negative number from the environment', () => {
+    process.env.KAIZEN_BANDIT_C = '3.5';
+    expect(banditExplorationC()).toBe(3.5);
+  });
+
+  it('falls back to default on invalid or negative input', () => {
+    process.env.KAIZEN_BANDIT_C = 'not-a-number';
+    expect(banditExplorationC()).toBe(DEFAULT_BANDIT_C);
+    process.env.KAIZEN_BANDIT_C = '-2';
+    expect(banditExplorationC()).toBe(DEFAULT_BANDIT_C);
   });
 });
 
@@ -2433,7 +2489,7 @@ describe('weightedModeSelect', () => {
   });
 });
 
-describe('selectMode adaptive integration', () => {
+describe('selectMode bandit integration', () => {
   function makeVariedHistory(): RunMetrics[] {
     // Mix of modes so signal overrides don't fire (avoids 4+ streak)
     const modes = ['exploit', 'exploit', 'exploit', 'explore', 'exploit', 'exploit', 'exploit', 'reflect', 'exploit', 'exploit', 'subtract', 'exploit'];
@@ -2442,11 +2498,15 @@ describe('selectMode adaptive integration', () => {
     );
   }
 
-  it('uses adaptive selection when history is sufficient', () => {
+  it('uses bandit selection when history is sufficient and exposes the breakdown', () => {
     const state = makeBatchState({ run_history: makeVariedHistory() });
     const result = selectMode(state, 1);
-    expect(result.reason).toBe('adaptive');
+    expect(result.reason).toBe('bandit');
     expect(['exploit', 'explore', 'reflect', 'subtract']).toContain(result.mode);
+    // Observability: the full per-mode breakdown rides along on the selection.
+    expect(result.bandit).toBeDefined();
+    expect(result.bandit!.details).toHaveLength(4);
+    expect(result.bandit!.totalPlays).toBe(12);
   });
 
   it('falls back to fixed schedule when history is insufficient', () => {
