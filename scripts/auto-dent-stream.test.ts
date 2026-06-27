@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   postInFlightUpdate,
   buildInFlightComment,
+  relativizeWorktreePath,
+  prettifyPath,
+  stripCdPrefix,
+  formatToolUse,
   type StreamContext,
 } from './auto-dent-stream.js';
 import * as github from './auto-dent-github.js';
@@ -106,5 +110,93 @@ describe('buildInFlightComment', () => {
     const comment = buildInFlightComment(1, Date.now(), result, ctx);
 
     expect(comment).toContain('https://github.com/o/r/pull/1');
+  });
+});
+
+// #1157 — semantic line budget for the live terminal stream.
+const WT = '/home/aviad/projects/kaizen/.claude/worktrees/2606271151-c55d';
+
+describe('relativizeWorktreePath', () => {
+  it('collapses a worktree-absolute path to its repo-relative remainder', () => {
+    expect(relativizeWorktreePath(`${WT}/scripts/foo.ts`)).toBe('scripts/foo.ts');
+  });
+
+  it('collapses a bare worktree root to "."', () => {
+    expect(relativizeWorktreePath(WT)).toBe('.');
+  });
+
+  it('leaves non-worktree paths unchanged', () => {
+    expect(relativizeWorktreePath('/usr/local/bin/node')).toBe('/usr/local/bin/node');
+    expect(relativizeWorktreePath('src/cli.ts')).toBe('src/cli.ts');
+  });
+
+  it('relativizes a worktree path embedded inside a larger command string', () => {
+    expect(relativizeWorktreePath(`sed -n 1,5p ${WT}/docs/x.md`)).toBe('sed -n 1,5p docs/x.md');
+  });
+
+  it('is a no-op on empty input', () => {
+    expect(relativizeWorktreePath('')).toBe('');
+  });
+});
+
+describe('prettifyPath', () => {
+  it('collapses /home/<user>/ to ~/ for non-worktree absolute paths', () => {
+    expect(prettifyPath('/home/aviad/projects/kaizen/src/cli.ts')).toBe(
+      '~/projects/kaizen/src/cli.ts',
+    );
+  });
+
+  it('prefers worktree-relative over home-collapse for worktree paths', () => {
+    expect(prettifyPath(`${WT}/scripts/foo.ts`)).toBe('scripts/foo.ts');
+  });
+});
+
+describe('stripCdPrefix', () => {
+  it('removes a leading "cd <path>;" prefix', () => {
+    expect(stripCdPrefix(`cd ${WT}; sed -n 1,5p file.ts`)).toBe('sed -n 1,5p file.ts');
+  });
+
+  it('removes a leading "cd <path> &&" prefix', () => {
+    expect(stripCdPrefix(`cd ${WT} && npm test`)).toBe('npm test');
+  });
+
+  it('leaves commands without a cd prefix untouched', () => {
+    expect(stripCdPrefix('npm run build')).toBe('npm run build');
+    expect(stripCdPrefix('grep -n cd file.ts')).toBe('grep -n cd file.ts');
+  });
+});
+
+describe('formatToolUse (#1157 semantic budget)', () => {
+  it('Bash: renders the meaningful tail, not the worktree cd prefix', () => {
+    const out = formatToolUse('Bash', {
+      command: `cd ${WT}; sed -n 1,40p ${WT}/scripts/auto-dent-stream.ts`,
+    });
+    expect(out).toBe('$ sed -n 1,40p scripts/auto-dent-stream.ts');
+    expect(out).not.toContain('worktrees');
+    expect(out).not.toContain('cd ');
+  });
+
+  it('Read/Edit/Write: render worktree-absolute paths repo-relative', () => {
+    expect(formatToolUse('Read', { file_path: `${WT}/scripts/foo.ts` })).toBe(
+      'Read scripts/foo.ts',
+    );
+    expect(formatToolUse('Edit', { file_path: `${WT}/src/cli.ts` })).toBe('Edit src/cli.ts');
+    expect(formatToolUse('Write', { file_path: `${WT}/docs/x.md` })).toBe('Write docs/x.md');
+  });
+
+  it('Grep: relativizes the search path', () => {
+    expect(formatToolUse('Grep', { pattern: 'foo', path: `${WT}/scripts` })).toBe(
+      'Grep "foo" scripts',
+    );
+  });
+
+  it('preserves existing rendering for non-path tools', () => {
+    expect(formatToolUse('Skill', { skill_name: 'kaizen-reflect' })).toBe('Skill /kaizen-reflect');
+    expect(formatToolUse('Agent', { description: 'do a thing' })).toBe('Agent: do a thing');
+    expect(formatToolUse('ExitWorktree', {})).toBe('ExitWorktree');
+  });
+
+  it('Bash falls back to description when no command, with prefix handling', () => {
+    expect(formatToolUse('Bash', { description: 'run tests' })).toBe('$ run tests');
   });
 });

@@ -55,6 +55,45 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + '\u2026' : s;
 }
 
+// Semantic line budget (#1157)
+//
+// In an auto-dent run worktree every command is prefixed with
+// `cd /home/.../.claude/worktrees/<id>; ...` and every path is absolute under
+// that worktree. That low-signal prefix consumes the truncation budget, pushing
+// the high-value tail (the real command / file) past the cutoff. These pure
+// helpers reclaim the budget for the meaningful part. Display-only: they never
+// touch the machine-readable logs.
+
+/** Matches a `.../.claude/worktrees/<id>` prefix; capture group 1 is the trailing slash, if any. */
+const WORKTREE_PREFIX_RE = /\S*?\/\.claude\/worktrees\/[^/\s;|&]+(\/?)/g;
+
+/**
+ * Render worktree-absolute paths repo-relative. A path *under* the worktree
+ * (trailing slash present) collapses to its remainder (`scripts/x.ts`); a bare
+ * worktree root collapses to `.`. Non-worktree paths are returned unchanged.
+ */
+export function relativizeWorktreePath(s: string): string {
+  if (!s) return s;
+  return s.replace(WORKTREE_PREFIX_RE, (_m, slash) => (slash ? '' : '.'));
+}
+
+/**
+ * Collapse noisy absolute prefixes for display: worktree paths become
+ * repo-relative, then a remaining `/home/<user>/` collapses to `~/`.
+ */
+export function prettifyPath(s: string): string {
+  if (!s) return s;
+  return relativizeWorktreePath(s).replace(/\/home\/[^/\s;|&]+\//g, '~/');
+}
+
+/**
+ * Drop a leading `cd <path>;` / `cd <path> &&` prefix from a command. The
+ * worktree is implied by the run, so the `cd` is pure boilerplate.
+ */
+export function stripCdPrefix(cmd: string): string {
+  return cmd.replace(/^\s*cd\s+\S+\s*(?:;|&&)\s*/, '');
+}
+
 // Tool use formatting
 
 export function formatToolUse(
@@ -63,15 +102,15 @@ export function formatToolUse(
 ): string {
   switch (name) {
     case 'Read':
-      return `Read ${truncate(input?.file_path || '?', 60)}`;
+      return `Read ${truncate(prettifyPath(input?.file_path || '?'), 60)}`;
     case 'Edit':
-      return `Edit ${truncate(input?.file_path || '?', 60)}`;
+      return `Edit ${truncate(prettifyPath(input?.file_path || '?'), 60)}`;
     case 'Write':
-      return `Write ${truncate(input?.file_path || '?', 60)}`;
+      return `Write ${truncate(prettifyPath(input?.file_path || '?'), 60)}`;
     case 'Bash':
-      return `$ ${truncate(input?.command || input?.description || '?', 70)}`;
+      return `$ ${truncate(prettifyPath(stripCdPrefix(input?.command || input?.description || '?')), 90)}`;
     case 'Grep':
-      return `Grep "${truncate(input?.pattern || '?', 30)}" ${input?.path || ''}`;
+      return `Grep "${truncate(input?.pattern || '?', 30)}" ${prettifyPath(input?.path || '')}`;
     case 'Glob':
       return `Glob ${truncate(input?.pattern || '?', 50)}`;
     case 'Skill':
