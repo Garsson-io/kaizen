@@ -705,10 +705,10 @@ describe('buildPrompt with templates', () => {
 });
 
 describe('extractArtifacts', () => {
-  it('extracts PR URLs from text', () => {
+  it('extracts PR URLs from structured phase markers', () => {
     const result = makeRunResult();
     extractArtifacts(
-      'Created PR: https://github.com/Garsson-io/kaizen/pull/450',
+      'AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/450',
       result,
     );
     expect(result.prs).toEqual([
@@ -716,10 +716,13 @@ describe('extractArtifacts', () => {
     ]);
   });
 
-  it('extracts multiple PR URLs', () => {
+  it('extracts multiple PR URLs from structured phase markers', () => {
     const result = makeRunResult();
     extractArtifacts(
-      'PRs: https://github.com/Garsson-io/kaizen/pull/450 and https://github.com/Garsson-io/kaizen/pull/451',
+      [
+        'AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/450',
+        'AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/451',
+      ].join('\n'),
       result,
     );
     expect(result.prs).toHaveLength(2);
@@ -728,20 +731,20 @@ describe('extractArtifacts', () => {
   it('deduplicates PR URLs', () => {
     const result = makeRunResult();
     extractArtifacts(
-      'https://github.com/Garsson-io/kaizen/pull/450',
+      'AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/450',
       result,
     );
     extractArtifacts(
-      'https://github.com/Garsson-io/kaizen/pull/450',
+      'AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/450',
       result,
     );
     expect(result.prs).toHaveLength(1);
   });
 
-  it('extracts issue URLs', () => {
+  it('extracts filed issue URLs from structured phase markers', () => {
     const result = makeRunResult();
     extractArtifacts(
-      'Filed: https://github.com/Garsson-io/kaizen/issues/267',
+      'AUTO_DENT_PHASE: REFLECT | issues_filed=https://github.com/Garsson-io/kaizen/issues/267',
       result,
     );
     expect(result.issuesFiled).toEqual([
@@ -749,24 +752,29 @@ describe('extractArtifacts', () => {
     ]);
   });
 
-  it('extracts closes/fixes/resolves references', () => {
+  it('extracts closed issue references from structured phase markers', () => {
     const result = makeRunResult();
-    extractArtifacts('Closes #100, fixes #200, resolves #300', result);
+    extractArtifacts('AUTO_DENT_PHASE: REFLECT | issues_closed=#100,#200,#300', result);
     expect(result.issuesClosed).toContain('#100');
     expect(result.issuesClosed).toContain('#200');
     expect(result.issuesClosed).toContain('#300');
   });
 
-  it('extracts "closed" past tense references', () => {
+  it('does not treat referenced PRs or issues as produced artifacts (#1203)', () => {
     const result = makeRunResult();
-    extractArtifacts('Closed #150', result);
-    expect(result.issuesClosed).toContain('#150');
-  });
-
-  it('extracts kaizen issue references', () => {
-    const result = makeRunResult();
-    extractArtifacts('Addressed kaizen #451', result);
-    expect(result.issuesClosed).toContain('#451');
+    extractArtifacts([
+      'AUTO_DENT_PHASE: PICK | issue=#1003 | title=checking availability',
+      'AUTO_DENT_PHASE: EVALUATE | verdict=skip | reason=issue #1003 is already covered by open PR #1012',
+      'AUTO_DENT_PHASE: STOP | reason=#1003 is effectively claimed by open PR https://github.com/Garsson-io/kaizen/pull/1012',
+      'Evidence:',
+      '- Issue `#1003` is open and unassigned, but active PR `#1012` explicitly includes `Fixes Garsson-io/kaizen#1003`.',
+      '- Related PR: https://github.com/Garsson-io/kaizen/pull/621',
+      '- Related issue: https://github.com/Garsson-io/kaizen/issues/1009',
+      'No PRs created, no issues filed, no issues closed.',
+    ].join('\n'), result);
+    expect(result.prs).toEqual([]);
+    expect(result.issuesFiled).toEqual([]);
+    expect(result.issuesClosed).toEqual([]);
   });
 
   it('extracts case references', () => {
@@ -1317,7 +1325,7 @@ describe('processStreamMessage', () => {
           content: [
             {
               type: 'text',
-              text: 'Created https://github.com/Garsson-io/kaizen/pull/500',
+              text: 'AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/500',
             },
           ],
         },
@@ -1370,7 +1378,10 @@ describe('processStreamMessage', () => {
         subtype: 'success',
         total_cost_usd: 1.0,
         result:
-          'Done. Closes #451. PR: https://github.com/Garsson-io/kaizen/pull/500',
+          [
+            'AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/500',
+            'AUTO_DENT_PHASE: REFLECT | issues_closed=#451',
+          ].join('\n'),
       },
       result,
       Date.now(),
@@ -1689,8 +1700,8 @@ describe('e2e: full workflow through stream pipeline', () => {
       msg.text('Created PR: https://github.com/Garsson-io/kaizen/pull/500'),
       msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/500' }),
       msg.phase('MERGE', { url: 'https://github.com/Garsson-io/kaizen/pull/500', status: 'queued' }),
-      msg.phase('REFLECT', { issues_filed: '1', lessons: 'shared helpers reduce boilerplate' }),
-      msg.done(2.5, 'Done. Closes #472.'),
+      msg.phase('REFLECT', { issues_filed: '1', issues_closed: '#472', lessons: 'shared helpers reduce boilerplate' }),
+      msg.done(2.5, 'Done.'),
     ]);
 
     expectPhase(capture, 'PICK', '#472', 'improve hook test DRY');
@@ -1819,10 +1830,10 @@ describe('e2e: full workflow through stream pipeline', () => {
 
   it('tracks artifacts across multiple messages', () => {
     const { result } = runStream([
-      msg.text('Filed https://github.com/Garsson-io/kaizen/issues/700'),
-      msg.text('Created https://github.com/Garsson-io/kaizen/pull/701'),
-      msg.text('Also created https://github.com/Garsson-io/kaizen/pull/702'),
-      msg.done(2.0, 'Closes #450. Fixes #451.'),
+      msg.phase('REFLECT', { issues_filed: 'https://github.com/Garsson-io/kaizen/issues/700' }),
+      msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/701' }),
+      msg.phase('PR', { url: 'https://github.com/Garsson-io/kaizen/pull/702' }),
+      msg.done(2.0, 'AUTO_DENT_PHASE: REFLECT | issues_closed=#450,#451'),
     ]);
 
     expect(result.issuesFiled).toContain('https://github.com/Garsson-io/kaizen/issues/700');
