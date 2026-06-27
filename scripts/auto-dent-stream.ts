@@ -249,6 +249,9 @@ export function extractArtifacts(text: string, result: RunResult): void {
       }
     }
   }
+  for (const m of text.matchAll(/^\s*(?:\*\*)?PRs created:\s*(?:\*\*)?\s*(https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+)/gmi)) {
+    pushPr(result, m[1]);
+  }
   for (const m of text.matchAll(/case[:\s]+(\d{6}-\d{4}-[\w-]+)/g)) {
     pushUnique(result.cases, m[1]);
   }
@@ -267,6 +270,25 @@ export function extractArtifacts(text: string, result: RunResult): void {
     const deletions = parseInt(m[2], 10);
     const net = deletions - insertions;
     if (net > 0) result.linesDeleted += net;
+  }
+}
+
+function pushPr(result: RunResult, prUrl: string): void {
+  pushUnique(result.prs, prUrl);
+  if (!result.progressSteps) result.progressSteps = [];
+  const existing = result.progressSteps.find((s) => s.phase === 'PR');
+  const step = {
+    phase: 'PR',
+    state: 'created',
+    detail: prUrl,
+    url: prUrl,
+  };
+  if (existing) {
+    existing.state = step.state;
+    existing.detail = step.detail;
+    existing.url = step.url;
+  } else {
+    result.progressSteps.push(step);
   }
 }
 
@@ -425,6 +447,7 @@ export function buildInFlightComment(
   const status = ctx.resultReceivedAt
     ? 'waiting for process exit'
     : 'working';
+  const synthetic = result.pickedIssue === 'not applicable';
 
   const lines = [
     `### Run #${runNum} — in progress (${mins}m ${secs}s elapsed)`,
@@ -436,7 +459,7 @@ export function buildInFlightComment(
     `| **Status** | ${status} |`,
     `| **Issue worked** | ${formatIssueForComment(result.pickedIssue, result.pickedIssueTitle, repo)} |`,
     `| **PR generated** | ${result.prs.length > 0 ? result.prs.join(', ') : 'none yet'} |`,
-    `| **Review state** | ${result.reviewVerdict ?? (result.prs.length > 0 ? 'pending' : 'not started')} |`,
+    `| **Review state** | ${synthetic ? 'not applicable' : result.reviewVerdict ?? (result.prs.length > 0 ? 'pending' : 'not started')} |`,
   ];
 
   if (ctx.lastActivity) {
@@ -448,17 +471,15 @@ export function buildInFlightComment(
   if (result.prs.length > 0) {
     lines.push(`| **PRs so far** | ${result.prs.join(', ')} |`);
   }
-  if (result.progressSteps && result.progressSteps.length > 0) {
-    lines.push(
-      '',
-      `#### Work Cycle`,
-      '',
-      `| Step | State | Detail | Link |`,
-      `|------|-------|--------|------|`,
-    );
-    for (const step of result.progressSteps) {
-      lines.push(`| ${step.phase} | ${step.state} | ${step.detail || '-'} | ${step.url || '-'} |`);
-    }
+  lines.push(
+    '',
+    `#### Kaizen Work Cycle`,
+    '',
+    `| Step | State | Detail | Link |`,
+    `|------|-------|--------|------|`,
+  );
+  for (const step of buildKaizenCycleSteps(result, repo)) {
+    lines.push(`| ${step.phase} | ${step.state} | ${step.detail || '-'} | ${step.url || '-'} |`);
   }
 
   return lines.join('\n');
@@ -468,6 +489,67 @@ function formatIssueForComment(issue: string | undefined, title: string | undefi
   if (!issue) return 'unknown';
   const url = issue.startsWith('http') ? issue : issue.replace(/^#?(\d+)$/, repo ? `https://github.com/${repo}/issues/$1` : issue);
   return title ? `${url} — ${title}` : url;
+}
+
+const PROGRESS_PHASE_ORDER = ['PICK', 'PLAN', 'EVALUATE', 'CASE', 'IMPLEMENT', 'TEST', 'PR', 'REVIEW', 'FIX', 'MERGE', 'REFLECT', 'CLEANUP', 'STOP'];
+
+function orderedProgressSteps(steps: NonNullable<RunResult['progressSteps']>): NonNullable<RunResult['progressSteps']> {
+  return [...steps].sort((a, b) => {
+    const ai = PROGRESS_PHASE_ORDER.indexOf(a.phase);
+    const bi = PROGRESS_PHASE_ORDER.indexOf(b.phase);
+    const ao = ai === -1 ? PROGRESS_PHASE_ORDER.length : ai;
+    const bo = bi === -1 ? PROGRESS_PHASE_ORDER.length : bi;
+    return ao - bo;
+  });
+}
+
+function buildKaizenCycleSteps(result: RunResult, repo: string): NonNullable<RunResult['progressSteps']> {
+  const existing = new Map<string, NonNullable<RunResult['progressSteps']>[number]>();
+  for (const step of result.progressSteps || []) existing.set(step.phase, step);
+  const synthetic = result.pickedIssue === 'not applicable';
+  const issueDetail = formatIssueForComment(result.pickedIssue, result.pickedIssueTitle, repo);
+  const prDetail = result.prs.join(', ');
+  const defaults: NonNullable<RunResult['progressSteps']> = [
+    {
+      phase: 'PICK',
+      state: synthetic ? 'not applicable' : result.pickedIssue ? 'selected' : 'not observed',
+      detail: synthetic ? (result.pickedIssueTitle || 'synthetic task') : (result.pickedIssue ? issueDetail : ''),
+      url: synthetic || !result.pickedIssue ? undefined : formatIssueForComment(result.pickedIssue, undefined, repo),
+    },
+    { phase: 'PLAN', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
+    { phase: 'EVALUATE', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
+    {
+      phase: 'CASE',
+      state: synthetic ? 'not applicable' : result.cases.length > 0 ? 'created' : 'not observed',
+      detail: synthetic ? 'synthetic test task' : result.cases.join(', '),
+    },
+    { phase: 'IMPLEMENT', state: synthetic && result.prs.length > 0 ? 'done' : 'not observed', detail: synthetic && result.prs.length > 0 ? 'synthetic file committed' : '' },
+    { phase: 'TEST', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'pipeline probe, not product tests' : '' },
+    { phase: 'PR', state: result.prs.length > 0 ? 'created' : 'not observed', detail: prDetail, url: result.prs[0] },
+    {
+      phase: 'REVIEW',
+      state: synthetic ? 'not applicable' : result.reviewVerdict || (result.prs.length > 0 ? 'pending' : 'not observed'),
+      detail: synthetic ? 'synthetic test task' : result.reviewVerdict || result.prs.length > 0 ? [result.reviewVerdict, result.prs[0]].filter(Boolean).join(' ') : '',
+      url: result.reviewUrls?.[0] || result.prs[0],
+    },
+    {
+      phase: 'FIX',
+      state: synthetic ? 'not applicable' : result.reviewVerdict === 'pass' || result.reviewVerdict === 'skipped' ? 'not needed' : 'not observed',
+      detail: synthetic ? 'synthetic test task' : '',
+    },
+    { phase: 'MERGE', state: result.prs.length > 0 ? 'not observed' : 'not applicable', detail: prDetail, url: result.prs[0] },
+    { phase: 'REFLECT', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
+    { phase: 'CLEANUP', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
+    { phase: 'STOP', state: result.stopRequested ? 'requested' : 'not requested', detail: result.stopReason || '' },
+  ];
+  for (const step of defaults) {
+    const observed = existing.get(step.phase);
+    if (!observed) continue;
+    step.state = observed.state || step.state;
+    step.detail = observed.detail || step.detail;
+    step.url = observed.url || step.url;
+  }
+  return orderedProgressSteps(defaults);
 }
 
 /**
@@ -544,6 +626,22 @@ export function processStreamMessage(
               console.log(`  [${elapsed}]  ${formatPhaseMarker(marker)}`);
               if (ctx) ctx.lastPhase = formatPhaseMarker(marker);
             }
+          }
+        }
+      }
+      break;
+
+    case 'user':
+      if (msg.tool_use_result?.gitOperation?.pr?.action === 'created') {
+        const prUrl = msg.tool_use_result.gitOperation.pr.url;
+        if (typeof prUrl === 'string' && prUrl) {
+          pushPr(result, prUrl);
+        }
+      }
+      if (msg.message?.content) {
+        for (const block of msg.message.content) {
+          if (block.type === 'tool_result' && typeof block.content === 'string') {
+            extractArtifacts(block.content, result);
           }
         }
       }

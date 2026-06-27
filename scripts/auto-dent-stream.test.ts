@@ -139,8 +139,51 @@ describe('buildInFlightComment', () => {
     expect(comment).toContain('| **Issue worked** | https://github.com/Garsson-io/kaizen/issues/1225 — redo CI proof gate |');
     expect(comment).toContain('| **PR generated** | https://github.com/Garsson-io/kaizen/pull/1227 |');
     expect(comment).toContain('| **Review state** | fail |');
-    expect(comment).toContain('#### Work Cycle');
+    expect(comment).toContain('#### Kaizen Work Cycle');
+    expect(comment).toContain('| PLAN | not observed | - | - |');
+    expect(comment).toContain('| CASE | not observed | - | - |');
     expect(comment).toContain('| PR | created | https://github.com/Garsson-io/kaizen/pull/1227 | https://github.com/Garsson-io/kaizen/pull/1227 |');
+    expect(comment).toContain('| CLEANUP | not observed | - | - |');
+  });
+
+  it('renders the full work-cycle checklist in canonical kaizen order', () => {
+    const result = makeRunResult({
+      progressSteps: [
+        { phase: 'STOP', state: 'requested', detail: 'done' },
+        { phase: 'PR', state: 'created', detail: 'https://github.com/o/r/pull/1', url: 'https://github.com/o/r/pull/1' },
+        { phase: 'REVIEW', state: 'skipped', detail: 'https://github.com/o/r/pull/1', url: 'https://github.com/o/r/pull/1' },
+        { phase: 'MERGE', state: 'merged', detail: 'https://github.com/o/r/pull/1', url: 'https://github.com/o/r/pull/1' },
+      ],
+    });
+
+    const comment = buildInFlightComment(1, Date.now(), result, {});
+
+    expect(comment).toContain('| PICK | not observed | - | - |');
+    expect(comment).toContain('| PLAN | not observed | - | - |');
+    expect(comment).toContain('| EVALUATE | not observed | - | - |');
+    expect(comment).toContain('| CASE | not observed | - | - |');
+    expect(comment).toContain('| IMPLEMENT | not observed | - | - |');
+    expect(comment).toContain('| TEST | not observed | - | - |');
+    expect(comment).toContain('| FIX |');
+    expect(comment).toContain('| REFLECT |');
+    expect(comment).toContain('| CLEANUP |');
+    expect(comment.indexOf('| PR |')).toBeLessThan(comment.indexOf('| REVIEW |'));
+    expect(comment.indexOf('| REVIEW |')).toBeLessThan(comment.indexOf('| MERGE |'));
+    expect(comment.indexOf('| MERGE |')).toBeLessThan(comment.indexOf('| STOP |'));
+  });
+
+  it('marks review as not applicable for synthetic test tasks', () => {
+    const result = makeRunResult({
+      pickedIssue: 'not applicable',
+      pickedIssueTitle: 'synthetic test task',
+      prs: ['https://github.com/o/r/pull/1'],
+      reviewVerdict: 'skipped',
+    });
+
+    const comment = buildInFlightComment(1, Date.now(), result, {});
+
+    expect(comment).toContain('| **Review state** | not applicable |');
+    expect(comment).toContain('| REVIEW | not applicable | synthetic test task | https://github.com/o/r/pull/1 |');
   });
 });
 

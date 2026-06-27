@@ -753,6 +753,17 @@ describe('extractArtifacts', () => {
     expect(result.prs).toHaveLength(2);
   });
 
+  it('extracts PR URLs from explicit final "PRs created" summary lines', () => {
+    const result = makeRunResult();
+    extractArtifacts(
+      '**PRs created:** https://github.com/Garsson-io/kaizen/pull/1236 (auto-merge queued)',
+      result,
+    );
+
+    expect(result.prs).toEqual(['https://github.com/Garsson-io/kaizen/pull/1236']);
+    expect(result.progressSteps?.find((s) => s.phase === 'PR')?.url).toBe('https://github.com/Garsson-io/kaizen/pull/1236');
+  });
+
   it('deduplicates PR URLs', () => {
     const result = makeRunResult();
     extractArtifacts(
@@ -1415,6 +1426,37 @@ describe('processStreamMessage', () => {
       'https://github.com/Garsson-io/kaizen/pull/500',
     );
     expect(result.issuesClosed).toContain('#451');
+  });
+
+  it('extracts PR artifacts from Claude Code tool result metadata', () => {
+    const result = makeRunResult();
+    processStreamMessage(
+      {
+        type: 'user',
+        message: {
+          content: [{
+            type: 'tool_result',
+            content: 'https://github.com/Garsson-io/kaizen/pull/1236',
+          }],
+        },
+        tool_use_result: {
+          gitOperation: {
+            pr: {
+              action: 'created',
+              url: 'https://github.com/Garsson-io/kaizen/pull/1236',
+            },
+          },
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    expect(result.prs).toEqual(['https://github.com/Garsson-io/kaizen/pull/1236']);
+    expect(result.progressSteps?.find((s) => s.phase === 'PR')).toMatchObject({
+      state: 'created',
+      url: 'https://github.com/Garsson-io/kaizen/pull/1236',
+    });
   });
 
   it('captures structured final claims from result text', () => {
@@ -3134,6 +3176,11 @@ describe('updateBatchProgressIssue', () => {
       reviewUrls: ['https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2'],
       progressSteps: [
         {
+          phase: 'STOP',
+          state: 'requested',
+          detail: 'done',
+        },
+        {
           phase: 'PICK',
           state: 'selected',
           detail: '#1225 — redo CI proof gate',
@@ -3164,8 +3211,16 @@ describe('updateBatchProgressIssue', () => {
     expect(body).toContain('| **Issue worked** | https://github.com/Garsson-io/kaizen/issues/1225 — redo CI proof gate |');
     expect(body).toContain('| **PR generated** | https://github.com/Garsson-io/kaizen/pull/1227 |');
     expect(body).toContain('| **Review state** | fail (https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2) |');
-    expect(body).toContain('#### Observed Steps');
+    expect(body).toContain('#### Kaizen Work Cycle');
+    expect(body).toContain('| PLAN | not observed | - | - |');
+    expect(body).toContain('| CASE | not observed | - | - |');
+    expect(body).toContain('| IMPLEMENT | not observed | - | - |');
+    expect(body).toContain('| TEST | not observed | - | - |');
     expect(body).toContain('| REVIEW | fail | https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2 | https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2 |');
+    expect(body).toContain('| REFLECT | not observed | - | - |');
+    expect(body).toContain('| CLEANUP | not observed | - | - |');
+    expect(body.indexOf('| PICK |')).toBeLessThan(body.indexOf('| REVIEW |'));
+    expect(body.indexOf('| REVIEW |')).toBeLessThan(body.indexOf('| STOP |'));
   });
 });
 
@@ -3229,6 +3284,14 @@ describe('classifyFailure live wiring (#1102 regression guard)', () => {
     const call = source.match(/classifyFailure\(runMetrics,\s*([A-Za-z0-9_]+)\)/);
     expect(call).not.toBeNull();
     expect(call![1]).not.toBe('');
+  });
+});
+
+describe('test-task lifecycle evidence regression guard', () => {
+  const source = readFileSync(join(__dirname, 'auto-dent-run.ts'), 'utf8');
+
+  it('does not treat skipped review as process-incomplete for synthetic test tasks', () => {
+    expect(source).toContain("reviewVerdict: state.test_task ? 'pass' : result.reviewVerdict");
   });
 });
 

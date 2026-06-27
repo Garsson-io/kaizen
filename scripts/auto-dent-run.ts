@@ -1563,6 +1563,10 @@ async function runClaude(
   }
   const promptMeta = buildPromptWithMetadata(state, runNum, logDir);
   const prompt = promptMeta.prompt;
+  if (state.test_task && !result.pickedIssue) {
+    result.pickedIssue = 'not applicable';
+    result.pickedIssueTitle = 'synthetic test task';
+  }
   if (promptMeta.claimedPlanIssue && !result.pickedIssue) {
     result.pickedIssue = promptMeta.claimedPlanIssue;
     result.progressSteps = result.progressSteps || [];
@@ -1574,6 +1578,12 @@ async function runClaude(
         url: formatIssueUrl(promptMeta.claimedPlanIssue, state.kaizen_repo || state.host_repo || ''),
       });
     }
+    upsertProgressStep(result, {
+      phase: 'PLAN',
+      state: 'assigned',
+      detail: `batch plan item ${promptMeta.claimedPlanIssue}`,
+      url: formatIssueUrl(promptMeta.claimedPlanIssue, state.kaizen_repo || state.host_repo || ''),
+    });
   }
 
   // Save rendered prompt for observability (#602)
@@ -1829,11 +1839,9 @@ function printRunSummary(
   for (const c of result.cases) console.log(`  \u2502 Case:     ${c}`);
   if (result.stopRequested)
     console.log(`  \u2502 ${color.red('STOP:')}     ${result.stopReason}`);
-  if (result.progressSteps && result.progressSteps.length > 0) {
-    console.log(`  \u2502 Steps:`);
-    for (const step of result.progressSteps) {
-      console.log(`  \u2502   ${step.phase}: ${step.state}${step.detail ? ` — ${step.detail}` : ''}${step.url ? ` (${step.url})` : ''}`);
-    }
+  console.log(`  \u2502 Steps:`);
+  for (const step of buildKaizenCycleSteps(result, repo)) {
+    console.log(`  \u2502   ${step.phase}: ${step.state}${step.detail ? ` — ${step.detail}` : ''}${step.url ? ` (${step.url})` : ''}`);
   }
 
   console.log(
@@ -1857,23 +1865,98 @@ function formatIssueForDisplay(issue: string | undefined, repo: string, title?: 
 }
 
 function formatReviewForDisplay(result: RunResult): string {
+  if (result.pickedIssue === 'not applicable') {
+    const urls = result.prs.length > 0 ? ` (${result.prs.join(', ')})` : '';
+    return `not applicable${urls}`;
+  }
   const verdict = result.reviewVerdict ?? (result.prs.length > 0 ? 'pending' : 'skipped');
   const urls = result.reviewUrls && result.reviewUrls.length > 0 ? result.reviewUrls : result.prs;
   return urls.length > 0 ? `${verdict} (${urls.join(', ')})` : verdict;
 }
 
 function formatProgressStepsMarkdown(result: RunResult): string {
-  if (!result.progressSteps || result.progressSteps.length === 0) return '';
   const lines = [
-    `#### Observed Steps`,
+    `#### Kaizen Work Cycle`,
     '',
     `| Step | State | Detail | Link |`,
     `|------|-------|--------|------|`,
   ];
-  for (const step of result.progressSteps) {
+  for (const step of buildKaizenCycleSteps(result)) {
     lines.push(`| ${step.phase} | ${step.state} | ${step.detail || '-'} | ${step.url || '-'} |`);
   }
   return lines.join('\n');
+}
+
+const PROGRESS_PHASE_ORDER = ['PICK', 'PLAN', 'EVALUATE', 'CASE', 'IMPLEMENT', 'TEST', 'PR', 'REVIEW', 'FIX', 'MERGE', 'REFLECT', 'CLEANUP', 'STOP'];
+
+function orderedProgressSteps(steps: RunProgressStep[]): RunProgressStep[] {
+  return [...steps].sort((a, b) => {
+    const ai = PROGRESS_PHASE_ORDER.indexOf(a.phase);
+    const bi = PROGRESS_PHASE_ORDER.indexOf(b.phase);
+    const ao = ai === -1 ? PROGRESS_PHASE_ORDER.length : ai;
+    const bo = bi === -1 ? PROGRESS_PHASE_ORDER.length : bi;
+    return ao - bo;
+  });
+}
+
+function buildKaizenCycleSteps(result: RunResult, repo = ''): RunProgressStep[] {
+  const existing = new Map<string, RunProgressStep>();
+  for (const step of result.progressSteps || []) {
+    existing.set(step.phase, step);
+  }
+  const synthetic = result.pickedIssue === 'not applicable';
+  const issueDetail = formatIssueForDisplay(result.pickedIssue, repo, result.pickedIssueTitle);
+  const prDetail = result.prs.join(', ');
+  const caseDetail = result.cases.join(', ');
+
+  const defaults: RunProgressStep[] = [
+    {
+      phase: 'PICK',
+      state: synthetic ? 'not applicable' : result.pickedIssue ? 'selected' : 'not observed',
+      detail: synthetic ? (result.pickedIssueTitle || 'synthetic task') : (result.pickedIssue ? issueDetail : ''),
+      url: synthetic ? undefined : formatIssueUrl(result.pickedIssue, repo),
+    },
+    { phase: 'PLAN', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
+    { phase: 'EVALUATE', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
+    {
+      phase: 'CASE',
+      state: synthetic ? 'not applicable' : result.cases.length > 0 ? 'created' : 'not observed',
+      detail: synthetic ? 'synthetic test task' : caseDetail,
+    },
+    { phase: 'IMPLEMENT', state: synthetic && result.prs.length > 0 ? 'done' : 'not observed', detail: synthetic && result.prs.length > 0 ? 'synthetic file committed' : '' },
+    { phase: 'TEST', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'pipeline probe, not product tests' : '' },
+    {
+      phase: 'PR',
+      state: result.prs.length > 0 ? 'created' : 'not observed',
+      detail: prDetail,
+      url: result.prs[0],
+    },
+    {
+      phase: 'REVIEW',
+      state: synthetic ? 'not applicable' : result.reviewVerdict || (result.prs.length > 0 ? 'pending' : 'not observed'),
+      detail: formatReviewForDisplay(result),
+      url: result.reviewUrls?.[0] || result.prs[0],
+    },
+    {
+      phase: 'FIX',
+      state: synthetic ? 'not applicable' : result.reviewVerdict === 'pass' || result.reviewVerdict === 'skipped' ? 'not needed' : 'not observed',
+      detail: synthetic ? 'synthetic test task' : '',
+    },
+    { phase: 'MERGE', state: result.prs.length > 0 ? 'not observed' : 'not applicable', detail: prDetail, url: result.prs[0] },
+    { phase: 'REFLECT', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
+    { phase: 'CLEANUP', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
+    { phase: 'STOP', state: result.stopRequested ? 'requested' : 'not requested', detail: result.stopReason || '' },
+  ];
+
+  for (const step of defaults) {
+    const observed = existing.get(step.phase);
+    if (observed) {
+      step.state = observed.state || step.state;
+      step.detail = observed.detail || step.detail;
+      step.url = observed.url || step.url;
+    }
+  }
+  return orderedProgressSteps(defaults);
 }
 
 function upsertProgressStep(result: RunResult, step: RunProgressStep): void {
@@ -2233,8 +2316,8 @@ async function main(): Promise<void> {
   result.reviewUrls = reviewUrls;
   upsertProgressStep(result, {
     phase: 'REVIEW',
-    state: reviewVerdict,
-    detail: reviewUrls.length > 0 ? reviewUrls.join(', ') : (result.prs[0] || ''),
+    state: state.test_task ? 'not applicable' : reviewVerdict,
+    detail: state.test_task ? 'synthetic test task' : reviewUrls.length > 0 ? reviewUrls.join(', ') : (result.prs[0] || ''),
     url: reviewUrls[0] || result.prs[0],
   });
   if (result.finalClaim) {
@@ -2269,7 +2352,7 @@ async function main(): Promise<void> {
       prsCreated: result.prs.length,
       casesCreated: result.cases.length,
       issuesFiledOrClosed: result.issuesFiled.length + result.issuesClosed.length,
-      reviewVerdict: result.reviewVerdict,
+      reviewVerdict: state.test_task ? 'pass' : result.reviewVerdict,
     };
     const evidenceCheck = verifyLifecycleEvidence(lifecycle, evidence);
     const phaseSet = new Set(lifecycle.phasesPresent);
@@ -2282,12 +2365,12 @@ async function main(): Promise<void> {
             : mergeStatuses.every((status) => status === 'merged' || status === 'auto_queued') ? 'ready'
               : 'unknown';
     const processEvidence: ProcessEvidence = {
-      planEvidence: Boolean(promptMeta.claimedPlanIssue),
-      implementationEvidence: result.cases.length > 0,
+      planEvidence: Boolean(state.test_task) || Boolean(promptMeta.claimedPlanIssue),
+      implementationEvidence: Boolean(state.test_task) ? result.prs.length > 0 : result.cases.length > 0,
       prEvidence: result.prs.length > 0,
-      testEvidence: hasDurableTestMarker,
-      reviewEvidence: result.reviewVerdict != null && result.reviewVerdict !== 'skipped',
-      reflectionEvidence: result.issuesFiled.length + result.issuesClosed.length > 0,
+      testEvidence: Boolean(state.test_task) || hasDurableTestMarker,
+      reviewEvidence: Boolean(state.test_task) || (result.reviewVerdict != null && result.reviewVerdict !== 'skipped'),
+      reflectionEvidence: Boolean(state.test_task) || result.issuesFiled.length + result.issuesClosed.length > 0,
       mergeReadiness,
     };
     const processValidation = validateProcessEvidence(lifecycle, processEvidence);
@@ -2383,6 +2466,16 @@ async function main(): Promise<void> {
     lifecycleSteeringNote =
       `Prior run had process verdict fail-open-warning (${processSummary}). ` +
       `Ensure the run log is durable so auto-dent can validate process evidence.`;
+  }
+
+  for (const pr of result.prs) {
+    const status = checkMergeStatus(pr);
+    upsertProgressStep(result, {
+      phase: 'MERGE',
+      state: status,
+      detail: pr,
+      url: pr,
+    });
   }
 
   printRunSummary(runNum, exitCode, duration, result, state.kaizen_repo || state.host_repo || '');
