@@ -29,6 +29,7 @@ export interface AutoDentOptions {
   testTask: boolean;
   experiment: boolean;
   noPlan: boolean;
+  provider: 'claude' | 'codex';
   guidance: string;
 }
 
@@ -59,6 +60,7 @@ const DEFAULT_OPTIONS: AutoDentOptions = {
   testTask: false,
   experiment: false,
   noPlan: false,
+  provider: 'claude',
   guidance: '',
 };
 
@@ -79,6 +81,7 @@ Options:
   --max-failures N     Stop after N consecutive failures (default: 3)
   --max-run-seconds N  Wall-time timeout per run in seconds (default: 1200 = 20min)
   --no-plan            Skip planning pre-pass (use discovery mode)
+  --provider NAME      Agent provider: claude (default) or codex (synthetic --test-task only)
   --dry-run            Show what would run without executing
   --test-task          Use synthetic fast task instead of /kaizen-deep-dive
   --experiment         Enable extra pipeline diagnostics
@@ -150,6 +153,15 @@ export function parseAutoDentArgs(argv: string[]): AutoDentOptions {
         opts.noPlan = true;
         i += 1;
         break;
+      case '--provider': {
+        const provider = requiredValue(argv, i);
+        if (provider !== 'claude' && provider !== 'codex') {
+          throw new Error(`Unknown provider: ${provider}`);
+        }
+        opts.provider = provider;
+        i += 2;
+        break;
+      }
       case '--experiment':
         opts.experiment = true;
         i += 1;
@@ -165,6 +177,9 @@ export function parseAutoDentArgs(argv: string[]): AutoDentOptions {
 
   opts.guidance = positional.join(' ');
   if (!opts.guidance && opts.testTask) opts.guidance = 'synthetic pipeline test';
+  if (opts.provider === 'codex' && !opts.testTask) {
+    throw new Error('Codex provider is restricted to --test-task synthetic runs');
+  }
   return opts;
 }
 
@@ -233,6 +248,7 @@ export function createInitialState(
     progress_issue: '',
     test_task: opts.testTask,
     experiment: opts.experiment,
+    provider: opts.provider,
     max_run_seconds: opts.maxRunSeconds,
     last_heartbeat: 0,
   };
@@ -568,6 +584,7 @@ async function main(): Promise<void> {
   if (opts.dryRun) {
     console.log('[dry-run] Would execute per run:');
     console.log(`  npx tsx ${join(repoRoot, 'scripts', 'auto-dent-run.ts')} ${stateFile}`);
+    console.log(`[dry-run] Provider: ${opts.provider}${opts.provider === 'codex' ? ' (synthetic test-task only)' : ''}`);
     console.log('');
     console.log('[dry-run] State file:');
     console.log(readFileSync(stateFile, 'utf8').trimEnd());

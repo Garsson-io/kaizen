@@ -20,7 +20,7 @@
  *   - auto-dent-stream.ts  — Stream processing (phase markers, artifacts, display)
  */
 
-import { spawn, execSync } from 'child_process';
+import { spawn, execFileSync, execSync } from 'child_process';
 import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, renameSync, copyFileSync } from 'fs';
 import { createInterface } from 'readline';
@@ -137,6 +137,7 @@ import {
 } from './auto-dent-github.js';
 import {
   color,
+  extractArtifacts,
   processStreamMessage,
   parsePhaseMarkers,
   postInFlightUpdate,
@@ -144,6 +145,11 @@ import {
   IN_FLIGHT_UPDATE_INTERVAL_MS,
   type StreamContext,
 } from './auto-dent-stream.js';
+import {
+  buildCodexExecArgs,
+  extractCodexPhaseMarkers,
+  parseCodexJsonl,
+} from './auto-dent-codex.js';
 import {
   validateRunLifecycle,
   summarizeLifecycle,
@@ -188,6 +194,8 @@ export interface BatchState {
   progress_issue?: string;
   test_task?: boolean;
   experiment?: boolean;
+  /** Agent provider. Defaults to claude for older state files. Codex is synthetic-only (#1144). */
+  provider?: 'claude' | 'codex';
   last_heartbeat?: number;
   max_run_seconds?: number;
   run_history?: RunMetrics[];
@@ -1345,6 +1353,113 @@ const POST_RESULT_GRACE_MS = 60_000;
 // Grace period after SIGTERM before SIGKILL
 const SIGKILL_GRACE_MS = 10_000;
 
+interface ProviderRunResult {
+  exitCode: number;
+  duration: number;
+  result: RunResult;
+  mode: string;
+  modeReason: string;
+  promptMeta: PromptMetadata;
+}
+
+async function runCodexSynthetic(
+  input: {
+    state: BatchState;
+    runNum: number;
+    logFile: string;
+    repoRoot: string;
+    stateFile: string;
+    prompt: string;
+    promptMeta: PromptMetadata;
+    mode: string;
+    modeReason: string;
+    result: RunResult;
+  },
+): Promise<ProviderRunResult> {
+  const logDir = dirname(input.stateFile);
+  const rawFile = `${logDir}/run-${input.runNum}-codex.jsonl`;
+  const runStart = Date.now();
+  const maxRunMs = (input.state.max_run_seconds || DEFAULT_MAX_RUN_SECONDS) * 1000;
+
+  let version = 'unknown';
+  try {
+    version = execFileSync('codex', ['--version'], { encoding: 'utf8' }).trim();
+  } catch {
+    // Missing version detail should not hide the primary spawn error below.
+  }
+
+  appendFileSync(input.logFile, `[provider] codex synthetic test-task\n`);
+  appendFileSync(input.logFile, `[provider] version=${version}\n`);
+  appendFileSync(input.logFile, `[provider] raw_jsonl=${rawFile}\n`);
+  writeFileSync(rawFile, '');
+
+  return new Promise((resolvePromise) => {
+    let processExited = false;
+    let raw = '';
+    const child = spawn('codex', buildCodexExecArgs(input.repoRoot), {
+      cwd: input.repoRoot,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    child.stdin?.end(input.prompt);
+
+    const wallTimer = setTimeout(() => {
+      if (!processExited) {
+        input.result.timedOut = true;
+        appendFileSync(input.logFile, `\n[watchdog] codex wall-time timeout (${maxRunMs / 1000}s) — sending SIGTERM\n`);
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          if (!processExited) child.kill('SIGKILL');
+        }, SIGKILL_GRACE_MS);
+      }
+    }, maxRunMs);
+
+    child.stdout?.on('data', (data: Buffer) => {
+      const s = data.toString();
+      raw += s;
+      appendFileSync(rawFile, s);
+    });
+
+    child.stderr?.on('data', (data: Buffer) => {
+      appendFileSync(input.logFile, data.toString());
+    });
+
+    const finish = (exitCode: number) => {
+      if (processExited) return;
+      processExited = true;
+      clearTimeout(wallTimer);
+      const parsed = parseCodexJsonl(raw);
+      input.result.toolCalls = parsed.events.length;
+      extractArtifacts([parsed.text, parsed.finalText].join('\n'), input.result);
+
+      appendFileSync(input.logFile, `\n--- codex final text ---\n${parsed.finalText || parsed.text}\n`);
+      const markers = extractCodexPhaseMarkers(parsed);
+      if (markers.length > 0) {
+        appendFileSync(input.logFile, `\n--- codex lifecycle markers ---\n${markers.join('\n')}\n`);
+      }
+      if (parsed.malformedLines.length > 0) {
+        appendFileSync(input.logFile, `\n[codex] malformed_jsonl_lines=${parsed.malformedLines.length}\n`);
+      }
+
+      const duration = Math.floor((Date.now() - runStart) / 1000);
+      resolvePromise({
+        exitCode,
+        duration,
+        result: input.result,
+        mode: input.mode,
+        modeReason: input.modeReason,
+        promptMeta: input.promptMeta,
+      });
+    };
+
+    child.on('close', (code) => finish(code ?? 1));
+    child.on('error', (err) => {
+      appendFileSync(input.logFile, `\nCodex process error: ${err.message}\n`);
+      finish(1);
+    });
+  });
+}
+
 async function runClaude(
   state: BatchState,
   runNum: number,
@@ -1385,6 +1500,32 @@ async function runClaude(
   // Save rendered prompt for observability (#602)
   const promptFile = `${logDir}/run-${runNum}-prompt.md`;
   writeFileSync(promptFile, prompt + '\n');
+
+  if (state.provider === 'codex') {
+    if (!state.test_task) {
+      appendFileSync(logFile, '[provider] codex requested for non-synthetic run; refusing\n');
+      return {
+        exitCode: 1,
+        duration: 0,
+        result,
+        mode: modeSelection.mode,
+        modeReason: modeSelection.reason,
+        promptMeta,
+      };
+    }
+    return runCodexSynthetic({
+      state,
+      runNum,
+      logFile,
+      repoRoot,
+      stateFile,
+      prompt,
+      promptMeta,
+      mode: modeSelection.mode,
+      modeReason: modeSelection.reason,
+      result,
+    });
+  }
 
   const nonce = `${new Date()
     .toISOString()
@@ -1618,6 +1759,19 @@ function printRunSummary(
     `  \u2514${'─'.repeat(54)}`,
   );
   console.log('');
+}
+
+function phaseProvidersForState(state: BatchState): PhaseProviderRecord {
+  if (state.provider !== 'codex') return defaultPhaseProviders();
+  const codex = { provider: 'codex' as const, billing: 'subscription-cli' as const };
+  return {
+    planning: codex,
+    implementation: codex,
+    review: { provider: 'claude', billing: 'subscription-cli' },
+    fix: codex,
+    reflection: codex,
+    validation: { provider: 'provider-independent', billing: 'local-only' },
+  };
 }
 
 // Lifecycle validation — implementation lives in ./auto-dent-lifecycle.ts.
@@ -2102,7 +2256,7 @@ async function main(): Promise<void> {
       process_summary: processSummary,
       review_verdict: reviewVerdict,
       review_cost_usd: reviewCostUsd,
-      phase_providers: defaultPhaseProviders(),
+      phase_providers: phaseProvidersForState(state),
       outcome,
       mode: runMode,
     });
@@ -2267,7 +2421,7 @@ async function main(): Promise<void> {
     process_summary: processSummary,
     review_verdict: reviewVerdict,
     review_cost_usd: reviewCostUsd,
-    phase_providers: defaultPhaseProviders(),
+    phase_providers: phaseProvidersForState(state),
   };
   // Classify failure: wall-clock timeout is authoritative (#686), then heuristics.
   // Feed the run log so the log-based branch (hook_rejection, infrastructure,
