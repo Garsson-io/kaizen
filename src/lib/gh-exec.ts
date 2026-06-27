@@ -13,12 +13,23 @@ export interface GhResult {
   stderr: string;
 }
 
-/** Run a gh CLI command and return status/stdout/stderr without throwing. */
-export function ghResult(args: string[], timeoutMs: number = 30_000): GhResult {
+/**
+ * Run a gh CLI command and return status/stdout/stderr without throwing.
+ *
+ * Pass `input` to feed data on the child's stdin (e.g. `gh pr comment
+ * --body-file -`), so callers never have to drop down to a raw `execSync`
+ * for the one stdin-based gh path.
+ */
+export function ghResult(
+  args: string[],
+  timeoutMs: number = 30_000,
+  input?: string,
+): GhResult {
   const result = spawnSync('gh', args, {
     encoding: 'utf8',
     timeout: timeoutMs,
     stdio: ['pipe', 'pipe', 'pipe'],
+    ...(input !== undefined ? { input } : {}),
   });
   return {
     status: result.status ?? 1,
@@ -27,9 +38,16 @@ export function ghResult(args: string[], timeoutMs: number = 30_000): GhResult {
   };
 }
 
-/** Run a gh CLI command and return trimmed stdout. Throws on non-zero exit. */
-export function gh(args: string[], timeoutMs: number = 30_000): string {
-  const result = ghResult(args, timeoutMs);
+/**
+ * Run a gh CLI command and return trimmed stdout. Throws on non-zero exit.
+ * Pass `input` to feed the child's stdin (see `ghResult`).
+ */
+export function gh(
+  args: string[],
+  timeoutMs: number = 30_000,
+  input?: string,
+): string {
+  const result = ghResult(args, timeoutMs, input);
   if (result.status !== 0) {
     throw new Error(`gh ${args.slice(0, 3).join(' ')} failed: ${result.stderr}`);
   }
