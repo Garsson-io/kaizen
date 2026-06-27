@@ -13,10 +13,24 @@ export interface GhResult {
   stderr: string;
 }
 
+export interface GhExecOptions {
+  timeoutMs?: number;
+  input?: string;
+}
+
+function normalizeOptions(
+  options: number | GhExecOptions = 30_000,
+): Required<Pick<GhExecOptions, 'timeoutMs'>> & Pick<GhExecOptions, 'input'> {
+  if (typeof options === 'number') return { timeoutMs: options };
+  return { timeoutMs: options.timeoutMs ?? 30_000, input: options.input };
+}
+
 /** Run a gh CLI command and return status/stdout/stderr without throwing. */
-export function ghResult(args: string[], timeoutMs: number = 30_000): GhResult {
+export function ghResult(args: string[], options: number | GhExecOptions = 30_000): GhResult {
+  const { timeoutMs, input } = normalizeOptions(options);
   const result = spawnSync('gh', args, {
     encoding: 'utf8',
+    input,
     timeout: timeoutMs,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -28,8 +42,8 @@ export function ghResult(args: string[], timeoutMs: number = 30_000): GhResult {
 }
 
 /** Run a gh CLI command and return trimmed stdout. Throws on non-zero exit. */
-export function gh(args: string[], timeoutMs: number = 30_000): string {
-  const result = ghResult(args, timeoutMs);
+export function gh(args: string[], options: number | GhExecOptions = 30_000): string {
+  const result = ghResult(args, options);
   if (result.status !== 0) {
     throw new Error(`gh ${args.slice(0, 3).join(' ')} failed: ${result.stderr}`);
   }

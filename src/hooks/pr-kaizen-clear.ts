@@ -18,7 +18,7 @@
 import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { gh } from '../lib/gh-exec.js';
+import { gh, type GhExecOptions } from '../lib/gh-exec.js';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import { verifyIssueRef, type RefStatus } from './lib/issue-ref-verifier.js';
@@ -51,7 +51,7 @@ interface Impediment {
   impact_minutes?: number;
 }
 
-type GhRunner = (args: string[]) => string;
+type GhRunner = (args: string[], options?: number | GhExecOptions) => string;
 
 // ── Audit logging ────────────────────────────────────────────────────
 
@@ -422,14 +422,17 @@ export function formatReflectionComment(
 }
 
 /** Post reflection as a PR comment (best-effort). */
-function defaultPostComment(prUrl: string, comment: string): void {
+export function defaultPostComment(
+  prUrl: string,
+  comment: string,
+  ghRun: GhRunner = gh,
+): void {
   const prNum = prUrl.match(/(\d+)$/)?.[1];
   const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
   if (!prNum || !repo) return;
-  execSync(`gh pr comment ${prNum} --repo "${repo}" --body-file -`, {
+  ghRun(['pr', 'comment', prNum, '--repo', repo, '--body-file', '-'], {
     input: comment,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    timeout: 15000,
+    timeoutMs: 15_000,
   });
 }
 
@@ -713,7 +716,10 @@ export function processHookInput(
     markReflectionDone(gatePrUrl, currentBranch(), stateDir);
 
     // Post reflection as PR comment for audit trail (kaizen #388, best-effort)
-    const postComment = options.postComment ?? defaultPostComment;
+    const postComment =
+      options.postComment ??
+      ((prUrl: string, comment: string) =>
+        defaultPostComment(prUrl, comment, ghRun));
     try {
       const comment = formatReflectionComment(
         validatedItems,
@@ -807,20 +813,27 @@ function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void {
 
   for (const num of issueNums) {
     try {
-      const state = execSync(
-        `gh issue view ${num} --repo Garsson-io/kaizen --json state --jq .state`,
-        {
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        },
-      ).trim();
+      const state = ghRun([
+        'issue',
+        'view',
+        num,
+        '--repo',
+        'Garsson-io/kaizen',
+        '--json',
+        'state',
+        '--jq',
+        '.state',
+      ]).trim();
       if (state === 'OPEN') {
-        execSync(
-          `gh issue close ${num} --repo Garsson-io/kaizen --comment "Auto-closed: PR merged (${prUrl})"`,
-          {
-            stdio: ['pipe', 'pipe', 'pipe'],
-          },
-        );
+        ghRun([
+          'issue',
+          'close',
+          num,
+          '--repo',
+          'Garsson-io/kaizen',
+          '--comment',
+          `Auto-closed: PR merged (${prUrl})`,
+        ]);
       }
     } catch {}
   }

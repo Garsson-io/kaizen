@@ -79,6 +79,28 @@ describe('ghResult — non-throwing shared GitHub CLI helper', () => {
       expect.objectContaining({ timeout: 15_000 }),
     );
   });
+
+  it('passes stdin input to spawnSync', () => {
+    mockSpawn.mockReturnValueOnce({
+      status: 0,
+      stdout: 'ok',
+      stderr: '',
+      signal: null,
+      pid: 0,
+      output: [],
+    } as any);
+
+    ghResult(['pr', 'comment', '42', '--body-file', '-'], {
+      input: 'comment body',
+      timeoutMs: 15_000,
+    });
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      'gh',
+      ['pr', 'comment', '42', '--body-file', '-'],
+      expect.objectContaining({ input: 'comment body', timeout: 15_000 }),
+    );
+  });
 });
 
 describe('gh — shared GitHub CLI helper', () => {

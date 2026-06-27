@@ -43,6 +43,7 @@ import {
   detectPrdWithoutFiledIssues,
   extractBgResults,
   formatReflectionComment,
+  defaultPostComment,
   hasPrdFiles,
   matchesWaiverBlocklist,
   processHookInput,
@@ -535,6 +536,29 @@ describe('processHookInput: reflection persistence (kaizen #388)', () => {
 
   afterEach(() => {
     fs.rmSync(unitStateDir, { recursive: true, force: true });
+  });
+
+  it('posts default reflection comments through argv-style gh with stdin body', () => {
+    const gh = vi.fn(() => '');
+
+    defaultPostComment(
+      'https://github.com/Garsson-io/kaizen/pull/42',
+      'comment body',
+      gh,
+    );
+
+    expect(gh).toHaveBeenCalledWith([
+      'pr',
+      'comment',
+      '42',
+      '--repo',
+      'Garsson-io/kaizen',
+      '--body-file',
+      '-',
+    ], {
+      input: 'comment body',
+      timeoutMs: 15_000,
+    });
   });
 
   it('calls postComment with formatted reflection on valid impediments', () => {
@@ -1141,7 +1165,7 @@ describe('processHookInput PRD blocking gate (kaizen #683, upgraded from #694)',
 });
 
 describe('processHookInput auto-close PR metadata gh seam', () => {
-  it('loads merged PR state and body through the gh argv seam after clearing', () => {
+  it('loads merged PR state/body and closes linked issues through the gh argv seam after clearing', () => {
     const gh = vi.fn((args: string[]) => {
       if (args[0] === 'pr' && args[1] === 'diff') {
         return 'src/hooks/pr-kaizen-clear.ts';
@@ -1150,7 +1174,13 @@ describe('processHookInput auto-close PR metadata gh seam', () => {
         return 'MERGED';
       }
       if (args[0] === 'pr' && args[1] === 'view' && args.includes('body')) {
-        return 'No linked kaizen issues in this fixture';
+        return 'Closes Garsson-io/kaizen#1306';
+      }
+      if (args[0] === 'issue' && args[1] === 'view') {
+        return 'OPEN';
+      }
+      if (args[0] === 'issue' && args[1] === 'close') {
+        return '';
       }
       return '';
     });
@@ -1184,6 +1214,26 @@ describe('processHookInput auto-close PR metadata gh seam', () => {
       'body',
       '--jq',
       '.body',
+    ]);
+    expect(gh).toHaveBeenCalledWith([
+      'issue',
+      'view',
+      '1306',
+      '--repo',
+      'Garsson-io/kaizen',
+      '--json',
+      'state',
+      '--jq',
+      '.state',
+    ]);
+    expect(gh).toHaveBeenCalledWith([
+      'issue',
+      'close',
+      '1306',
+      '--repo',
+      'Garsson-io/kaizen',
+      '--comment',
+      'Auto-closed: PR merged (https://github.com/Garsson-io/kaizen/pull/42)',
     ]);
   });
 });

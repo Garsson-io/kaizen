@@ -17,10 +17,7 @@ const REPO_ROOT = join(__dirname, '..', '..');
 const SRC_DIR = join(REPO_ROOT, 'src');
 const CANONICAL_HELPER = 'src/lib/gh-exec.ts';
 
-const OPT_OUT = new Set<string>([
-  // stdin-based PR comment posting; migrate after gh-exec grows stdin support.
-  'src/hooks/pr-kaizen-clear.ts',
-]);
+const OPT_OUT = new Set<string>();
 
 function repoRelative(path: string): string {
   return relative(REPO_ROOT, path).replace(/\\/g, '/');
