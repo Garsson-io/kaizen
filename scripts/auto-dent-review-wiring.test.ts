@@ -3,31 +3,62 @@ import { runReviewWiring, type ReviewWiringDeps, type ReviewWiringInput } from '
 import type { BatteryResult } from '../src/review-battery.js';
 import type { ReviewFixState } from './review-fix.js';
 
+type BatteryDimension = BatteryResult['dimensions'][number];
+
+function makeRequirementFailure(overrides: Partial<BatteryDimension> = {}): BatteryDimension {
+  return {
+    dimension: 'requirements',
+    verdict: 'fail',
+    findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
+    summary: 'fail',
+    ...overrides,
+  };
+}
+
+function makeBatteryResult(overrides: Partial<BatteryResult> = {}): BatteryResult {
+  return {
+    verdict: 'pass',
+    missingCount: 0,
+    partialCount: 0,
+    durationMs: 1000,
+    costUsd: 0.10,
+    failedDimensions: [],
+    skippedDimensions: [],
+    dimensions: [],
+    ...overrides,
+  };
+}
+
+function makeFailingBatteryResult(overrides: Partial<BatteryResult> = {}): BatteryResult {
+  return makeBatteryResult({
+    verdict: 'fail',
+    missingCount: 1,
+    dimensions: [makeRequirementFailure()],
+    ...overrides,
+  });
+}
+
+function makeReviewFixState(overrides: Partial<ReviewFixState> = {}): ReviewFixState {
+  return {
+    prUrl: 'https://github.com/test/repo/pull/1',
+    issueNum: '42',
+    repo: 'test/repo',
+    maxRounds: 2,
+    budgetCap: 0.5,
+    currentRound: 1,
+    totalCostUsd: 0.20,
+    startedAt: new Date().toISOString(),
+    phase: 'done',
+    rounds: [],
+    outcome: 'pass',
+    ...overrides,
+  };
+}
+
 function makeDeps(overrides: Partial<ReviewWiringDeps> = {}): ReviewWiringDeps {
   return {
-    reviewBattery: vi.fn().mockResolvedValue({
-      verdict: 'pass',
-      missingCount: 0,
-      partialCount: 0,
-      durationMs: 1000,
-      costUsd: 0.10,
-      failedDimensions: [],
-      skippedDimensions: [],
-      dimensions: [],
-    } satisfies BatteryResult),
-    runFixLoop: vi.fn().mockResolvedValue({
-      prUrl: 'https://github.com/test/repo/pull/1',
-      issueNum: '42',
-      repo: 'test/repo',
-      maxRounds: 2,
-      budgetCap: 0.5,
-      currentRound: 1,
-      totalCostUsd: 0.20,
-      startedAt: new Date().toISOString(),
-      phase: 'done',
-      rounds: [],
-      outcome: 'pass',
-    } satisfies ReviewFixState),
+    reviewBattery: vi.fn().mockResolvedValue(makeBatteryResult()),
+    runFixLoop: vi.fn().mockResolvedValue(makeReviewFixState()),
     listPrDimensions: vi.fn().mockReturnValue(['requirements', 'correctness']),
     formatBatteryReport: vi.fn().mockReturnValue('report'),
     emit: vi.fn(),
@@ -63,21 +94,11 @@ describe('runReviewWiring', () => {
 
   it('INVARIANT: review fail with gaps triggers fix loop with correct args', async () => {
     const deps = makeDeps({
-      reviewBattery: vi.fn().mockResolvedValue({
-        verdict: 'fail',
-        missingCount: 1,
-        partialCount: 0,
-        durationMs: 1000,
-        costUsd: 0.10,
-        failedDimensions: [],
-        skippedDimensions: [],
-        dimensions: [{
-          dimension: 'requirements',
-          verdict: 'fail',
+      reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult({
+        dimensions: [makeRequirementFailure({
           findings: [{ requirement: 'Must do X', status: 'MISSING', detail: 'Not implemented' }],
-          summary: 'fail',
-        }],
-      } satisfies BatteryResult),
+        })],
+      })),
     });
     const input = makeInput({ repo: 'test/repo', pickedIssue: '42' });
     const result = await runReviewWiring(input, deps);
@@ -91,21 +112,7 @@ describe('runReviewWiring', () => {
 
   it('INVARIANT: budget exceeded skips fix loop (#898 — uses remaining, not total)', async () => {
     const deps = makeDeps({
-      reviewBattery: vi.fn().mockResolvedValue({
-        verdict: 'fail',
-        missingCount: 1,
-        partialCount: 0,
-        durationMs: 1000,
-        costUsd: 0.10,
-        failedDimensions: [],
-        skippedDimensions: [],
-        dimensions: [{
-          dimension: 'requirements',
-          verdict: 'fail',
-          findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
-          summary: 'fail',
-        }],
-      } satisfies BatteryResult),
+      reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult()),
     });
     // Total budget $2, implementation cost $1.80 → remaining $0.20 → review cap $0.08
     // Review costs $0.10 → exceeds cap → no fix loop
@@ -118,21 +125,14 @@ describe('runReviewWiring', () => {
 
   it('INVARIANT: 0 gaps skips fix loop even when verdict is fail (#897)', async () => {
     const deps = makeDeps({
-      reviewBattery: vi.fn().mockResolvedValue({
-        verdict: 'fail',
+      reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult({
         missingCount: 0,
-        partialCount: 0,
-        durationMs: 1000,
-        costUsd: 0.10,
         failedDimensions: ['requirements'],
-        skippedDimensions: [],
-        dimensions: [{
-          dimension: 'requirements',
-          verdict: 'fail',
+        dimensions: [makeRequirementFailure({
           findings: [], // all timed out — no findings
           summary: 'timeout',
-        }],
-      } satisfies BatteryResult),
+        })],
+      })),
     });
     const result = await runReviewWiring(makeInput(), deps);
 
@@ -142,34 +142,11 @@ describe('runReviewWiring', () => {
 
   it('INVARIANT: fix loop pass propagates to reviewVerdict', async () => {
     const deps = makeDeps({
-      reviewBattery: vi.fn().mockResolvedValue({
-        verdict: 'fail',
-        missingCount: 1,
-        partialCount: 0,
-        durationMs: 1000,
-        costUsd: 0.10,
-        failedDimensions: [],
-        skippedDimensions: [],
-        dimensions: [{
-          dimension: 'requirements',
-          verdict: 'fail',
-          findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
-          summary: 'fail',
-        }],
-      } satisfies BatteryResult),
-      runFixLoop: vi.fn().mockResolvedValue({
-        prUrl: 'https://github.com/test/repo/pull/1',
-        issueNum: '42',
-        repo: 'test/repo',
-        maxRounds: 2,
-        budgetCap: 0.5,
+      reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult()),
+      runFixLoop: vi.fn().mockResolvedValue(makeReviewFixState({
         currentRound: 2,
         totalCostUsd: 0.30,
-        startedAt: new Date().toISOString(),
-        phase: 'done',
-        rounds: [],
-        outcome: 'pass',
-      } satisfies ReviewFixState),
+      })),
     });
     const result = await runReviewWiring(makeInput(), deps);
 
@@ -178,34 +155,12 @@ describe('runReviewWiring', () => {
 
   it('INVARIANT: fix loop fail propagates to reviewVerdict', async () => {
     const deps = makeDeps({
-      reviewBattery: vi.fn().mockResolvedValue({
-        verdict: 'fail',
-        missingCount: 1,
-        partialCount: 0,
-        durationMs: 1000,
-        costUsd: 0.10,
-        failedDimensions: [],
-        skippedDimensions: [],
-        dimensions: [{
-          dimension: 'requirements',
-          verdict: 'fail',
-          findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
-          summary: 'fail',
-        }],
-      } satisfies BatteryResult),
-      runFixLoop: vi.fn().mockResolvedValue({
-        prUrl: 'https://github.com/test/repo/pull/1',
-        issueNum: '42',
-        repo: 'test/repo',
-        maxRounds: 2,
-        budgetCap: 0.5,
+      reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult()),
+      runFixLoop: vi.fn().mockResolvedValue(makeReviewFixState({
         currentRound: 2,
         totalCostUsd: 0.30,
-        startedAt: new Date().toISOString(),
-        phase: 'done',
-        rounds: [],
         outcome: 'max_rounds',
-      } satisfies ReviewFixState),
+      })),
     });
     const result = await runReviewWiring(makeInput(), deps);
 
@@ -224,21 +179,7 @@ describe('runReviewWiring', () => {
     // totalBudget=5, implementationCost=1 → remaining=4 → 4*0.4=1.6 → cap=1.6
     // Review costs $0.10, 1 gap → fix loop should get budgetCap = 1.6 - 0.10 = 1.5
     const deps = makeDeps({
-      reviewBattery: vi.fn().mockResolvedValue({
-        verdict: 'fail',
-        missingCount: 1,
-        partialCount: 0,
-        durationMs: 1000,
-        costUsd: 0.10,
-        failedDimensions: [],
-        skippedDimensions: [],
-        dimensions: [{
-          dimension: 'requirements',
-          verdict: 'fail',
-          findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
-          summary: 'fail',
-        }],
-      } satisfies BatteryResult),
+      reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult()),
     });
     const input = makeInput({ totalBudget: 5.0, implementationCost: 1.0 });
     await runReviewWiring(input, deps);
@@ -249,21 +190,7 @@ describe('runReviewWiring', () => {
 
   it('INVARIANT: budget cap is capped at $2 even with large remaining budget (#898)', async () => {
     const deps = makeDeps({
-      reviewBattery: vi.fn().mockResolvedValue({
-        verdict: 'fail',
-        missingCount: 1,
-        partialCount: 0,
-        durationMs: 1000,
-        costUsd: 0.10,
-        failedDimensions: [],
-        skippedDimensions: [],
-        dimensions: [{
-          dimension: 'requirements',
-          verdict: 'fail',
-          findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
-          summary: 'fail',
-        }],
-      } satisfies BatteryResult),
+      reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult()),
     });
     const input = makeInput({ totalBudget: 20.0, implementationCost: 0 });
     await runReviewWiring(input, deps);
@@ -275,21 +202,10 @@ describe('runReviewWiring', () => {
 
   it('INVARIANT: events emitted with correct types and shared base fields (#899)', async () => {
     const deps = makeDeps({
-      reviewBattery: vi.fn().mockResolvedValue({
-        verdict: 'fail',
-        missingCount: 1,
-        partialCount: 0,
+      reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult({
         durationMs: 500,
         costUsd: 0.05,
-        failedDimensions: [],
-        skippedDimensions: [],
-        dimensions: [{
-          dimension: 'requirements',
-          verdict: 'fail',
-          findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
-          summary: 'fail',
-        }],
-      } satisfies BatteryResult),
+      })),
     });
     const input = makeInput({ runId: 'b1/run-1', batchId: 'b1', runNum: 3 });
     await runReviewWiring(input, deps);
@@ -313,21 +229,7 @@ describe('runReviewWiring', () => {
 
   it('INVARIANT: budget exceeded emits round events but NOT fix_spawned', async () => {
     const deps = makeDeps({
-      reviewBattery: vi.fn().mockResolvedValue({
-        verdict: 'fail',
-        missingCount: 1,
-        partialCount: 0,
-        durationMs: 1000,
-        costUsd: 0.10,
-        failedDimensions: [],
-        skippedDimensions: [],
-        dimensions: [{
-          dimension: 'requirements',
-          verdict: 'fail',
-          findings: [{ requirement: 'X', status: 'MISSING', detail: 'missing' }],
-          summary: 'fail',
-        }],
-      } satisfies BatteryResult),
+      reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult()),
     });
     const input = makeInput({ totalBudget: 2.0, implementationCost: 1.80 });
     await runReviewWiring(input, deps);
