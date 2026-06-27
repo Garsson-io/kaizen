@@ -6,6 +6,7 @@ import {
   storePlan,
   storeMetadata,
   storeReviewFinding,
+  storeReviewSummary,
 } from './structured-data.js';
 
 vi.mock('node:fs', () => ({
@@ -238,6 +239,32 @@ describe('store-review-batch — review sentinel', () => {
     );
     expect(sentinelCall).toBeDefined();
     expect(String(sentinelCall![0])).toContain('456');
+  });
+});
+
+describe('store-review-summary — CI head proof', () => {
+  it('passes --head-sha through to summary storage before writing the sentinel (#1070)', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await handlers['store-review-summary']({
+      command: 'store-review-summary',
+      pr: '903',
+      repo: 'Garsson-io/kaizen',
+      round: '5',
+      ['head-sha']: 'abc123',
+    } as CliArgs);
+
+    expect(vi.mocked(storeReviewSummary)).toHaveBeenCalledWith(
+      { kind: 'pr', number: 903, repo: 'Garsson-io/kaizen' },
+      5,
+      undefined,
+      { expectedHeadSha: 'abc123' },
+    );
+    const sentinelCall = vi.mocked(appendFileSync).mock.calls.find(
+      ([path]) => typeof path === 'string' && path.includes('.reviewed-r5'),
+    );
+    expect(sentinelCall).toBeDefined();
+    log.mockRestore();
   });
 });
 

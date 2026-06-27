@@ -39,7 +39,7 @@ function ghReturns(stdout: string) {
 }
 
 
-beforeEach(() => { vi.clearAllMocks(); clearCommentCache(); });
+beforeEach(() => { vi.clearAllMocks(); mockGh.mockReset(); clearCommentCache(); });
 
 const pr = prTarget('903', 'Garsson-io/kaizen');
 const issue = issueTarget('904', 'Garsson-io/kaizen');
@@ -305,16 +305,88 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     const ok = dimComment(2, 'correctness', 'pass', 3, 0, 0); // all DONE → PASS
     ghReturns(ok); // compose: list
     ghReturns(ok); // compose: read
-    ghReturns(ok); // deriveStoredRoundVerdict: list
-    ghReturns(ok); // deriveStoredRoundVerdict: read
+    ghReturns('abc123'); // gh pr view: current PR head
+    ghReturns(JSON.stringify([{ name: 'TypeScript tests + coverage', bucket: 'pass', state: 'SUCCESS' }])); // gh pr checks
     ghReturns(''); // writeAttachment: readAttachment (no existing)
     ghReturns('https://...#issuecomment-sum');
 
-    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes');
+    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes', { expectedHeadSha: 'abc123' });
     const body = bodyOfLastCreate();
     expect(body).toContain('## Review Round 2 — PASS');
     expect(body).toContain('### Reviewer notes (non-authoritative');
     expect(body).toContain('rebased onto main');
+  });
+
+  describe('CI proof gate (#1070)', () => {
+    const head = 'abc123';
+    const passChecks = JSON.stringify([
+      { name: 'TypeScript tests + coverage', bucket: 'pass', state: 'SUCCESS' },
+      { name: 'auto-merge', bucket: 'skipping', state: 'SKIPPED' },
+    ]);
+    const pendingChecks = JSON.stringify([
+      { name: 'TypeScript tests + coverage', bucket: 'pending', state: 'IN_PROGRESS' },
+    ]);
+    const failChecks = JSON.stringify([
+      { name: 'TypeScript tests + coverage', bucket: 'fail', state: 'FAILURE' },
+    ]);
+
+    it('stores a derived PASS only when current-head CI is passing', () => {
+      const ok = dimComment(4, 'correctness', 'pass', 2, 0, 0);
+      ghReturns(ok); // compose: list
+      ghReturns(ok); // compose: read
+      ghReturns(head); // gh pr view: current PR head
+      ghReturns(passChecks); // gh pr checks
+      ghReturns(''); // writeAttachment: readAttachment (no existing)
+      ghReturns('https://...#issuecomment-sum');
+
+      storeReviewSummary(pr, 4, undefined, { expectedHeadSha: head });
+
+      const body = bodyOfLastCreate();
+      expect(body).toContain('## Review Round 4 — PASS');
+    });
+
+    it('refuses to store a derived PASS while CI is pending', () => {
+      const ok = dimComment(6, 'correctness', 'pass', 2, 0, 0);
+      ghReturns(ok); // compose: list
+      ghReturns(ok); // compose: read
+      ghReturns(head); // gh pr view
+      ghReturns(pendingChecks); // gh pr checks
+
+      expect(() => storeReviewSummary(pr, 6, undefined, { expectedHeadSha: head }))
+        .toThrow(/CI.*pending|pending.*CI|#1070/i);
+    });
+
+    it('refuses to store a derived PASS when CI is failing', () => {
+      const ok = dimComment(7, 'correctness', 'pass', 2, 0, 0);
+      ghReturns(ok); // compose: list
+      ghReturns(ok); // compose: read
+      ghReturns(head); // gh pr view
+      ghReturns(failChecks); // gh pr checks
+
+      expect(() => storeReviewSummary(pr, 7, undefined, { expectedHeadSha: head }))
+        .toThrow(/CI.*fail|fail.*CI|#1070/i);
+    });
+
+    it('refuses to store a derived PASS before CI has produced checks', () => {
+      const ok = dimComment(9, 'correctness', 'pass', 2, 0, 0);
+      ghReturns(ok); // compose: list
+      ghReturns(ok); // compose: read
+      ghReturns(head); // gh pr view
+      ghReturns('[]'); // gh pr checks: CI has not started
+
+      expect(() => storeReviewSummary(pr, 9, undefined, { expectedHeadSha: head }))
+        .toThrow(/CI.*not produced checks|#1070/i);
+    });
+
+    it('refuses to store a derived PASS when the reviewed head is stale', () => {
+      const ok = dimComment(8, 'correctness', 'pass', 2, 0, 0);
+      ghReturns(ok); // compose: list
+      ghReturns(ok); // compose: read
+      ghReturns('def456'); // gh pr view: current PR head differs from reviewed head
+
+      expect(() => storeReviewSummary(pr, 8, undefined, { expectedHeadSha: head }))
+        .toThrow(/stale|HEAD|#1070/i);
+    });
   });
 });
 

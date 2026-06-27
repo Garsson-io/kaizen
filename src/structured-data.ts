@@ -14,6 +14,7 @@
  */
 
 import YAML from 'yaml';
+import { spawnSync } from 'node:child_process';
 import {
   listAttachments,
   readAttachment,
@@ -63,9 +64,10 @@ export function storeReviewBatch(
   target: AttachmentTarget,
   round: number,
   findings: ReviewFindingData[],
+  options: StoreReviewSummaryOptions = {},
 ): { urls: string[]; summaryUrl: string } {
   const urls = findings.map(f => storeReviewFinding(target, round, f));
-  const summaryUrl = storeReviewSummary(target, round);
+  const summaryUrl = storeReviewSummary(target, round, undefined, options);
   return { urls, summaryUrl };
 }
 
@@ -103,6 +105,130 @@ export function extractPlanText(text: string): string | undefined {
 export type { ReviewFinding, ReviewFindingData } from './review-finding-contract.js';
 
 const STATUS_ICON: Record<string, string> = { DONE: '✅', PARTIAL: '⚠️', MISSING: '❌' };
+
+export type StoreReviewSummaryOptions = {
+  /**
+   * The commit SHA that was reviewed. If omitted, the current local HEAD is used.
+   * Passing this explicitly lets review tooling prove CI belongs to the same
+   * commit it reviewed even if the local worktree has moved.
+   */
+  expectedHeadSha?: string;
+};
+
+type GhCheck = {
+  name?: string;
+  bucket?: string;
+  state?: string;
+  workflow?: string;
+  link?: string;
+};
+
+function spawnText(command: string, args: string[], failureContext: string): string {
+  const result = spawnSync(command, args, { encoding: 'utf8' });
+  if (result.error) {
+    throw new Error(`${failureContext}: ${result.error.message}`);
+  }
+  const stdout = (result.stdout ?? '').trim();
+  if ((result.status ?? 0) !== 0 && !stdout) {
+    const stderr = (result.stderr ?? '').trim();
+    throw new Error(`${failureContext}: ${stderr || `${command} exited ${result.status}`}`);
+  }
+  return stdout;
+}
+
+function resolveReviewedHeadSha(expectedHeadSha: string | undefined): string {
+  const explicit = expectedHeadSha?.trim();
+  if (explicit) return explicit;
+  return spawnText(
+    'git',
+    ['rev-parse', 'HEAD'],
+    'store-review-summary: #1070 unable to determine reviewed HEAD; pass --head-sha explicitly',
+  );
+}
+
+function readPrHeadSha(target: AttachmentTarget): string {
+  return spawnText(
+    'gh',
+    ['pr', 'view', String(target.number), '--repo', target.repo, '--json', 'headRefOid', '--jq', '.headRefOid'],
+    'store-review-summary: #1070 unable to read current PR head',
+  );
+}
+
+function readPrChecks(target: AttachmentTarget): GhCheck[] {
+  const stdout = spawnText(
+    'gh',
+    ['pr', 'checks', String(target.number), '--repo', target.repo, '--json', 'name,bucket,state,workflow,link'],
+    'store-review-summary: #1070 unable to read PR checks',
+  );
+  try {
+    const parsed = JSON.parse(stdout);
+    if (!Array.isArray(parsed)) {
+      throw new Error('JSON was not an array');
+    }
+    return parsed as GhCheck[];
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`store-review-summary: #1070 unable to parse PR checks JSON (${msg})`);
+  }
+}
+
+function formatCheck(check: GhCheck): string {
+  const workflow = check.workflow ? `${check.workflow} / ` : '';
+  const name = check.name ?? '(unnamed check)';
+  const bucket = check.bucket ?? 'unknown';
+  const state = check.state ? ` (${check.state})` : '';
+  return `${workflow}${name}: ${bucket}${state}`;
+}
+
+function assertReviewSummaryCiPassed(target: AttachmentTarget, options: StoreReviewSummaryOptions): void {
+  if (target.kind !== 'pr') {
+    throw new Error('store-review-summary: #1070 CI proof requires a PR target');
+  }
+
+  const reviewedHead = resolveReviewedHeadSha(options.expectedHeadSha);
+  const currentHead = readPrHeadSha(target);
+  if (currentHead !== reviewedHead) {
+    throw new Error(
+      `store-review-summary: #1070 refusing to store a passing review summary for stale HEAD. ` +
+      `Reviewed ${reviewedHead}, but PR #${target.number} is currently ${currentHead}. ` +
+      `Re-review the current head before storing a pass summary.`,
+    );
+  }
+
+  const checks = readPrChecks(target);
+  if (checks.length === 0) {
+    throw new Error(
+      `store-review-summary: #1070 refusing to store a passing review summary because CI has not produced checks for ${currentHead}.`,
+    );
+  }
+
+  const blocking = checks.filter(check => {
+    const bucket = check.bucket;
+    return bucket !== 'pass' && bucket !== 'skipping';
+  });
+  if (blocking.length > 0) {
+    const details = blocking.map(formatCheck).join('; ');
+    throw new Error(
+      `store-review-summary: #1070 refusing to store a passing review summary because CI is not green for ${currentHead}: ${details}`,
+    );
+  }
+}
+
+function extractSummaryRoundVerdict(summary: string): RoundVerdict | null {
+  const match = summary.match(/^<!-- meta:(\{.*\}) -->/);
+  if (!match) return null;
+  try {
+    const meta = JSON.parse(match[1]) as { round_verdict?: RoundVerdict; verdict?: string };
+    if (meta.round_verdict === 'PASS' || meta.round_verdict === 'PASS_WITH_PARTIALS' || meta.round_verdict === 'FAIL') {
+      return meta.round_verdict;
+    }
+    if (meta.verdict === 'fail') return 'FAIL';
+    if (meta.verdict === 'pass') return 'PASS';
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Defensive coercion for CLI/API payloads. Supports legacy shapes (status-only,
@@ -271,13 +397,18 @@ export function storeReviewSummary(
   target: AttachmentTarget,
   round: number,
   note?: string,
+  options: StoreReviewSummaryOptions = {},
 ): string {
   const derived = composeReviewSummary(target, round);
+  const roundVerdict = extractSummaryRoundVerdict(derived) ?? deriveStoredRoundVerdict(target, round);
+  if (roundVerdict !== 'FAIL') {
+    assertReviewSummaryCiPassed(target, options);
+  }
+
   let content = derived;
 
   const trimmed = note?.trim();
   if (trimmed) {
-    const roundVerdict = deriveStoredRoundVerdict(target, round);
     if (roundVerdict === 'FAIL' && assertsPass(trimmed)) {
       throw new Error(
         `store-review-summary: refusing to store a note that asserts the round PASSED while the ` +

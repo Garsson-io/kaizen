@@ -226,8 +226,13 @@ follow-up issue. If any dimension still has MISSING findings, the round is FAIL 
 Store the round summary (required to advance to next round or close the gate):
 ```bash
 npx tsx src/cli-structured-data.ts store-review-summary \
-  --pr <PR_NUMBER> --repo <owner/repo> --round <N>
+  --pr <PR_NUMBER> --repo <owner/repo> --round <N> --head-sha "$(git rev-parse HEAD)"
 ```
+
+For a derived PASS or PASS-with-partials verdict, `store-review-summary` now verifies the PR's
+current HEAD matches `--head-sha` and that `gh pr checks` is green for that HEAD before it writes
+the summary/sentinel (#1070). Pending, failing, absent, or stale-head CI refuses storage; re-run
+review on the current head after CI passes.
 
 Add `--note "<context>"` only for non-verdict commentary (e.g. "rebased onto main, re-ran tests").
 Read back the derived verdict with `read-review-summary --pr <N> --repo <repo> --round <N>` — the
