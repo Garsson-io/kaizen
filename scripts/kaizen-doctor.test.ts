@@ -9,6 +9,7 @@ import {
   checkRestartNeeded,
   checkHookExecSmoke,
   checkSingleRegistrationPath,
+  checkCodexReadiness,
   runAllChecks,
   exitCodeFor,
   buildSnapshot,
@@ -339,12 +340,187 @@ describe('checkSingleRegistrationPath (#1063)', () => {
   });
 });
 
+describe('checkCodexReadiness (#1151)', () => {
+  const supportedFeatures = [
+    'shell_tool stable true',
+    'unified_exec stable true',
+    'hooks stable true',
+    'apply_patch removed false',
+  ].join('\n');
+
+  const subscriptionDoctorJson = JSON.stringify({
+    codexVersion: '0.142.3',
+    overallStatus: 'ok',
+    checks: {
+      'auth.credentials': {
+        status: 'ok',
+        details: {
+          'stored API key': 'false',
+          'stored ChatGPT tokens': 'true',
+          'stored auth mode': 'chatgpt',
+        },
+      },
+      'config.load': {
+        status: 'ok',
+        details: {
+          'enabled feature flags': 'shell_tool, unified_exec, hooks',
+        },
+      },
+    },
+  });
+
+  const runner = (responses: Record<string, string | Error>) =>
+    (cmd: string, args: readonly string[]): string => {
+      const key = `${cmd} ${args.join(' ')}`;
+      const value = responses[key];
+      if (value instanceof Error) throw value;
+      if (value == null) throw new Error(`unexpected command: ${key}`);
+      return value;
+    };
+
+  it('WARNs with machine-readable unavailable state when the Codex CLI is missing', () => {
+    const r = checkCodexReadiness({
+      run: runner({ 'codex --version': new Error('ENOENT') }),
+    });
+
+    expect(r.status).toBe('WARN');
+    expect(r.name).toBe('codex-readiness');
+    expect(r.data).toMatchObject({
+      available: false,
+      accepted_path_available: false,
+      subscription_compatible: false,
+    });
+  });
+
+  it('reports codex-cli 0.142.3 as supported and subscription-compatible', () => {
+    const r = checkCodexReadiness({
+      run: runner({
+        'codex --version': 'codex-cli 0.142.3\n',
+        'codex doctor --json': subscriptionDoctorJson,
+        'codex features list': supportedFeatures,
+      }),
+    });
+
+    expect(r.status).toBe('PASS');
+    expect(r.data).toMatchObject({
+      available: true,
+      version: '0.142.3',
+      supported_version: true,
+      auth_mode: 'chatgpt',
+      subscription_compatible: true,
+      api_token_only: false,
+      accepted_path_available: true,
+    });
+  });
+
+  it('reports unsupported old versions as present but not accepted', () => {
+    const r = checkCodexReadiness({
+      run: runner({
+        'codex --version': 'codex-cli 0.90.0\n',
+        'codex doctor --json': subscriptionDoctorJson,
+        'codex features list': supportedFeatures,
+      }),
+    });
+
+    expect(r.status).toBe('WARN');
+    expect(r.data).toMatchObject({
+      available: true,
+      version: '0.90.0',
+      supported_version: false,
+      accepted_path_available: false,
+    });
+  });
+
+  it('keeps version/auth readiness when feature probing fails', () => {
+    const r = checkCodexReadiness({
+      run: runner({
+        'codex --version': 'codex-cli 0.142.3\n',
+        'codex doctor --json': subscriptionDoctorJson,
+        'codex features list': new Error('not supported'),
+      }),
+    });
+
+    expect(r.status).toBe('PASS');
+    expect(r.data).toMatchObject({
+      available: true,
+      supported_version: true,
+      feature_probe: 'unavailable',
+      accepted_path_available: true,
+    });
+  });
+
+  it('does not accept readiness when a required Codex feature is disabled', () => {
+    const r = checkCodexReadiness({
+      run: runner({
+        'codex --version': 'codex-cli 0.142.3\n',
+        'codex doctor --json': subscriptionDoctorJson,
+        'codex features list': [
+          'shell_tool stable true',
+          'unified_exec stable false',
+          'hooks stable true',
+        ].join('\n'),
+      }),
+    });
+
+    expect(r.status).toBe('WARN');
+    expect(r.data).toMatchObject({
+      required_features: { unified_exec: false },
+      accepted_path_available: false,
+    });
+  });
+
+  it('does not accept API-token-only auth as subscription-compatible readiness', () => {
+    const apiTokenDoctorJson = JSON.stringify({
+      codexVersion: '0.142.3',
+      checks: {
+        'auth.credentials': {
+          status: 'ok',
+          details: {
+            'stored API key': 'true',
+            'stored ChatGPT tokens': 'false',
+            'stored auth mode': 'api-key',
+          },
+        },
+      },
+    });
+    const r = checkCodexReadiness({
+      run: runner({
+        'codex --version': 'codex-cli 0.142.3\n',
+        'codex doctor --json': apiTokenDoctorJson,
+        'codex features list': supportedFeatures,
+      }),
+    });
+
+    expect(r.status).toBe('WARN');
+    expect(r.data).toMatchObject({
+      available: true,
+      api_token_only: true,
+      subscription_compatible: false,
+      accepted_path_available: false,
+    });
+  });
+
+  it('serializes readiness data for JSON doctor output', () => {
+    const r = checkCodexReadiness({
+      run: runner({
+        'codex --version': 'codex-cli 0.142.3\n',
+        'codex doctor --json': subscriptionDoctorJson,
+        'codex features list': supportedFeatures,
+      }),
+    });
+
+    expect(JSON.parse(JSON.stringify({ results: [r] })).results[0].data).toMatchObject({
+      accepted_path_available: true,
+    });
+  });
+});
+
 describe('runAllChecks + exitCodeFor', () => {
   let proj: string, home: string;
   beforeEach(() => { proj = makeProject(); home = makeHome(); });
   afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
 
-  it('returns 6 checks in defined order', () => {
+  it('returns checks in defined order', () => {
     const results = runAllChecks({ projectRoot: proj, homeDir: home });
     expect(results.map(r => r.name)).toEqual([
       'single-registration-path',
@@ -353,6 +529,7 @@ describe('runAllChecks + exitCodeFor', () => {
       'stale-plugin-cache',
       'restart-needed',
       'hook-exec-smoke',
+      'codex-readiness',
     ]);
   });
 

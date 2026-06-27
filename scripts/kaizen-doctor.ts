@@ -26,6 +26,7 @@ import {
   constants as fsConstants,
   accessSync,
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { join, resolve, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -37,6 +38,7 @@ export interface CheckResult {
   name: string;
   status: CheckStatus;
   detail: string;
+  data?: unknown;
 }
 
 export interface DoctorOpts {
@@ -45,7 +47,32 @@ export interface DoctorOpts {
   pluginName?: string;
 }
 
+export type CommandRunner = (cmd: string, args: readonly string[]) => string;
+
+export interface CodexReadiness {
+  available: boolean;
+  version: string | null;
+  supported_version: boolean;
+  min_version: string;
+  auth_mode: string | null;
+  subscription_compatible: boolean;
+  api_token_only: boolean;
+  accepted_path_available: boolean;
+  feature_probe: 'available' | 'unavailable';
+  doctor_probe: 'available' | 'unavailable';
+  required_features: Record<string, boolean | null>;
+  unsupported_reasons: string[];
+  experimental_capabilities: string[];
+}
+
+export interface CodexReadinessOpts {
+  run?: CommandRunner;
+  minVersion?: string;
+}
+
 const DEFAULT_PLUGIN = 'kaizen@kaizen';
+const MIN_CODEX_VERSION = '0.142.3';
+const REQUIRED_CODEX_FEATURES = ['shell_tool', 'unified_exec', 'hooks'] as const;
 
 function safeReadJson(path: string): unknown | null {
   try {
@@ -421,6 +448,166 @@ export function checkHookExecSmoke(opts: DoctorOpts): CheckResult {
   };
 }
 
+function defaultRun(cmd: string, args: readonly string[]): string {
+  return execFileSync(cmd, [...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 10_000,
+  });
+}
+
+function parseVersion(output: string): string | null {
+  return output.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] ?? null;
+}
+
+function compareVersion(a: string, b: string): number {
+  const aa = a.split('.').map((x) => Number.parseInt(x, 10));
+  const bb = b.split('.').map((x) => Number.parseInt(x, 10));
+  for (let i = 0; i < Math.max(aa.length, bb.length); i++) {
+    const av = aa[i] ?? 0;
+    const bv = bb[i] ?? 0;
+    if (av !== bv) return av - bv;
+  }
+  return 0;
+}
+
+function asRecord(x: unknown): Record<string, unknown> {
+  return x && typeof x === 'object' ? x as Record<string, unknown> : {};
+}
+
+function detailValue(details: Record<string, unknown>, key: string): string | null {
+  const v = details[key];
+  return typeof v === 'string' ? v : null;
+}
+
+function parseFeatureList(output: string): Record<string, { stage: string; enabled: boolean }> {
+  const features: Record<string, { stage: string; enabled: boolean }> = {};
+  for (const raw of output.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || /^Name\s+/i.test(line) || /^-+\s+/.test(line)) continue;
+    const parts = line.split(/\s+/);
+    if (parts.length < 3) continue;
+    const enabledRaw = parts[parts.length - 1];
+    if (enabledRaw !== 'true' && enabledRaw !== 'false') continue;
+    const name = parts[0];
+    const stage = parts.slice(1, -1).join(' ');
+    features[name] = { stage, enabled: enabledRaw === 'true' };
+  }
+  return features;
+}
+
+/**
+ * #1151 — Codex readiness for subscription-compatible auto-dent paths.
+ * Best-effort by design: absence or unsupported shape is WARN, not FAIL, so
+ * non-Codex users can still use kaizen-doctor without breaking setup.
+ */
+export function checkCodexReadiness(opts: CodexReadinessOpts = {}): CheckResult {
+  const run = opts.run ?? defaultRun;
+  const minVersion = opts.minVersion ?? MIN_CODEX_VERSION;
+  const base: CodexReadiness = {
+    available: false,
+    version: null,
+    supported_version: false,
+    min_version: minVersion,
+    auth_mode: null,
+    subscription_compatible: false,
+    api_token_only: false,
+    accepted_path_available: false,
+    feature_probe: 'unavailable',
+    doctor_probe: 'unavailable',
+    required_features: Object.fromEntries(REQUIRED_CODEX_FEATURES.map((f) => [f, null])),
+    unsupported_reasons: [],
+    experimental_capabilities: [],
+  };
+
+  let versionOutput = '';
+  try {
+    versionOutput = run('codex', ['--version']);
+  } catch {
+    return {
+      name: 'codex-readiness',
+      status: 'WARN',
+      detail: 'Codex CLI not found; Codex auto-dent path is unavailable.',
+      data: {
+        ...base,
+        unsupported_reasons: ['codex CLI missing'],
+      },
+    };
+  }
+
+  const version = parseVersion(versionOutput);
+  const readiness: CodexReadiness = {
+    ...base,
+    available: true,
+    version,
+    supported_version: version != null && compareVersion(version, minVersion) >= 0,
+  };
+
+  if (!readiness.supported_version) {
+    readiness.unsupported_reasons.push(
+      version ? `codex ${version} is older than supported minimum ${minVersion}` : 'could not parse codex version',
+    );
+  }
+
+  try {
+    const doctor = asRecord(JSON.parse(run('codex', ['doctor', '--json'])));
+    readiness.doctor_probe = 'available';
+    const checks = asRecord(doctor.checks);
+    const auth = asRecord(checks['auth.credentials']);
+    const authDetails = asRecord(auth.details);
+    const authMode = detailValue(authDetails, 'stored auth mode');
+    const storedApiKey = detailValue(authDetails, 'stored API key') === 'true';
+    const storedChatgpt = detailValue(authDetails, 'stored ChatGPT tokens') === 'true';
+    readiness.auth_mode = authMode;
+    readiness.api_token_only = storedApiKey && !storedChatgpt;
+    readiness.subscription_compatible = storedChatgpt && !readiness.api_token_only;
+    if (!readiness.subscription_compatible) {
+      readiness.unsupported_reasons.push(
+        readiness.api_token_only
+          ? 'Codex auth is API-token-only; accepted auto-dent path requires subscription CLI auth'
+          : 'Codex subscription auth was not detected',
+      );
+    }
+  } catch {
+    readiness.unsupported_reasons.push('codex doctor --json unavailable; auth mode could not be verified');
+  }
+
+  try {
+    const features = parseFeatureList(run('codex', ['features', 'list']));
+    readiness.feature_probe = 'available';
+    for (const f of REQUIRED_CODEX_FEATURES) {
+      readiness.required_features[f] = features[f]?.enabled ?? null;
+      if (features[f]?.enabled !== true) {
+        const stage = features[f]?.stage ?? 'unknown';
+        readiness.experimental_capabilities.push(`${f}: ${stage}`);
+        readiness.unsupported_reasons.push(`required Codex feature ${f} is not enabled (${stage})`);
+      }
+    }
+  } catch {
+    // Feature probing is useful color, but Codex 0.142.3 has `codex doctor --json`
+    // as the stronger readiness source; don't reject a run solely for this.
+    readiness.feature_probe = 'unavailable';
+  }
+
+  readiness.accepted_path_available =
+    readiness.available &&
+    readiness.supported_version &&
+    readiness.subscription_compatible &&
+    readiness.unsupported_reasons.length === 0;
+
+  const status: CheckStatus = readiness.accepted_path_available ? 'PASS' : 'WARN';
+  const detail = readiness.accepted_path_available
+    ? `Codex ${readiness.version} ready for subscription-compatible auto-dent path (auth=${readiness.auth_mode ?? 'unknown'}).`
+    : `Codex present but not ready for accepted auto-dent path: ${readiness.unsupported_reasons.join('; ') || 'unknown reason'}.`;
+
+  return {
+    name: 'codex-readiness',
+    status,
+    detail,
+    data: readiness,
+  };
+}
+
 export function runAllChecks(opts: DoctorOpts): CheckResult[] {
   return [
     checkSingleRegistrationPath(opts),
@@ -429,6 +616,7 @@ export function runAllChecks(opts: DoctorOpts): CheckResult[] {
     checkStalePluginCache(opts),
     checkRestartNeeded(opts),
     checkHookExecSmoke(opts),
+    checkCodexReadiness(),
   ];
 }
 
