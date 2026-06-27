@@ -14,9 +14,11 @@ import { ghExec } from './auto-dent-github.js';
 import {
   buildKaizenCycleSteps,
   formatIssueForDisplay,
+  formatProgressStepsMarkdown,
   upsertProgressStep,
   type RunProgressStep,
 } from './auto-dent-progress.js';
+import { parseHookOutputs, type HookOutput } from '../src/hooks/lib/gate-signal.js';
 
 // ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
 
@@ -230,6 +232,9 @@ function extractIssueRefs(value: string): string[] {
 }
 
 export function extractArtifacts(text: string, result: RunResult): void {
+  for (const output of parseHookOutputs(text)) {
+    updateProgressFromHookOutput(output, result);
+  }
   for (const marker of parsePhaseMarkers(text)) {
     updateProgressFromMarker(marker, result);
     if (marker.phase === 'PICK' && marker.fields.issue) {
@@ -286,13 +291,51 @@ function pushPr(result: RunResult, prUrl: string): void {
     state: 'created',
     detail: prUrl,
     url: prUrl,
-  });
+  }, 'replace');
 }
 
 function updateProgressFromMarker(marker: PhaseMarker, result: RunResult): void {
   const step = progressStepFromMarker(marker);
   if (!step) return;
   upsertProgressStep(result, step);
+}
+
+function updateProgressFromHookOutput(output: HookOutput, result: RunResult): void {
+  if (output.type !== 'gate-set' && output.type !== 'gate-clear') return;
+  if (!output.gate) return;
+
+  if (output.pr) pushPr(result, output.pr);
+
+  const detail = [output.round ? `round ${output.round}:` : '', output.reason]
+    .filter(Boolean)
+    .join(' ');
+  const url = output.pr || result.prs[0];
+
+  switch (output.gate) {
+    case 'needs_review':
+      upsertProgressStep(result, {
+        phase: 'REVIEW',
+        state: output.type === 'gate-set' ? 'pending' : 'passed',
+        detail,
+        url,
+      }, 'replace');
+      return;
+    case 'needs_pr_kaizen':
+      upsertProgressStep(result, {
+        phase: 'REFLECT',
+        state: output.type === 'gate-set' ? 'pending' : 'completed',
+        detail: output.reason,
+      }, 'replace');
+      return;
+    case 'needs_post_merge':
+      upsertProgressStep(result, {
+        phase: 'MERGE',
+        state: output.type === 'gate-set' ? 'merged' : 'completed',
+        detail: output.reason,
+        url,
+      }, 'replace');
+      return;
+  }
 }
 
 function progressStepFromMarker(marker: PhaseMarker): RunProgressStep | null {
@@ -462,14 +505,8 @@ export function buildInFlightComment(
   }
   lines.push(
     '',
-    `#### Kaizen Work Cycle`,
-    '',
-    `| Step | State | Detail | Link |`,
-    `|------|-------|--------|------|`,
+    formatProgressStepsMarkdown(result, repo),
   );
-  for (const step of buildKaizenCycleSteps(result, repo)) {
-    lines.push(`| ${step.phase} | ${step.state} | ${step.detail || '-'} | ${step.url || '-'} |`);
-  }
 
   return lines.join('\n');
 }

@@ -33,6 +33,19 @@ export const PROGRESS_PHASE_ORDER = [
   'STOP',
 ];
 
+const SYNTHETIC_NOT_APPLICABLE_PHASES = new Set([
+  'PLAN',
+  'EVALUATE',
+  'CASE',
+  'TEST',
+  'REVIEW',
+  'FIX',
+  'REFLECT',
+  'CLEANUP',
+]);
+
+export type ProgressUpsertMode = 'merge' | 'replace';
+
 export function formatIssueUrl(issue: string | undefined, repo: string): string {
   if (!issue) return '';
   if (/^https?:\/\//.test(issue)) return issue;
@@ -125,11 +138,13 @@ export function buildKaizenCycleSteps(
 
   for (const step of defaults) {
     const observed = existing.get(step.phase);
-    if (observed) {
-      step.state = observed.state || step.state;
-      step.detail = observed.detail || step.detail;
-      step.url = observed.url || step.url;
+    if (!observed) continue;
+    if (synthetic && SYNTHETIC_NOT_APPLICABLE_PHASES.has(step.phase)) {
+      continue;
     }
+    step.state = observed.state || step.state;
+    step.detail = observed.detail || step.detail;
+    step.url = observed.url || step.url;
   }
   return orderedProgressSteps(defaults);
 }
@@ -150,14 +165,21 @@ export function formatProgressStepsMarkdown(result: AutoDentProgressResult, repo
 export function upsertProgressStep(
   result: AutoDentProgressResult,
   step: RunProgressStep,
+  mode: ProgressUpsertMode = 'merge',
 ): void {
   result.progressSteps = result.progressSteps || [];
   const existing = result.progressSteps.find((s) => s.phase === step.phase);
-  if (existing) {
-    existing.state = step.state || existing.state;
-    existing.detail = step.detail || existing.detail;
-    existing.url = step.url || existing.url;
-  } else {
+  if (!existing) {
     result.progressSteps.push(step);
+    return;
   }
+  if (mode === 'replace') {
+    existing.state = step.state;
+    existing.detail = step.detail;
+    existing.url = step.url;
+    return;
+  }
+  existing.state = step.state || existing.state;
+  existing.detail = step.detail || existing.detail;
+  existing.url = step.url || existing.url;
 }

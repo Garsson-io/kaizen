@@ -1404,7 +1404,7 @@ export function updateBatchProgressIssue(
   if (result.stopRequested) {
     lines.push('', `**STOP requested:** ${result.stopReason}`);
   }
-  const stepsTable = formatProgressStepsMarkdown(result);
+  const stepsTable = formatProgressStepsMarkdown(result, kaizenRepo);
   if (stepsTable) {
     lines.push('', stepsTable);
   }
