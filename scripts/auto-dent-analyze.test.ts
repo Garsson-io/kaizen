@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { tmpdir } from 'os';
 import {
   analyzeRunLog,
@@ -275,6 +275,30 @@ describe('analyzeBatch', () => {
 
     const result = analyzeBatch(batchDir);
     expect(result.batchId).toBe('test-batch-id');
+  });
+
+  it('reads batch ID from backup state when primary state is corrupt', () => {
+    const batchDir = createTmpBatch([
+      [initMsg(), userMsg('2026-03-22T22:00:00.000Z')],
+    ]);
+    writeFileSync(join(batchDir, 'state.json'), '{not valid json');
+    writeFileSync(
+      join(batchDir, 'state.json.bak'),
+      JSON.stringify({ batch_id: 'backup-batch-id' }),
+    );
+
+    const result = analyzeBatch(batchDir);
+    expect(result.batchId).toBe('backup-batch-id');
+  });
+
+  it('falls back to directory batch ID when corrupt state has no backup', () => {
+    const batchDir = createTmpBatch([
+      [initMsg(), userMsg('2026-03-22T22:00:00.000Z')],
+    ]);
+    writeFileSync(join(batchDir, 'state.json'), '{not valid json');
+
+    const result = analyzeBatch(batchDir);
+    expect(result.batchId).toBe(basename(batchDir));
   });
 });
 
@@ -883,6 +907,32 @@ describe('integration: regression detection in batch analysis', () => {
     expect(result.runs[0].promptHash).toBe('abc123def456');
     expect(result.runs[1].promptTemplate).toBe('explore-gaps.md');
     expect(result.runs[1].promptHash).toBe('789abc012def');
+  });
+
+  it('enriches prompt metadata from backup state when primary state is corrupt', () => {
+    const batchDir = createTmpBatch([
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantToolUse('Edit', { file_path: '/a.ts' }),
+        userMsg('2026-03-22T22:00:30.000Z'),
+      ],
+    ]);
+
+    writeFileSync(join(batchDir, 'state.json'), '{not valid json');
+    writeFileSync(
+      join(batchDir, 'state.json.bak'),
+      JSON.stringify({
+        batch_id: 'test-batch',
+        run_history: [
+          { run: 1, prompt_template: 'backup-template.md', prompt_hash: 'backup123' },
+        ],
+      }),
+    );
+
+    const result = analyzeBatch(batchDir);
+    expect(result.runs[0].promptTemplate).toBe('backup-template.md');
+    expect(result.runs[0].promptHash).toBe('backup123');
   });
 
   it('handles missing state.json gracefully for prompt enrichment', () => {
