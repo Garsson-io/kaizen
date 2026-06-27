@@ -11,13 +11,12 @@
  * Linear: ENG-6638
  */
 
-import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import { readYamlFrontmatter, stripYamlFrontmatter } from './lib/frontmatter.js';
-import { parseJsonLines } from './lib/json-lines.js';
 import { firstMarkdownFence, markdownFences } from './lib/markdown-fence.js';
 import { resolveProjectRoot, type GitRunner } from './lib/resolve-project-root.js';
+import { spawnClaude } from './spawn-claude.js';
 import { retrievePlan, issueTarget } from './structured-data.js';
 import {
   normalizeFindingStatus,
@@ -59,19 +58,6 @@ export interface DimensionReview {
 export type ReviewFailureClass =
   | 'claude_review_failed'
   | 'codex_review_unsupported';
-
-interface StreamJsonContentBlock {
-  type?: unknown;
-  text?: string;
-}
-
-interface StreamJsonMessage {
-  type?: unknown;
-  total_cost_usd?: number;
-  message?: {
-    content?: unknown;
-  };
-}
 
 export interface ReviewProvider {
   provider: 'claude' | 'codex';
@@ -468,68 +454,12 @@ export interface SpawnReviewOptions {
 }
 
 // ── Claude Subprocess Helper ─────────────────────────────────────────
+// The `claude -p` spawn loop lives in the shared `spawnClaude` primitive
+// (src/spawn-claude.ts) so the review battery and the independence-by-spawn
+// judge share one implementation (#1231 DRY mandate). `runClaude` is a thin
+// local alias kept for call-site readability.
 
-/**
- * Run a single `claude -p` call with the given prompt.
- * Model is controlled by the REVIEW_MODEL env var (default: sonnet).
- * Returns parsed text, cost, duration, and exit code.
- */
-async function runClaude(
-  prompt: string,
-  opts: { cwd?: string; timeoutMs?: number },
-): Promise<{ text: string; costUsd: number; durationMs: number; exitCode: number }> {
-  const model = process.env.REVIEW_MODEL ?? 'sonnet';
-  const start = Date.now();
-
-  return new Promise((resolve) => {
-    const child = spawn('claude', [
-      '-p',
-      '--output-format', 'stream-json',
-      '--verbose',
-      '--dangerously-skip-permissions',
-      '--model', model,
-    ], {
-      cwd: opts.cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-
-    child.stdin.write(prompt, 'utf8');
-    child.stdin.end();
-
-    let stdout = '';
-    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
-    child.stderr.on('data', () => {}); // drain to prevent blocking
-
-    const timer = setTimeout(() => { child.kill(); }, opts.timeoutMs ?? 120_000);
-
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      const durationMs = Date.now() - start;
-
-      // Parse text and cost from stream-json JSONL output.
-      // The `result` field in the final "result" message is now always empty;
-      // actual text lives in assistant message content blocks.
-      let costUsd = 0;
-      let text = '';
-      for (const msg of parseJsonLines<StreamJsonMessage>(stdout)) {
-        if (msg.type === 'result') {
-          costUsd = msg.total_cost_usd ?? 0;
-        } else if (msg.type === 'assistant') {
-          const content = Array.isArray(msg.message?.content)
-            ? msg.message.content as StreamJsonContentBlock[]
-            : [];
-          for (const block of content) {
-            if (block.type === 'text') {
-              text += block.text ?? '';
-            }
-          }
-        }
-      }
-
-      resolve({ text, costUsd, durationMs, exitCode: code ?? -1 });
-    });
-  });
-}
+const runClaude = spawnClaude;
 
 /**
  * Spawn a single review agent via `claude -p`.
