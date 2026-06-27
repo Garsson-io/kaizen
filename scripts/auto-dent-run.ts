@@ -153,6 +153,14 @@ import {
   parseCodexJsonl,
 } from './auto-dent-codex.js';
 import {
+  compareFinalClaimToEvidence,
+  foldFinalClaimWarningsIntoProcess,
+  parseFinalRunClaim,
+  writeFinalClaimArtifact,
+  type FinalClaimStatus,
+  type FinalRunClaim,
+} from './auto-dent-final-claim.js';
+import {
   validateRunLifecycle,
   summarizeLifecycle,
   verifyLifecycleEvidence,
@@ -260,6 +268,14 @@ export interface RunMetrics {
    * `defaultPhaseProviders()` in scripts/auto-dent-provider.ts.
    */
   phase_providers?: PhaseProviderRecord;
+  /** Status of the schema-constrained final run claim (#1145). */
+  final_claim_status?: FinalClaimStatus;
+  /** Parsed final claim object, when valid (#1145). */
+  final_claim?: FinalRunClaim;
+  /** Sidecar path for the persisted final claim object (#1145). */
+  final_claim_path?: string;
+  /** Warnings from final-claim parsing or claim/evidence comparison (#1145). */
+  final_claim_warnings?: string[];
 }
 
 export interface RunResult {
@@ -287,6 +303,14 @@ export interface RunResult {
   reviewVerdict?: 'pass' | 'fail' | 'skipped';
   /** Cost of the requirements review in USD */
   reviewCostUsd?: number;
+  /** Parsed schema-constrained final run claim (#1145). */
+  finalClaim?: FinalRunClaim;
+  /** Parse status for the final run claim (#1145). */
+  finalClaimStatus?: FinalClaimStatus;
+  /** Sidecar path for the persisted final claim object (#1145). */
+  finalClaimPath?: string;
+  /** Parse/comparison warnings for the final run claim (#1145). */
+  finalClaimWarnings?: string[];
 }
 
 import { extractPlanText } from '../src/structured-data.js';
@@ -1460,6 +1484,10 @@ async function runCodexSynthetic(
       if (parsed.malformedLines.length > 0) {
         appendFileSync(input.logFile, `\n[codex] malformed_jsonl_lines=${parsed.malformedLines.length}\n`);
       }
+      const claimResult = parseFinalRunClaim(parsed.finalText || parsed.text);
+      input.result.finalClaimStatus = claimResult.status;
+      input.result.finalClaim = claimResult.claim;
+      input.result.finalClaimWarnings = claimResult.warnings;
 
       const duration = Math.floor((Date.now() - runStart) / 1000);
       resolvePromise({
@@ -2106,6 +2134,13 @@ async function main(): Promise<void> {
   );
   result.reviewVerdict = reviewVerdict;
   result.reviewCostUsd = reviewCostUsd;
+  if (result.finalClaim) {
+    result.finalClaimPath = writeFinalClaimArtifact(logDir, runNum, result.finalClaim);
+    appendFileSync(logFile, `final_claim_path=${result.finalClaimPath}\n`);
+  }
+  if (result.finalClaimStatus && result.finalClaimStatus !== 'valid') {
+    appendFileSync(logFile, `final_claim_status=${result.finalClaimStatus}: ${(result.finalClaimWarnings || []).join('; ')}\n`);
+  }
 
   // Lifecycle validation (#639, #1103) — observability + steering, never a hard
   // block. Beyond ordering, this detects critical gaps (PR without IMPLEMENT,
@@ -2153,6 +2188,21 @@ async function main(): Promise<void> {
       mergeReadiness,
     };
     const processValidation = validateProcessEvidence(lifecycle, processEvidence);
+    if (result.finalClaim) {
+      const claimWarnings = compareFinalClaimToEvidence(result.finalClaim, {
+        prs: result.prs,
+        cases: result.cases,
+        testEvidence: processEvidence.testEvidence === true,
+        reviewEvidence: processEvidence.reviewEvidence === true,
+        reflectionEvidence: processEvidence.reflectionEvidence === true,
+      });
+      if (claimWarnings.length > 0) {
+        result.finalClaimWarnings = [
+          ...(result.finalClaimWarnings || []),
+          ...claimWarnings,
+        ];
+      }
+    }
 
     lifecycleViolationCount = lifecycle.violations.length;
     lifecycleHealth = foldEvidenceIntoHealth(lifecycle.health, evidenceCheck);
@@ -2161,6 +2211,20 @@ async function main(): Promise<void> {
     processVerdict = processValidation.verdict;
     processIssueCount = processValidation.failedChecks.length + processValidation.warningChecks.length;
     processSummary = summarizeProcessValidation(processValidation);
+    const claimEvidenceWarnings = result.finalClaimWarnings || [];
+    if (claimEvidenceWarnings.length > 0) {
+      appendFileSync(logFile, `final_claim_warnings=${claimEvidenceWarnings.join('; ')}\n`);
+      const folded = foldFinalClaimWarningsIntoProcess(
+        processVerdict,
+        processIssueCount,
+        processSummary,
+        Boolean(result.finalClaim),
+        claimEvidenceWarnings,
+      );
+      processVerdict = folded.verdict;
+      processIssueCount = folded.issueCount;
+      processSummary = folded.summary;
+    }
     if (processVerdict !== 'pass' && lifecycleHealth !== 'critical') {
       lifecycleHealth = 'degraded';
     }
@@ -2442,6 +2506,10 @@ async function main(): Promise<void> {
     review_verdict: reviewVerdict,
     review_cost_usd: reviewCostUsd,
     phase_providers: phaseProvidersForState(state),
+    final_claim_status: result.finalClaimStatus,
+    final_claim: result.finalClaim,
+    final_claim_path: result.finalClaimPath,
+    final_claim_warnings: result.finalClaimWarnings,
   };
   // Classify failure: wall-clock timeout is authoritative (#686), then heuristics.
   // Feed the run log so the log-based branch (hook_rejection, infrastructure,
