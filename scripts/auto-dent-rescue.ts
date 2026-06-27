@@ -308,20 +308,100 @@ export function rescueRun(targets: RescueTarget[], ctx: RescueContext, deps: Res
   return targets.map((t) => rescueTarget(t, ctx, deps));
 }
 
+/** Git config key carrying the run that created/owns a case worktree (#1270). */
+export const RUNTAG_CONFIG_KEY = 'kaizen.runtag';
+
+export interface CollectRunWorktreesOptions {
+  /**
+   * This run's tag. When set together with `git`, on-disk case worktrees stamped
+   * with this exact runtag are unioned in — covering worktrees created *before*
+   * the `IMPLEMENT` marker was emitted (the #1270 crash-before-marker strand).
+   */
+  runTag?: string;
+  /** Git runner used to enumerate worktrees and read their per-worktree runtag. */
+  git?: GitExec;
+}
+
 /**
- * Derive the rescue targets for THIS run from the case ids it created. Scoped
- * to the run's own worktrees only — never scans the whole worktree tree, so a
- * concurrent agent's WIP can't be swept up. Existence is checked in rescueTarget.
+ * Read a worktree's durable run attribution stamp (`kaizen.runtag`, written at
+ * `git worktree add` time by the capture-worktree-context hook). Returns the tag
+ * or `null`. A worktree with no stamp, or whose `--worktree` config can't be
+ * read, yields `null` — it is never attributed to any run.
  */
-export function collectRunWorktrees(repoRoot: string, cases: string[]): RescueTarget[] {
-  const targets: RescueTarget[] = [];
+function readWorktreeRunTag(git: GitExec, worktree: string): string | null {
+  const r = git(['-C', worktree, 'config', '--worktree', '--get', RUNTAG_CONFIG_KEY]);
+  if (r.exitCode !== 0) return null;
+  const tag = r.stdout.trim();
+  return tag.length > 0 ? tag : null;
+}
+
+/** Resolve a worktree's current branch from HEAD; null on detached/error. */
+function readWorktreeBranch(git: GitExec, worktree: string): string | null {
+  const r = git(['-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD']);
+  if (r.exitCode !== 0) return null;
+  const b = r.stdout.trim();
+  return b && b !== 'HEAD' ? b : null;
+}
+
+/**
+ * Enumerate the absolute paths of every git worktree under
+ * `<repoRoot>/.claude/worktrees`. Uses `git worktree list --porcelain` so the
+ * set is authoritative (no directory-name guessing). Returns [] on any failure.
+ */
+function listManagedWorktrees(git: GitExec, repoRoot: string): string[] {
+  const r = git(['-C', repoRoot, 'worktree', 'list', '--porcelain']);
+  if (r.exitCode !== 0) return [];
+  const prefix = join(repoRoot, '.claude', 'worktrees');
+  const paths: string[] = [];
+  for (const line of r.stdout.split('\n')) {
+    const m = /^worktree (.+)$/.exec(line.trim());
+    if (m && m[1].startsWith(prefix)) paths.push(m[1]);
+  }
+  return paths;
+}
+
+/**
+ * Derive the rescue targets for THIS run.
+ *
+ * Base set: the case ids the run reported through `IMPLEMENT` stream markers
+ * (`cases`). This is scoped to the run's own worktrees only.
+ *
+ * #1270 union: when `opts.runTag` + `opts.git` are supplied, also include any
+ * on-disk managed worktree whose per-worktree `kaizen.runtag` equals this run's
+ * tag. This recovers worktrees created *before* the marker was emitted (the
+ * crash-before-marker strand that previously forced manual `[rescue]` PRs).
+ *
+ * Concurrency safety is structural: a worktree stamped with a *different*
+ * runtag — or with no stamp at all — is never attributed to this run, so a
+ * sibling run's in-progress WIP can never be swept up. Targets are de-duplicated
+ * by worktree path, with the marker-derived branch taking precedence.
+ */
+export function collectRunWorktrees(
+  repoRoot: string,
+  cases: string[],
+  opts: CollectRunWorktreesOptions = {},
+): RescueTarget[] {
+  const byPath = new Map<string, RescueTarget>();
+
   for (const caseId of cases) {
     if (!caseId) continue;
     const worktree = join(repoRoot, '.claude', 'worktrees', caseId);
     if (!existsSync(worktree)) continue;
-    targets.push({ worktree, branch: `case/${caseId}` });
+    byPath.set(worktree, { worktree, branch: `case/${caseId}` });
   }
-  return targets;
+
+  if (opts.runTag && opts.git) {
+    const git = opts.git;
+    for (const worktree of listManagedWorktrees(git, repoRoot)) {
+      if (byPath.has(worktree) || !existsSync(worktree)) continue;
+      if (readWorktreeRunTag(git, worktree) !== opts.runTag) continue;
+      const branch = readWorktreeBranch(git, worktree);
+      if (!branch) continue; // detached/unknown — can't safely push
+      byPath.set(worktree, { worktree, branch });
+    }
+  }
+
+  return [...byPath.values()];
 }
 
 /** Default deps wiring the shared primitives (used by the finalizer). */

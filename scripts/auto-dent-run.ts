@@ -188,6 +188,7 @@ import {
   rescueRun,
   defaultRescueDeps,
 } from './auto-dent-rescue.js';
+import { createDefaultGitExec } from '../src/hooks/lib/git-state.js';
 
 // Types
 
@@ -1750,12 +1751,22 @@ async function runClaude(
   const maxRunMs =
     (state.max_run_seconds || DEFAULT_MAX_RUN_SECONDS) * 1000;
 
+  // #1270: expose this run's identity to the spawned agent. The
+  // capture-worktree-context hook reads KAIZEN_RUN_TAG to stamp every case
+  // worktree the agent creates, giving the rescue finalizer a durable,
+  // run-scoped attribution signal independent of stream markers.
+  // (Local names are agent-prefixed to stay clear of the canonical post-run
+  // `runId` declaration guarded by the #1128 regression test.)
+  const agentRunTag = `${state.batch_id}/run-${runNum}`;
+  const agentRunId = makeRunId(state.batch_id, runNum);
+
   return new Promise((resolvePromise) => {
     let processExited = false;
 
     const child = spawn('claude', args, {
       cwd: repoRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, KAIZEN_RUN_TAG: agentRunTag, KAIZEN_RUN_ID: agentRunId },
     });
 
     const cleanup = (...timers: (ReturnType<typeof setInterval> | ReturnType<typeof setTimeout> | undefined)[]) => {
@@ -2825,7 +2836,14 @@ async function main(): Promise<void> {
   // THIS run's own case worktrees; best-effort and fully guarded so a rescue
   // failure can never hide or block the original run outcome.
   try {
-    const targets = collectRunWorktrees(repoRoot, result.cases);
+    // #1270: union the marker-reported cases with any on-disk case worktree
+    // stamped with THIS run's tag, so work stranded *before* the IMPLEMENT
+    // marker (crash/SIGKILL) is still rescued. The runtag scan is run-scoped and
+    // concurrency-safe — a sibling run's worktrees carry a different tag.
+    const targets = collectRunWorktrees(repoRoot, result.cases, {
+      runTag,
+      git: createDefaultGitExec(),
+    });
     if (targets.length > 0) {
       const { reason: failureReason } = classifyRunExit({
         exitCode,
