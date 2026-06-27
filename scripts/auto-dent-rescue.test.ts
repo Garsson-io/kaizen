@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -250,6 +250,104 @@ describe('rescueRun + collectRunWorktrees', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'rescue-root-'));
     // No worktrees created under repoRoot/.claude/worktrees → nothing collected.
     const targets = collectRunWorktrees(repoRoot, ['260628-k1-foo', '', '260628-k2-bar']);
+    expect(targets).toEqual([]);
+  });
+});
+
+// --- #1270: union marker cases with runtag-stamped on-disk worktrees ---------
+
+/**
+ * Build a repoRoot with on-disk case worktrees and a fake GitExec that answers
+ * `worktree list`, per-worktree `kaizen.runtag`, and HEAD-branch queries.
+ * `stamps[id]` = the runtag string the worktree carries, or undefined = unstamped.
+ * `heads[id]` = the branch HEAD reports (defaults to `case/<id>-head`).
+ */
+function makeWorktreeRepo(
+  ids: string[],
+  stamps: Record<string, string | undefined>,
+  heads: Record<string, string> = {},
+) {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'rescue-union-'));
+  const wtDir = join(repoRoot, '.claude', 'worktrees');
+  const paths: Record<string, string> = {};
+  for (const id of ids) {
+    const p = join(wtDir, id);
+    mkdirSync(p, { recursive: true });
+    paths[id] = p;
+  }
+  const git: GitExec = (args) => {
+    const a = [...args];
+    const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
+    const fail = () => ({ stdout: '', stderr: '', exitCode: 1 });
+    // git -C <repoRoot> worktree list --porcelain
+    if (a.includes('worktree') && a.includes('list')) {
+      const lines = [`worktree ${repoRoot}`, ...ids.map((id) => `worktree ${paths[id]}`)];
+      return ok(lines.join('\n') + '\n');
+    }
+    // git -C <wt> config --worktree --get kaizen.runtag
+    if (a.includes('config') && a.includes('kaizen.runtag')) {
+      const wt = a[a.indexOf('-C') + 1];
+      const id = ids.find((i) => paths[i] === wt);
+      const tag = id ? stamps[id] : undefined;
+      return tag ? ok(tag + '\n') : fail();
+    }
+    // git -C <wt> rev-parse --abbrev-ref HEAD
+    if (a.includes('rev-parse') && a.includes('--abbrev-ref')) {
+      const wt = a[a.indexOf('-C') + 1];
+      const id = ids.find((i) => paths[i] === wt);
+      return ok((id && (heads[id] ?? `case/${id}-head`)) || 'HEAD');
+    }
+    return ok();
+  };
+  return { repoRoot, paths, git };
+}
+
+describe('collectRunWorktrees — #1270 runtag union', () => {
+  it('unions marker cases with on-disk worktrees stamped with this run tag', () => {
+    // A = marker case (also stamped); B = runtag-only (no marker). Both included.
+    const repo = makeWorktreeRepo(['A', 'B'], { A: 'run-X', B: 'run-X' });
+    const targets = collectRunWorktrees(repo.repoRoot, ['A'], { runTag: 'run-X', git: repo.git });
+    const byPath = Object.fromEntries(targets.map((t) => [t.worktree, t.branch]));
+    expect(targets).toHaveLength(2);
+    expect(byPath[repo.paths.A]).toBe('case/A'); // marker branch wins for A
+    expect(byPath[repo.paths.B]).toBe('case/B-head'); // B recovered via runtag
+  });
+
+  it('excludes worktrees stamped with a DIFFERENT run tag (concurrency safety)', () => {
+    const repo = makeWorktreeRepo(['C'], { C: 'other-run/run-2' });
+    const targets = collectRunWorktrees(repo.repoRoot, [], { runTag: 'run-X', git: repo.git });
+    expect(targets).toEqual([]);
+  });
+
+  it('excludes unstamped case worktrees', () => {
+    const repo = makeWorktreeRepo(['D'], { D: undefined });
+    const targets = collectRunWorktrees(repo.repoRoot, [], { runTag: 'run-X', git: repo.git });
+    expect(targets).toEqual([]);
+  });
+
+  it('de-duplicates a case present both as a marker and a runtag match', () => {
+    const repo = makeWorktreeRepo(['A'], { A: 'run-X' });
+    const targets = collectRunWorktrees(repo.repoRoot, ['A'], { runTag: 'run-X', git: repo.git });
+    expect(targets).toHaveLength(1);
+    expect(targets[0].branch).toBe('case/A'); // marker precedence, not the HEAD guess
+  });
+
+  it('derives the branch from the worktree HEAD, not the directory name', () => {
+    const repo = makeWorktreeRepo(['B'], { B: 'run-X' }, { B: 'case/260628-k1270-actual' });
+    const targets = collectRunWorktrees(repo.repoRoot, [], { runTag: 'run-X', git: repo.git });
+    expect(targets).toHaveLength(1);
+    expect(targets[0].branch).toBe('case/260628-k1270-actual');
+  });
+
+  it('skips a runtag-matched worktree whose HEAD is detached', () => {
+    const repo = makeWorktreeRepo(['E'], { E: 'run-X' }, { E: 'HEAD' });
+    const targets = collectRunWorktrees(repo.repoRoot, [], { runTag: 'run-X', git: repo.git });
+    expect(targets).toEqual([]);
+  });
+
+  it('does not scan when no runTag/git is supplied (marker-only back-compat)', () => {
+    const repo = makeWorktreeRepo(['B'], { B: 'run-X' });
+    const targets = collectRunWorktrees(repo.repoRoot, []);
     expect(targets).toEqual([]);
   });
 });
