@@ -118,6 +118,127 @@ export function validateRunLifecycle(logFile: string): LifecycleValidation {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// External evidence verification (#1138, epic #1134)
+//
+// validateRunLifecycle above classifies a run from the agent's AUTO_DENT_PHASE
+// markers — but those are the *worker's self-report*. Epic #1134's principle is
+// "auto-dent is the judge; the agent is the worker; hooks are useful feedback but
+// not the source of truth." A run can emit PR/MERGE/REFLECT markers with zero
+// corresponding external artifacts and still classify as clean. This is the
+// batch-level instance of "verify outcomes, not commands" (#943, #950).
+//
+// The functions below cross-check claimed phases against evidence the harness
+// extracts INDEPENDENTLY of the agent (PRs, cases, filed/closed issues, the
+// review-battery verdict). They read only external outcomes — never the markers'
+// truthiness — so they judge Claude and Codex identically. They are pure: the
+// caller assembles the evidence (the only impure part), the verifier decides.
+// Like all lifecycle validation, this is observability + steering, never a hard
+// block (#1103).
+
+/**
+ * External outcomes of a run, extracted by the harness independently of the
+ * agent's self-report. This is the judge's evidence. Provider-independent:
+ * assembled the same way whether the worker was Claude or Codex.
+ */
+export interface LifecycleEvidence {
+  /** PRs the harness extracted from the run output. */
+  prsCreated: number;
+  /** Case worktrees the harness extracted. */
+  casesCreated: number;
+  /** Issues filed or closed — durable reflection output. */
+  issuesFiledOrClosed: number;
+  /** Requirements-review verdict computed externally by the review battery. */
+  reviewVerdict: 'pass' | 'fail' | 'skipped' | null | undefined;
+}
+
+/** A claimed phase whose corroborating external evidence is missing. */
+export interface ProcessGap {
+  phase: string;
+  reason: string;
+}
+
+export interface EvidenceVerification {
+  /** Claims that the external outcomes do not corroborate. */
+  processGaps: ProcessGap[];
+  /** true when every claimed phase has corroborating external evidence. */
+  processComplete: boolean;
+}
+
+/**
+ * Cross-check a run's claimed lifecycle phases against the external outcomes the
+ * harness extracted. Returns the unsupported claims (process gaps). Conservative
+ * by design: each rule fires only when a claim is contradicted by a hard,
+ * harness-observed fact, so a false positive is unlikely and — per #1103 — never
+ * halts a batch regardless.
+ */
+export function verifyLifecycleEvidence(
+  validation: LifecycleValidation,
+  evidence: LifecycleEvidence,
+): EvidenceVerification {
+  const present = new Set(validation.phasesPresent);
+  const gaps: ProcessGap[] = [];
+
+  // PR / MERGE claimed but nothing shipped externally.
+  if ((present.has('PR') || present.has('MERGE')) && evidence.prsCreated <= 0) {
+    const claimed = present.has('MERGE') ? 'MERGE' : 'PR';
+    gaps.push({
+      phase: claimed,
+      reason: `claimed ${claimed} but the harness extracted 0 PRs from the run`,
+    });
+  }
+
+  // IMPLEMENT claimed but produced no work artifact (no case worktree, no PR).
+  if (present.has('IMPLEMENT') && evidence.casesCreated <= 0 && evidence.prsCreated <= 0) {
+    gaps.push({
+      phase: 'IMPLEMENT',
+      reason: 'claimed IMPLEMENT but no case worktree and no PR were produced',
+    });
+  }
+
+  // REFLECT claimed but produced no durable output (no issue filed or closed).
+  if (present.has('REFLECT') && evidence.issuesFiledOrClosed <= 0) {
+    gaps.push({
+      phase: 'REFLECT',
+      reason: 'claimed REFLECT but no issues were filed or closed',
+    });
+  }
+
+  // A PR shipped but review evidence is absent — the review battery never
+  // produced a verdict for it. Gated on the external fact (prsCreated > 0), not
+  // on a claim, so it catches PRs the agent never announced too.
+  if (
+    evidence.prsCreated > 0 &&
+    (evidence.reviewVerdict == null || evidence.reviewVerdict === 'skipped')
+  ) {
+    gaps.push({
+      phase: 'PR',
+      reason: `a PR was created but review evidence is ${evidence.reviewVerdict ?? 'missing'}`,
+    });
+  }
+
+  return { processGaps: gaps, processComplete: gaps.length === 0 };
+}
+
+/**
+ * Fold an evidence verification into a marker-derived lifecycle health. A
+ * process-incomplete run is at least `degraded`; an already-`critical` run stays
+ * critical. Evidence gaps never *downgrade* health.
+ */
+export function foldEvidenceIntoHealth(
+  health: LifecycleHealth,
+  verification: EvidenceVerification,
+): LifecycleHealth {
+  if (verification.processComplete) return health;
+  return health === 'critical' ? 'critical' : 'degraded';
+}
+
+/** One-line human summary of an evidence verification, for logs and steering. */
+export function summarizeEvidence(v: EvidenceVerification): string {
+  if (v.processComplete) return 'process complete (claims corroborated by outcomes)';
+  return `process-incomplete: ${v.processGaps.map((g) => g.reason).join('; ')}`;
+}
+
 /**
  * Render a one-line human summary of a lifecycle validation result, suitable for
  * console logs, run logs, and steering insights. Critical findings are named.
