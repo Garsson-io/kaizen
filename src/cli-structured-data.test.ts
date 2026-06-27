@@ -7,6 +7,7 @@ import {
   storeMetadata,
   storeReviewFinding,
   storeReviewSummary,
+  ReviewCiProofError,
 } from './structured-data.js';
 
 vi.mock('node:fs', () => ({
@@ -44,6 +45,14 @@ vi.mock('./structured-data.js', () => ({
   updatePrSection: vi.fn(),
   storeIterationState: vi.fn().mockReturnValue('https://example.com/iteration'),
   retrieveIterationState: vi.fn().mockReturnValue({ round: 1 }),
+  // The CLI imports the error class to branch ci_pending vs fail; mock it as a real class.
+  ReviewCiProofError: class ReviewCiProofError extends Error {
+    constructor(public result: { status: string; detail?: string }) {
+      super(`ci ${result.status}`);
+      this.name = 'ReviewCiProofError';
+    }
+    get isPending() { return this.result.status === 'pending' || this.result.status === 'no_checks'; }
+  },
 }));
 
 beforeEach(() => vi.clearAllMocks());
@@ -252,7 +261,7 @@ describe('store-review-batch — review sentinel', () => {
 });
 
 describe('store-review-summary — CI head proof', () => {
-  it('passes --head-sha through to summary storage before writing the sentinel (#1070)', async () => {
+  it('passes --head-sha and attaches the real CI verifier at the boundary (#1070/#1222)', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await handlers['store-review-summary']({
@@ -263,11 +272,13 @@ describe('store-review-summary — CI head proof', () => {
       ['head-sha']: 'abc123',
     } as CliArgs);
 
+    // The CLI is the enforcement boundary: it injects the gh-backed verifier (a function) so the
+    // pure storage layer can perform the CI proof without baking in network side-effects (#1222).
     expect(vi.mocked(storeReviewSummary)).toHaveBeenCalledWith(
       { kind: 'pr', number: 903, repo: 'Garsson-io/kaizen' },
       5,
       undefined,
-      { expectedHeadSha: 'abc123' },
+      { expectedHeadSha: 'abc123', ciVerifier: expect.any(Function) },
     );
     const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r5'),
@@ -284,6 +295,65 @@ describe('store-review-summary — CI head proof', () => {
     expect(payload.findingCount).toBeGreaterThanOrEqual(0);
     expect(payload.integrity).toMatch(/^sha256:/);
     log.mockRestore();
+  });
+
+  it('--no-ci-proof keeps storage pure (no verifier injected) for non-CI/local use', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['store-review-summary']({
+      command: 'store-review-summary',
+      pr: '903',
+      repo: 'Garsson-io/kaizen',
+      round: '5',
+      ['no-ci-proof']: 'true',
+    } as CliArgs);
+    expect(vi.mocked(storeReviewSummary)).toHaveBeenCalledWith(
+      { kind: 'pr', number: 903, repo: 'Garsson-io/kaizen' },
+      5,
+      undefined,
+      { expectedHeadSha: undefined },
+    );
+    log.mockRestore();
+  });
+
+  it('ci_pending exits 3 (branchable, NOT a fix-round) and writes no sentinel (#1221)', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = vi.spyOn(process, 'exit').mockImplementation((code?: number | string | null) => {
+      throw new Error(`process.exit(${code})`);
+    });
+    vi.mocked(storeReviewSummary).mockImplementationOnce(() => {
+      throw new ReviewCiProofError({ status: 'pending', detail: 'TS tests' });
+    });
+    await expect(handlers['store-review-summary']({
+      command: 'store-review-summary',
+      pr: '903',
+      repo: 'Garsson-io/kaizen',
+      round: '5',
+    } as CliArgs)).rejects.toThrow('process.exit(3)');
+    // Gate stays uncleared: no review sentinel written on a pending block.
+    const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === 'string' && path.includes('.reviewed-r'),
+    );
+    expect(sentinelCall).toBeUndefined();
+    err.mockRestore();
+    exit.mockRestore();
+  });
+
+  it('a real CI fail exits 1 (distinct from ci_pending)', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = vi.spyOn(process, 'exit').mockImplementation((code?: number | string | null) => {
+      throw new Error(`process.exit(${code})`);
+    });
+    vi.mocked(storeReviewSummary).mockImplementationOnce(() => {
+      throw new ReviewCiProofError({ status: 'fail', detail: 'red' });
+    });
+    await expect(handlers['store-review-summary']({
+      command: 'store-review-summary',
+      pr: '903',
+      repo: 'Garsson-io/kaizen',
+      round: '5',
+    } as CliArgs)).rejects.toThrow('process.exit(1)');
+    err.mockRestore();
+    exit.mockRestore();
   });
 });
 

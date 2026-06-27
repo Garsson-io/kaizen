@@ -71,6 +71,14 @@ describe('kaizen-review-pr SKILL.md — review findings storage contract (#966)'
     expect(skill).toMatch(/--head-sha "\$\(git rev-parse HEAD\)"/);
     expect(skill).toMatch(/Pending, failing, absent, or stale-head CI refuses storage/);
   });
+
+  it('documents wait-for-CI and the ci_pending exit code (#1221/#1225)', () => {
+    // INVARIANT: the skill must teach that a still-running CI is a WAIT, not a fix-round burn,
+    // so the loop does not false-exhaust on pending CI (the #1221 regression).
+    const skill = readFileSync(REVIEW_PR_SKILL, 'utf8');
+    expect(skill).toMatch(/ci_pending/);
+    expect(skill).toMatch(/wait/i);
+  });
 });
 
 describe('kaizen-implement SKILL.md — review battery storage reference (#966)', () => {

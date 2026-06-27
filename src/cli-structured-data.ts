@@ -58,9 +58,11 @@ import {
   updatePrSection,
   storeIterationState,
   retrieveIterationState,
+  ReviewCiProofError,
   type ReviewFindingData,
   type StoreReviewSummaryOptions,
 } from './structured-data.js';
+import { makeGhCiVerifier } from './review-ci-proof.js';
 import {
   buildReviewSentinelRecord,
   serializeReviewSentinel,
@@ -74,7 +76,7 @@ type Handler = (a: CliArgs) => Promise<void>;
  * Flags that are booleans — no value follows, presence means true.
  * Keeps `--stdin` usable without the trap of consuming the next arg.
  */
-const BOOLEAN_FLAGS = new Set(['stdin']);
+const BOOLEAN_FLAGS = new Set(['stdin', 'no-ci-proof']);
 
 export function parseArgs(argv?: string[]): CliArgs {
   const args = argv ?? process.argv.slice(2);
@@ -177,10 +179,46 @@ function writeReviewSentinel(repo: string, pr: string | undefined, round: number
   }
 }
 
+/**
+ * The CLI is the enforcement boundary for the #1070 CI proof (#1222): the storage layer stays
+ * pure, and the real `gh`/`git`-backed verifier is injected here. `--no-ci-proof` opts out (for
+ * non-CI/local contexts or tests); `--ci-timeout-ms` / `--ci-poll-ms` tune the wait-for-CI loop.
+ */
 function reviewSummaryOptions(a: CliArgs): StoreReviewSummaryOptions {
+  if (a['no-ci-proof']) {
+    return { expectedHeadSha: a['head-sha'] };
+  }
   return {
     expectedHeadSha: a['head-sha'],
+    ciVerifier: makeGhCiVerifier({
+      timeoutMs: a['ci-timeout-ms'] !== undefined ? Number(a['ci-timeout-ms']) : undefined,
+      pollIntervalMs: a['ci-poll-ms'] !== undefined ? Number(a['ci-poll-ms']) : undefined,
+    }),
   };
+}
+
+/**
+ * Translate a storage error into an exit. A `ReviewCiProofError` whose CI is merely not-yet-green
+ * (`ci_pending`) exits with code 3 and an explicit "this is not a review failure, wait for CI"
+ * message, so the review-fix loop can distinguish it from a real FAIL and NOT burn a fix round
+ * (#1221). A red/stale CI exits 1. Either way the review sentinel is never written (the gate stays
+ * uncleared) because this throws before the sentinel write.
+ */
+function exitOnReviewStoreError(err: unknown): never {
+  if (err instanceof ReviewCiProofError) {
+    console.error(err.message);
+    if (err.isPending) {
+      console.error(
+        'store-review: CI is not green yet (ci_pending) — this is NOT a review failure. Wait for ' +
+        'CI to reach a terminal state, then re-store the summary. Do not count this as an ' +
+        'exhausted fix round.',
+      );
+      process.exit(3);
+    }
+    process.exit(1);
+  }
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
 }
 
 // Review handlers
@@ -254,7 +292,12 @@ async function handleStoreReviewBatch(a: CliArgs): Promise<void> {
     }
   }
   const findings = parsedBatch as ReviewFindingData[];
-  const result = storeReviewBatch(pr, r, findings, reviewSummaryOptions(a));
+  let result: { urls: string[]; summaryUrl: string };
+  try {
+    result = storeReviewBatch(pr, r, findings, reviewSummaryOptions(a));
+  } catch (err) {
+    exitOnReviewStoreError(err);
+  }
   // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
   // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
   writeReviewSentinel(a.repo, a.pr, r);
@@ -279,8 +322,7 @@ async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
   try {
     url = storeReviewSummary(prTarget(a.pr, a.repo), r, note, reviewSummaryOptions(a));
   } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
+    exitOnReviewStoreError(err);
   }
   // #920: Write review sentinel so pr-review-loop.ts can verify outcome
   writeReviewSentinel(a.repo, a.pr, r);

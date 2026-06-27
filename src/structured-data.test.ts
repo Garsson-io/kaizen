@@ -25,8 +25,11 @@ import {
   retrieveIterationState,
   updatePrSection,
   normalizeReviewFindingData,
+  ReviewCiProofError,
   type ReviewFindingData,
+  type CiVerifier,
 } from './structured-data.js';
+import { makeGhCiVerifier, type CommandRunner } from './review-ci-proof.js';
 
 vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
@@ -180,8 +183,12 @@ describe('storeReviewBatch — multiple findings + auto-summary', () => {
     // listAttachments fetches comments
     const stored1 = JSON.stringify({ url: 'https://...#issuecomment-10', body: `<!-- kaizen:review/r5/correctness -->\n<!-- meta:{"round":5,"dimension":"correctness","verdict":"pass","done":2,"partial":0,"missing":0} -->` });
     const stored2 = JSON.stringify({ url: 'https://...#issuecomment-11', body: `<!-- kaizen:review/r5/test-quality -->\n<!-- meta:{"round":5,"dimension":"test-quality","verdict":"pass","done":1,"partial":0,"missing":1} -->` });
-    ghReturns(`${stored1}\n${stored2}`); // listAttachments for review/r5/
-    // readReviewFinding for each dim
+    ghReturns(`${stored1}\n${stored2}`); // composeReviewSummary: listAttachments for review/r5/
+    // composeReviewSummary: readReviewFinding for each dim
+    ghReturns(stored1);
+    ghReturns(stored2);
+    // deriveStoredRoundVerdict re-reads the same findings (I29: structural derivation, no regex)
+    ghReturns(`${stored1}\n${stored2}`); // derive: listAttachments
     ghReturns(stored1);
     ghReturns(stored2);
     // writeAttachment for summary: readAttachment (no existing) + createComment
@@ -292,6 +299,8 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     const sec = dimComment(5, 'security', 'fail', 1, 0, 2);
     ghReturns(sec); // compose: list
     ghReturns(sec); // compose: read
+    ghReturns(sec); // derive: list
+    ghReturns(sec); // derive: read
     ghReturns(''); // writeAttachment: readAttachment (no existing summary) → create
     ghReturns('https://...#issuecomment-sum');
 
@@ -305,87 +314,130 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     const ok = dimComment(2, 'correctness', 'pass', 3, 0, 0); // all DONE → PASS
     ghReturns(ok); // compose: list
     ghReturns(ok); // compose: read
-    ghReturns('abc123'); // gh pr view: current PR head
-    ghReturns(JSON.stringify([{ name: 'TypeScript tests + coverage', bucket: 'pass', state: 'SUCCESS' }])); // gh pr checks
+    ghReturns(ok); // derive: list
+    ghReturns(ok); // derive: read
     ghReturns(''); // writeAttachment: readAttachment (no existing)
     ghReturns('https://...#issuecomment-sum');
 
-    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes', { expectedHeadSha: 'abc123' });
+    // No verifier supplied → pure storage, no CI work (the #1222 fix).
+    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes');
     const body = bodyOfLastCreate();
     expect(body).toContain('## Review Round 2 — PASS');
     expect(body).toContain('### Reviewer notes (non-authoritative');
     expect(body).toContain('rebased onto main');
   });
 
-  describe('CI proof gate (#1070)', () => {
-    const head = 'abc123';
-    const passChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'pass', state: 'SUCCESS' },
-      { name: 'auto-merge', bucket: 'skipping', state: 'SKIPPED' },
-    ]);
-    const pendingChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'pending', state: 'IN_PROGRESS' },
-    ]);
-    const failChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'fail', state: 'FAILURE' },
-    ]);
+  // #1070 redone per #1221/#1222/#1225: the gate is now an INJECTABLE verifier. Storage is pure
+  // by default (no verifier => no network); the CLI boundary supplies the real one. These tests
+  // prove storage HONORS a non-pass verdict (gate BLOCKS) and is otherwise side-effect-free.
+  describe('CI proof binding (#1070, injectable per #1222)', () => {
+    // Each non-throwing store needs: compose(list,read) + derive(list,read) + write(read,create).
+    const composeAndDerive = (c: string) => { ghReturns(c); ghReturns(c); ghReturns(c); ghReturns(c); };
+    const writeStubs = () => { ghReturns(''); ghReturns('https://...#issuecomment-sum'); };
 
-    it('stores a derived PASS only when current-head CI is passing', () => {
-      const ok = dimComment(4, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view: current PR head
-      ghReturns(passChecks); // gh pr checks
-      ghReturns(''); // writeAttachment: readAttachment (no existing)
-      ghReturns('https://...#issuecomment-sum');
-
-      storeReviewSummary(pr, 4, undefined, { expectedHeadSha: head });
-
-      const body = bodyOfLastCreate();
-      expect(body).toContain('## Review Round 4 — PASS');
+    it('stores a derived PASS when the injected verifier returns pass', () => {
+      composeAndDerive(dimComment(4, 'correctness', 'pass', 2, 0, 0));
+      writeStubs();
+      const verifier: CiVerifier = () => ({ status: 'pass' });
+      storeReviewSummary(pr, 4, undefined, { expectedHeadSha: 'abc123', ciVerifier: verifier });
+      expect(bodyOfLastCreate()).toContain('## Review Round 4 — PASS');
     });
 
-    it('refuses to store a derived PASS while CI is pending', () => {
-      const ok = dimComment(6, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns(pendingChecks); // gh pr checks
-
-      expect(() => storeReviewSummary(pr, 6, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*pending|pending.*CI|#1070/i);
+    it('BLOCKS: refuses a derived PASS while CI is pending, and the error is branchable (isPending)', () => {
+      composeAndDerive(dimComment(6, 'correctness', 'pass', 2, 0, 0));
+      let caught: unknown;
+      try {
+        storeReviewSummary(pr, 6, undefined, { ciVerifier: () => ({ status: 'pending', detail: 'TS tests' }) });
+      } catch (e) { caught = e; }
+      expect(caught).toBeInstanceOf(ReviewCiProofError);
+      expect((caught as ReviewCiProofError).result.status).toBe('pending');
+      expect((caught as ReviewCiProofError).isPending).toBe(true);
     });
 
-    it('refuses to store a derived PASS when CI is failing', () => {
-      const ok = dimComment(7, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns(failChecks); // gh pr checks
-
-      expect(() => storeReviewSummary(pr, 7, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*fail|fail.*CI|#1070/i);
+    it('BLOCKS: refuses a derived PASS when CI is failing', () => {
+      composeAndDerive(dimComment(7, 'correctness', 'pass', 2, 0, 0));
+      expect(() => storeReviewSummary(pr, 7, undefined, { ciVerifier: () => ({ status: 'fail', detail: 'x' }) }))
+        .toThrow(ReviewCiProofError);
     });
 
-    it('refuses to store a derived PASS before CI has produced checks', () => {
-      const ok = dimComment(9, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns('[]'); // gh pr checks: CI has not started
-
-      expect(() => storeReviewSummary(pr, 9, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*not produced checks|#1070/i);
+    it('BLOCKS: refuses a derived PASS when the reviewed head is stale', () => {
+      composeAndDerive(dimComment(8, 'correctness', 'pass', 2, 0, 0));
+      expect(() => storeReviewSummary(pr, 8, undefined, { ciVerifier: () => ({ status: 'stale_head' }) }))
+        .toThrow(ReviewCiProofError);
     });
 
-    it('refuses to store a derived PASS when the reviewed head is stale', () => {
-      const ok = dimComment(8, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns('def456'); // gh pr view: current PR head differs from reviewed head
+    it('BLOCKS: refuses a derived PASS before CI has produced checks (no_checks)', () => {
+      composeAndDerive(dimComment(9, 'correctness', 'pass', 2, 0, 0));
+      let caught: unknown;
+      try {
+        storeReviewSummary(pr, 9, undefined, { ciVerifier: () => ({ status: 'no_checks' }) });
+      } catch (e) { caught = e; }
+      expect(caught).toBeInstanceOf(ReviewCiProofError);
+      expect((caught as ReviewCiProofError).isPending).toBe(true); // wait, don't burn a fix round
+    });
 
-      expect(() => storeReviewSummary(pr, 8, undefined, { expectedHeadSha: head }))
-        .toThrow(/stale|HEAD|#1070/i);
+    it('is PURE without a verifier — stores a derived PASS doing zero CI work (#1222)', () => {
+      composeAndDerive(dimComment(10, 'correctness', 'pass', 2, 0, 0));
+      writeStubs();
+      storeReviewSummary(pr, 10); // no ciVerifier
+      expect(bodyOfLastCreate()).toContain('## Review Round 10 — PASS');
+    });
+
+    it('SKIP-NOT-THROW: a verifier returning skipped allows the store', () => {
+      composeAndDerive(dimComment(12, 'correctness', 'pass', 2, 0, 0));
+      writeStubs();
+      storeReviewSummary(pr, 12, undefined, { ciVerifier: () => ({ status: 'skipped' }) });
+      expect(bodyOfLastCreate()).toContain('## Review Round 12 — PASS');
+    });
+
+    it('FAIL verdict never invokes the verifier — failed evidence stays recordable', () => {
+      composeAndDerive(dimComment(11, 'security', 'fail', 1, 0, 2));
+      writeStubs();
+      const verifier = vi.fn((): { status: 'pending' } => ({ status: 'pending' }));
+      storeReviewSummary(pr, 11, undefined, { ciVerifier: verifier });
+      expect(verifier).not.toHaveBeenCalled();
+      expect(bodyOfLastCreate()).toContain('## Review Round 11 — FAIL');
+    });
+
+    it('non-PR target: verifier is NOT invoked and the summary stores on an issue (#1222.1)', () => {
+      composeAndDerive(dimComment(3, 'correctness', 'pass', 2, 0, 0));
+      writeStubs();
+      const verifier = vi.fn((): { status: 'pass' } => ({ status: 'pass' }));
+      storeReviewSummary(issue, 3, undefined, { ciVerifier: verifier });
+      expect(verifier).not.toHaveBeenCalled();
+    });
+
+    // INTEGRATION: storage + the REAL makeGhCiVerifier wired together over an injected gh runner.
+    // Proves the end-to-end gate (#1212 shipped no such test) without any network.
+    describe('wired with the real gh verifier (injected runner)', () => {
+      const greenRunner = (): CommandRunner => (command, args) => {
+        const ok = (stdout: string) => ({ status: 0, stdout, stderr: '' });
+        if (command === 'git') return ok('wiredHEAD');
+        if (args[1] === 'view') return ok('wiredHEAD');
+        return ok(JSON.stringify([{ name: 'tests', bucket: 'pass' }]));
+      };
+      const pendingRunner = (): CommandRunner => (command, args) => {
+        const ok = (stdout: string) => ({ status: 0, stdout, stderr: '' });
+        if (command === 'git') return ok('wiredHEAD');
+        if (args[1] === 'view') return ok('wiredHEAD');
+        return ok(JSON.stringify([{ name: 'tests', bucket: 'pending' }]));
+      };
+
+      it('green CI through the real verifier stores the PASS summary', () => {
+        composeAndDerive(dimComment(14, 'correctness', 'pass', 2, 0, 0));
+        writeStubs();
+        const verifier = makeGhCiVerifier({ runner: greenRunner(), sleep: () => {} });
+        storeReviewSummary(pr, 14, undefined, { expectedHeadSha: 'wiredHEAD', ciVerifier: verifier });
+        expect(bodyOfLastCreate()).toContain('## Review Round 14 — PASS');
+      });
+
+      it('BLOCKS: pending CI through the real verifier refuses the PASS summary', () => {
+        composeAndDerive(dimComment(15, 'correctness', 'pass', 2, 0, 0));
+        const verifier = makeGhCiVerifier({ runner: pendingRunner(), sleep: () => {}, pollIntervalMs: 1, timeoutMs: 3 });
+        expect(() =>
+          storeReviewSummary(pr, 15, undefined, { expectedHeadSha: 'wiredHEAD', ciVerifier: verifier }),
+        ).toThrow(ReviewCiProofError);
+      });
     });
   });
 });
