@@ -5,7 +5,8 @@ import {
   parseShellArgs,
   fetchIssueLabels,
   checkMergeStatus,
-  sweepBatchPRs,
+  driveBatchToMerge,
+  classifyMergeView,
   labelArtifacts,
   queueAutoMerge,
   extractLinkedIssue,
@@ -210,63 +211,221 @@ describe('checkMergeStatus', () => {
   });
 });
 
-describe('sweepBatchPRs', () => {
+describe('classifyMergeView', () => {
+  it('MERGED → terminal merged', () => {
+    expect(classifyMergeView({ state: 'MERGED' })).toEqual({ status: 'merged' });
+  });
+
+  it('CLOSED → terminal closed', () => {
+    expect(classifyMergeView({ state: 'CLOSED' })).toEqual({ status: 'closed' });
+  });
+
+  it('DIRTY → stuck:conflicting', () => {
+    expect(classifyMergeView({ state: 'OPEN', mergeStateStatus: 'DIRTY' })).toEqual({
+      status: 'stuck',
+      reason: 'conflicting',
+    });
+  });
+
+  it('BLOCKED → stuck:blocked', () => {
+    expect(classifyMergeView({ state: 'OPEN', mergeStateStatus: 'BLOCKED' })).toEqual({
+      status: 'stuck',
+      reason: 'blocked',
+    });
+  });
+
+  it.each(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED'])(
+    'a check in %s state → stuck:checks_failing (via .state)',
+    (s) => {
+      expect(
+        classifyMergeView({
+          state: 'OPEN',
+          mergeStateStatus: 'UNSTABLE',
+          statusCheckRollup: [{ state: 'SUCCESS' }, { state: s }],
+        }),
+      ).toEqual({ status: 'stuck', reason: 'checks_failing' });
+    },
+  );
+
+  it('a check failing via the .conclusion field (not .state) → stuck:checks_failing', () => {
+    expect(
+      classifyMergeView({
+        state: 'OPEN',
+        mergeStateStatus: 'UNSTABLE',
+        statusCheckRollup: [{ conclusion: 'FAILURE' }],
+      }),
+    ).toEqual({ status: 'stuck', reason: 'checks_failing' });
+  });
+
+  it('checks failure is case-insensitive', () => {
+    expect(
+      classifyMergeView({
+        state: 'OPEN',
+        statusCheckRollup: [{ state: 'failure' }],
+      }),
+    ).toEqual({ status: 'stuck', reason: 'checks_failing' });
+  });
+
+  it.each(['BEHIND', 'CLEAN', 'UNSTABLE', 'HAS_HOOKS', 'UNKNOWN', undefined])(
+    'non-terminal mergeStateStatus %s with passing checks → null (keep polling)',
+    (mss) => {
+      expect(
+        classifyMergeView({
+          state: 'OPEN',
+          mergeStateStatus: mss as string | undefined,
+          statusCheckRollup: [{ state: 'SUCCESS' }],
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it('failing checks take precedence over a DIRTY/BLOCKED state', () => {
+    // checks are evaluated before mergeStateStatus
+    expect(
+      classifyMergeView({
+        state: 'OPEN',
+        mergeStateStatus: 'DIRTY',
+        statusCheckRollup: [{ state: 'FAILURE' }],
+      }),
+    ).toEqual({ status: 'stuck', reason: 'checks_failing' });
+  });
+});
+
+describe('driveBatchToMerge', () => {
   beforeEach(() => {
     mockSpawnSync.mockReset();
   });
 
-  it('returns empty for empty input', () => {
-    expect(sweepBatchPRs([])).toEqual([]);
-  });
-
-  it('marks merged PRs as merged', () => {
-    mockSpawnSync.mockReturnValue(
-      ok(JSON.stringify({ state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null })) as any,
-    );
-    const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
-    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'merged' }]);
-  });
-
-  it('marks closed PRs as closed', () => {
-    mockSpawnSync.mockReturnValue(
-      ok(JSON.stringify({ state: 'CLOSED', mergeStateStatus: null, autoMergeRequest: null })) as any,
-    );
-    const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
-    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'closed' }]);
-  });
-
-  it('updates BEHIND branches with auto-merge queued', () => {
+  // Build a gh mock whose `pr view` responses come from a queue (one per poll),
+  // while `update-branch` and other commands return ok. Lets us simulate a PR's
+  // state evolving across polling attempts.
+  function mockPrViewSequence(views: object[]) {
+    let i = 0;
     mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
-      const cmdStr = args.join(' ');
-      if (cmdStr.includes('pr view')) {
-        return ok(JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BEHIND', autoMergeRequest: { enabledAt: '2024' } }));
+      const cmd = args.join(' ');
+      if (cmd.includes('pr view')) {
+        const v = views[Math.min(i, views.length - 1)];
+        i++;
+        return ok(JSON.stringify(v));
       }
-      if (cmdStr.includes('update-branch')) {
-        return ok('ok');
-      }
-      return ok('');
+      return ok('ok'); // update-branch et al
     }) as any);
+  }
 
-    const results = sweepBatchPRs(['https://github.com/o/r/pull/5']);
-    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/5', action: 'updated' }]);
-  });
+  const noopSleep = () => {};
+  const PR = 'https://github.com/o/r/pull/7';
 
-  it('marks already current PRs', () => {
-    mockSpawnSync.mockReturnValue(
-      ok(JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: { enabledAt: '2024' } })) as any,
-    );
-    const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
-    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'already_current' }]);
+  it('returns empty for empty input', () => {
+    expect(driveBatchToMerge([])).toEqual([]);
   });
 
   it('skips invalid URLs', () => {
-    expect(sweepBatchPRs(['not-a-url'])).toEqual([]);
+    expect(driveBatchToMerge(['not-a-url'], { sleep: noopSleep })).toEqual([]);
   });
 
-  it('handles gh failure as failed', () => {
+  it('marks a MERGED PR terminal and stops polling it', () => {
+    mockPrViewSequence([{ state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null }]);
+    const results = driveBatchToMerge([PR], { sleep: noopSleep, maxAttempts: 5 });
+    expect(results).toEqual([{ pr: PR, status: 'merged', attempts: 1 }]);
+    // exactly one `pr view` — no further polling after terminal
+    const views = mockSpawnSync.mock.calls
+      .map((c) => joinArgs(c as any))
+      .filter((s) => s.includes('pr view'));
+    expect(views).toHaveLength(1);
+  });
+
+  it('marks a CLOSED PR terminal', () => {
+    mockPrViewSequence([{ state: 'CLOSED', mergeStateStatus: null, autoMergeRequest: null }]);
+    const results = driveBatchToMerge([PR], { sleep: noopSleep });
+    expect(results).toEqual([{ pr: PR, status: 'closed', attempts: 1 }]);
+  });
+
+  // The #368 regression guard: a PR BEHIND on a LATER poll must be re-updated,
+  // then reach MERGED. A one-shot sweep could not do this.
+  it('re-updates a branch that falls BEHIND across polls, then sees it merge', () => {
+    mockPrViewSequence([
+      { state: 'OPEN', mergeStateStatus: 'BEHIND', autoMergeRequest: { enabledAt: '2024' } },
+      { state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null },
+    ]);
+    const results = driveBatchToMerge([PR], { sleep: noopSleep, maxAttempts: 5 });
+    expect(results).toEqual([{ pr: PR, status: 'merged', attempts: 2 }]);
+    const cmds = mockSpawnSync.mock.calls.map((c) => joinArgs(c as any));
+    expect(cmds.some((c) => c.includes('update-branch'))).toBe(true);
+  });
+
+  it('classifies a BLOCKED PR as stuck:blocked and stops polling', () => {
+    mockPrViewSequence([
+      { state: 'OPEN', mergeStateStatus: 'BLOCKED', autoMergeRequest: { enabledAt: '2024' } },
+    ]);
+    const results = driveBatchToMerge([PR], { sleep: noopSleep, maxAttempts: 5 });
+    expect(results).toEqual([{ pr: PR, status: 'stuck', reason: 'blocked', attempts: 1 }]);
+    const views = mockSpawnSync.mock.calls
+      .map((c) => joinArgs(c as any))
+      .filter((s) => s.includes('pr view'));
+    expect(views).toHaveLength(1); // terminal-stuck: no further polling
+  });
+
+  it('classifies a DIRTY (conflicting) PR as stuck:conflicting', () => {
+    mockPrViewSequence([
+      { state: 'OPEN', mergeStateStatus: 'DIRTY', autoMergeRequest: { enabledAt: '2024' } },
+    ]);
+    const results = driveBatchToMerge([PR], { sleep: noopSleep });
+    expect(results).toEqual([{ pr: PR, status: 'stuck', reason: 'conflicting', attempts: 1 }]);
+  });
+
+  it('classifies a PR with a failing check as stuck:checks_failing', () => {
+    mockPrViewSequence([
+      {
+        state: 'OPEN',
+        mergeStateStatus: 'UNSTABLE',
+        autoMergeRequest: { enabledAt: '2024' },
+        statusCheckRollup: [
+          { name: 'build', state: 'SUCCESS' },
+          { name: 'test', state: 'FAILURE' },
+        ],
+      },
+    ]);
+    const results = driveBatchToMerge([PR], { sleep: noopSleep });
+    expect(results).toEqual([{ pr: PR, status: 'stuck', reason: 'checks_failing', attempts: 1 }]);
+  });
+
+  it('is bounded — exhausting maxAttempts on an in-progress PR returns stuck:timed_out', () => {
+    // Always CLEAN + auto queued but never merges (CI in progress forever)
+    mockPrViewSequence([
+      { state: 'OPEN', mergeStateStatus: 'CLEAN', autoMergeRequest: { enabledAt: '2024' } },
+    ]);
+    const results = driveBatchToMerge([PR], { sleep: noopSleep, maxAttempts: 3 });
+    expect(results).toEqual([{ pr: PR, status: 'stuck', reason: 'timed_out', attempts: 3 }]);
+    const views = mockSpawnSync.mock.calls
+      .map((c) => joinArgs(c as any))
+      .filter((s) => s.includes('pr view'));
+    expect(views).toHaveLength(3); // polled exactly maxAttempts times
+  });
+
+  it('never throws on gh failure — degrades to stuck:unknown within budget', () => {
     mockSpawnSync.mockReturnValue(fail() as any);
-    const results = sweepBatchPRs(['https://github.com/o/r/pull/1']);
-    expect(results).toEqual([{ pr: 'https://github.com/o/r/pull/1', action: 'failed' }]);
+    const results = driveBatchToMerge([PR], { sleep: noopSleep, maxAttempts: 2 });
+    expect(results).toEqual([{ pr: PR, status: 'stuck', reason: 'unknown', attempts: 2 }]);
+  });
+
+  it('drives multiple PRs independently in one pass', () => {
+    const A = 'https://github.com/o/r/pull/1';
+    const B = 'https://github.com/o/r/pull/2';
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmd = args.join(' ');
+      if (cmd.includes('pr view 1')) {
+        return ok(JSON.stringify({ state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null }));
+      }
+      if (cmd.includes('pr view 2')) {
+        return ok(JSON.stringify({ state: 'OPEN', mergeStateStatus: 'DIRTY', autoMergeRequest: { enabledAt: '2024' } }));
+      }
+      return ok('ok');
+    }) as any);
+    const results = driveBatchToMerge([A, B], { sleep: noopSleep, maxAttempts: 5 });
+    expect(results).toEqual([
+      { pr: A, status: 'merged', attempts: 1 },
+      { pr: B, status: 'stuck', reason: 'conflicting', attempts: 1 },
+    ]);
   });
 });
 

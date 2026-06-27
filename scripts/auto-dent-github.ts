@@ -125,78 +125,178 @@ export function checkMergeStatus(prUrl: string): MergeStatus {
   }
 }
 
-// Branch sweep
+// Active merge babysitter (#1129)
+//
+// queueAutoMerge() fires `gh pr merge --auto` and exits. That alone leaves
+// queued PRs to stall: when main advances (a sibling PR merges), a PR falls
+// BEHIND and its queued merge waits forever, while a blocked/conflicting PR
+// just sits open — both reported as "queued" with no reason (#368). This
+// babysitter polls each PR until it merges, closes, is classified stuck (with a
+// reason), or a bounded attempt budget is exhausted, re-updating BEHIND branches
+// across attempts. It only REPORTS — the `--auto` queue stays in place, so
+// GitHub may still merge server-side later. (Supersedes the earlier one-shot
+// branch sweep, which updated BEHIND branches exactly once; #368 H1/H4.)
 
-export type SweepAction = 'updated' | 'already_current' | 'merged' | 'closed' | 'failed';
+export type DriveStatus = 'merged' | 'closed' | 'stuck';
+export type DriveReason =
+  | 'blocked'
+  | 'conflicting'
+  | 'checks_failing'
+  | 'timed_out'
+  | 'unknown';
 
-export interface SweepResult {
+export interface DriveResult {
   pr: string;
-  action: SweepAction;
+  status: DriveStatus;
+  /** Present only when status is 'stuck' — why it didn't merge. */
+  reason?: DriveReason;
+  /** Number of poll attempts spent on this PR. */
+  attempts: number;
+}
+
+export interface DriveOptions {
+  /** Max poll attempts per PR before giving up (default 20). */
+  maxAttempts?: number;
+  /** Milliseconds to sleep between polling rounds (default 15000). */
+  sleepMs?: number;
+  /** Injectable sleep — default is a real synchronous sleep; tests pass a no-op. */
+  sleep?: (ms: number) => void;
 }
 
 /**
- * Sweep all batch PRs: update stale branches so auto-merge can proceed.
- *
- * When strict branch protection is enabled and main advances (from a
- * previous run's PR merging), subsequent PRs fall BEHIND and auto-merge
- * stalls silently. This sweep detects BEHIND branches and calls the
- * GitHub API to update them.
- *
- * See issue #368, hypothesis H1/H4.
+ * Synchronous sleep. The auto-dent post-run path is already synchronous (gh
+ * calls block via spawnSync), so the babysitter blocks rather than introducing
+ * async plumbing. Atomics.wait is the standard way to sleep a thread without
+ * busy-waiting.
  */
-export function sweepBatchPRs(allPrUrls: string[]): SweepResult[] {
-  const results: SweepResult[] = [];
+function defaultSleep(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 
-  for (const prUrl of allPrUrls) {
-    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (!m) continue;
+/**
+ * Classify a single `gh pr view` payload into a terminal verdict, or null to
+ * keep polling. Failing required checks and merge conflicts won't resolve
+ * without a new push, so they are terminal-stuck; BEHIND/CLEAN/UNSTABLE are
+ * transient and keep polling.
+ */
+export function classifyMergeView(
+  data: {
+    state?: string;
+    mergeStateStatus?: string;
+    statusCheckRollup?: Array<{ state?: string; conclusion?: string }>;
+  },
+): { status: DriveStatus; reason?: DriveReason } | null {
+  if (data.state === 'MERGED') return { status: 'merged' };
+  if (data.state === 'CLOSED') return { status: 'closed' };
 
-    const [, repo, prNum] = m;
+  const checks = Array.isArray(data.statusCheckRollup) ? data.statusCheckRollup : [];
+  const failed = checks.some((c) => {
+    const s = (c?.state ?? c?.conclusion ?? '').toString().toUpperCase();
+    return s === 'FAILURE' || s === 'ERROR' || s === 'TIMED_OUT' || s === 'CANCELLED';
+  });
+  if (failed) return { status: 'stuck', reason: 'checks_failing' };
 
-    try {
+  switch (data.mergeStateStatus) {
+    case 'DIRTY':
+      return { status: 'stuck', reason: 'conflicting' };
+    case 'BLOCKED':
+      return { status: 'stuck', reason: 'blocked' };
+    default:
+      // BEHIND / CLEAN / UNSTABLE / HAS_HOOKS / UNKNOWN → not terminal yet.
+      return null;
+  }
+}
+
+interface PrPollState {
+  pr: string;
+  repo: string;
+  num: string;
+  status: DriveStatus | 'pending';
+  reason?: DriveReason;
+  attempts: number;
+}
+
+export function driveBatchToMerge(
+  prUrls: string[],
+  opts: DriveOptions = {},
+): DriveResult[] {
+  const maxAttempts = opts.maxAttempts ?? 20;
+  const sleepMs = opts.sleepMs ?? 15000;
+  const sleep = opts.sleep ?? defaultSleep;
+
+  const states: PrPollState[] = [];
+  for (const pr of prUrls) {
+    const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+    if (!m) continue; // skip invalid URLs (best-effort, module convention)
+    states.push({ pr, repo: m[1], num: m[2], status: 'pending', attempts: 0 });
+  }
+  if (states.length === 0) return [];
+
+  let round = 0;
+  while (states.some((s) => s.status === 'pending') && round < maxAttempts) {
+    round++;
+    if (round > 1) sleep(sleepMs); // don't sleep before the first poll
+    for (const s of states) {
+      if (s.status !== 'pending') continue;
+      s.attempts = round;
+
       const json = ghExec(
-        `gh pr view ${prNum} --repo ${repo} --json state,mergeStateStatus,autoMergeRequest`,
+        `gh pr view ${s.num} --repo ${s.repo} --json state,mergeStateStatus,statusCheckRollup,autoMergeRequest`,
       );
       if (!json) {
-        results.push({ pr: prUrl, action: 'failed' });
+        s.reason = 'unknown'; // couldn't read — leave pending for the budget
         continue;
       }
 
-      const data = JSON.parse(json);
-
-      if (data.state === 'MERGED') {
-        results.push({ pr: prUrl, action: 'merged' });
+      let data: {
+        state?: string;
+        mergeStateStatus?: string;
+        autoMergeRequest?: unknown;
+        statusCheckRollup?: Array<{ state?: string; conclusion?: string }>;
+      };
+      try {
+        data = JSON.parse(json);
+      } catch {
+        s.reason = 'unknown';
         continue;
       }
-      if (data.state === 'CLOSED') {
-        results.push({ pr: prUrl, action: 'closed' });
+
+      const verdict = classifyMergeView(data);
+      if (verdict) {
+        s.status = verdict.status;
+        s.reason = verdict.reason;
         continue;
       }
 
-      // Only update if branch is behind and auto-merge is queued
-      if (
-        data.mergeStateStatus === 'BEHIND' &&
-        data.autoMergeRequest
-      ) {
-        const updateOut = ghExec(
-          `gh api repos/${repo}/pulls/${prNum}/update-branch -X PUT -f expected_head_sha=""`,
+      // Non-terminal. If BEHIND with auto-merge queued, re-update the branch —
+      // the part the one-shot sweep could only do once (#368). Then keep polling.
+      if (data.mergeStateStatus === 'BEHIND' && data.autoMergeRequest) {
+        ghExec(
+          `gh api repos/${s.repo}/pulls/${s.num}/update-branch -X PUT -f expected_head_sha=""`,
         );
-        if (updateOut && !updateOut.includes('error')) {
-          console.log(`  [sweep] updated stale branch for PR #${prNum}`);
-          results.push({ pr: prUrl, action: 'updated' });
-        } else {
-          console.log(`  [sweep] failed to update branch for PR #${prNum}`);
-          results.push({ pr: prUrl, action: 'failed' });
-        }
-      } else {
-        results.push({ pr: prUrl, action: 'already_current' });
       }
-    } catch {
-      results.push({ pr: prUrl, action: 'failed' });
+      s.reason = 'timed_out'; // in-progress; if the budget runs out, it timed out
     }
   }
 
-  return results;
+  return states.map((s) => {
+    if (s.status === 'pending') {
+      return {
+        pr: s.pr,
+        status: 'stuck' as const,
+        reason: s.reason ?? 'timed_out',
+        attempts: s.attempts,
+      };
+    }
+    const r: DriveResult = {
+      pr: s.pr,
+      status: s.status as DriveStatus,
+      attempts: s.attempts,
+    };
+    if (s.status === 'stuck' && s.reason) r.reason = s.reason;
+    return r;
+  });
 }
 
 // Artifact labeling and auto-merge

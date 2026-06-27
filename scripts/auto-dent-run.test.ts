@@ -40,8 +40,8 @@ import {
   type PhaseMarker,
   type RunMetrics,
   type StreamContext,
-  type SweepAction,
-  type SweepResult,
+  type DriveResult,
+  type DriveReason,
   type PromptMetadata,
   validateRunLifecycle,
   findExistingProgressIssue,
@@ -1580,23 +1580,32 @@ describe('cleanGuidanceForTitle', () => {
   });
 });
 
-describe('SweepResult type', () => {
-  it('can construct valid SweepResult objects for each action', () => {
-    const actions: SweepAction[] = [
-      'updated',
-      'already_current',
-      'merged',
-      'closed',
-      'failed',
+describe('DriveResult type', () => {
+  it('is re-exported and constructable for stuck + terminal outcomes', () => {
+    const reasons: DriveReason[] = [
+      'blocked',
+      'conflicting',
+      'checks_failing',
+      'timed_out',
+      'unknown',
     ];
-    for (const action of actions) {
-      const result: SweepResult = {
+    for (const reason of reasons) {
+      const result: DriveResult = {
         pr: 'https://github.com/Garsson-io/kaizen/pull/500',
-        action,
+        status: 'stuck',
+        reason,
+        attempts: 3,
       };
-      expect(result.pr).toContain('pull/500');
-      expect(result.action).toBe(action);
+      expect(result.status).toBe('stuck');
+      expect(result.reason).toBe(reason);
     }
+    const merged: DriveResult = {
+      pr: 'https://github.com/Garsson-io/kaizen/pull/501',
+      status: 'merged',
+      attempts: 1,
+    };
+    expect(merged.status).toBe('merged');
+    expect(merged.reason).toBeUndefined();
   });
 });
 
