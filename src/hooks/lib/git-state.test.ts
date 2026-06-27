@@ -16,10 +16,30 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatDiagnostic,
+  gitStdout,
   isBypassRequested,
   readDirtyFiles,
   resolveTargetWorktree,
 } from './git-state.js';
+
+describe('gitStdout', () => {
+  it('returns trimmed stdout from an argv git runner', () => {
+    const calls: string[][] = [];
+    const runner = (args: readonly string[]) => {
+      calls.push([...args]);
+      return { stdout: '  main  \n', stderr: '', exitCode: 0 };
+    };
+
+    expect(gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], '', runner)).toBe('main');
+    expect(calls).toEqual([['rev-parse', '--abbrev-ref', 'HEAD']]);
+  });
+
+  it('returns fallback on non-zero exit', () => {
+    const runner = () => ({ stdout: '', stderr: 'fatal', exitCode: 128 });
+
+    expect(gitStdout(['remote', 'get-url', 'origin'], 'fallback', runner)).toBe('fallback');
+  });
+});
 
 describe('resolveTargetWorktree', () => {
   const CWD = '/agent/cwd';

@@ -20,7 +20,6 @@
  * Migration: kaizen #320 (Phase 3 of #223)
  */
 
-import { execSync } from 'node:child_process';
 import { appendFileSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -33,6 +32,7 @@ import {
 import { findOpenPrUrlForBranch } from '../lib/github-pr.js';
 import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
+import { gitStdout } from './lib/git-state.js';
 import {
   isGhPrCommand,
   isGitCommand,
@@ -87,21 +87,10 @@ function trace(decision: HookDecision, trigger: string): void {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function git(args: string, fallback = ''): string {
-  try {
-    return execSync(`git ${args}`, {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-  } catch {
-    return fallback;
-  }
-}
-
 /** Compute diff line count between two SHAs. Returns 0 if either SHA is invalid. */
 function diffLines(fromSha: string, toRef: string = 'HEAD'): number {
   if (!fromSha) return 0;
-  const statLine = git(`diff --stat ${fromSha}..${toRef}`).split('\n').pop() ?? '';
+  const statLine = gitStdout(['diff', '--stat', `${fromSha}..${toRef}`]).split('\n').pop() ?? '';
   const ins = parseInt(statLine.match(/(\d+) insertion/)?.[1] ?? '0', 10);
   const del = parseInt(statLine.match(/(\d+) deletion/)?.[1] ?? '0', 10);
   return ins + del;
@@ -110,11 +99,11 @@ function diffLines(fromSha: string, toRef: string = 'HEAD'): number {
 /** Check if a SHA exists in the git history. */
 function shaExists(sha: string): boolean {
   if (!sha) return false;
-  return git(`cat-file -t ${sha}`) === 'commit';
+  return gitStdout(['cat-file', '-t', sha]) === 'commit';
 }
 
 function detectGhRepo(): string | undefined {
-  const url = git('remote get-url origin');
+  const url = gitStdout(['remote', 'get-url', 'origin']);
   return url.match(/github\.com[:/]([^/]+\/[^/.]+)/)?.[1];
 }
 
@@ -260,7 +249,7 @@ export function processHookInput(
   const stateDir =
     options.stateDir ?? process.env.STATE_DIR ?? DEFAULT_STATE_DIR;
   const branch =
-    options.branch ?? git('rev-parse --abbrev-ref HEAD', 'unknown');
+    options.branch ?? gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown');
   const repoFromGit = options.repoFromGit ?? detectGhRepo();
   const getDiffLines = options.computeDiffLines ?? diffLines;
   const isShaValid = options.checkShaExists ?? shaExists;
@@ -297,7 +286,7 @@ export function processHookInput(
     const postMergeKey = prUrlToStateKey(mergeUrl);
     const mc =
       options.mainCheckout ??
-      git('worktree list --porcelain').match(/^worktree (.+)/m)?.[1] ??
+      gitStdout(['worktree', 'list', '--porcelain']).match(/^worktree (.+)/m)?.[1] ??
       '.';
 
     if (isAuto) {
@@ -340,7 +329,7 @@ export function processHookInput(
       STATUS: 'needs_review',
       BRANCH: branch,
     });
-    const sha = git('rev-parse HEAD');
+    const sha = gitStdout(['rev-parse', 'HEAD']);
     if (sha) {
       appendFileSync(fp, `LAST_REVIEWED_SHA=${sha}\n`);
       appendFileSync(fp, `LAST_FULL_REVIEW_SHA=${sha}\n`);
@@ -366,9 +355,9 @@ export function processHookInput(
     }
 
     // Skip merge-from-main pushes (kaizen #85)
-    const parents = git('log -1 --format=%P HEAD').split(/\s+/).filter(Boolean);
+    const parents = gitStdout(['log', '-1', '--format=%P', 'HEAD']).split(/\s+/).filter(Boolean);
     if (parents.length >= 2) {
-      const mainHead = git('rev-parse origin/main');
+      const mainHead = gitStdout(['rev-parse', 'origin/main']);
       if (mainHead && parents.includes(mainHead)) {
         return decide('ignore', 'merge_from_main', null, { parents });
       }
@@ -408,7 +397,7 @@ export function processHookInput(
         STATUS: 'passed',
         BRANCH: branch,
       });
-      const sha = git('rev-parse HEAD');
+      const sha = gitStdout(['rev-parse', 'HEAD']);
       if (sha) appendFileSync(fp, `LAST_REVIEWED_SHA=${sha}\n`);
       if (lastFullReviewSha) appendFileSync(fp, `LAST_FULL_REVIEW_SHA=${lastFullReviewSha}\n`);
       return decide('auto_pass', 'small_incremental_and_cumulative',
@@ -470,7 +459,7 @@ export function processHookInput(
       STATUS: 'passed',
       BRANCH: branch,
     });
-    const sha = git('rev-parse HEAD');
+    const sha = gitStdout(['rev-parse', 'HEAD']);
     if (sha) {
       appendFileSync(fp, `LAST_REVIEWED_SHA=${sha}\n`);
       appendFileSync(fp, `LAST_FULL_REVIEW_SHA=${sha}\n`);
