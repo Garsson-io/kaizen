@@ -280,7 +280,20 @@ describe('pr-review-loop: cross-worktree isolation', () => {
 describe('pr-review-loop: gh pr diff', () => {
   /** Write a review sentinel to simulate store-review-summary having been called */
   function writeSentinel(stateKey: string, round: string): void {
-    fs.writeFileSync(path.join(testStateDir, `${stateKey}.reviewed-r${round}`), `reviewed_at=${new Date().toISOString()}\n`);
+    const prNumber = stateKey.split('_').pop();
+    writeReviewSentinel(`https://github.com/Garsson-io/kaizen/pull/${prNumber}`, round, testStateDir);
+  }
+
+  function createPendingReviewState(prNumber: string, round: string = '1'): void {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf-8',
+    }).trim();
+    createState(`Garsson-io_kaizen_${prNumber}`, {
+      PR_URL: `https://github.com/Garsson-io/kaizen/pull/${prNumber}`,
+      ROUND: round,
+      STATUS: 'needs_review',
+      BRANCH: branch,
+    });
   }
 
   it('outputs checklist and transitions to passed (with sentinel)', () => {
@@ -323,6 +336,51 @@ describe('pr-review-loop: gh pr diff', () => {
 
     const state = readState('Garsson-io_kaizen_201');
     expect(state.LAST_REVIEWED_SHA).toBeTruthy();
+  });
+
+  it('rejects a manually touched empty sentinel', () => {
+    createPendingReviewState('997', '1');
+    fs.closeSync(fs.openSync(path.join(testStateDir, 'Garsson-io_kaizen_997.reviewed-r1'), 'w'));
+
+    const output = runHook(
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/997'),
+    );
+
+    expect(output).toContain('no valid review sentinel stored for round 1');
+    expect(output).toContain('/kaizen-review-pr');
+    const state = readState('Garsson-io_kaizen_997');
+    expect(state.STATUS).toBe('needs_review');
+  });
+
+  it('rejects the legacy timestamp-only sentinel format', () => {
+    createPendingReviewState('998', '1');
+    fs.writeFileSync(path.join(testStateDir, 'Garsson-io_kaizen_998.reviewed-r1'), `reviewed_at=${new Date().toISOString()}\n`);
+
+    const output = runHook(
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/998'),
+    );
+
+    expect(output).toContain('invalid review sentinel');
+    const state = readState('Garsson-io_kaizen_998');
+    expect(state.STATUS).toBe('needs_review');
+  });
+
+  it('records rejected forged sentinels in hook trace', () => {
+    const traceFile = path.join(testStateDir, 'trace.jsonl');
+    createPendingReviewState('999', '1');
+    fs.closeSync(fs.openSync(path.join(testStateDir, 'Garsson-io_kaizen_999.reviewed-r1'), 'w'));
+
+    runHookRaw(
+      JSON.stringify(prDiffInput('https://github.com/Garsson-io/kaizen/pull/999')),
+      { KAIZEN_HOOK_TRACE: traceFile },
+    );
+
+    const entries = fs.readFileSync(traceFile, 'utf8')
+      .trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+    const reviewEntry = entries.find((e: Record<string, string>) => e.hook === 'pr-review-loop');
+    expect(reviewEntry).toBeDefined();
+    expect(reviewEntry.action).toBe('needs_review');
+    expect(reviewEntry.reason).toBe('invalid_review_sentinel');
   });
 
   it('exits silently when already passed', () => {

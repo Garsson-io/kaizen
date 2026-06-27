@@ -21,8 +21,15 @@
  */
 
 import { execSync } from 'node:child_process';
-import { appendFileSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import { appendFileSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  buildReviewSentinelRecord,
+  serializeReviewSentinel,
+  validateReviewSentinel,
+  type ReviewSentinelInput,
+  type ReviewSentinelValidation,
+} from '../review-sentinel.js';
 import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import {
@@ -117,17 +124,17 @@ function isValidPrUrl(url: string): boolean {
 }
 
 /**
- * Check if a review sentinel exists for the given PR and round.
+ * Check if a review sentinel proves the given PR and round were reviewed.
  * The sentinel is written by store-review-summary in cli-structured-data.ts.
  * Format: <stateDir>/<stateKey>.reviewed-r<round>
  */
-function defaultCheckReviewSentinel(prUrl: string, round: string, stateDir: string): boolean {
+function defaultCheckReviewSentinel(prUrl: string, round: string, stateDir: string): ReviewSentinelValidation {
   const sentinel = join(stateDir, `${prUrlToStateKey(prUrl)}.reviewed-r${round}`);
   try {
     statSync(sentinel);
-    return true;
+    return validateReviewSentinel(readFileSync(sentinel, 'utf-8'), { prUrl, round });
   } catch {
-    return false;
+    return { ok: false, reason: 'missing_sentinel' };
   }
 }
 
@@ -135,10 +142,16 @@ function defaultCheckReviewSentinel(prUrl: string, round: string, stateDir: stri
  * Write a review sentinel for the given PR and round.
  * Called by store-review-summary after findings are stored.
  */
-export function writeReviewSentinel(prUrl: string, round: string | number, stateDir: string = DEFAULT_STATE_DIR): void {
+export function writeReviewSentinel(
+  prUrl: string,
+  round: string | number,
+  stateDir: string = DEFAULT_STATE_DIR,
+  options: Partial<ReviewSentinelInput> = {},
+): void {
   ensureStateDir(stateDir);
   const sentinel = join(stateDir, `${prUrlToStateKey(prUrl)}.reviewed-r${round}`);
-  appendFileSync(sentinel, `reviewed_at=${new Date().toISOString()}\n`);
+  const record = buildReviewSentinelRecord({ ...options, prUrl, round });
+  writeFileSync(sentinel, serializeReviewSentinel(record));
 }
 
 function printChecklist(
@@ -447,10 +460,16 @@ export function processHookInput(
     // #920: Verify review outcome exists before clearing gate.
     // The sentinel is written by store-review-summary (cli-structured-data.ts).
     // Without it, gh pr diff alone doesn't prove dimension agents were spawned.
-    const checkSentinel = options.checkReviewSentinel ?? defaultCheckReviewSentinel;
-    if (!checkSentinel(found.prUrl, found.round, stateDir)) {
-      const msg = `\n\ud83d\udccb REVIEW ROUND ${found.round}/${MAX_ROUNDS}\n${printChecklist(found.prUrl, found.round, MAX_ROUNDS)}\n\u26a0\ufe0f No review findings stored for round ${found.round}. Run \`/kaizen-review-pr ${found.prUrl}\` to spawn dimension agents.\n`;
-      return decide('needs_review', 'no_review_sentinel', msg, { prUrl: found.prUrl, round: found.round });
+    const sentinelResult = options.checkReviewSentinel
+      ? {
+          ok: options.checkReviewSentinel(found.prUrl, found.round, stateDir),
+          reason: 'custom_check_failed',
+        }
+      : defaultCheckReviewSentinel(found.prUrl, found.round, stateDir);
+    if (!sentinelResult.ok) {
+      const reason = sentinelResult.reason === 'missing_sentinel' ? 'no_review_sentinel' : 'invalid_review_sentinel';
+      const msg = `\n\ud83d\udccb REVIEW ROUND ${found.round}/${MAX_ROUNDS}\n${printChecklist(found.prUrl, found.round, MAX_ROUNDS)}\n\u26a0\ufe0f invalid review sentinel: no valid review sentinel stored for round ${found.round} (${sentinelResult.reason}). Run \`/kaizen-review-pr ${found.prUrl}\` to spawn dimension agents.\n`;
+      return decide('needs_review', reason, msg, { prUrl: found.prUrl, round: found.round, sentinelReason: sentinelResult.reason });
     }
 
     const fp = writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {
