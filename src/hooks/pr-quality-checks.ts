@@ -27,6 +27,7 @@ import {
   isGitCommand,
   stripHeredocBody,
 } from './parse-command.js';
+import { gh as runGh } from '../lib/gh-exec.js';
 
 type CommandType = 'pr_create' | 'pr_merge' | 'git_commit' | 'none';
 
@@ -39,6 +40,7 @@ export function detectCommandType(cmdLine: string): CommandType {
 
 interface RunnerOptions {
   exec?: (cmd: string) => string;
+  gh?: (args: string[]) => string;
   fileExists?: (path: string) => boolean;
   readFile?: (path: string) => string;
   hookDir?: string;
@@ -52,20 +54,31 @@ const defaultExec = (cmd: string): string => {
   }
 };
 
+const defaultGh = (args: string[]): string => {
+  try {
+    return runGh(args);
+  } catch {
+    return '';
+  }
+};
+
 /** Get changed files for the current PR/branch. */
 export function getChangedFiles(
   cmdLine: string,
   isMerge: boolean,
   exec: (cmd: string) => string,
+  gh: (args: string[]) => string = defaultGh,
 ): string[] {
   let raw: string;
   if (isMerge) {
-    // Try gh pr diff first for merge commands
     const prNumMatch = cmdLine.match(/gh\s+pr\s+merge\s+(\d+)/);
     const prArg = prNumMatch?.[1] ?? '';
     const repoMatch = cmdLine.match(/--repo\s+(\S+)/);
-    const repoFlag = repoMatch ? `--repo ${repoMatch[1]}` : '';
-    raw = exec(`gh pr diff ${prArg} --name-only ${repoFlag}`.trim());
+    const args = ['pr', 'diff'];
+    if (prArg) args.push(prArg);
+    args.push('--name-only');
+    if (repoMatch) args.push('--repo', repoMatch[1]);
+    raw = gh(args);
     if (!raw) {
       raw = exec('git diff --name-only main...HEAD');
     }
@@ -188,6 +201,7 @@ export function checkVerification(
   command: string,
   cmdType: CommandType,
   exec: (cmd: string) => string,
+  gh: (args: string[]) => string = defaultGh,
 ): string {
   if (cmdType === 'pr_create') {
     // Check for verification markers in the command (heredoc body)
@@ -208,12 +222,13 @@ CI pr-policy check will block merge if this is missing.`;
     // For merge: fetch PR body and show verification steps
     const cmdLine = stripHeredocBody(command);
     const prNumMatch = cmdLine.match(/gh\s+pr\s+merge\s+(\d+)/);
-    let prBody: string;
+    let args: string[];
     if (prNumMatch) {
-      prBody = exec(`gh pr view ${prNumMatch[1]} --json body --jq '.body'`);
+      args = ['pr', 'view', prNumMatch[1], '--json', 'body', '--jq', '.body'];
     } else {
-      prBody = exec("gh pr view --json body --jq '.body'");
+      args = ['pr', 'view', '--json', 'body', '--jq', '.body'];
     }
+    const prBody = gh(args);
 
     if (!prBody) return '';
 
@@ -379,6 +394,7 @@ export function runQualityChecks(
   opts: RunnerOptions = {},
 ): QualityCheckOutput {
   const exec = opts.exec ?? defaultExec;
+  const gh = opts.gh ?? defaultGh;
   const cmdLine = stripHeredocBody(command);
   const cmdType = detectCommandType(cmdLine);
 
@@ -390,7 +406,7 @@ export function runQualityChecks(
   const isPrCommand = cmdType === 'pr_create' || cmdType === 'pr_merge';
 
   if (isPrCommand) {
-    const changedFiles = getChangedFiles(cmdLine, isMerge, exec);
+    const changedFiles = getChangedFiles(cmdLine, isMerge, exec, gh);
 
     // Test coverage check (pr_create and pr_merge)
     const coverageResult = checkTestCoverage(changedFiles, opts);
@@ -398,7 +414,7 @@ export function runQualityChecks(
     if (coverageMsg) messages.push(coverageMsg);
 
     // Verification check
-    const verificationMsg = checkVerification(command, cmdType, exec);
+    const verificationMsg = checkVerification(command, cmdType, exec, gh);
     if (verificationMsg) messages.push(verificationMsg);
 
     // Practices checklist (pr_create only)
