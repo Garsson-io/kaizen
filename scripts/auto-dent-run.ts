@@ -109,8 +109,10 @@ export {
   validateRunLifecycle,
   summarizeLifecycle,
   verifyLifecycleEvidence,
+  validateProcessEvidence,
   foldEvidenceIntoHealth,
   summarizeEvidence,
+  summarizeProcessValidation,
   LIFECYCLE_ORDER,
   FLOATING_PHASES,
   REQUIRED_PREDECESSORS,
@@ -119,6 +121,7 @@ export {
   type LifecycleEvidence,
   type EvidenceVerification,
   type ProcessGap,
+  type ProcessVerdict,
 } from './auto-dent-lifecycle.js';
 
 // Import for internal use
@@ -145,10 +148,14 @@ import {
   validateRunLifecycle,
   summarizeLifecycle,
   verifyLifecycleEvidence,
+  validateProcessEvidence,
   foldEvidenceIntoHealth,
   summarizeEvidence,
+  summarizeProcessValidation,
   type LifecycleHealth,
   type LifecycleEvidence,
+  type ProcessEvidence,
+  type ProcessVerdict,
 } from './auto-dent-lifecycle.js';
 
 // Types
@@ -226,6 +233,12 @@ export interface RunMetrics {
   lifecycle_violations?: number;
   /** Lifecycle health: clean (ok) | degraded (ordering) | critical (gaps/phantoms) (#1103) */
   lifecycle_health?: LifecycleHealth;
+  /** Durable process-evidence verdict (#1149) */
+  process_verdict?: ProcessVerdict;
+  /** Count of failed/warning process evidence checks (#1149) */
+  process_issue_count?: number;
+  /** Compact process evidence summary (#1149) */
+  process_summary?: string;
   /** Review battery verdict for PRs created in this run */
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Review battery cost (USD) */
@@ -1928,6 +1941,9 @@ async function main(): Promise<void> {
   let lifecycleHealth: LifecycleHealth = 'clean';
   let lifecycleCriticalCount = 0;
   let lifecycleSteeringNote: string | null = null;
+  let processVerdict: ProcessVerdict = 'fail-open-warning';
+  let processIssueCount = 0;
+  let processSummary = 'fail-open-warning: process validator did not run';
   try {
     const lifecycle = validateRunLifecycle(logFile);
 
@@ -1944,11 +1960,36 @@ async function main(): Promise<void> {
       reviewVerdict: result.reviewVerdict,
     };
     const evidenceCheck = verifyLifecycleEvidence(lifecycle, evidence);
+    const phaseSet = new Set(lifecycle.phasesPresent);
+    const hasDurableTestMarker = phaseSet.has('TEST') && lifecycle.phantomPhases.every((p) => p.phase !== 'TEST');
+    const mergeStatuses = result.prs.map((pr) => checkMergeStatus(pr));
+    const mergeReadiness: ProcessEvidence['mergeReadiness'] =
+      result.prs.length === 0 ? 'not-applicable'
+        : mergeStatuses.some((status) => status === 'unknown') ? 'unknown'
+          : mergeStatuses.some((status) => status === 'closed') ? 'not-ready'
+            : mergeStatuses.every((status) => status === 'merged' || status === 'auto_queued') ? 'ready'
+              : 'unknown';
+    const processEvidence: ProcessEvidence = {
+      planEvidence: Boolean(promptMeta.claimedPlanIssue),
+      implementationEvidence: result.cases.length > 0,
+      prEvidence: result.prs.length > 0,
+      testEvidence: hasDurableTestMarker,
+      reviewEvidence: result.reviewVerdict != null && result.reviewVerdict !== 'skipped',
+      reflectionEvidence: result.issuesFiled.length + result.issuesClosed.length > 0,
+      mergeReadiness,
+    };
+    const processValidation = validateProcessEvidence(lifecycle, processEvidence);
 
     lifecycleViolationCount = lifecycle.violations.length;
     lifecycleHealth = foldEvidenceIntoHealth(lifecycle.health, evidenceCheck);
     lifecycleCriticalCount = lifecycle.criticalGaps.length + lifecycle.phantomPhases.length;
     const summary = summarizeLifecycle(lifecycle);
+    processVerdict = processValidation.verdict;
+    processIssueCount = processValidation.failedChecks.length + processValidation.warningChecks.length;
+    processSummary = summarizeProcessValidation(processValidation);
+    if (processVerdict !== 'pass' && lifecycleHealth !== 'critical') {
+      lifecycleHealth = 'degraded';
+    }
 
     // Surface process-completeness for observability/telemetry regardless of health.
     appendFileSync(
@@ -1963,6 +2004,13 @@ async function main(): Promise<void> {
       lifecycleSteeringNote =
         `Prior run was PROCESS-INCOMPLETE (${evidenceSummary}). ` +
         `Don't emit a lifecycle phase you didn't actually complete — auto-dent verifies claims against real PRs, cases, filed issues, and the review verdict, not against your markers.`;
+    }
+    appendFileSync(logFile, `process_verdict=${processVerdict}: ${processSummary}\n`);
+    if (processVerdict !== 'pass') {
+      console.log(`  ${color.yellow('[process]')} ${processSummary}`);
+      lifecycleSteeringNote =
+        `Prior run had process verdict ${processVerdict} (${processSummary}). ` +
+        `Back claims with durable plan, implementation, PR, test, review, reflection, and merge-readiness evidence.`;
     }
 
     if (lifecycle.health === 'critical') {
@@ -1986,7 +2034,14 @@ async function main(): Promise<void> {
       );
     }
   } catch {
-    // Log file unreadable — skip lifecycle check
+    // Log file unreadable — classify fail-open so telemetry does not claim pass.
+    processVerdict = 'fail-open-warning';
+    processIssueCount = 1;
+    processSummary = 'fail-open-warning: process validator could not read the run log';
+    lifecycleHealth = lifecycleHealth === 'critical' ? 'critical' : 'degraded';
+    lifecycleSteeringNote =
+      `Prior run had process verdict fail-open-warning (${processSummary}). ` +
+      `Ensure the run log is durable so auto-dent can validate process evidence.`;
   }
 
   // Cost anomaly detection (#585)
@@ -2042,6 +2097,9 @@ async function main(): Promise<void> {
       lifecycle_violations: lifecycleViolationCount,
       lifecycle_health: lifecycleHealth,
       lifecycle_critical: lifecycleCriticalCount,
+      process_verdict: processVerdict,
+      process_issue_count: processIssueCount,
+      process_summary: processSummary,
       review_verdict: reviewVerdict,
       review_cost_usd: reviewCostUsd,
       phase_providers: defaultPhaseProviders(),
@@ -2204,6 +2262,9 @@ async function main(): Promise<void> {
     prompt_hash: promptMeta.hash,
     lifecycle_violations: lifecycleViolationCount,
     lifecycle_health: lifecycleHealth,
+    process_verdict: processVerdict,
+    process_issue_count: processIssueCount,
+    process_summary: processSummary,
     review_verdict: reviewVerdict,
     review_cost_usd: reviewCostUsd,
     phase_providers: defaultPhaseProviders(),

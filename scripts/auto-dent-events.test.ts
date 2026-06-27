@@ -128,6 +128,9 @@ describe('EventEmitter', () => {
       stop_requested: false,
       failure_class: undefined,
       lifecycle_violations: 0,
+      process_verdict: 'process-incomplete',
+      process_issue_count: 2,
+      process_summary: 'process-incomplete: plan and test evidence missing',
       outcome: 'success',
     });
 
@@ -137,6 +140,8 @@ describe('EventEmitter', () => {
       outcome: 'success',
       cost_usd: 1.5,
       prs_created: 1,
+      process_verdict: 'process-incomplete',
+      process_issue_count: 2,
     });
   });
 
