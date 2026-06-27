@@ -5,15 +5,31 @@ import { tmpdir } from 'os';
 import {
   extractPlanJson,
   validatePlan,
+  validateThemes,
   readPlan,
   claimNextItem,
+  selectNextItem,
   markItem,
   resetAssignedItems,
   formatPlanSummary,
   buildPlanPrompt,
+  titleTokens,
+  deriveThemes,
+  ensureThemes,
+  themeProgress,
   type BatchPlan,
   type PlanItem,
 } from './auto-dent-plan.js';
+
+function mkItem(overrides: Partial<PlanItem> & { issue: string; title: string }): PlanItem {
+  return {
+    score: 5,
+    approach: '',
+    status: 'pending',
+    item_type: 'leaf',
+    ...overrides,
+  };
+}
 
 function makePlan(overrides: Partial<BatchPlan> = {}): BatchPlan {
   return {
@@ -490,5 +506,387 @@ describe('buildPlanPrompt', () => {
     const prompt = buildPlanPrompt(state);
     expect(prompt).toContain('decomposition');
     expect(prompt).toContain('item_type');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Thematic plan coordination (#941)
+// ---------------------------------------------------------------------------
+
+describe('titleTokens', () => {
+  it('lowercases, splits, and drops short/stopwords', () => {
+    const t = titleTokens('Fix the L2 hook performance observability');
+    expect(t.has('hook')).toBe(true);
+    expect(t.has('performance')).toBe(true);
+    expect(t.has('observability')).toBe(true);
+    // stopwords / domain noise removed
+    expect(t.has('the')).toBe(false);
+    expect(t.has('fix')).toBe(false);
+    expect(t.has('l2')).toBe(false);
+  });
+
+  it('splits on hyphens', () => {
+    const t = titleTokens('cross-batch steering');
+    expect(t.has('cross')).toBe(true);
+    expect(t.has('batch')).toBe(true);
+    expect(t.has('steering')).toBe(true);
+  });
+});
+
+describe('deriveThemes', () => {
+  it('groups items sharing a parent_epic into one theme', () => {
+    const items = [
+      mkItem({ issue: '#1', title: 'alpha widget', parent_epic: '#900' }),
+      mkItem({ issue: '#2', title: 'beta gadget', parent_epic: '#900' }),
+      mkItem({ issue: '#3', title: 'lone thing', parent_epic: '#999' }),
+    ];
+    const themes = deriveThemes(items);
+    expect(themes).toHaveLength(1);
+    expect(themes[0].issues.sort()).toEqual(['#1', '#2']);
+    expect(themes[0].title).toContain('#900');
+  });
+
+  it('groups items sharing >=2 significant title tokens', () => {
+    const items = [
+      mkItem({ issue: '#1', title: 'hook performance observability' }),
+      mkItem({ issue: '#2', title: 'hook performance timing instrumentation' }),
+      mkItem({ issue: '#3', title: 'worktree cleanup logic' }),
+    ];
+    const themes = deriveThemes(items);
+    expect(themes).toHaveLength(1);
+    expect(themes[0].issues.sort()).toEqual(['#1', '#2']);
+  });
+
+  it('does NOT group on a single shared token', () => {
+    const items = [
+      mkItem({ issue: '#1', title: 'hook reliability gate' }),
+      mkItem({ issue: '#2', title: 'hook is unrelated entirely otherwise distinct' }),
+    ];
+    // only "hook" is shared (1 token) → not related
+    const themes = deriveThemes(items);
+    expect(themes).toHaveLength(0);
+  });
+
+  it('leaves singletons themeless (no theme produced)', () => {
+    const items = [
+      mkItem({ issue: '#1', title: 'alpha unique words' }),
+      mkItem({ issue: '#2', title: 'beta different terms' }),
+    ];
+    expect(deriveThemes(items)).toHaveLength(0);
+  });
+
+  it('clusters transitively via union-find (A~B, B~C => one theme)', () => {
+    const items = [
+      mkItem({ issue: '#1', title: 'batch steering recommendations' }),
+      mkItem({ issue: '#2', title: 'batch steering memory' }), // shares batch+steering with #1
+      mkItem({ issue: '#3', title: 'batch memory observability' }), // shares batch+memory with #2
+    ];
+    const themes = deriveThemes(items);
+    expect(themes).toHaveLength(1);
+    expect(themes[0].issues.sort()).toEqual(['#1', '#2', '#3']);
+  });
+
+  it('is deterministic — same input yields same ids/order', () => {
+    const build = () => [
+      mkItem({ issue: '#1', title: 'hook performance observability' }),
+      mkItem({ issue: '#2', title: 'hook performance timing' }),
+    ];
+    expect(deriveThemes(build())).toEqual(deriveThemes(build()));
+  });
+
+  it('produces unique theme ids when labels collide', () => {
+    const items = [
+      mkItem({ issue: '#1', title: 'review battery dimension', parent_epic: '#100' }),
+      mkItem({ issue: '#2', title: 'review battery loop', parent_epic: '#100' }),
+      mkItem({ issue: '#3', title: 'review battery coverage', parent_epic: '#200' }),
+      mkItem({ issue: '#4', title: 'review battery fix', parent_epic: '#200' }),
+    ];
+    const themes = deriveThemes(items);
+    const ids = themes.map((t) => t.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('ensureThemes', () => {
+  it('derives themes and stamps item.theme when absent', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      items: [
+        mkItem({ issue: '#1', title: 'hook performance observability' }),
+        mkItem({ issue: '#2', title: 'hook performance timing' }),
+        mkItem({ issue: '#3', title: 'unrelated singleton work' }),
+      ],
+    };
+    ensureThemes(plan);
+    expect(plan.themes!.length).toBe(1);
+    expect(plan.items[0].theme).toBe(plan.themes![0].id);
+    expect(plan.items[1].theme).toBe(plan.themes![0].id);
+    expect(plan.items[2].theme).toBeUndefined();
+  });
+
+  it('is idempotent', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      items: [
+        mkItem({ issue: '#1', title: 'batch steering memory' }),
+        mkItem({ issue: '#2', title: 'batch steering recommendations' }),
+      ],
+    };
+    ensureThemes(plan);
+    const first = JSON.stringify(plan);
+    ensureThemes(plan);
+    expect(JSON.stringify(plan)).toBe(first);
+  });
+
+  it('respects LLM-provided themes instead of overwriting', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      themes: [{ id: 'llm-theme', title: 'LLM Theme', rationale: 'r', issues: ['#1', '#2'] }],
+      items: [
+        mkItem({ issue: '#1', title: 'totally unrelated alpha' }),
+        mkItem({ issue: '#2', title: 'totally unrelated beta' }),
+      ],
+    };
+    ensureThemes(plan);
+    expect(plan.themes!.map((t) => t.id)).toEqual(['llm-theme']);
+    expect(plan.items[0].theme).toBe('llm-theme');
+    expect(plan.items[1].theme).toBe('llm-theme');
+  });
+});
+
+describe('validateThemes', () => {
+  it('keeps well-formed themes', () => {
+    const themes = validateThemes([
+      { id: 't1', title: 'T1', rationale: 'r', issues: ['#1', '#2'] },
+    ]);
+    expect(themes).toHaveLength(1);
+    expect(themes[0].issues).toEqual(['#1', '#2']);
+  });
+
+  it('drops malformed themes (missing fields / empty issues)', () => {
+    const themes = validateThemes([
+      { id: 't1', title: 'ok', issues: ['#1'] },
+      { id: 't2', issues: ['#3'] }, // missing title
+      { id: 't3', title: 'empty', issues: [] }, // empty issues
+      null,
+    ]);
+    expect(themes.map((t) => t.id)).toEqual(['t1']);
+  });
+
+  it('returns [] for non-array', () => {
+    expect(validateThemes(undefined)).toEqual([]);
+    expect(validateThemes('nope')).toEqual([]);
+  });
+
+  it('de-duplicates an issue appearing in multiple themes (first wins)', () => {
+    const themes = validateThemes([
+      { id: 't1', title: 'T1', rationale: '', issues: ['#1', '#2'] },
+      { id: 't2', title: 'T2', rationale: '', issues: ['#2', '#3'] },
+    ]);
+    expect(themes.find((t) => t.id === 't1')!.issues).toEqual(['#1', '#2']);
+    expect(themes.find((t) => t.id === 't2')!.issues).toEqual(['#3']);
+  });
+
+  it('drops a theme that becomes empty after dedup', () => {
+    const themes = validateThemes([
+      { id: 't1', title: 'T1', rationale: '', issues: ['#1'] },
+      { id: 't2', title: 'T2', rationale: '', issues: ['#1'] },
+    ]);
+    expect(themes.map((t) => t.id)).toEqual(['t1']);
+  });
+});
+
+describe('validatePlan with themes', () => {
+  it('preserves per-item theme and a validated themes array', () => {
+    const raw = {
+      items: [
+        { issue: '#1', title: 'one', score: 5, theme: 'alpha' },
+        { issue: '#2', title: 'two', score: 4, theme: 'alpha' },
+      ],
+      themes: [{ id: 'alpha', title: 'Alpha', rationale: 'r', issues: ['#1', '#2'] }],
+    };
+    const plan = validatePlan(raw);
+    expect(plan!.items[0].theme).toBe('alpha');
+    expect(plan!.themes).toHaveLength(1);
+    expect(plan!.themes![0].id).toBe('alpha');
+  });
+
+  it('omits themes when none provided (no themes key)', () => {
+    const plan = validatePlan({ items: [{ issue: '#1', title: 'one', score: 5 }] });
+    expect(plan!.themes).toBeUndefined();
+  });
+});
+
+describe('selectNextItem — coordination', () => {
+  it('theme-less plan: returns first pending (legacy behavior)', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      items: [
+        mkItem({ issue: '#1', title: 'a', score: 3 }),
+        mkItem({ issue: '#2', title: 'b', score: 9 }),
+      ],
+    };
+    // Even though #2 has higher score, legacy behavior takes first pending.
+    expect(selectNextItem(plan)!.issue).toBe('#1');
+  });
+
+  it('continues an in-progress theme even when a higher-score item exists elsewhere', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      themes: [
+        { id: 'T1', title: 'T1', rationale: '', issues: ['#1', '#2'] },
+        { id: 'T2', title: 'T2', rationale: '', issues: ['#3'] },
+      ],
+      items: [
+        mkItem({ issue: '#1', title: 'a', score: 5, theme: 'T1', status: 'done' }),
+        mkItem({ issue: '#2', title: 'b', score: 4, theme: 'T1', status: 'pending' }),
+        mkItem({ issue: '#3', title: 'c', score: 9, theme: 'T2', status: 'pending' }),
+      ],
+    };
+    // T1 is in progress (#1 done) and has pending #2 → claim #2, not higher-score #3.
+    expect(selectNextItem(plan)!.issue).toBe('#2');
+  });
+
+  it('within an in-progress theme, picks the highest-score pending', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      themes: [{ id: 'T1', title: 'T1', rationale: '', issues: ['#1', '#2', '#3'] }],
+      items: [
+        mkItem({ issue: '#1', title: 'a', score: 5, theme: 'T1', status: 'assigned' }),
+        mkItem({ issue: '#2', title: 'b', score: 4, theme: 'T1', status: 'pending' }),
+        mkItem({ issue: '#3', title: 'c', score: 7, theme: 'T1', status: 'pending' }),
+      ],
+    };
+    expect(selectNextItem(plan)!.issue).toBe('#3');
+  });
+
+  it('with no theme in progress, starts the strongest theme (highest-score item)', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      themes: [
+        { id: 'T1', title: 'T1', rationale: '', issues: ['#1'] },
+        { id: 'T2', title: 'T2', rationale: '', issues: ['#2'] },
+      ],
+      items: [
+        mkItem({ issue: '#1', title: 'a', score: 5, theme: 'T1', status: 'pending' }),
+        mkItem({ issue: '#2', title: 'b', score: 9, theme: 'T2', status: 'pending' }),
+      ],
+    };
+    expect(selectNextItem(plan)!.issue).toBe('#2');
+  });
+
+  it('moves to a fresh theme once the in-progress one is exhausted', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      themes: [
+        { id: 'T1', title: 'T1', rationale: '', issues: ['#1'] },
+        { id: 'T2', title: 'T2', rationale: '', issues: ['#2'] },
+      ],
+      items: [
+        mkItem({ issue: '#1', title: 'a', score: 5, theme: 'T1', status: 'done' }),
+        mkItem({ issue: '#2', title: 'b', score: 9, theme: 'T2', status: 'pending' }),
+      ],
+    };
+    // T1 done & exhausted → fall to strongest fresh pending = #2
+    expect(selectNextItem(plan)!.issue).toBe('#2');
+  });
+
+  it('returns null when nothing is pending', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      items: [mkItem({ issue: '#1', title: 'a', status: 'done' })],
+    };
+    expect(selectNextItem(plan)).toBeNull();
+  });
+});
+
+describe('claimNextItem theme-aware persistence', () => {
+  let tmpDir: string;
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'plan-theme-test-')); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it('claims the continuation of an in-progress theme and persists assigned', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      themes: [
+        { id: 'T1', title: 'T1', rationale: '', issues: ['#1', '#2'] },
+        { id: 'T2', title: 'T2', rationale: '', issues: ['#3'] },
+      ],
+      items: [
+        mkItem({ issue: '#1', title: 'a', score: 5, theme: 'T1', status: 'done' }),
+        mkItem({ issue: '#2', title: 'b', score: 4, theme: 'T1', status: 'pending' }),
+        mkItem({ issue: '#3', title: 'c', score: 9, theme: 'T2', status: 'pending' }),
+      ],
+    };
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+    const claimed = claimNextItem(tmpDir);
+    expect(claimed!.issue).toBe('#2');
+    const updated = readPlan(tmpDir)!;
+    expect(updated.items.find((i) => i.issue === '#2')!.status).toBe('assigned');
+    expect(updated.items.find((i) => i.issue === '#3')!.status).toBe('pending');
+  });
+});
+
+describe('themeProgress', () => {
+  it('counts statuses per theme', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      themes: [{ id: 'T1', title: 'Hooks', rationale: '', issues: ['#1', '#2', '#3'] }],
+      items: [
+        mkItem({ issue: '#1', title: 'a', theme: 'T1', status: 'done' }),
+        mkItem({ issue: '#2', title: 'b', theme: 'T1', status: 'pending' }),
+        mkItem({ issue: '#3', title: 'c', theme: 'T1', status: 'assigned' }),
+      ],
+    };
+    const tp = themeProgress(plan);
+    expect(tp).toHaveLength(1);
+    expect(tp[0]).toMatchObject({ id: 'T1', total: 3, done: 1, pending: 1, assigned: 1, skipped: 0 });
+  });
+
+  it('returns [] when no themes', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      items: [mkItem({ issue: '#1', title: 'a' })],
+    };
+    expect(themeProgress(plan)).toEqual([]);
+  });
+});
+
+describe('formatPlanSummary with themes', () => {
+  it('renders a Themes section with done/total markers', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      themes: [{ id: 'hooks', title: 'Hooks', rationale: '', issues: ['#1', '#2'] }],
+      items: [
+        mkItem({ issue: '#1', title: 'a', theme: 'hooks', status: 'done' }),
+        mkItem({ issue: '#2', title: 'b', theme: 'hooks', status: 'pending' }),
+      ],
+    };
+    const summary = formatPlanSummary(plan);
+    expect(summary).toContain('Themes (1 coordinated bundle)');
+    expect(summary).toContain('Hooks [1/2]');
+  });
+
+  it('omits the Themes section when there are no themes', () => {
+    const plan: BatchPlan = {
+      created_at: 'x', guidance: 'g', wip_excluded: [], epics_scanned: [],
+      items: [mkItem({ issue: '#1', title: 'a' })],
+    };
+    expect(formatPlanSummary(plan)).not.toContain('Themes (');
+  });
+});
+
+describe('plan-prepass template includes theme instructions', () => {
+  it('buildPlanPrompt mentions themes', () => {
+    const state = {
+      batch_id: 'b', batch_start: 0, guidance: 'g', max_runs: 10, cooldown: 30,
+      budget: '3.00', max_failures: 3, kaizen_repo: 'Garsson-io/kaizen',
+      host_repo: 'Garsson-io/kaizen', run: 0, prs: [], issues_filed: [],
+      issues_closed: [], cases: [], consecutive_failures: 0, current_cooldown: 30,
+      stop_reason: '', last_issue: '', last_pr: '', last_case: '', last_branch: '',
+      last_worktree: '',
+    };
+    const prompt = buildPlanPrompt(state);
+    expect(prompt.toLowerCase()).toContain('theme');
   });
 });
