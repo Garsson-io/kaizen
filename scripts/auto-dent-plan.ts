@@ -20,6 +20,7 @@ import { spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
+import { z } from 'zod';
 import {
   type BatchState,
   buildTemplateVars,
@@ -73,6 +74,66 @@ export interface PlanningCommand {
   args: string[];
   /** Prompt stdin for providers that read the prompt from stdin. */
   stdin?: string;
+}
+
+const PlanningOutputItemSchema = z.object({
+  issue: z.string().min(1),
+  title: z.string().min(1),
+  score: z.number(),
+  approach: z.string(),
+  status: z.enum(['pending', 'assigned', 'done', 'skipped']),
+  item_type: z.enum(['leaf', 'decompose']),
+  parent_epic: z.string().nullable(),
+  theme: z.string().nullable(),
+}).strict();
+
+const PlanningOutputThemeSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  rationale: z.string(),
+  issues: z.array(z.string()).min(1),
+}).strict();
+
+const PlanningOutputSchema = z.object({
+  created_at: z.string(),
+  guidance: z.string(),
+  items: z.array(PlanningOutputItemSchema).min(1),
+  themes: z.array(PlanningOutputThemeSchema),
+  wip_excluded: z.array(z.string()),
+  epics_scanned: z.array(z.string()),
+  decomposition_candidates: z.array(z.string()),
+}).strict();
+
+const RawPlanningInputSchema = z.object({
+  created_at: z.unknown().optional(),
+  guidance: z.unknown().optional(),
+  planning_provider: z.unknown().optional(),
+  items: z.array(z.unknown()),
+  themes: z.unknown().optional(),
+  wip_excluded: z.unknown().optional(),
+  epics_scanned: z.unknown().optional(),
+  decomposition_candidates: z.unknown().optional(),
+}).passthrough();
+
+const RawPlanItemInputSchema = z.object({
+  issue: z.unknown(),
+  title: z.unknown(),
+  score: z.unknown().optional(),
+  approach: z.unknown().optional(),
+  item_type: z.unknown().optional(),
+  parent_epic: z.unknown().optional(),
+  theme: z.unknown().optional(),
+}).passthrough();
+
+const RawPlanThemeInputSchema = z.object({
+  id: z.unknown(),
+  title: z.unknown(),
+  rationale: z.unknown().optional(),
+  issues: z.array(z.unknown()).min(1),
+}).passthrough();
+
+export function validatePlanningOutputContract(raw: unknown): boolean {
+  return PlanningOutputSchema.safeParse(raw).success;
 }
 
 function readState(stateFile: string): BatchState {
@@ -130,11 +191,17 @@ export function buildPlanningCommand(
   prompt: string,
   state: BatchState,
   repoRoot: string,
+  schemaFile?: string,
 ): PlanningCommand {
   if (planningProviderName(provider) === 'codex') {
+    const args = buildCodexExecArgs(repoRoot);
+    if (schemaFile) {
+      const promptArgIndex = args.lastIndexOf('-');
+      args.splice(promptArgIndex >= 0 ? promptArgIndex : args.length, 0, '--output-schema', schemaFile);
+    }
     return {
       command: 'codex',
-      args: buildCodexExecArgs(repoRoot),
+      args,
       stdin: prompt,
     };
   }
@@ -155,6 +222,12 @@ export function buildPlanningCommand(
   }
 
   return { command: 'claude', args };
+}
+
+export function buildPlanningSchemaFile(logDir: string): string {
+  const schemaFile = resolve(logDir, 'plan-output.schema.json');
+  writeFileSync(schemaFile, JSON.stringify(z.toJSONSchema(PlanningOutputSchema), null, 2) + '\n');
+  return schemaFile;
 }
 
 export function extractPlanningText(provider: PlanningProviderName, raw: string): string {
@@ -228,11 +301,15 @@ export function extractPlanJson(text: string): BatchPlan | null {
  * Validate and normalize a parsed plan.
  */
 export function validatePlan(raw: any): BatchPlan | null {
-  if (!raw || !Array.isArray(raw.items)) return null;
+  const parsed = RawPlanningInputSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const rawPlan = parsed.data;
 
-  const items: PlanItem[] = raw.items
-    .filter((item: any) => item.issue && item.title)
-    .map((item: any) => ({
+  const items: PlanItem[] = rawPlan.items
+    .map((item: any) => RawPlanItemInputSchema.safeParse(item))
+    .filter((result: z.ZodSafeParseResult<z.infer<typeof RawPlanItemInputSchema>>) => result.success && Boolean(result.data.issue) && Boolean(result.data.title))
+    .map((result: z.ZodSafeParseSuccess<z.infer<typeof RawPlanItemInputSchema>>) => result.data)
+    .map((item) => ({
       issue: String(item.issue),
       title: String(item.title),
       score: Number(item.score) || 0,
@@ -244,16 +321,16 @@ export function validatePlan(raw: any): BatchPlan | null {
 
   if (items.length === 0) return null;
 
-  const themes = validateThemes(raw.themes);
+  const themes = validateThemes(rawPlan.themes);
 
   return {
-    created_at: raw.created_at || new Date().toISOString(),
-    guidance: raw.guidance || '',
-    ...(raw.planning_provider ? { planning_provider: raw.planning_provider } : {}),
+    created_at: rawPlan.created_at || new Date().toISOString(),
+    guidance: rawPlan.guidance || '',
+    ...(rawPlan.planning_provider ? { planning_provider: rawPlan.planning_provider as PhaseProvider } : {}),
     items,
-    wip_excluded: Array.isArray(raw.wip_excluded) ? raw.wip_excluded : [],
-    epics_scanned: Array.isArray(raw.epics_scanned) ? raw.epics_scanned : [],
-    decomposition_candidates: Array.isArray(raw.decomposition_candidates) ? raw.decomposition_candidates : [],
+    wip_excluded: Array.isArray(rawPlan.wip_excluded) ? rawPlan.wip_excluded : [],
+    epics_scanned: Array.isArray(rawPlan.epics_scanned) ? rawPlan.epics_scanned : [],
+    decomposition_candidates: Array.isArray(rawPlan.decomposition_candidates) ? rawPlan.decomposition_candidates : [],
     ...(themes.length > 0 ? { themes } : {}),
   };
 }
@@ -269,16 +346,17 @@ export function validateThemes(raw: any): PlanTheme[] {
   const claimed = new Set<string>();
   const out: PlanTheme[] = [];
   for (const t of raw) {
-    if (!t || !t.id || !t.title || !Array.isArray(t.issues)) continue;
-    const issues = t.issues
+    const parsed = RawPlanThemeInputSchema.safeParse(t);
+    if (!parsed.success || !parsed.data.id || !parsed.data.title) continue;
+    const issues = parsed.data.issues
       .map((i: any) => String(i))
       .filter((i: string) => !claimed.has(i));
     if (issues.length === 0) continue;
     for (const i of issues) claimed.add(i);
     out.push({
-      id: String(t.id),
-      title: String(t.title),
-      rationale: String(t.rationale || ''),
+      id: String(parsed.data.id),
+      title: String(parsed.data.title),
+      rationale: String(parsed.data.rationale || ''),
       issues,
     });
   }
@@ -442,11 +520,13 @@ export function themeProgress(plan: BatchPlan): ThemeProgress[] {
 async function runPlanning(
   state: BatchState,
   repoRoot: string,
+  logDir: string,
 ): Promise<BatchPlan | null> {
   const prompt = buildPlanPrompt(state);
   const provider = selectPlanningProvider(state);
   const providerName = planningProviderName(provider);
-  const command = buildPlanningCommand(provider, prompt, state, repoRoot);
+  const schemaFile = providerName === 'codex' ? buildPlanningSchemaFile(logDir) : undefined;
+  const command = buildPlanningCommand(provider, prompt, state, repoRoot, schemaFile);
   let rawOutput = '';
 
   return new Promise((resolve) => {
@@ -659,7 +739,7 @@ async function main(): Promise<void> {
   const provider = selectPlanningProvider(state);
   console.log(`    Provider: ${planningProviderName(provider)} (${provider.billing})`);
 
-  const plan = await runPlanning(state, repoRoot);
+  const plan = await runPlanning(state, repoRoot, logDir);
 
   if (!plan) {
     console.log('>>> Planning failed — batch will use discovery mode (no plan).');
