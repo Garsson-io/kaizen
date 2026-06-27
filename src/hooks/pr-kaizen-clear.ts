@@ -805,14 +805,16 @@ export function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void
 
   for (const num of issueNums) {
     try {
-      // Route through the injected ghRun argv boundary (no shell strings); repo is
-      // derived from the PR URL above rather than hardcoded.
+      // Route through the injected ghRun argv boundary (no shell strings). The
+      // issue refs are extracted by a kaizen-scoped regex above, so these calls
+      // stay pinned to the kaizen repo (NOT the PR-derived repo, which differs
+      // in host-project mode) — behavior-preserving with the pre-migration code.
       const state = ghRun([
         'issue',
         'view',
         num,
         '--repo',
-        repo,
+        'Garsson-io/kaizen',
         '--json',
         'state',
         '--jq',
@@ -824,7 +826,7 @@ export function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void
           'close',
           num,
           '--repo',
-          repo,
+          'Garsson-io/kaizen',
           '--comment',
           `Auto-closed: PR merged (${prUrl})`,
         ]);

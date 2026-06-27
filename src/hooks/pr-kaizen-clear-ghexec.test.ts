@@ -88,6 +88,29 @@ describe('autoCloseKaizenIssues — gh-exec argv migration', () => {
     ]);
   });
 
+  it('pins issue view/close to the kaizen repo even when the PR lives elsewhere (host mode)', () => {
+    // Host-project mode: the PR is on the host repo, but the kaizen-scoped regex
+    // only extracts Garsson-io/kaizen issue refs — so the issue calls must stay
+    // pinned to the kaizen repo, NOT the PR-derived host repo.
+    const hostPrUrl = 'https://github.com/acme/widgets/pull/9';
+    const ghRun = vi.fn((args: string[]) => {
+      if (args[0] === 'pr' && args.includes('state')) return 'MERGED';
+      if (args[0] === 'pr' && args.includes('body'))
+        return 'Closes Garsson-io/kaizen#42';
+      if (args[0] === 'issue' && args[1] === 'view') return 'OPEN';
+      return '';
+    });
+    autoCloseKaizenIssues(hostPrUrl, ghRun);
+
+    const issueCalls = ghRun.mock.calls
+      .map(c => c[0])
+      .filter(a => a[0] === 'issue');
+    expect(issueCalls.length).toBeGreaterThan(0);
+    for (const a of issueCalls) {
+      expect(a[a.indexOf('--repo') + 1]).toBe('Garsson-io/kaizen');
+    }
+  });
+
   it('does not close an issue that is already CLOSED', () => {
     const ghRun = makeGhRun('CLOSED');
     autoCloseKaizenIssues(PR_URL, ghRun);
