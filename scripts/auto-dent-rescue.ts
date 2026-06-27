@@ -88,6 +88,17 @@ export interface RescueDecisionInput {
   /** URL of an open PR already targeting this branch, or null. */
   existingOpenPr: string | null;
   /**
+   * Whether the run terminated abnormally (`classifyRunExit().abnormal`): a
+   * watchdog timeout or non-zero exit, where work was likely STRANDED. A clean
+   * exit / intentional agent stop is NOT abnormal. This is required (not
+   * defaulted) so every caller must bind the computed classification at this
+   * choke point — the #943/#1227 "computed-but-not-bound" guard. It gates ONLY
+   * `create-draft`: manufacturing a brand-new draft rescue PR is justified only
+   * when termination stranded the work. `push-existing` (extending an already
+   * open PR) is exit-agnostic and ignores this field. (#1289)
+   */
+  abnormal: boolean;
+  /**
    * True when the most-recent PR for the branch is MERGED and there is no open
    * PR — the I7 "merged branch" state. Pushing to or opening a PR on such a
    * branch is forbidden (CLAUDE.md branch hygiene), and in the rescue path it
@@ -140,13 +151,28 @@ export function decideRescueAction(input: RescueDecisionInput): RescueAction {
     };
   }
   const hasWork = input.commitsAheadBase > 0 || input.dirtyTotal > 0;
-  return hasWork
-    ? {
-        kind: 'create-draft',
-        commitDirty,
-        reason: `no PR for branch with rescueable work (${input.commitsAheadBase} commits ahead, ${input.dirtyTotal} dirty)`,
-      }
-    : { kind: 'none', commitDirty: false, reason: 'no commits ahead and no dirty files' };
+  if (!hasWork) {
+    return { kind: 'none', commitDirty: false, reason: 'no commits ahead and no dirty files' };
+  }
+  // #1289: only an ABNORMAL termination (watchdog timeout / non-zero exit) strands
+  // work that warrants manufacturing a brand-new draft rescue PR. A clean exit or
+  // intentional agent stop that ends with worktree commits and no PR is deliberate
+  // (discovery output, an explore/contemplate run, or an agent that stopped on
+  // purpose) — opening a spurious "NOT VALIDATED" draft for it is the over-eager
+  // inverse of the strand failure. Leave it alone. The `push-existing` path above
+  // keeps precedence and is exit-agnostic: extending an already-open PR is always safe.
+  if (!input.abnormal) {
+    return {
+      kind: 'none',
+      commitDirty: false,
+      reason: 'clean exit with worktree commits and no PR — intentional stop / discovery output, not manufacturing a draft (#1289)',
+    };
+  }
+  return {
+    kind: 'create-draft',
+    commitDirty,
+    reason: `abnormal exit stranded work with no PR (${input.commitsAheadBase} commits ahead, ${input.dirtyTotal} dirty)`,
+  };
 }
 
 export interface RescueReportInput {
@@ -209,6 +235,13 @@ export interface RescueContext {
   runTag: string;
   runId: string;
   failureReason: string;
+  /**
+   * Whether the run terminated abnormally (`classifyRunExit().abnormal`). Bound
+   * from the run's exit classification and forwarded to `decideRescueAction` so a
+   * brand-new draft rescue PR is only manufactured for crash/timeout-stranded
+   * work, never for a clean-exit worktree (#1289).
+   */
+  abnormal: boolean;
   pickedIssue?: string;
   /** Base branch for create-draft and the ahead-of-base count. Default 'origin/main'. */
   base?: string;
@@ -273,7 +306,7 @@ export function rescueTarget(target: RescueTarget, ctx: RescueContext, deps: Res
   const existingOpenPr = prState.openUrl ?? null;
   const mostRecentMerged = prState.mostRecent?.state === 'MERGED' && !prState.hasOpen;
 
-  const action = decideRescueAction({ commitsAheadBase, unpushedCommits, dirtyTotal, existingOpenPr, mostRecentMerged });
+  const action = decideRescueAction({ commitsAheadBase, unpushedCommits, dirtyTotal, existingOpenPr, mostRecentMerged, abnormal: ctx.abnormal });
   outcome.action = action.kind;
   if (action.kind === 'none') {
     log?.(`${target.branch}: ${action.reason}`);

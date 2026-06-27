@@ -2845,7 +2845,7 @@ async function main(): Promise<void> {
       git: createDefaultGitExec(),
     });
     if (targets.length > 0) {
-      const { reason: failureReason } = classifyRunExit({
+      const { reason: failureReason, abnormal } = classifyRunExit({
         exitCode,
         timedOut: Boolean(result.timedOut),
         stopRequested: Boolean(result.stopRequested),
@@ -2857,6 +2857,9 @@ async function main(): Promise<void> {
           runTag,
           runId,
           failureReason,
+          // #1289: bind the exit classification to the rescue gate so a clean-exit
+          // worktree with commits never gets a spurious "NOT VALIDATED" draft PR.
+          abnormal,
           pickedIssue,
         },
         defaultRescueDeps((m) => console.log(`  [rescue] ${m}`)),
