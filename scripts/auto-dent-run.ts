@@ -283,6 +283,12 @@ export interface RunResult {
   issuesFiled: string[];
   issuesClosed: string[];
   cases: string[];
+  /** Issue selected for this run, usually from the PICK phase marker. */
+  pickedIssue?: string;
+  /** Human title for the selected issue, when the PICK marker included it. */
+  pickedIssueTitle?: string;
+  /** Structured phase progress reconstructed from AUTO_DENT_PHASE markers. */
+  progressSteps?: RunProgressStep[];
   cost: number;
   toolCalls: number;
   stopRequested: boolean;
@@ -303,6 +309,8 @@ export interface RunResult {
   reviewVerdict?: 'pass' | 'fail' | 'skipped';
   /** Cost of the requirements review in USD */
   reviewCostUsd?: number;
+  /** Review attachment/comment URLs produced by the review wiring, if any. */
+  reviewUrls?: string[];
   /** Parsed schema-constrained final run claim (#1145). */
   finalClaim?: FinalRunClaim;
   /** Parse status for the final run claim (#1145). */
@@ -311,6 +319,13 @@ export interface RunResult {
   finalClaimPath?: string;
   /** Parse/comparison warnings for the final run claim (#1145). */
   finalClaimWarnings?: string[];
+}
+
+export interface RunProgressStep {
+  phase: string;
+  state: string;
+  detail: string;
+  url?: string;
 }
 
 import { extractPlanText } from '../src/structured-data.js';
@@ -1260,11 +1275,11 @@ export function updateBatchProgressIssue(
     `| **Duration** | ${mins}m ${secs}s |`,
     `| **Cost** | $${result.cost.toFixed(2)} |`,
     `| **Tool calls** | ${result.toolCalls} |`,
+    `| **Issue worked** | ${formatIssueForDisplay(result.pickedIssue, kaizenRepo, result.pickedIssueTitle)} |`,
+    `| **PR generated** | ${result.prs.length > 0 ? result.prs.join(', ') : 'none'} |`,
+    `| **Review state** | ${formatReviewForDisplay(result)} |`,
   ];
 
-  if (result.prs.length > 0) {
-    lines.push(`| **PRs** | ${result.prs.join(', ')} |`);
-  }
   if (result.issuesFiled.length > 0) {
     lines.push(`| **Issues filed** | ${result.issuesFiled.join(', ')} |`);
   }
@@ -1278,6 +1293,10 @@ export function updateBatchProgressIssue(
   }
   if (result.stopRequested) {
     lines.push('', `**STOP requested:** ${result.stopReason}`);
+  }
+  const stepsTable = formatProgressStepsMarkdown(result);
+  if (stepsTable) {
+    lines.push('', stepsTable);
   }
 
   const comment = lines.join('\n');
@@ -1544,6 +1563,18 @@ async function runClaude(
   }
   const promptMeta = buildPromptWithMetadata(state, runNum, logDir);
   const prompt = promptMeta.prompt;
+  if (promptMeta.claimedPlanIssue && !result.pickedIssue) {
+    result.pickedIssue = promptMeta.claimedPlanIssue;
+    result.progressSteps = result.progressSteps || [];
+    if (!result.progressSteps.some((s) => s.phase === 'PICK')) {
+      result.progressSteps.push({
+        phase: 'PICK',
+        state: 'assigned',
+        detail: promptMeta.claimedPlanIssue,
+        url: formatIssueUrl(promptMeta.claimedPlanIssue, state.kaizen_repo || state.host_repo || ''),
+      });
+    }
+  }
 
   // Save rendered prompt for observability (#602)
   const promptFile = `${logDir}/run-${runNum}-prompt.md`;
@@ -1770,6 +1801,7 @@ function printRunSummary(
   exitCode: number,
   duration: number,
   result: RunResult,
+  repo = '',
 ): void {
   const status =
     exitCode === 0 ? color.green('success') : color.red(`failed (exit ${exitCode})`);
@@ -1783,7 +1815,13 @@ function printRunSummary(
   console.log(`  \u2502 Cost:     $${result.cost.toFixed(2)}`);
   console.log(`  \u2502 Tools:    ${result.toolCalls} calls`);
 
-  for (const pr of result.prs) console.log(`  \u2502 ${color.green('PR:')}       ${pr}`);
+  console.log(`  \u2502 Issue:    ${formatIssueForDisplay(result.pickedIssue, repo, result.pickedIssueTitle)}`);
+  if (result.prs.length === 0) {
+    console.log(`  \u2502 ${color.green('PR:')}       none`);
+  } else {
+    for (const pr of result.prs) console.log(`  \u2502 ${color.green('PR:')}       ${pr}`);
+  }
+  console.log(`  \u2502 Review:   ${formatReviewForDisplay(result)}`);
   for (const issue of result.issuesFiled)
     console.log(`  \u2502 ${color.cyan('Issue:')}    ${issue}`);
   if (result.issuesClosed.length > 0)
@@ -1791,11 +1829,63 @@ function printRunSummary(
   for (const c of result.cases) console.log(`  \u2502 Case:     ${c}`);
   if (result.stopRequested)
     console.log(`  \u2502 ${color.red('STOP:')}     ${result.stopReason}`);
+  if (result.progressSteps && result.progressSteps.length > 0) {
+    console.log(`  \u2502 Steps:`);
+    for (const step of result.progressSteps) {
+      console.log(`  \u2502   ${step.phase}: ${step.state}${step.detail ? ` — ${step.detail}` : ''}${step.url ? ` (${step.url})` : ''}`);
+    }
+  }
 
   console.log(
     `  \u2514${'─'.repeat(54)}`,
   );
   console.log('');
+}
+
+function formatIssueUrl(issue: string | undefined, repo: string): string {
+  if (!issue) return '';
+  if (/^https?:\/\//.test(issue)) return issue;
+  const match = issue.match(/#?(\d+)/);
+  if (!match || !repo) return issue;
+  return `https://github.com/${repo}/issues/${match[1]}`;
+}
+
+function formatIssueForDisplay(issue: string | undefined, repo: string, title?: string): string {
+  const url = formatIssueUrl(issue, repo);
+  if (!url) return 'unknown';
+  return title ? `${url} — ${title}` : url;
+}
+
+function formatReviewForDisplay(result: RunResult): string {
+  const verdict = result.reviewVerdict ?? (result.prs.length > 0 ? 'pending' : 'skipped');
+  const urls = result.reviewUrls && result.reviewUrls.length > 0 ? result.reviewUrls : result.prs;
+  return urls.length > 0 ? `${verdict} (${urls.join(', ')})` : verdict;
+}
+
+function formatProgressStepsMarkdown(result: RunResult): string {
+  if (!result.progressSteps || result.progressSteps.length === 0) return '';
+  const lines = [
+    `#### Observed Steps`,
+    '',
+    `| Step | State | Detail | Link |`,
+    `|------|-------|--------|------|`,
+  ];
+  for (const step of result.progressSteps) {
+    lines.push(`| ${step.phase} | ${step.state} | ${step.detail || '-'} | ${step.url || '-'} |`);
+  }
+  return lines.join('\n');
+}
+
+function upsertProgressStep(result: RunResult, step: RunProgressStep): void {
+  result.progressSteps = result.progressSteps || [];
+  const existing = result.progressSteps.find((s) => s.phase === step.phase);
+  if (existing) {
+    existing.state = step.state || existing.state;
+    existing.detail = step.detail || existing.detail;
+    existing.url = step.url || existing.url;
+  } else {
+    result.progressSteps.push(step);
+  }
 }
 
 function phaseProvidersForState(state: BatchState): PhaseProviderRecord {
@@ -1847,6 +1937,7 @@ export interface ReviewWiringInput {
 export interface ReviewWiringResult {
   reviewVerdict: 'pass' | 'fail' | 'skipped';
   reviewCostUsd: number;
+  reviewUrls: string[];
 }
 
 export async function runReviewWiring(
@@ -1855,6 +1946,7 @@ export async function runReviewWiring(
 ): Promise<ReviewWiringResult> {
   let reviewVerdict: 'pass' | 'fail' | 'skipped' = 'skipped';
   let reviewCostUsd = 0;
+  const reviewUrls: string[] = [];
 
   // #898: Use remaining budget after implementation, not total budget
   const reviewBudgetCap = Math.min(
@@ -1863,7 +1955,7 @@ export async function runReviewWiring(
   );
 
   if (input.prs.length === 0 || !input.pickedIssue) {
-    return { reviewVerdict, reviewCostUsd };
+    return { reviewVerdict, reviewCostUsd, reviewUrls };
   }
 
   try {
@@ -1905,7 +1997,8 @@ export async function runReviewWiring(
         try {
           const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '';
           if (prNum && input.repo) {
-            deps.writeAttachment({ kind: 'pr', number: prNum, repo: input.repo }, 'review-battery', `## Review Battery: FAIL\n\n${report}`);
+            const url = deps.writeAttachment({ kind: 'pr', number: prNum, repo: input.repo }, 'review-battery', `## Review Battery: FAIL\n\n${report}`);
+            if (url && !reviewUrls.includes(url)) reviewUrls.push(url);
           }
         } catch { /* best effort */ }
 
@@ -1951,12 +2044,13 @@ export async function runReviewWiring(
               reviewVerdict = 'fail';
               deps.appendLog(`\nreview_fix=fail rounds=${fixState.currentRound} cost=$${fixCost.toFixed(2)} pr=${prUrl}\n`);
               try {
-                deps.ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(
+                const url = deps.ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(
                   `## Review Fix Loop: Exhausted\n\n` +
                   `Ran ${fixState.currentRound} fix round(s) but gaps remain. ` +
                   `Total review+fix cost: $${reviewCostUsd.toFixed(2)}.\n\n` +
                   `@aviadr1 needs human review.`
                 )}`);
+                if (url && !reviewUrls.includes(url)) reviewUrls.push(url);
               } catch { /* best effort */ }
             }
           } catch (e: any) {
@@ -1972,13 +2066,24 @@ export async function runReviewWiring(
       } else if (reviewVerdict !== 'fail') {
         reviewVerdict = 'pass';
         deps.appendLog(`\nreview_battery=pass pr=${prUrl} cost=$${batteryResult.costUsd.toFixed(2)}\n`);
+        try {
+          const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '';
+          if (prNum && input.repo) {
+            const url = deps.writeAttachment(
+              { kind: 'pr', number: prNum, repo: input.repo },
+              'review-battery',
+              deps.formatBatteryReport(batteryResult),
+            );
+            if (url && !reviewUrls.includes(url)) reviewUrls.push(url);
+          }
+        } catch { /* best effort */ }
       }
     }
   } catch {
     // Review battery error — non-fatal
   }
 
-  return { reviewVerdict, reviewCostUsd };
+  return { reviewVerdict, reviewCostUsd, reviewUrls };
 }
 
 // Main
@@ -2066,8 +2171,6 @@ async function main(): Promise<void> {
     ].join('\n'),
   );
 
-  printRunSummary(runNum, exitCode, duration, result);
-
   // Emit per-artifact events from stream results (#647)
   let pickedIssue = '';
   {
@@ -2103,7 +2206,7 @@ async function main(): Promise<void> {
   }
 
   // Post-run review battery with fix loop (#891, #914)
-  const { reviewVerdict, reviewCostUsd } = await runReviewWiring(
+  const { reviewVerdict, reviewCostUsd, reviewUrls } = await runReviewWiring(
     {
       prs: result.prs,
       pickedIssue: pickedIssue ?? '',
@@ -2127,6 +2230,13 @@ async function main(): Promise<void> {
   );
   result.reviewVerdict = reviewVerdict;
   result.reviewCostUsd = reviewCostUsd;
+  result.reviewUrls = reviewUrls;
+  upsertProgressStep(result, {
+    phase: 'REVIEW',
+    state: reviewVerdict,
+    detail: reviewUrls.length > 0 ? reviewUrls.join(', ') : (result.prs[0] || ''),
+    url: reviewUrls[0] || result.prs[0],
+  });
   if (result.finalClaim) {
     result.finalClaimPath = writeFinalClaimArtifact(logDir, runNum, result.finalClaim);
     appendFileSync(logFile, `final_claim_path=${result.finalClaimPath}\n`);
@@ -2274,6 +2384,8 @@ async function main(): Promise<void> {
       `Prior run had process verdict fail-open-warning (${processSummary}). ` +
       `Ensure the run log is durable so auto-dent can validate process evidence.`;
   }
+
+  printRunSummary(runNum, exitCode, duration, result, state.kaizen_repo || state.host_repo || '');
 
   // Cost anomaly detection (#585)
   {
@@ -2423,6 +2535,15 @@ async function main(): Promise<void> {
         logFile,
         `merge_drive=${r.pr} ${r.status}${r.reason ? ':' + r.reason : ''} attempts=${r.attempts}\n`,
       );
+    }
+    const representative = driveResults.find((r) => result.prs.includes(r.pr)) || driveResults[0];
+    if (representative) {
+      upsertProgressStep(result, {
+        phase: 'MERGE',
+        state: representative.status,
+        detail: representative.reason ? `${representative.pr} ${representative.reason}` : representative.pr,
+        url: representative.pr,
+      });
     }
   }
 

@@ -225,6 +225,11 @@ function extractIssueRefs(value: string): string[] {
 
 export function extractArtifacts(text: string, result: RunResult): void {
   for (const marker of parsePhaseMarkers(text)) {
+    updateProgressFromMarker(marker, result);
+    if (marker.phase === 'PICK' && marker.fields.issue) {
+      result.pickedIssue = marker.fields.issue;
+      result.pickedIssueTitle = marker.fields.title || result.pickedIssueTitle;
+    }
     if (marker.phase === 'PR' && marker.fields.url) {
       pushUnique(result.prs, marker.fields.url);
     }
@@ -262,6 +267,79 @@ export function extractArtifacts(text: string, result: RunResult): void {
     const deletions = parseInt(m[2], 10);
     const net = deletions - insertions;
     if (net > 0) result.linesDeleted += net;
+  }
+}
+
+function updateProgressFromMarker(marker: PhaseMarker, result: RunResult): void {
+  const step = progressStepFromMarker(marker);
+  if (!step) return;
+  if (!result.progressSteps) result.progressSteps = [];
+  const existing = result.progressSteps.find((s) => s.phase === step.phase);
+  if (existing) {
+    existing.state = step.state || existing.state;
+    existing.detail = step.detail || existing.detail;
+    existing.url = step.url || existing.url;
+  } else {
+    result.progressSteps.push(step);
+  }
+}
+
+function progressStepFromMarker(marker: PhaseMarker): NonNullable<RunResult['progressSteps']>[number] | null {
+  const f = marker.fields;
+  switch (marker.phase) {
+    case 'PICK':
+      return {
+        phase: 'PICK',
+        state: f.issue ? 'selected' : 'seen',
+        detail: [f.issue, f.title].filter(Boolean).join(' — '),
+        url: f.issue?.startsWith('http') ? f.issue : undefined,
+      };
+    case 'EVALUATE':
+      return {
+        phase: 'EVALUATE',
+        state: f.verdict || 'seen',
+        detail: f.reason || '',
+      };
+    case 'IMPLEMENT':
+      return {
+        phase: 'IMPLEMENT',
+        state: f.case ? 'started' : 'seen',
+        detail: [f.case ? `case:${f.case}` : '', f.branch ? `branch:${f.branch}` : ''].filter(Boolean).join(' '),
+      };
+    case 'TEST':
+      return {
+        phase: 'TEST',
+        state: f.result || 'seen',
+        detail: f.count ? `${f.count} tests` : '',
+      };
+    case 'PR':
+      return {
+        phase: 'PR',
+        state: f.url ? 'created' : 'seen',
+        detail: f.url || '',
+        url: f.url,
+      };
+    case 'MERGE':
+      return {
+        phase: 'MERGE',
+        state: f.status || 'seen',
+        detail: f.url || '',
+        url: f.url,
+      };
+    case 'REFLECT':
+      return {
+        phase: 'REFLECT',
+        state: f.issues_filed || f.issues_created ? 'filed' : 'seen',
+        detail: [f.issues_filed ? `${f.issues_filed} issues filed` : '', f.issues_created ? `created:${f.issues_created}` : '', f.lessons].filter(Boolean).join(' '),
+      };
+    case 'STOP':
+      return {
+        phase: 'STOP',
+        state: 'requested',
+        detail: f.reason || '',
+      };
+    default:
+      return null;
   }
 }
 
@@ -338,6 +416,7 @@ export function buildInFlightComment(
   runStart: number,
   result: RunResult,
   ctx: StreamContext,
+  repo = '',
 ): string {
   const elapsedSec = Math.floor((Date.now() - runStart) / 1000);
   const mins = Math.floor(elapsedSec / 60);
@@ -355,6 +434,9 @@ export function buildInFlightComment(
     `| **Tool calls** | ${result.toolCalls} |`,
     `| **Cost so far** | $${result.cost.toFixed(2)} |`,
     `| **Status** | ${status} |`,
+    `| **Issue worked** | ${formatIssueForComment(result.pickedIssue, result.pickedIssueTitle, repo)} |`,
+    `| **PR generated** | ${result.prs.length > 0 ? result.prs.join(', ') : 'none yet'} |`,
+    `| **Review state** | ${result.reviewVerdict ?? (result.prs.length > 0 ? 'pending' : 'not started')} |`,
   ];
 
   if (ctx.lastActivity) {
@@ -366,8 +448,26 @@ export function buildInFlightComment(
   if (result.prs.length > 0) {
     lines.push(`| **PRs so far** | ${result.prs.join(', ')} |`);
   }
+  if (result.progressSteps && result.progressSteps.length > 0) {
+    lines.push(
+      '',
+      `#### Work Cycle`,
+      '',
+      `| Step | State | Detail | Link |`,
+      `|------|-------|--------|------|`,
+    );
+    for (const step of result.progressSteps) {
+      lines.push(`| ${step.phase} | ${step.state} | ${step.detail || '-'} | ${step.url || '-'} |`);
+    }
+  }
 
   return lines.join('\n');
+}
+
+function formatIssueForComment(issue: string | undefined, title: string | undefined, repo: string): string {
+  if (!issue) return 'unknown';
+  const url = issue.startsWith('http') ? issue : issue.replace(/^#?(\d+)$/, repo ? `https://github.com/${repo}/issues/$1` : issue);
+  return title ? `${url} — ${title}` : url;
 }
 
 /**
@@ -386,7 +486,7 @@ export function postInFlightUpdate(
   const m = progressIssue.match(/issues\/(\d+)/);
   if (!m) return false;
 
-  const comment = buildInFlightComment(runNum, runStart, result, ctx);
+  const comment = buildInFlightComment(runNum, runStart, result, ctx, kaizenRepo);
   const out = ghExec(
     `gh issue comment ${m[1]} --repo ${kaizenRepo} --body ${JSON.stringify(comment)}`,
   );

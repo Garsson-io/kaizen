@@ -49,6 +49,7 @@ import {
   validateRunLifecycle,
   findExistingProgressIssue,
   ensureBatchProgressIssue,
+  updateBatchProgressIssue,
   extractPlanText,
   populateCrossBatchSteering,
   shouldRunCodexProvider,
@@ -714,6 +715,30 @@ describe('extractArtifacts', () => {
     expect(result.prs).toEqual([
       'https://github.com/Garsson-io/kaizen/pull/450',
     ]);
+  });
+
+  it('tracks the structured work cycle from phase markers', () => {
+    const result = makeRunResult();
+    extractArtifacts([
+      'AUTO_DENT_PHASE: PICK | issue=#1225 | title=redo CI proof gate',
+      'AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=concrete defect',
+      'AUTO_DENT_PHASE: IMPLEMENT | case=2606272230-k1225 | branch=case/2606272230-k1225-ci-proof-redo',
+      'AUTO_DENT_PHASE: TEST | result=pass | count=4',
+      'AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/1227',
+      'AUTO_DENT_PHASE: MERGE | url=https://github.com/Garsson-io/kaizen/pull/1227 | status=queued',
+    ].join('\n'), result);
+
+    expect(result.pickedIssue).toBe('#1225');
+    expect(result.pickedIssueTitle).toBe('redo CI proof gate');
+    expect(result.progressSteps?.map((s) => s.phase)).toEqual([
+      'PICK',
+      'EVALUATE',
+      'IMPLEMENT',
+      'TEST',
+      'PR',
+      'MERGE',
+    ]);
+    expect(result.progressSteps?.find((s) => s.phase === 'PR')?.url).toBe('https://github.com/Garsson-io/kaizen/pull/1227');
   });
 
   it('extracts multiple PR URLs from structured phase markers', () => {
@@ -3094,6 +3119,56 @@ describe('ensureBatchProgressIssue', () => {
   });
 });
 
+describe('updateBatchProgressIssue', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('posts issue, PR, review, and structured work-cycle artifacts', () => {
+    const spy = vi.spyOn(github, 'ghExec').mockReturnValue('https://github.com/Garsson-io/kaizen/issues/1226#issuecomment-1');
+    const result = makeRunResult({
+      pickedIssue: '#1225',
+      pickedIssueTitle: 'redo CI proof gate',
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+      reviewVerdict: 'fail',
+      reviewUrls: ['https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2'],
+      progressSteps: [
+        {
+          phase: 'PICK',
+          state: 'selected',
+          detail: '#1225 — redo CI proof gate',
+          url: 'https://github.com/Garsson-io/kaizen/issues/1225',
+        },
+        {
+          phase: 'REVIEW',
+          state: 'fail',
+          detail: 'https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2',
+          url: 'https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2',
+        },
+      ],
+    });
+
+    updateBatchProgressIssue(
+      'https://github.com/Garsson-io/kaizen/issues/1226',
+      'Garsson-io/kaizen',
+      1,
+      1,
+      1205,
+      result,
+    );
+
+    expect(spy).toHaveBeenCalledOnce();
+    const cmd = spy.mock.calls[0][0];
+    expect(cmd).toContain('gh issue comment 1226');
+    const body = JSON.parse(cmd.match(/--body (.+)$/)![1]);
+    expect(body).toContain('| **Issue worked** | https://github.com/Garsson-io/kaizen/issues/1225 — redo CI proof gate |');
+    expect(body).toContain('| **PR generated** | https://github.com/Garsson-io/kaizen/pull/1227 |');
+    expect(body).toContain('| **Review state** | fail (https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2) |');
+    expect(body).toContain('#### Observed Steps');
+    expect(body).toContain('| REVIEW | fail | https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2 | https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2 |');
+  });
+});
+
 describe('extractPlanText — plan section regex extraction (kaizen #901)', () => {
   it('extracts ## Plan section from issue body', () => {
     const body = '## Problem\n\nSomething broke.\n\n## Plan\n\n1. Fix A\n2. Fix B\n\n## Test Plan\n\nRun tests.';
@@ -3164,7 +3239,7 @@ describe('post-run runId lifetime (#1128 regression guard)', () => {
     const declaration = 'const runId = makeRunId(state.batch_id, runNum);';
     const declarationIndex = source.indexOf(declaration);
     const runStartIndex = source.indexOf('events.emitAt(runStartDate');
-    const reviewIndex = source.indexOf('const { reviewVerdict, reviewCostUsd } = await runReviewWiring');
+    const reviewIndex = source.indexOf('const { reviewVerdict, reviewCostUsd, reviewUrls } = await runReviewWiring');
 
     expect(declarationIndex).toBeGreaterThan(-1);
     expect(declarationIndex).toBeLessThan(runStartIndex);

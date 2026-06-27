@@ -112,6 +112,36 @@ describe('buildInFlightComment', () => {
 
     expect(comment).toContain('https://github.com/o/r/pull/1');
   });
+
+  it('shows observable work-cycle artifacts with URLs', () => {
+    const result = makeRunResult({
+      pickedIssue: '#1225',
+      pickedIssueTitle: 'redo CI proof gate',
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+      reviewVerdict: 'fail',
+      progressSteps: [
+        {
+          phase: 'PICK',
+          state: 'selected',
+          detail: '#1225 — redo CI proof gate',
+        },
+        {
+          phase: 'PR',
+          state: 'created',
+          detail: 'https://github.com/Garsson-io/kaizen/pull/1227',
+          url: 'https://github.com/Garsson-io/kaizen/pull/1227',
+        },
+      ],
+    });
+    const ctx: StreamContext = {};
+    const comment = buildInFlightComment(1, Date.now(), result, ctx, 'Garsson-io/kaizen');
+
+    expect(comment).toContain('| **Issue worked** | https://github.com/Garsson-io/kaizen/issues/1225 — redo CI proof gate |');
+    expect(comment).toContain('| **PR generated** | https://github.com/Garsson-io/kaizen/pull/1227 |');
+    expect(comment).toContain('| **Review state** | fail |');
+    expect(comment).toContain('#### Work Cycle');
+    expect(comment).toContain('| PR | created | https://github.com/Garsson-io/kaizen/pull/1227 | https://github.com/Garsson-io/kaizen/pull/1227 |');
+  });
 });
 
 // #1157 — semantic line budget for the live terminal stream.
