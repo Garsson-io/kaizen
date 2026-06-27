@@ -18,6 +18,7 @@
 import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { gh } from '../lib/gh-exec.js';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import { verifyIssueRef, type RefStatus } from './lib/issue-ref-verifier.js';
@@ -49,6 +50,8 @@ interface Impediment {
   reason?: string;
   impact_minutes?: number;
 }
+
+type GhRunner = (args: string[]) => string;
 
 // ── Audit logging ────────────────────────────────────────────────────
 
@@ -433,15 +436,12 @@ function defaultPostComment(prUrl: string, comment: string): void {
 // ── PRD detection (kaizen #694) ───────────────────────────────────────
 
 /** List changed files in a PR (best-effort). */
-function defaultGetPrFiles(prUrl: string): string[] {
+function defaultGetPrFiles(prUrl: string, ghRun: GhRunner = gh): string[] {
   const prNum = prUrl.match(/(\d+)$/)?.[1];
   const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
   if (!prNum || !repo) return [];
   try {
-    const out = execSync(
-      `gh pr diff ${prNum} --repo "${repo}" --name-only`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 15000 },
-    ).trim();
+    const out = ghRun(['pr', 'diff', prNum, '--repo', repo, '--name-only']).trim();
     return out ? out.split('\n').map(f => f.trim()).filter(Boolean) : [];
   } catch {
     return [];
@@ -479,6 +479,7 @@ export function processHookInput(
     stateDir?: string;
     postComment?: (prUrl: string, comment: string) => void;
     getPrFiles?: (prUrl: string) => string[];
+    gh?: GhRunner;
     /** Outcome predicate for filed/incident refs (injected in tests). */
     verifyRef?: (ref: string) => RefStatus;
   } = {},
@@ -493,6 +494,7 @@ export function processHookInput(
   const cmdLine = stripHeredocBody(command);
   const stateDir =
     options.stateDir ?? process.env.STATE_DIR ?? DEFAULT_STATE_DIR;
+  const ghRun = options.gh ?? gh;
 
   // ── Trigger 0: KAIZEN_UNFINISHED (kaizen #775) ────────────────
   // Check BEFORE the kaizen gate check — KAIZEN_UNFINISHED clears ALL gates
@@ -690,7 +692,8 @@ export function processHookInput(
     }
 
     // PRD-without-issues BLOCKING check (kaizen #683, upgraded from #694 advisory)
-    const getPrFiles = options.getPrFiles ?? defaultGetPrFiles;
+    const getPrFiles =
+      options.getPrFiles ?? ((prUrl: string) => defaultGetPrFiles(prUrl, ghRun));
     try {
       const files = getPrFiles(gatePrUrl);
       const prdBlock = detectPrdWithoutFiledIssues(
@@ -741,7 +744,7 @@ export function processHookInput(
 
     // Auto-close kaizen issues (best-effort)
     try {
-      autoCloseKaizenIssues(gatePrUrl);
+      autoCloseKaizenIssues(gatePrUrl, ghRun);
     } catch {}
 
     output.push(
@@ -754,20 +757,24 @@ export function processHookInput(
 }
 
 /** Auto-close kaizen issues referenced in a merged PR body. */
-function autoCloseKaizenIssues(prUrl: string): void {
+function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void {
   const prNum = prUrl.match(/(\d+)$/)?.[1];
   const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/)?.[1];
   if (!prNum || !repo) return;
 
   let prState: string;
   try {
-    prState = execSync(
-      `gh pr view ${prNum} --repo "${repo}" --json state --jq .state`,
-      {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      },
-    ).trim();
+    prState = ghRun([
+      'pr',
+      'view',
+      prNum,
+      '--repo',
+      repo,
+      '--json',
+      'state',
+      '--jq',
+      '.state',
+    ]).trim();
   } catch {
     return;
   }
@@ -775,13 +782,17 @@ function autoCloseKaizenIssues(prUrl: string): void {
 
   let prBody: string;
   try {
-    prBody = execSync(
-      `gh pr view ${prNum} --repo "${repo}" --json body --jq .body`,
-      {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      },
-    ).trim();
+    prBody = ghRun([
+      'pr',
+      'view',
+      prNum,
+      '--repo',
+      repo,
+      '--json',
+      'body',
+      '--jq',
+      '.body',
+    ]).trim();
   } catch {
     return;
   }
