@@ -40,7 +40,6 @@ import {
   color,
   type BatchState,
   type CleanupResult,
-  type RunResult,
   type PhaseMarker,
   type RunMetrics,
   type StreamContext,
@@ -55,49 +54,7 @@ import {
   shouldRunCodexProvider,
 } from './auto-dent-run.js';
 import * as github from './auto-dent-github.js';
-
-function makeBatchState(overrides: Partial<BatchState> = {}): BatchState {
-  return {
-    batch_id: 'batch-260322-2100-a1b2',
-    batch_start: 1742680800,
-    guidance: 'improve hooks reliability',
-    max_runs: 5,
-    cooldown: 30,
-    budget: '3.00',
-    max_failures: 3,
-    kaizen_repo: 'Garsson-io/kaizen',
-    host_repo: 'Garsson-io/kaizen',
-    run: 0,
-    prs: [],
-    issues_filed: [],
-    issues_closed: [],
-    cases: [],
-    consecutive_failures: 0,
-    current_cooldown: 30,
-    stop_reason: '',
-    last_issue: '',
-    last_pr: '',
-    last_case: '',
-    last_branch: '',
-    last_worktree: '',
-    ...overrides,
-  };
-}
-
-function makeRunResult(overrides: Partial<RunResult> = {}): RunResult {
-  return {
-    prs: [],
-    issuesFiled: [],
-    issuesClosed: [],
-    cases: [],
-    cost: 0,
-    toolCalls: 0,
-    stopRequested: false,
-    linesDeleted: 0,
-    issuesPruned: 0,
-    ...overrides,
-  };
-}
+import { makeBatchState, makeRunResult } from './auto-dent-test-utils.js';
 
 describe('buildPrompt', () => {
   it('includes run tag with batch id and run number', () => {

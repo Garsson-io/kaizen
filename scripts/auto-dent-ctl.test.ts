@@ -26,35 +26,8 @@ import {
   type WatchdogResult,
   type AggregateBatchRecord,
 } from './auto-dent-ctl.js';
-import type { BatchState, RunMetrics } from './auto-dent-run.js';
-
-function makeBatchState(overrides: Partial<BatchState> = {}): BatchState {
-  return {
-    batch_id: 'batch-260322-2100-a1b2',
-    batch_start: 1742680800,
-    guidance: 'improve hooks reliability',
-    max_runs: 5,
-    cooldown: 30,
-    budget: '3.00',
-    max_failures: 3,
-    kaizen_repo: 'Garsson-io/kaizen',
-    host_repo: 'Garsson-io/kaizen',
-    run: 0,
-    prs: [],
-    issues_filed: [],
-    issues_closed: [],
-    cases: [],
-    consecutive_failures: 0,
-    current_cooldown: 30,
-    stop_reason: '',
-    last_issue: '',
-    last_pr: '',
-    last_case: '',
-    last_branch: '',
-    last_worktree: '',
-    ...overrides,
-  };
-}
+import type { RunMetrics } from './auto-dent-run.js';
+import { makeBatchState } from './auto-dent-test-utils.js';
 
 function makeBatchInfo(overrides: Partial<BatchInfo> = {}): BatchInfo {
   return {
