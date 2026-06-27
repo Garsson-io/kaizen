@@ -22,8 +22,6 @@ const OPT_OUT = new Set<string>([
   'src/hooks/pr-kaizen-clear.ts',
   // PR quality hook still shells through an injected exec seam for gh metadata.
   'src/hooks/pr-quality-checks.ts',
-  // SessionStart cleanup still checks PR state through gh directly.
-  'src/hooks/session-cleanup.ts',
   // Worktree cleanup still shells through an injected exec seam for gh PR lists.
   'src/worktree-du.ts',
 ]);

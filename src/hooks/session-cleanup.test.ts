@@ -58,4 +58,54 @@ describe('cleanupMergedReviewStates', () => {
     // Stale file should be pruned by pruneStaleStateFiles
     expect(existsSync(join(TEST_STATE_DIR, 'stale-review'))).toBe(false);
   });
+
+  it('removes review state files for merged PRs', () => {
+    const prUrl = 'https://github.com/org/repo/pull/42';
+    writeState('needs-review-merged', prUrl, 'needs_review', 'feature');
+
+    const cleaned = cleanupMergedReviewStates(TEST_STATE_DIR, {
+      readPrState: vi.fn().mockReturnValue('MERGED'),
+    });
+
+    expect(cleaned).toBe(1);
+    expect(existsSync(join(TEST_STATE_DIR, 'needs-review-merged'))).toBe(false);
+  });
+
+  it('removes review state files for closed PRs', () => {
+    const prUrl = 'https://github.com/org/repo/pull/43';
+    writeState('needs-review-closed', prUrl, 'needs_review', 'feature');
+
+    const cleaned = cleanupMergedReviewStates(TEST_STATE_DIR, {
+      readPrState: vi.fn().mockReturnValue('CLOSED'),
+    });
+
+    expect(cleaned).toBe(1);
+    expect(existsSync(join(TEST_STATE_DIR, 'needs-review-closed'))).toBe(false);
+  });
+
+  it('keeps review state files for open PRs', () => {
+    const prUrl = 'https://github.com/org/repo/pull/44';
+    writeState('needs-review-open', prUrl, 'needs_review', 'feature');
+
+    const cleaned = cleanupMergedReviewStates(TEST_STATE_DIR, {
+      readPrState: vi.fn().mockReturnValue('OPEN'),
+    });
+
+    expect(cleaned).toBe(0);
+    expect(existsSync(join(TEST_STATE_DIR, 'needs-review-open'))).toBe(true);
+  });
+
+  it('ignores PR state lookup failures', () => {
+    const prUrl = 'https://github.com/org/repo/pull/45';
+    writeState('needs-review-failure', prUrl, 'needs_review', 'feature');
+
+    const cleaned = cleanupMergedReviewStates(TEST_STATE_DIR, {
+      readPrState: vi.fn().mockImplementation(() => {
+        throw new Error('gh failed');
+      }),
+    });
+
+    expect(cleaned).toBe(0);
+    expect(existsSync(join(TEST_STATE_DIR, 'needs-review-failure'))).toBe(true);
+  });
 });

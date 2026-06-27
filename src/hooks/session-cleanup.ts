@@ -2,13 +2,12 @@
  * session-cleanup.ts — SessionStart hook: prunes stale/merged state files.
  *
  * Moved out of find_needs_review_state() hot path in kaizen #452 —
- * was adding ~400ms per PreToolUse call due to gh pr view HTTP roundtrip.
+ * was adding ~400ms per PreToolUse call due to PR-state HTTP roundtrip.
  *
  * Part of kAIzen Agent Control Flow — kaizen #786
  * Bash predecessor deleted in #790.
  */
 
-import { execSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { readHookInput } from './hook-io.js';
@@ -17,14 +16,25 @@ import {
   parseStateFile,
   pruneStaleStateFiles,
 } from './state-utils.js';
+import { gh } from '../lib/gh-exec.js';
+
+interface CleanupMergedReviewStatesOptions {
+  readPrState?: (prUrl: string) => string;
+}
+
+function defaultReadPrState(prUrl: string): string {
+  return gh(['pr', 'view', prUrl, '--json', 'state', '--jq', '.state'], 5000);
+}
 
 /**
  * Clean up state files for PRs that have been merged or closed.
- * Uses gh pr view to check PR state — only runs at session start, not hot path.
+ * Uses shared gh-exec helper to check PR state — only runs at session start, not hot path.
  */
 export function cleanupMergedReviewStates(
   stateDir: string = DEFAULT_STATE_DIR,
+  opts: CleanupMergedReviewStatesOptions = {},
 ): number {
+  const readPrState = opts.readPrState ?? defaultReadPrState;
   // First prune stale files by age
   pruneStaleStateFiles(stateDir);
 
@@ -40,11 +50,7 @@ export function cleanupMergedReviewStates(
       if (state.STATUS !== 'needs_review') continue;
       if (!state.PR_URL) continue;
 
-      // Check if PR is merged or closed
-      const prState = execSync(
-        `gh pr view "${state.PR_URL}" --json state --jq .state`,
-        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 },
-      ).trim();
+      const prState = readPrState(state.PR_URL).trim();
 
       if (prState === 'MERGED' || prState === 'CLOSED') {
         unlinkSync(filepath);
