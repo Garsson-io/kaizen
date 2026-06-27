@@ -26,6 +26,7 @@ import {
   buildTemplateVars,
   renderTemplate,
   loadPromptTemplate,
+  readState,
 } from './auto-dent-run.js';
 import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
 import type { PhaseProvider } from './auto-dent-provider.js';
@@ -134,10 +135,6 @@ const RawPlanThemeInputSchema = z.object({
 
 export function validatePlanningOutputContract(raw: unknown): boolean {
   return PlanningOutputSchema.safeParse(raw).success;
-}
-
-function readState(stateFile: string): BatchState {
-  return JSON.parse(readFileSync(stateFile, 'utf8'));
 }
 
 function getRepoRoot(): string {
