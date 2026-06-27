@@ -33,7 +33,7 @@
  *   npx tsx src/cli-structured-data.ts retrieve-iteration --pr 903 --repo R
  */
 
-import { readFileSync, mkdirSync, appendFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import YAML from 'yaml';
 import {
   prTarget,
@@ -61,6 +61,10 @@ import {
   type ReviewFindingData,
   type StoreReviewSummaryOptions,
 } from './structured-data.js';
+import {
+  buildReviewSentinelRecord,
+  serializeReviewSentinel,
+} from './review-sentinel.js';
 import { normalizeReviewFindingData, validateReviewFindingPayload, summarizeFindingStatuses } from './review-finding-contract.js';
 
 export type CliArgs = Record<string, string> & { command: string };
@@ -125,12 +129,49 @@ export function resolveRound(a: CliArgs): number {
   return 1;
 }
 
+function parseFindingMeta(content: string): { done: number; partial: number; missing: number } | null {
+  const match = content.match(/^<!-- meta:(\{.*\}) -->/);
+  if (!match) return null;
+  try {
+    const meta = JSON.parse(match[1]) as { done?: number; partial?: number; missing?: number };
+    return {
+      done: Number.isInteger(meta.done) ? meta.done! : 0,
+      partial: Number.isInteger(meta.partial) ? meta.partial! : 0,
+      missing: Number.isInteger(meta.missing) ? meta.missing! : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function writeReviewSentinel(repo: string, pr: string | undefined, round: number): void {
+  if (!pr) return;
   try {
     const stateDir = process.env.STATE_DIR ?? '/tmp/.pr-review-state';
-    const stateKey = `${repo.replace('/', '_')}_${pr ?? ''}`;
+    const stateKey = `${repo.replace('/', '_')}_${pr}`;
+    const target = prTarget(pr, repo);
+    const dimensionsReviewed = listReviewDimensions(target, round);
+    const totals = dimensionsReviewed.reduce(
+      (acc, dim) => {
+        const content = readReviewFinding(target, round, dim);
+        const meta = content ? parseFindingMeta(content) : null;
+        if (!meta) return acc;
+        acc.totalDone += meta.done;
+        acc.totalPartial += meta.partial;
+        acc.totalMissing += meta.missing;
+        acc.findingCount += meta.done + meta.partial + meta.missing;
+        return acc;
+      },
+      { findingCount: 0, totalDone: 0, totalPartial: 0, totalMissing: 0 },
+    );
+    const record = buildReviewSentinelRecord({
+      prUrl: `https://github.com/${repo}/pull/${pr}`,
+      round,
+      dimensionsReviewed,
+      ...totals,
+    });
     mkdirSync(stateDir, { recursive: true });
-    appendFileSync(`${stateDir}/${stateKey}.reviewed-r${round}`, `reviewed_at=${new Date().toISOString()}\n`);
+    writeFileSync(`${stateDir}/${stateKey}.reviewed-r${round}`, serializeReviewSentinel(record));
   } catch {
     // best effort — sentinel is advisory
   }
