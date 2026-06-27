@@ -122,6 +122,40 @@ describe('writeFinalClaimArtifact (#1145)', () => {
 });
 
 describe('foldFinalClaimWarningsIntoProcess (#1145)', () => {
+  it('fixture #1150: a valid structured success claim is not proof without durable evidence', () => {
+    const claim = validClaim({
+      tests: {
+        status: 'pass',
+        command: 'npm test',
+        count: 42,
+        evidence: ['claimed green'],
+      },
+      review_status: 'pass',
+      reflection_status: 'done',
+    });
+
+    const warnings = compareFinalClaimToEvidence(claim, {
+      prs: [],
+      cases: [],
+      testEvidence: false,
+      reviewEvidence: false,
+      reflectionEvidence: false,
+    });
+    const folded = foldFinalClaimWarningsIntoProcess(
+      'pass',
+      0,
+      'process verdict pass (durable evidence complete)',
+      true,
+      warnings,
+    );
+
+    expect(warnings).toContain('claim says tests passed but durable test evidence is missing');
+    expect(warnings).toContain('claim says review passed but durable review evidence is missing');
+    expect(warnings).toContain('claim says reflection completed but durable reflection evidence is missing');
+    expect(folded.verdict).toBe('process-incomplete');
+    expect(folded.issueCount).toBeGreaterThanOrEqual(3);
+  });
+
   it('turns an otherwise passing process verdict into process-incomplete for valid contradictory claims', () => {
     const folded = foldFinalClaimWarningsIntoProcess(
       'pass',

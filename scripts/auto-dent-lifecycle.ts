@@ -168,6 +168,7 @@ export interface EvidenceVerification {
 export type ProcessVerdict = 'pass' | 'process-incomplete' | 'fail-open-warning';
 export type ProcessCheckStatus = 'pass' | 'fail' | 'warning' | 'not-applicable';
 export type MergeReadinessEvidence = 'ready' | 'not-ready' | 'unknown' | 'not-applicable';
+export type ProviderReviewEvidenceStatus = 'pass' | 'fail' | 'skipped' | 'missing' | 'pending';
 
 export interface ProcessEvidence {
   /** Durable plan or claimed-plan assignment evidence exists. */
@@ -180,6 +181,12 @@ export interface ProcessEvidence {
   testEvidence?: boolean;
   /** Review-battery verdict exists (pass/fail both count as evidence). */
   reviewEvidence?: boolean;
+  /**
+   * Optional per-provider review evidence for hybrid/provider-comparison runs.
+   * `pass` and `fail` both prove a provider review completed; skipped/missing/pending
+   * mean the worker cannot claim review completion for that provider.
+   */
+  providerReviewEvidence?: Record<string, ProviderReviewEvidenceStatus>;
   /** Durable reflection output exists. */
   reflectionEvidence?: boolean;
   /** Merge readiness signal for PR-producing runs. */
@@ -187,10 +194,24 @@ export interface ProcessEvidence {
 }
 
 export interface ProcessCheck {
-  id: 'plan' | 'implementation' | 'pr' | 'test' | 'review' | 'reflection' | 'merge-readiness';
+  id: 'plan' | 'implementation' | 'pr' | 'test' | 'review' | 'review-provider' | 'reflection' | 'merge-readiness';
   status: ProcessCheckStatus;
   reason: string;
   remediation?: string;
+}
+
+function completedReviewProviderStatuses(providerEvidence: Record<string, ProviderReviewEvidenceStatus>): {
+  complete: boolean;
+  incompleteProviders: string[];
+} {
+  const entries = Object.entries(providerEvidence);
+  if (entries.length === 0) {
+    return { complete: false, incompleteProviders: ['(none recorded)'] };
+  }
+  const incompleteProviders = entries
+    .filter(([, status]) => status !== 'pass' && status !== 'fail')
+    .map(([provider, status]) => `${provider}:${status}`);
+  return { complete: incompleteProviders.length === 0, incompleteProviders };
 }
 
 export interface ProcessValidation {
@@ -294,6 +315,23 @@ export function validateProcessEvidence(
     'review evidence exists',
     'run the review battery and store a pass/fail verdict',
   );
+
+  if (needsReview && evidence.providerReviewEvidence !== undefined) {
+    const providerReview = completedReviewProviderStatuses(evidence.providerReviewEvidence);
+    checks.push(providerReview.complete
+      ? {
+        id: 'review-provider',
+        status: 'pass',
+        reason: 'all provider review attempts have durable pass/fail evidence',
+      }
+      : {
+        id: 'review-provider',
+        status: 'fail',
+        reason: `provider review evidence incomplete: ${providerReview.incompleteProviders.join(', ')}`,
+        remediation: 'wait for every selected provider review to finish and store its pass/fail evidence before claiming review success',
+      });
+  }
+
   addCheck(
     checks,
     'reflection',
