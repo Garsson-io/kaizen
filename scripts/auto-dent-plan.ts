@@ -35,6 +35,20 @@ export interface PlanItem {
   status: 'pending' | 'assigned' | 'done' | 'skipped';
   item_type?: 'leaf' | 'decompose';
   parent_epic?: string;
+  /** Theme id this item belongs to (a coordinated cluster of related issues). */
+  theme?: string;
+}
+
+/**
+ * A coordinated cluster of related work items — the unit of "bunching" that
+ * lets a batch drive 3-5 related PRs to completion before switching topics,
+ * instead of hopping across unrelated issues by score (#941).
+ */
+export interface PlanTheme {
+  id: string;
+  title: string;
+  rationale: string;
+  issues: string[];
 }
 
 export interface BatchPlan {
@@ -44,6 +58,8 @@ export interface BatchPlan {
   wip_excluded: string[];
   epics_scanned: string[];
   decomposition_candidates?: string[];
+  /** Coordinated clusters of related items (#941). Derived if not LLM-provided. */
+  themes?: PlanTheme[];
 }
 
 function readState(stateFile: string): BatchState {
@@ -128,9 +144,12 @@ export function validatePlan(raw: any): BatchPlan | null {
       approach: String(item.approach || ''),
       status: 'pending' as const,
       ...(item.item_type === 'decompose' ? { item_type: 'decompose' as const, parent_epic: item.parent_epic ? String(item.parent_epic) : undefined } : { item_type: 'leaf' as const }),
+      ...(item.theme ? { theme: String(item.theme) } : {}),
     }));
 
   if (items.length === 0) return null;
+
+  const themes = validateThemes(raw.themes);
 
   return {
     created_at: raw.created_at || new Date().toISOString(),
@@ -139,7 +158,186 @@ export function validatePlan(raw: any): BatchPlan | null {
     wip_excluded: Array.isArray(raw.wip_excluded) ? raw.wip_excluded : [],
     epics_scanned: Array.isArray(raw.epics_scanned) ? raw.epics_scanned : [],
     decomposition_candidates: Array.isArray(raw.decomposition_candidates) ? raw.decomposition_candidates : [],
+    ...(themes.length > 0 ? { themes } : {}),
   };
+}
+
+/**
+ * Validate and normalize an LLM-provided themes array. Drops malformed
+ * entries (missing id/title or empty issue list) and de-duplicates issues
+ * across themes (first theme to claim an issue wins) so an item is never
+ * stamped with two themes — which would make {@link themeProgress} miscount.
+ */
+export function validateThemes(raw: any): PlanTheme[] {
+  if (!Array.isArray(raw)) return [];
+  const claimed = new Set<string>();
+  const out: PlanTheme[] = [];
+  for (const t of raw) {
+    if (!t || !t.id || !t.title || !Array.isArray(t.issues)) continue;
+    const issues = t.issues
+      .map((i: any) => String(i))
+      .filter((i: string) => !claimed.has(i));
+    if (issues.length === 0) continue;
+    for (const i of issues) claimed.add(i);
+    out.push({
+      id: String(t.id),
+      title: String(t.title),
+      rationale: String(t.rationale || ''),
+      issues,
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Thematic clustering (#941) — group related issues into coordinated bundles.
+// ---------------------------------------------------------------------------
+
+const TITLE_STOPWORDS = new Set([
+  'the', 'a', 'an', 'of', 'to', 'and', 'or', 'for', 'in', 'on', 'with', 'is',
+  'are', 'be', 'not', 'no', 'as', 'at', 'by', 'from', 'into', 'via', 'auto',
+  'dent', 'kaizen', 'fix', 'add', 'l1', 'l2', 'l3', 'meta', 'epic', 'feat',
+  'should', 'when', 'this', 'that', 'it', 'its', 'but', 'use', 'using',
+]);
+
+/** Tokenize a title into significant lowercase tokens (stopwords removed). */
+export function titleTokens(title: string): Set<string> {
+  const tokens = title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/[\s-]+/)
+    .filter((t) => t.length >= 3 && !TITLE_STOPWORDS.has(t));
+  return new Set(tokens);
+}
+
+/** True when two items belong in the same coordinated theme. */
+function itemsRelated(a: PlanItem, b: PlanItem): boolean {
+  if (a.parent_epic && b.parent_epic && a.parent_epic === b.parent_epic) return true;
+  const ta = titleTokens(a.title);
+  const tb = titleTokens(b.title);
+  let shared = 0;
+  for (const t of ta) if (tb.has(t)) shared++;
+  return shared >= 2;
+}
+
+/** Slugify a string into a stable theme id. */
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'theme';
+}
+
+/**
+ * Derive coordinated themes from a flat item list using connected components
+ * over the {@link itemsRelated} predicate (union-find). Components of size >= 2
+ * become themes; singletons stay themeless so they are claimed last.
+ *
+ * Pure and deterministic: input order in → stable theme ids/order out. No
+ * Date/random — safe under auto-dent's resume constraints.
+ */
+export function deriveThemes(items: PlanItem[]): PlanTheme[] {
+  const n = items.length;
+  const parent = Array.from({ length: n }, (_, i) => i);
+  const find = (x: number): number => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  };
+  const union = (x: number, y: number) => {
+    const rx = find(x);
+    const ry = find(y);
+    if (rx !== ry) parent[Math.max(rx, ry)] = Math.min(rx, ry);
+  };
+
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (itemsRelated(items[i], items[j])) union(i, j);
+    }
+  }
+
+  // Group indices by component root, preserving first-seen order.
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root)!.push(i);
+  }
+
+  const themes: PlanTheme[] = [];
+  const usedIds = new Set<string>();
+  for (const idxs of groups.values()) {
+    if (idxs.length < 2) continue; // singletons stay themeless
+    const members = idxs.map((i) => items[i]);
+    // Theme label: shared parent_epic, else most common significant token.
+    const epic = members[0].parent_epic;
+    const sameEpic = epic && members.every((m) => m.parent_epic === epic);
+    let label: string;
+    if (sameEpic) {
+      label = `epic ${epic}`;
+    } else {
+      const freq = new Map<string, number>();
+      for (const m of members) for (const t of titleTokens(m.title)) freq.set(t, (freq.get(t) || 0) + 1);
+      const best = [...freq.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0];
+      label = best ? best[0] : members[0].issue;
+    }
+    let id = slugify(label);
+    let suffix = 2;
+    while (usedIds.has(id)) id = `${slugify(label)}-${suffix++}`;
+    usedIds.add(id);
+    themes.push({
+      id,
+      title: label,
+      rationale: `${members.length} related items grouped by ${sameEpic ? 'shared parent epic' : 'shared topic'}`,
+      issues: members.map((m) => m.issue),
+    });
+  }
+  return themes;
+}
+
+/**
+ * Ensure a plan has themes and that each item is stamped with its theme id.
+ * If the plan already carries LLM-provided themes, they are respected and
+ * used to stamp items; otherwise themes are derived deterministically.
+ * Idempotent.
+ */
+export function ensureThemes(plan: BatchPlan): BatchPlan {
+  const themes = plan.themes && plan.themes.length > 0 ? plan.themes : deriveThemes(plan.items);
+  const issueToTheme = new Map<string, string>();
+  for (const t of themes) for (const issue of t.issues) issueToTheme.set(issue, t.id);
+  for (const item of plan.items) {
+    const tid = issueToTheme.get(item.issue);
+    if (tid) item.theme = tid;
+  }
+  plan.themes = themes;
+  return plan;
+}
+
+/** Per-theme completion counts for observability and steering. */
+export interface ThemeProgress {
+  id: string;
+  title: string;
+  total: number;
+  done: number;
+  pending: number;
+  assigned: number;
+  skipped: number;
+}
+
+export function themeProgress(plan: BatchPlan): ThemeProgress[] {
+  const themes = plan.themes || [];
+  return themes.map((t) => {
+    const members = plan.items.filter((i) => i.theme === t.id);
+    const count = (s: PlanItem['status']) => members.filter((m) => m.status === s).length;
+    return {
+      id: t.id,
+      title: t.title,
+      total: members.length,
+      done: count('done'),
+      pending: count('pending'),
+      assigned: count('assigned'),
+      skipped: count('skipped'),
+    };
+  });
 }
 
 /**
@@ -237,14 +435,50 @@ export function readPlan(logDir: string): BatchPlan | null {
 }
 
 /**
- * Get the next pending item from a plan.
- * Marks it as 'assigned' in the plan file.
+ * Choose the next pending item from a plan, preferring coordination:
+ *
+ * - If a theme is already in progress (has an `assigned`/`done`/`skipped`
+ *   member) and still has `pending` members, claim the highest-score pending
+ *   item from THAT theme — drive the bundle to completion before switching.
+ * - Otherwise claim the highest-score pending item overall, which naturally
+ *   starts the strongest theme first.
+ *
+ * When the plan carries no themes, this reduces to the legacy behavior
+ * (first pending item in plan/array order) — a strict no-op for theme-less plans.
+ */
+export function selectNextItem(plan: BatchPlan): PlanItem | null {
+  const pending = plan.items.filter((i) => i.status === 'pending');
+  if (pending.length === 0) return null;
+
+  const themes = plan.themes || [];
+  if (themes.length > 0) {
+    const inProgress = new Set(
+      plan.items
+        .filter((i) => i.theme && i.status !== 'pending')
+        .map((i) => i.theme as string),
+    );
+    if (inProgress.size > 0) {
+      const continuable = pending
+        .filter((i) => i.theme && inProgress.has(i.theme))
+        .sort((a, b) => b.score - a.score);
+      if (continuable.length > 0) return continuable[0];
+    }
+    // No in-progress theme has pending work — start the strongest theme.
+    return [...pending].sort((a, b) => b.score - a.score)[0];
+  }
+
+  // Theme-less plan: legacy behavior — first pending in existing order.
+  return pending[0];
+}
+
+/**
+ * Get the next item to work from a plan and mark it 'assigned' in the file.
  */
 export function claimNextItem(logDir: string): PlanItem | null {
   const plan = readPlan(logDir);
   if (!plan) return null;
 
-  const next = plan.items.find((item) => item.status === 'pending');
+  const next = selectNextItem(plan);
   if (!next) return null;
 
   next.status = 'assigned';
@@ -320,6 +554,13 @@ export function formatPlanSummary(plan: BatchPlan): string {
   if (plan.decomposition_candidates && plan.decomposition_candidates.length > 0) {
     lines.push(`  Decomposition candidates: ${plan.decomposition_candidates.length}`);
   }
+  const progress = themeProgress(plan);
+  if (progress.length > 0) {
+    lines.push(`  Themes (${progress.length} coordinated bundle${progress.length === 1 ? '' : 's'}):`);
+    for (const t of progress) {
+      lines.push(`    - ${t.title} [${t.done}/${t.total}] ${t.id}`);
+    }
+  }
   return lines.join('\n');
 }
 
@@ -346,6 +587,7 @@ async function main(): Promise<void> {
     process.exit(0); // Non-fatal: batch continues without a plan
   }
 
+  ensureThemes(plan);
   const planFile = resolve(logDir, 'plan.json');
   writeFileSync(planFile, JSON.stringify(plan, null, 2) + '\n');
 

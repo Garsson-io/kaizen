@@ -55,6 +55,16 @@ PRs already created (avoid overlapping work): {{prs}}
 
 7. For each selected item, write a one-sentence approach.
 
+8. **Group related items into coordinated themes (aim for 3-5 items per theme).**
+   Issues that share a root cause, a file/subsystem, or a parent epic belong
+   together so the batch drives a coherent body of work to completion instead
+   of hopping across unrelated issues by score. Give each theme a kebab-case
+   `id`, a human `title`, a one-line `rationale`, and the member issue refs.
+   Stamp each item with its `theme` id. Leave genuinely unrelated singletons
+   out of themes. (If you omit `themes`, auto-dent derives them
+   deterministically from shared epics + title overlap — but your semantic
+   grouping is better, so prefer providing them.)
+
 ## Output
 
 You MUST output a single JSON code block with this exact structure:
@@ -70,7 +80,8 @@ You MUST output a single JSON code block with this exact structure:
       "score": 0.0,
       "approach": "one sentence describing the implementation approach",
       "status": "pending",
-      "item_type": "leaf"
+      "item_type": "leaf",
+      "theme": "theme-id"
     },
     {
       "issue": "#NNN",
@@ -82,6 +93,14 @@ You MUST output a single JSON code block with this exact structure:
       "parent_epic": "#NNN"
     }
   ],
+  "themes": [
+    {
+      "id": "theme-id",
+      "title": "Short theme title",
+      "rationale": "why these issues belong together (shared root cause / file / epic)",
+      "issues": ["#NNN", "#NNN"]
+    }
+  ],
   "wip_excluded": ["#NNN (reason)"],
   "epics_scanned": ["#NNN title"],
   "decomposition_candidates": ["#NNN title — reason it needs decomposition"]
@@ -91,5 +110,10 @@ You MUST output a single JSON code block with this exact structure:
 Notes on `item_type`:
 - `"leaf"` — a concrete issue ready for implementation
 - `"decompose"` — an abstract item (epic/PRD/horizon) that needs to be broken into concrete issues first. The agent should file 1-3 child issues, then implement the most actionable one.
+
+Notes on `themes`:
+- Optional but strongly preferred — it is the mechanism that lets the batch
+  finish a related cluster of issues as one coordinated effort (#941).
+- Every issue ref in a theme's `issues` array should also appear as an item.
 
 Do NOT include any text outside the JSON code block. The output will be parsed programmatically.

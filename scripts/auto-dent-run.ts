@@ -27,7 +27,7 @@ import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { firstHookReason } from './hook-signals.js';
-import { claimNextItem, markItem, resetAssignedItems } from './auto-dent-plan.js';
+import { claimNextItem, markItem, resetAssignedItems, readPlan, themeProgress } from './auto-dent-plan.js';
 import { writeAttachment, addSection } from '../src/section-editor.js';
 import {
   reviewBattery,
@@ -386,8 +386,19 @@ export function buildTemplateVars(
           lines.push(`- **Parent epic:** ${planItem.parent_epic}`);
         }
       }
+      // Surface theme membership so the run knows it is continuing a
+      // coordinated bundle of related work, not a one-off issue (#941).
+      if (planItem.theme) {
+        const plan = readPlan(logDir);
+        const tp = plan ? themeProgress(plan).find((t) => t.id === planItem.theme) : undefined;
+        if (tp) {
+          lines.push(
+            `- **Theme:** ${tp.title} (${tp.done}/${tp.total} complete) — part of a coordinated bundle of related issues; keep this PR scoped to the theme and prefer finishing the theme before switching topics`,
+          );
+        }
+      }
       planAssignment = lines.join('\n');
-      console.log(`  [plan] assigned ${planItem.issue}: ${planItem.title}${planItem.item_type === 'decompose' ? ' [DECOMPOSE]' : ''}`);
+      console.log(`  [plan] assigned ${planItem.issue}: ${planItem.title}${planItem.item_type === 'decompose' ? ' [DECOMPOSE]' : ''}${planItem.theme ? ` [theme:${planItem.theme}]` : ''}`);
     }
 
     // Load reflection insights from prior mid-batch reflection (#603)
