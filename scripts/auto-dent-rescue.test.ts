@@ -43,44 +43,64 @@ describe('classifyRunExit', () => {
 
 describe('decideRescueAction', () => {
   it('does nothing when there is no PR and no work', () => {
-    const a = decideRescueAction({ commitsAheadBase: 0, unpushedCommits: 0, dirtyTotal: 0, existingOpenPr: null });
+    const a = decideRescueAction({ commitsAheadBase: 0, unpushedCommits: 0, dirtyTotal: 0, existingOpenPr: null, abnormal: true });
     expect(a.kind).toBe('none');
   });
 
-  it('creates a draft PR when there is no PR but commits ahead', () => {
-    const a = decideRescueAction({ commitsAheadBase: 3, unpushedCommits: 0, dirtyTotal: 0, existingOpenPr: null });
+  it('creates a draft PR when an abnormal exit stranded commits with no PR', () => {
+    const a = decideRescueAction({ commitsAheadBase: 3, unpushedCommits: 0, dirtyTotal: 0, existingOpenPr: null, abnormal: true });
     expect(a.kind).toBe('create-draft');
     expect(a.commitDirty).toBe(false);
   });
 
-  it('creates a draft PR and commits dirty when only dirty files exist', () => {
-    const a = decideRescueAction({ commitsAheadBase: 0, unpushedCommits: 0, dirtyTotal: 2, existingOpenPr: null });
+  it('creates a draft PR and commits dirty when an abnormal exit left only dirty files', () => {
+    const a = decideRescueAction({ commitsAheadBase: 0, unpushedCommits: 0, dirtyTotal: 2, existingOpenPr: null, abnormal: true });
     expect(a.kind).toBe('create-draft');
     expect(a.commitDirty).toBe(true);
+  });
+
+  // #1289 core: a CLEAN exit that ends with worktree commits and no PR is
+  // intentional (discovery output / agent stopped on purpose) — never manufacture
+  // a spurious "NOT VALIDATED" draft for it. This is the over-eager inverse gate
+  // the exit classification was built to honor but was previously discarded.
+  it('does nothing when a clean exit left commits ahead with no PR (#1289)', () => {
+    const a = decideRescueAction({ commitsAheadBase: 3, unpushedCommits: 0, dirtyTotal: 0, existingOpenPr: null, abnormal: false });
+    expect(a.kind).toBe('none');
+    expect(a.commitDirty).toBe(false);
+    expect(a.reason).toMatch(/clean exit|#1289/i);
+  });
+
+  it('does nothing when a clean exit left only dirty files with no PR (#1289)', () => {
+    const a = decideRescueAction({ commitsAheadBase: 0, unpushedCommits: 0, dirtyTotal: 2, existingOpenPr: null, abnormal: false });
+    expect(a.kind).toBe('none');
+    expect(a.commitDirty).toBe(false);
   });
 
   // Regression guard: a healthy open PR (commits ahead of main but already
   // pushed, nothing dirty) must NOT receive a spurious rescue comment.
   it('does nothing for a healthy open PR with no unpushed or dirty work', () => {
-    const a = decideRescueAction({ commitsAheadBase: 5, unpushedCommits: 0, dirtyTotal: 0, existingOpenPr: 'https://x/pr/1' });
+    const a = decideRescueAction({ commitsAheadBase: 5, unpushedCommits: 0, dirtyTotal: 0, existingOpenPr: 'https://x/pr/1', abnormal: true });
     expect(a.kind).toBe('none');
   });
 
-  it('pushes to the existing PR when there are unpushed commits', () => {
-    const a = decideRescueAction({ commitsAheadBase: 5, unpushedCommits: 2, dirtyTotal: 0, existingOpenPr: 'https://x/pr/1' });
+  // push-existing is exit-agnostic: extending an already-open PR with unpushed
+  // work is correct whether the run crashed or stopped cleanly (#1289).
+  it('pushes to the existing PR when there are unpushed commits (even on a clean exit)', () => {
+    const a = decideRescueAction({ commitsAheadBase: 5, unpushedCommits: 2, dirtyTotal: 0, existingOpenPr: 'https://x/pr/1', abnormal: false });
     expect(a.kind).toBe('push-existing');
     expect(a.commitDirty).toBe(false);
   });
 
-  it('pushes to the existing PR and commits dirty when files are dirty', () => {
-    const a = decideRescueAction({ commitsAheadBase: 5, unpushedCommits: 0, dirtyTotal: 1, existingOpenPr: 'https://x/pr/1' });
+  it('pushes to the existing PR and commits dirty when files are dirty (even on a clean exit)', () => {
+    const a = decideRescueAction({ commitsAheadBase: 5, unpushedCommits: 0, dirtyTotal: 1, existingOpenPr: 'https://x/pr/1', abnormal: false });
     expect(a.kind).toBe('push-existing');
     expect(a.commitDirty).toBe(true);
   });
 
   // #1284 supersede guard / #1282 regression: a branch whose most-recent PR
   // merged with no open PR must NOT get a fresh rescue PR even with work ahead
-  // of base — pushing to a merged branch violates I7.
+  // of base — pushing to a merged branch violates I7. The I7 guard takes
+  // precedence over create-draft even when the exit was abnormal.
   it('does nothing when the most-recent PR merged with no open PR (I7 supersede)', () => {
     const a = decideRescueAction({
       commitsAheadBase: 3,
@@ -88,6 +108,7 @@ describe('decideRescueAction', () => {
       dirtyTotal: 2,
       existingOpenPr: null,
       mostRecentMerged: true,
+      abnormal: true,
     });
     expect(a.kind).toBe('none');
     expect(a.commitDirty).toBe(false);
@@ -103,6 +124,7 @@ describe('decideRescueAction', () => {
       dirtyTotal: 0,
       existingOpenPr: 'https://x/pr/1',
       mostRecentMerged: true,
+      abnormal: false,
     });
     expect(a.kind).toBe('push-existing');
   });
@@ -115,6 +137,7 @@ describe('decideRescueAction', () => {
       dirtyTotal: 0,
       existingOpenPr: null,
       mostRecentMerged: true,
+      abnormal: true,
     });
     expect(a.kind).toBe('none');
   });
@@ -215,7 +238,7 @@ function makeReadDirty(total: number) {
 
 describe('rescueTarget orchestration', () => {
   const worktree = mkdtempSync(join(tmpdir(), 'rescue-wt-'));
-  const ctx = { repo: 'owner/repo', runTag: 'b/run-1', runId: 'b-r1', failureReason: 'timeout' };
+  const ctx = { repo: 'owner/repo', runTag: 'b/run-1', runId: 'b-r1', failureReason: 'timeout', abnormal: true };
 
   it('creates a draft PR when work is stranded with no PR', () => {
     const gitLog: string[][] = [];
@@ -234,6 +257,39 @@ describe('rescueTarget orchestration', () => {
     expect(gitLog.some((a) => a.includes('push') && a.includes('--no-verify'))).toBe(true);
     expect(ghLog.some((a) => a[0] === 'pr' && a[1] === 'list' && a.includes('--repo') && a.includes('owner/repo'))).toBe(true);
     expect(ghLog.some((a) => a[1] === 'create' && a.includes('--draft'))).toBe(true);
+  });
+
+  // #1289 end-to-end: a CLEAN-exit worktree (ctx.abnormal=false) with commits and
+  // no PR must produce NO git push and NO gh pr create — the rescue declines to
+  // manufacture a spurious "NOT VALIDATED" draft for work nobody abandoned.
+  it('does nothing for a clean-exit worktree with commits and no PR (#1289)', () => {
+    const gitLog: string[][] = [];
+    const ghLog: string[][] = [];
+    const out = rescueTarget(
+      { worktree, branch: 'case/x' },
+      { ...ctx, abnormal: false, failureReason: 'clean exit' },
+      { git: makeFakeGit({ aheadBase: 2 }, gitLog), gh: makeFakeGh(null, ghLog), readDirty: makeReadDirty(1) },
+    );
+    expect(out.action).toBe('none');
+    expect(out.pushed).toBe(false);
+    expect(out.prUrl).toBeUndefined();
+    expect(gitLog.some((a) => a.includes('push'))).toBe(false);
+    expect(ghLog.some((a) => a[1] === 'create' || a[1] === 'comment')).toBe(false);
+  });
+
+  // Even on a clean exit, an already-open PR is extended (push-existing is
+  // exit-agnostic): committed-but-unpushed work still belongs on the PR.
+  it('extends an open PR with unpushed work even on a clean exit (#1289)', () => {
+    const gitLog: string[][] = [];
+    const ghLog: string[][] = [];
+    const out = rescueTarget(
+      { worktree, branch: 'case/x' },
+      { ...ctx, abnormal: false, failureReason: 'clean exit' },
+      { git: makeFakeGit({ aheadBase: 5, unpushed: 2 }, gitLog), gh: makeFakeGh('https://x/pr/1', ghLog), readDirty: makeReadDirty(0) },
+    );
+    expect(out.action).toBe('push-existing');
+    expect(out.prUrl).toBe('https://x/pr/1');
+    expect(ghLog.some((a) => a[1] === 'comment')).toBe(true);
   });
 
   it('comments on the existing PR and pushes when extending it', () => {
@@ -318,7 +374,7 @@ describe('rescueRun + collectRunWorktrees', () => {
     const worktree = mkdtempSync(join(tmpdir(), 'rescue-multi-'));
     const outs = rescueRun(
       [{ worktree, branch: 'case/a' }],
-      { repo: 'o/r', runTag: 'b/run-1', runId: 'b-r1', failureReason: 'timeout' },
+      { repo: 'o/r', runTag: 'b/run-1', runId: 'b-r1', failureReason: 'timeout', abnormal: true },
       { git: makeFakeGit({ aheadBase: 1 }, []), gh: makeFakeGh(null, []), readDirty: makeReadDirty(0) },
     );
     expect(outs).toHaveLength(1);
