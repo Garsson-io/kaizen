@@ -17,10 +17,11 @@ const REPO_ROOT = join(__dirname, '..', '..');
 const SRC_DIR = join(REPO_ROOT, 'src');
 const CANONICAL_HELPER = 'src/lib/gh-exec.ts';
 
-const OPT_OUT = new Set<string>([
-  // PR quality hook still shells through an injected exec seam for gh metadata.
-  'src/hooks/pr-quality-checks.ts',
-]);
+// Terminal state of the gh-exec DRY migration (#1294): every production file
+// now routes GitHub-CLI calls through src/lib/gh-exec.ts. pr-quality-checks.ts
+// was migrated in #1305 and pr-kaizen-clear.ts in #1306 — the ratchet is empty.
+// Any new direct-gh caller fails the invariant below with no escape hatch.
+const OPT_OUT = new Set<string>([]);
 
 function repoRelative(path: string): string {
   return relative(REPO_ROOT, path).replace(/\\/g, '/');

@@ -45,11 +45,30 @@ describe('getChangedFiles', () => {
   });
 
   it('uses gh pr diff for merge', () => {
-    const exec = (cmd: string) => {
-      if (cmd.includes('gh pr diff')) return 'src/c.ts\nsrc/d.ts';
+    const gh = (args: string[]) => {
+      if (args[0] === 'pr' && args[1] === 'diff') return 'src/c.ts\nsrc/d.ts';
       return '';
     };
-    expect(getChangedFiles('gh pr merge 42', true, exec)).toEqual(['src/c.ts', 'src/d.ts']);
+    expect(getChangedFiles('gh pr merge 42', true, () => '', gh)).toEqual(['src/c.ts', 'src/d.ts']);
+  });
+
+  it('uses argv-style gh args for merge PR diff', () => {
+    const ghCalls: string[][] = [];
+    const gh = (args: string[]) => {
+      ghCalls.push(args);
+      return 'src/c.ts\nsrc/d.ts';
+    };
+
+    expect(getChangedFiles('gh pr merge 42 --repo Garsson-io/kaizen', true, () => '', gh))
+      .toEqual(['src/c.ts', 'src/d.ts']);
+    expect(ghCalls).toEqual([[
+      'pr',
+      'diff',
+      '42',
+      '--name-only',
+      '--repo',
+      'Garsson-io/kaizen',
+    ]]);
   });
 
   it('falls back to git diff on merge if gh pr diff fails', () => {
@@ -59,6 +78,18 @@ describe('getChangedFiles', () => {
       return '';
     };
     expect(getChangedFiles('gh pr merge 42', true, exec)).toEqual(['src/e.ts']);
+  });
+
+  it('falls back to git diff when argv-style gh PR diff returns empty', () => {
+    const execCalls: string[] = [];
+    const exec = (cmd: string) => {
+      execCalls.push(cmd);
+      if (cmd.includes('git diff')) return 'src/e.ts';
+      return '';
+    };
+
+    expect(getChangedFiles('gh pr merge 42', true, exec, () => '')).toEqual(['src/e.ts']);
+    expect(execCalls).toEqual(['git diff --name-only main...HEAD']);
   });
 });
 
@@ -165,20 +196,61 @@ describe('checkVerification', () => {
   });
 
   it('shows post-merge verification on pr_merge', () => {
-    const exec = (cmd: string) => {
-      if (cmd.includes('gh pr view')) return '## Verification\n- Run npm test\n- Check output';
+    const gh = (args: string[]) => {
+      if (args[0] === 'pr' && args[1] === 'view') return '## Verification\n- Run npm test\n- Check output';
       return '';
     };
-    const msg = checkVerification('gh pr merge 42', 'pr_merge', exec);
+    const msg = checkVerification('gh pr merge 42', 'pr_merge', () => '', gh);
     expect(msg).toContain('POST-MERGE VERIFICATION REQUIRED');
   });
 
+  it('uses argv-style gh args to fetch explicit merge PR body', () => {
+    const ghCalls: string[][] = [];
+    const gh = (args: string[]) => {
+      ghCalls.push(args);
+      return '## Verification\n- Run npm test';
+    };
+
+    const msg = checkVerification('gh pr merge 42', 'pr_merge', () => '', gh);
+
+    expect(msg).toContain('POST-MERGE VERIFICATION REQUIRED');
+    expect(ghCalls).toEqual([[
+      'pr',
+      'view',
+      '42',
+      '--json',
+      'body',
+      '--jq',
+      '.body',
+    ]]);
+  });
+
+  it('uses argv-style gh args to fetch current PR body when merge command has no number', () => {
+    const ghCalls: string[][] = [];
+    const gh = (args: string[]) => {
+      ghCalls.push(args);
+      return '## Verification\n- Run npm test';
+    };
+
+    const msg = checkVerification('gh pr merge --squash', 'pr_merge', () => '', gh);
+
+    expect(msg).toContain('POST-MERGE VERIFICATION REQUIRED');
+    expect(ghCalls).toEqual([[
+      'pr',
+      'view',
+      '--json',
+      'body',
+      '--jq',
+      '.body',
+    ]]);
+  });
+
   it('warns when merge PR has no verification section', () => {
-    const exec = (cmd: string) => {
-      if (cmd.includes('gh pr view')) return '## Summary\nSome changes';
+    const gh = (args: string[]) => {
+      if (args[0] === 'pr' && args[1] === 'view') return '## Summary\nSome changes';
       return '';
     };
-    const msg = checkVerification('gh pr merge 42', 'pr_merge', exec);
+    const msg = checkVerification('gh pr merge 42', 'pr_merge', () => '', gh);
     expect(msg).toContain('no Verification section');
   });
 
@@ -299,8 +371,11 @@ describe('runQualityChecks', () => {
   it('runs test coverage and verification for gh pr merge', () => {
     const result = runQualityChecks('gh pr merge 42', {
       exec: (cmd) => {
-        if (cmd.includes('gh pr diff')) return 'src/a.ts';
-        if (cmd.includes('gh pr view')) return '## Verification\n- check';
+        return '';
+      },
+      gh: (args) => {
+        if (args[0] === 'pr' && args[1] === 'diff') return 'src/a.ts';
+        if (args[0] === 'pr' && args[1] === 'view') return '## Verification\n- check';
         return '';
       },
     });
