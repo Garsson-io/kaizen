@@ -59,6 +59,7 @@ import {
   storeIterationState,
   retrieveIterationState,
   type ReviewFindingData,
+  type StoreReviewSummaryOptions,
 } from './structured-data.js';
 import { normalizeReviewFindingData, validateReviewFindingPayload, summarizeFindingStatuses } from './review-finding-contract.js';
 
@@ -135,6 +136,12 @@ function writeReviewSentinel(repo: string, pr: string | undefined, round: number
   }
 }
 
+function reviewSummaryOptions(a: CliArgs): StoreReviewSummaryOptions {
+  return {
+    expectedHeadSha: a['head-sha'],
+  };
+}
+
 // Review handlers
 
 async function handleNextRound(a: CliArgs): Promise<void> {
@@ -206,7 +213,7 @@ async function handleStoreReviewBatch(a: CliArgs): Promise<void> {
     }
   }
   const findings = parsedBatch as ReviewFindingData[];
-  const result = storeReviewBatch(pr, r, findings);
+  const result = storeReviewBatch(pr, r, findings, reviewSummaryOptions(a));
   // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
   // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
   writeReviewSentinel(a.repo, a.pr, r);
@@ -229,7 +236,7 @@ async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
   const r = resolveRound(a);
   let url: string;
   try {
-    url = storeReviewSummary(prTarget(a.pr, a.repo), r, note);
+    url = storeReviewSummary(prTarget(a.pr, a.repo), r, note, reviewSummaryOptions(a));
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

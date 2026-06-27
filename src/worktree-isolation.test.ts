@@ -62,6 +62,15 @@ describe('kaizen-review-pr SKILL.md — review findings storage contract (#966)'
     const skill = readFileSync(REVIEW_PR_SKILL, 'utf8');
     expect(skill).toMatch(/store-review-summary/);
   });
+
+  it('requires current-head CI proof when storing a pass summary (#1070)', () => {
+    // INVARIANT: the skill must not regress to instruction-only CI checking.
+    // The storage command carries the reviewed head so the CLI can reject
+    // pending, failing, absent, or stale-head CI before writing the sentinel.
+    const skill = readFileSync(REVIEW_PR_SKILL, 'utf8');
+    expect(skill).toMatch(/--head-sha "\$\(git rev-parse HEAD\)"/);
+    expect(skill).toMatch(/Pending, failing, absent, or stale-head CI refuses storage/);
+  });
 });
 
 describe('kaizen-implement SKILL.md — review battery storage reference (#966)', () => {
