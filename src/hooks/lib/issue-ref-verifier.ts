@@ -16,7 +16,7 @@
  *                    a flaky network must never deadlock a run.
  */
 
-import { spawnSync } from 'node:child_process';
+import { ghResult } from '../../lib/gh-exec.js';
 
 export type RefStatus = 'exists' | 'missing' | 'unverifiable';
 
@@ -32,18 +32,7 @@ export type GhRunner = (args: string[]) => {
   stderr: string;
 };
 
-const defaultRunner: GhRunner = (args) => {
-  const r = spawnSync('gh', args, {
-    encoding: 'utf8',
-    timeout: 15_000,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  return {
-    status: r.status ?? 1,
-    stdout: r.stdout ?? '',
-    stderr: r.stderr ?? '',
-  };
-};
+const defaultRunner: GhRunner = (args) => ghResult(args, 15_000);
 
 /**
  * Parse an issue/PR reference. Accepts: a full github URL, `owner/repo#N`,

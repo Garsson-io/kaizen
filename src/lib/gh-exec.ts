@@ -7,17 +7,33 @@
 
 import { spawnSync } from 'node:child_process';
 
-/** Run a gh CLI command and return trimmed stdout. Throws on non-zero exit. */
-export function gh(args: string[], timeoutMs: number = 30_000): string {
+export interface GhResult {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
+
+/** Run a gh CLI command and return status/stdout/stderr without throwing. */
+export function ghResult(args: string[], timeoutMs: number = 30_000): GhResult {
   const result = spawnSync('gh', args, {
     encoding: 'utf8',
     timeout: timeoutMs,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout?.trim() ?? '',
+    stderr: result.stderr?.trim() ?? '',
+  };
+}
+
+/** Run a gh CLI command and return trimmed stdout. Throws on non-zero exit. */
+export function gh(args: string[], timeoutMs: number = 30_000): string {
+  const result = ghResult(args, timeoutMs);
   if (result.status !== 0) {
-    throw new Error(`gh ${args.slice(0, 3).join(' ')} failed: ${result.stderr?.trim()}`);
+    throw new Error(`gh ${args.slice(0, 3).join(' ')} failed: ${result.stderr}`);
   }
-  return result.stdout?.trim() ?? '';
+  return result.stdout;
 }
 
 /**
