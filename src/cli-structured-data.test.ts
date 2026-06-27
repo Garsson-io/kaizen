@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { handlers, parseArgs, resolveContent, resolveRound, type CliArgs } from './cli-structured-data.js';
+import { handlers, parseArgs, resolveContent, resolveRound, ciGateForSummary, type CliArgs } from './cli-structured-data.js';
+import type { CommandRunner } from './review-ci-proof.js';
 import {
   nextReviewRound,
   storePlan,
@@ -44,6 +45,7 @@ vi.mock('./structured-data.js', () => ({
   updatePrSection: vi.fn(),
   storeIterationState: vi.fn().mockReturnValue('https://example.com/iteration'),
   retrieveIterationState: vi.fn().mockReturnValue({ round: 1 }),
+  deriveStoredRoundVerdict: vi.fn().mockReturnValue('PASS'),
 }));
 
 beforeEach(() => vi.clearAllMocks());
@@ -194,7 +196,9 @@ describe('individual command handlers', () => {
 // ── store-review-batch sentinel (category prevention: #966) ─────────────────
 
 describe('store-review-batch — review sentinel', () => {
-  const baseArgs: CliArgs = { command: 'store-review-batch', pr: '903', repo: 'org/repo', round: '1' };
+  // These tests exercise sentinel writing, not the CI gate (#1070), so they opt
+  // out of the CI proof with the explicit escape hatch rather than shelling out.
+  const baseArgs: CliArgs = { command: 'store-review-batch', pr: '903', repo: 'org/repo', round: '1', ['skip-ci-proof']: 'true' };
 
   it('writes review sentinel after storing batch findings', async () => {
     // INVARIANT: store-review-batch must write the review sentinel so the
@@ -251,23 +255,27 @@ describe('store-review-batch — review sentinel', () => {
   });
 });
 
-describe('store-review-summary — CI head proof', () => {
-  it('passes --head-sha through to summary storage before writing the sentinel (#1070)', async () => {
+describe('store-review-summary — storage is side-effect-free, sentinel still written (#1070/#1225)', () => {
+  it('stores the summary with the new 3-arg signature (no CI options baked into storage) then writes the sentinel', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
 
+    // skip-ci-proof keeps this test focused on storage + sentinel; the CI gate
+    // itself is covered by `ciGateForSummary` below with an injected runner.
     await handlers['store-review-summary']({
       command: 'store-review-summary',
       pr: '903',
       repo: 'Garsson-io/kaizen',
       round: '5',
       ['head-sha']: 'abc123',
+      ['skip-ci-proof']: 'true',
     } as CliArgs);
 
+    // New signature: CI proof is NOT threaded into storage as a 4th options arg (#1222).
     expect(vi.mocked(storeReviewSummary)).toHaveBeenCalledWith(
       { kind: 'pr', number: 903, repo: 'Garsson-io/kaizen' },
       5,
       undefined,
-      { expectedHeadSha: 'abc123' },
     );
     const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r5'),
@@ -284,6 +292,77 @@ describe('store-review-summary — CI head proof', () => {
     expect(payload.findingCount).toBeGreaterThanOrEqual(0);
     expect(payload.integrity).toMatch(/^sha256:/);
     log.mockRestore();
+    err.mockRestore();
+  });
+});
+
+describe('ciGateForSummary — CI gate at the CLI boundary (#1070/#1225)', () => {
+  const pr = { kind: 'pr' as const, number: '903', repo: 'Garsson-io/kaizen' };
+  const issueTgt = { kind: 'issue' as const, number: '904', repo: 'Garsson-io/kaizen' };
+  const passChecks = JSON.stringify([{ name: 'tests', bucket: 'pass', state: 'SUCCESS' }]);
+  const pendingChecks = JSON.stringify([{ name: 'tests', bucket: 'pending', state: 'IN_PROGRESS' }]);
+  const failChecks = JSON.stringify([{ name: 'tests', bucket: 'fail', state: 'FAILURE' }]);
+
+  const runner = (prChecks: string, prHead = 'abc'): CommandRunner => (command, argv) => {
+    const joined = `${command} ${argv.join(' ')}`;
+    if (command === 'git') return { status: 0, stdout: 'abc', stderr: '' };
+    if (joined.includes('pr view')) return { status: 0, stdout: prHead, stderr: '' };
+    if (joined.includes('pr checks')) return { status: 0, stdout: prChecks, stderr: '' };
+    return { status: 0, stdout: '', stderr: '' };
+  };
+  const deps = (prChecks: string, prHead = 'abc') => ({
+    runner: runner(prChecks, prHead),
+    sleep: async () => {},
+    now: (() => { let t = 0; return () => (t += 60_000); })(),
+  });
+  const argsWith = (extra: Partial<CliArgs> = {}): CliArgs =>
+    ({ command: 'store-review-summary', pr: '903', repo: 'Garsson-io/kaizen', ['head-sha']: 'abc', ...extra }) as CliArgs;
+
+  it('stores when CI is green', async () => {
+    const d = await ciGateForSummary(pr, 'PASS', argsWith(), deps(passChecks));
+    expect(d.outcome).toBe('store');
+  });
+
+  it('refuses with exit 1 when CI is failing', async () => {
+    const d = await ciGateForSummary(pr, 'PASS', argsWith(), deps(failChecks));
+    expect(d).toMatchObject({ outcome: 'refuse', exitCode: 1 });
+  });
+
+  it('refuses with the distinct ci_pending exit 2 when CI never finishes (#1221)', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const d = await ciGateForSummary(pr, 'PASS', argsWith({ ['ci-timeout-sec']: '1' }), deps(pendingChecks));
+    expect(d).toMatchObject({ outcome: 'refuse', exitCode: 2 });
+    expect(d.message).toMatch(/ci_pending/);
+    err.mockRestore();
+  });
+
+  it('refuses with exit 1 when the reviewed head is stale', async () => {
+    const d = await ciGateForSummary(pr, 'PASS', argsWith(), deps(passChecks, 'different-head'));
+    expect(d).toMatchObject({ outcome: 'refuse', exitCode: 1 });
+  });
+
+  it('stores (skipped) for a non-PR target — never refuses (#1222.1)', async () => {
+    const d = await ciGateForSummary(issueTgt, 'PASS', argsWith(), deps(passChecks));
+    expect(d.outcome).toBe('store');
+  });
+
+  it('stores a FAIL verdict without consulting CI', async () => {
+    let called = false;
+    const spyDeps = { runner: ((c: string, a: string[]) => { called = true; return { status: 0, stdout: '', stderr: '' }; }) as CommandRunner, sleep: async () => {} };
+    const d = await ciGateForSummary(pr, 'FAIL', argsWith(), spyDeps);
+    expect(d.outcome).toBe('store');
+    expect(called).toBe(false);
+  });
+
+  it('stores with --skip-ci-proof and logs the bypass', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let called = false;
+    const spyDeps = { runner: ((c: string, a: string[]) => { called = true; return { status: 0, stdout: '', stderr: '' }; }) as CommandRunner, sleep: async () => {} };
+    const d = await ciGateForSummary(pr, 'PASS', argsWith({ ['skip-ci-proof']: 'true' }), spyDeps);
+    expect(d.outcome).toBe('store');
+    expect(called).toBe(false);
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/skip-ci-proof/));
+    err.mockRestore();
   });
 });
 

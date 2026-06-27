@@ -58,14 +58,27 @@ import {
   updatePrSection,
   storeIterationState,
   retrieveIterationState,
+  deriveStoredRoundVerdict,
   type ReviewFindingData,
-  type StoreReviewSummaryOptions,
 } from './structured-data.js';
 import {
   buildReviewSentinelRecord,
   serializeReviewSentinel,
 } from './review-sentinel.js';
-import { normalizeReviewFindingData, validateReviewFindingPayload, summarizeFindingStatuses } from './review-finding-contract.js';
+import {
+  normalizeReviewFindingData,
+  validateReviewFindingPayload,
+  summarizeFindingStatuses,
+  summarizeRound,
+  type RoundVerdict,
+} from './review-finding-contract.js';
+import {
+  waitForCiProof,
+  type CiProofOptions,
+  type CommandRunner,
+  type WaitForCiOptions,
+} from './review-ci-proof.js';
+import type { AttachmentTarget } from './section-editor.js';
 
 export type CliArgs = Record<string, string> & { command: string };
 type Handler = (a: CliArgs) => Promise<void>;
@@ -74,7 +87,7 @@ type Handler = (a: CliArgs) => Promise<void>;
  * Flags that are booleans — no value follows, presence means true.
  * Keeps `--stdin` usable without the trap of consuming the next arg.
  */
-const BOOLEAN_FLAGS = new Set(['stdin']);
+const BOOLEAN_FLAGS = new Set(['stdin', 'skip-ci-proof']);
 
 export function parseArgs(argv?: string[]): CliArgs {
   const args = argv ?? process.argv.slice(2);
@@ -177,10 +190,86 @@ function writeReviewSentinel(repo: string, pr: string | undefined, round: number
   }
 }
 
-function reviewSummaryOptions(a: CliArgs): StoreReviewSummaryOptions {
+function ciProofOptions(a: CliArgs): CiProofOptions {
   return {
     expectedHeadSha: a['head-sha'],
   };
+}
+
+/**
+ * The CLI/caller-boundary CI gate for a PASS / PASS-with-partials review summary (#1070, redone
+ * per #1225). Storage stays side-effect-free; this is where the `gh`/`git` proof lives.
+ *
+ * Returns a decision so the wiring is unit-testable (the handler does the actual `process.exit`):
+ *  - FAIL verdict → always `store` (a FAIL summary needs no CI proof).
+ *  - `pass` / `skipped` → `store`.
+ *  - `fail` / `stale` / `no_checks` (terminal) → `refuse` exit 1 (real review-blocking state).
+ *  - `pending` after the wait budget → `refuse` exit 2 with a distinct `ci_pending` message, so a
+ *    caller/loop can tell "CI not done yet" apart from "review FAIL" and wait rather than exhaust
+ *    a fix round (#1221).
+ */
+export interface CiGateDecision {
+  outcome: 'store' | 'refuse';
+  exitCode?: number;
+  message?: string;
+}
+
+export interface CiGateDeps {
+  runner?: CommandRunner;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+export async function ciGateForSummary(
+  target: AttachmentTarget,
+  verdict: RoundVerdict,
+  a: CliArgs,
+  deps: CiGateDeps = {},
+): Promise<CiGateDecision> {
+  // A FAIL summary is always storable — there is nothing to falsely declare passed.
+  if (verdict === 'FAIL') return { outcome: 'store' };
+  // Explicit, logged escape hatch.
+  if (a['skip-ci-proof'] === 'true') {
+    console.error('store-review-summary: ⚠️  --skip-ci-proof set — storing a PASS summary WITHOUT CI proof (#1070 bypass).');
+    return { outcome: 'store' };
+  }
+  const waitOpts: WaitForCiOptions = {
+    ...ciProofOptions(a),
+    ...(deps.runner ? { runner: deps.runner } : {}),
+    ...(deps.sleep ? { sleep: deps.sleep } : {}),
+    ...(deps.now ? { now: deps.now } : {}),
+    ...(a['ci-timeout-sec'] ? { timeoutMs: Number(a['ci-timeout-sec']) * 1000 } : {}),
+    ...(a['ci-poll-sec'] ? { intervalMs: Number(a['ci-poll-sec']) * 1000 } : {}),
+    onPoll: (r, elapsed) => {
+      if (r.status === 'pending' || r.status === 'no_checks') {
+        console.error(`store-review-summary: waiting for CI (${Math.round(elapsed / 1000)}s) — ${r.detail}`);
+      }
+    },
+  };
+  const result = await waitForCiProof(target, waitOpts);
+  switch (result.status) {
+    case 'pass':
+    case 'skipped':
+      return { outcome: 'store' };
+    case 'pending':
+    case 'no_checks':
+      return {
+        outcome: 'refuse',
+        exitCode: 2,
+        message:
+          `store-review-summary: ci_pending — refusing to store a PASS summary because CI has not ` +
+          `finished for the reviewed head. ${result.detail} This is NOT a review FAIL; wait for CI ` +
+          `to go green and re-run, or raise --ci-timeout-sec.`,
+      };
+    case 'fail':
+    case 'stale':
+    default:
+      return {
+        outcome: 'refuse',
+        exitCode: 1,
+        message: `store-review-summary: refusing to store a PASS summary — ${result.detail}`,
+      };
+  }
 }
 
 // Review handlers
@@ -254,7 +343,22 @@ async function handleStoreReviewBatch(a: CliArgs): Promise<void> {
     }
   }
   const findings = parsedBatch as ReviewFindingData[];
-  const result = storeReviewBatch(pr, r, findings, reviewSummaryOptions(a));
+
+  // Same CI-green proof as store-review-summary (#1070/#1225): derive the round verdict from the
+  // batch payload up front and gate a PASS on CI before storing anything.
+  const rows = findings.map(f => {
+    const norm = normalizeReviewFindingData(f);
+    const stats = summarizeFindingStatuses(norm.findings);
+    return { dim: norm.dimension, verdict: norm.verdict, done: stats.done, partial: stats.partial, missing: stats.missing };
+  });
+  const batchVerdict = summarizeRound(rows).verdict;
+  const gate = await ciGateForSummary(pr, batchVerdict, a);
+  if (gate.outcome === 'refuse') {
+    console.error(gate.message ?? 'store-review-batch: CI proof refused.');
+    process.exit(gate.exitCode ?? 1);
+  }
+
+  const result = storeReviewBatch(pr, r, findings);
   // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
   // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
   writeReviewSentinel(a.repo, a.pr, r);
@@ -275,9 +379,21 @@ async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
   // legacy --text/--file) is non-authoritative commentary appended below the derived block.
   const note = (a.note ?? resolveContent(a)) || undefined;
   const r = resolveRound(a);
+  const target = prTarget(a.pr, a.repo);
+
+  // CI-green proof at the caller boundary (#1070/#1225): derive the verdict from the already-stored
+  // findings, then gate a PASS on CI before writing the summary/sentinel. Storage itself stays
+  // side-effect-free (#1222) and pending CI is a wait, not a false FAIL (#1221).
+  const verdict = deriveStoredRoundVerdict(target, r);
+  const gate = await ciGateForSummary(target, verdict, a);
+  if (gate.outcome === 'refuse') {
+    console.error(gate.message ?? 'store-review-summary: CI proof refused.');
+    process.exit(gate.exitCode ?? 1);
+  }
+
   let url: string;
   try {
-    url = storeReviewSummary(prTarget(a.pr, a.repo), r, note, reviewSummaryOptions(a));
+    url = storeReviewSummary(target, r, note);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

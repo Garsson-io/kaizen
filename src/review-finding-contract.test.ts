@@ -9,6 +9,10 @@ import {
   deriveRoundVerdict,
   summarizeRound,
   assertsPass,
+  extractMetaComment,
+  parseReviewSummaryMeta,
+  extractReviewSummaryMeta,
+  summaryRoundVerdict,
 } from './review-finding-contract.js';
 
 describe('review-finding-contract', () => {
@@ -193,5 +197,46 @@ describe('normalizeReviewFindingData — no fail-coercion on empty (#1039 H5)', 
       findings: [],
     });
     expect(finding.verdict).toBe('pass');
+  });
+});
+
+describe('summary-meta accessor (I29 — replaces hand-rolled regex, #1222.3)', () => {
+  // A real round-summary meta block as written by composeReviewSummary.
+  const summaryBody = (verdict: string, roundVerdict: string) =>
+    `<!-- meta:{"round":5,"verdict":"${verdict}","round_verdict":"${roundVerdict}","dimensions":3,"pass":2,"fail":0,"partial":1,"total_done":7,"total_missing":0,"total_partial":1} -->\n## Review Round 5 — PASS — 1 PARTIAL`;
+
+  it('extractMetaComment parses the first meta JSON object', () => {
+    expect(extractMetaComment(summaryBody('pass', 'PASS_WITH_PARTIALS'))).toMatchObject({ round: 5, round_verdict: 'PASS_WITH_PARTIALS' });
+  });
+
+  it('extractMetaComment returns null when no meta comment is present', () => {
+    expect(extractMetaComment('## Review Round 5 — PASS')).toBeNull();
+  });
+
+  it('parseReviewSummaryMeta validates round_verdict via schema', () => {
+    expect(parseReviewSummaryMeta({ round: 5, round_verdict: 'FAIL' })).toEqual({ round: 5, round_verdict: 'FAIL', });
+    // missing required `round` → rejected
+    expect(parseReviewSummaryMeta({ round_verdict: 'PASS' })).toBeNull();
+    // bogus round_verdict → rejected (not silently coerced)
+    expect(parseReviewSummaryMeta({ round: 1, round_verdict: 'MAYBE' })).toBeNull();
+  });
+
+  it('summaryRoundVerdict prefers round_verdict, falls back to binary verdict', () => {
+    expect(summaryRoundVerdict(summaryBody('pass', 'PASS_WITH_PARTIALS'))).toBe('PASS_WITH_PARTIALS');
+    expect(summaryRoundVerdict(summaryBody('fail', 'FAIL'))).toBe('FAIL');
+    // legacy summary with only a binary verdict
+    expect(summaryRoundVerdict('<!-- meta:{"round":2,"verdict":"pass"} -->\n## Review Round 2 — PASS')).toBe('PASS');
+    expect(summaryRoundVerdict('<!-- meta:{"round":2,"verdict":"fail"} -->\n## Review Round 2 — FAIL')).toBe('FAIL');
+  });
+
+  it('summaryRoundVerdict returns null on a body with no meta', () => {
+    expect(summaryRoundVerdict('## Review Round 2 — PASS')).toBeNull();
+  });
+
+  it('extractReviewSummaryMeta does not mistake a greedy match across two meta comments', () => {
+    // The old hand-rolled /^<!-- meta:(\{.*\}) -->/ was greedy and anchored; the
+    // shared non-greedy extractor must grab only the FIRST object.
+    const two = '<!-- meta:{"round":5,"round_verdict":"PASS"} -->\n<!-- meta:{"round":6} -->';
+    expect(extractReviewSummaryMeta(two)).toMatchObject({ round: 5, round_verdict: 'PASS' });
   });
 });

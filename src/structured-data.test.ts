@@ -305,87 +305,65 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     const ok = dimComment(2, 'correctness', 'pass', 3, 0, 0); // all DONE → PASS
     ghReturns(ok); // compose: list
     ghReturns(ok); // compose: read
-    ghReturns('abc123'); // gh pr view: current PR head
-    ghReturns(JSON.stringify([{ name: 'TypeScript tests + coverage', bucket: 'pass', state: 'SUCCESS' }])); // gh pr checks
     ghReturns(''); // writeAttachment: readAttachment (no existing)
     ghReturns('https://...#issuecomment-sum');
 
-    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes', { expectedHeadSha: 'abc123' });
+    storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes');
     const body = bodyOfLastCreate();
     expect(body).toContain('## Review Round 2 — PASS');
     expect(body).toContain('### Reviewer notes (non-authoritative');
     expect(body).toContain('rebased onto main');
   });
 
-  describe('CI proof gate (#1070)', () => {
-    const head = 'abc123';
-    const passChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'pass', state: 'SUCCESS' },
-      { name: 'auto-merge', bucket: 'skipping', state: 'SKIPPED' },
-    ]);
-    const pendingChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'pending', state: 'IN_PROGRESS' },
-    ]);
-    const failChecks = JSON.stringify([
-      { name: 'TypeScript tests + coverage', bucket: 'fail', state: 'FAILURE' },
-    ]);
+  // #1225/#1222: the CI-green proof moved OUT of storage to the CLI boundary
+  // (review-ci-proof.ts + cli-structured-data.ts). Storage must NOT shell out to
+  // `gh pr view` / `gh pr checks` / `git rev-parse` — it only does its own
+  // attachment I/O. These tests pin that the storage layer is CI-proof-free.
+  describe('storage is CI-proof-free (#1222)', () => {
+    const ciProofCall = (args: unknown): boolean => {
+      if (!Array.isArray(args)) return false;
+      const a = args as string[];
+      return (a[0] === 'git' && a.includes('rev-parse'))
+        || (a.includes('pr') && (a.includes('checks') || a.includes('view')) && a.includes('headRefOid'))
+        || (a.includes('pr') && a.includes('checks'));
+    };
+    // mockGh.mock.calls[i] is [command, args]; flatten command+args for the predicate.
+    const noCiProofShellOut = () => {
+      for (const call of mockGh.mock.calls) {
+        const merged = [call[0], ...(Array.isArray(call[1]) ? call[1] : [])];
+        expect(ciProofCall(merged)).toBe(false);
+      }
+    };
 
-    it('stores a derived PASS only when current-head CI is passing', () => {
+    it('stores a derived PASS without any gh pr view / gh pr checks / git rev-parse call', () => {
       const ok = dimComment(4, 'correctness', 'pass', 2, 0, 0);
       ghReturns(ok); // compose: list
       ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view: current PR head
-      ghReturns(passChecks); // gh pr checks
       ghReturns(''); // writeAttachment: readAttachment (no existing)
       ghReturns('https://...#issuecomment-sum');
 
-      storeReviewSummary(pr, 4, undefined, { expectedHeadSha: head });
-
-      const body = bodyOfLastCreate();
-      expect(body).toContain('## Review Round 4 — PASS');
+      const url = storeReviewSummary(pr, 4);
+      expect(url).toContain('issuecomment');
+      expect(bodyOfLastCreate()).toContain('## Review Round 4 — PASS');
+      noCiProofShellOut();
     });
 
-    it('refuses to store a derived PASS while CI is pending', () => {
-      const ok = dimComment(6, 'correctness', 'pass', 2, 0, 0);
+    it('stores a derived PASS summary on an ISSUE target without throwing (#1222.1 regression)', () => {
+      const ok = dimComment(3, 'correctness', 'pass', 2, 0, 0);
       ghReturns(ok); // compose: list
       ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns(pendingChecks); // gh pr checks
+      ghReturns(''); // writeAttachment: readAttachment (no existing)
+      ghReturns('https://...#issuecomment-issue');
 
-      expect(() => storeReviewSummary(pr, 6, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*pending|pending.*CI|#1070/i);
-    });
-
-    it('refuses to store a derived PASS when CI is failing', () => {
-      const ok = dimComment(7, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns(failChecks); // gh pr checks
-
-      expect(() => storeReviewSummary(pr, 7, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*fail|fail.*CI|#1070/i);
-    });
-
-    it('refuses to store a derived PASS before CI has produced checks', () => {
-      const ok = dimComment(9, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns(head); // gh pr view
-      ghReturns('[]'); // gh pr checks: CI has not started
-
-      expect(() => storeReviewSummary(pr, 9, undefined, { expectedHeadSha: head }))
-        .toThrow(/CI.*not produced checks|#1070/i);
-    });
-
-    it('refuses to store a derived PASS when the reviewed head is stale', () => {
-      const ok = dimComment(8, 'correctness', 'pass', 2, 0, 0);
-      ghReturns(ok); // compose: list
-      ghReturns(ok); // compose: read
-      ghReturns('def456'); // gh pr view: current PR head differs from reviewed head
-
-      expect(() => storeReviewSummary(pr, 8, undefined, { expectedHeadSha: head }))
-        .toThrow(/stale|HEAD|#1070/i);
+      const url = storeReviewSummary(issue, 3);
+      expect(url).toContain('issuecomment');
+      // Issue createComment uses `gh issue comment --body <raw>` (not `body=`), so
+      // scan every call arg for the composed summary instead of bodyOfLastCreate.
+      const stored = mockGh.mock.calls.some(call =>
+        (Array.isArray(call[1]) ? call[1] : []).some(
+          arg => typeof arg === 'string' && arg.includes('## Review Round 3 — PASS')));
+      expect(stored).toBe(true);
+      noCiProofShellOut();
     });
   });
 });

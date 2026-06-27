@@ -229,10 +229,20 @@ npx tsx src/cli-structured-data.ts store-review-summary \
   --pr <PR_NUMBER> --repo <owner/repo> --round <N> --head-sha "$(git rev-parse HEAD)"
 ```
 
-For a derived PASS or PASS-with-partials verdict, `store-review-summary` now verifies the PR's
-current HEAD matches `--head-sha` and that `gh pr checks` is green for that HEAD before it writes
-the summary/sentinel (#1070). Pending, failing, absent, or stale-head CI refuses storage; re-run
-review on the current head after CI passes.
+For a derived PASS or PASS-with-partials verdict, `store-review-summary` proves CI is green at the
+CLI boundary before it writes the summary/sentinel (#1070, redone in #1225). It verifies the PR's
+current HEAD matches `--head-sha` and **waits** for `gh pr checks` to reach a terminal state for
+that HEAD:
+
+- **CI green** → stores the summary.
+- **CI pending** → it *polls* (it does not fail); past `--ci-timeout-sec` (default 600) it exits **2**
+  with a distinct `ci_pending` message — this is NOT a review FAIL. Wait for CI to finish, then
+  re-run; do not treat it as an exhausted fix round (#1221).
+- **CI failing / stale head** → exits **1**; fix CI or re-review the current head.
+- **Non-PR target** (review summary on an issue) → CI proof is skipped, the summary stores (#1222).
+
+Tuning flags: `--ci-timeout-sec <N>`, `--ci-poll-sec <N>`. Escape hatch (logged): `--skip-ci-proof`
+stores a PASS without CI proof — use only when CI genuinely cannot run.
 
 Add `--note "<context>"` only for non-verdict commentary (e.g. "rebased onto main, re-ran tests").
 Read back the derived verdict with `read-review-summary --pr <N> --repo <repo> --round <N>` — the

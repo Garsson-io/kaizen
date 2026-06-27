@@ -8,6 +8,8 @@
  * - review finding metadata shape
  */
 
+import { z } from 'zod';
+
 export type FindingStatus = 'DONE' | 'PARTIAL' | 'MISSING';
 
 export interface ReviewFinding {
@@ -301,12 +303,64 @@ export function parseReviewFindingMeta(value: unknown): ReviewFindingMeta | null
   };
 }
 
-export function extractReviewFindingMeta(content: string): ReviewFindingMeta | null {
+/**
+ * Extract and JSON-parse the first `<!-- meta:{...} -->` comment from a stored
+ * attachment body. Single source of the meta-comment regex so no caller hand-rolls
+ * its own (I29) — both finding and summary accessors go through here.
+ */
+export function extractMetaComment(content: string): unknown | null {
   const match = content.match(/<!-- meta:(\{.*?\}) -->/);
   if (!match) return null;
   try {
-    return parseReviewFindingMeta(JSON.parse(match[1]));
+    return JSON.parse(match[1]);
   } catch {
     return null;
   }
+}
+
+export function extractReviewFindingMeta(content: string): ReviewFindingMeta | null {
+  return parseReviewFindingMeta(extractMetaComment(content));
+}
+
+/**
+ * Schema for the round-*summary* meta block (distinct from per-dimension finding
+ * meta). `composeReviewSummary` writes it; the store-summary CI gate reads
+ * `round_verdict` from it. Validated via zod so no caller hand-rolls a regex +
+ * `JSON.parse` over structured data (I29; the #1222.3 trap).
+ */
+const ReviewSummaryMetaSchema = z.object({
+  round: z.number(),
+  round_verdict: z.enum(['PASS', 'PASS_WITH_PARTIALS', 'FAIL']).optional(),
+  verdict: z.enum(['pass', 'fail']).optional(),
+}).passthrough();
+
+export type ReviewSummaryMeta = {
+  round: number;
+  round_verdict?: RoundVerdict;
+  verdict?: 'pass' | 'fail';
+};
+
+export function parseReviewSummaryMeta(value: unknown): ReviewSummaryMeta | null {
+  const parsed = ReviewSummaryMetaSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const { round, round_verdict, verdict } = parsed.data;
+  return { round, ...(round_verdict ? { round_verdict } : {}), ...(verdict ? { verdict } : {}) };
+}
+
+export function extractReviewSummaryMeta(content: string): ReviewSummaryMeta | null {
+  return parseReviewSummaryMeta(extractMetaComment(content));
+}
+
+/**
+ * The authoritative round verdict carried by a stored summary's meta block.
+ * Prefers the explicit `round_verdict`; falls back to mapping the binary
+ * `verdict` (legacy summaries) — pass → PASS so the CI gate still engages.
+ */
+export function summaryRoundVerdict(content: string): RoundVerdict | null {
+  const meta = extractReviewSummaryMeta(content);
+  if (!meta) return null;
+  if (meta.round_verdict) return meta.round_verdict;
+  if (meta.verdict === 'fail') return 'FAIL';
+  if (meta.verdict === 'pass') return 'PASS';
+  return null;
 }
