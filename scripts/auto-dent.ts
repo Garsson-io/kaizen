@@ -16,6 +16,7 @@ import {
 } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { uniqueNamesGenerator, adjectives, animals } from 'unique-names-generator';
+import { ghResult, type GhResult } from '../src/lib/gh-exec.js';
 import { readState, writeState, type BatchState } from './auto-dent-run.js';
 
 export interface AutoDentOptions {
@@ -47,6 +48,12 @@ export interface BudgetStatus {
 export interface StopDecision {
   stop: boolean;
   reason: string;
+}
+
+export interface PostStructuredSummaryDeps {
+  generateSummary?: (scriptDir: string, logDir: string) => string;
+  postIssueComment?: (args: string[]) => GhResult;
+  log?: (line: string) => void;
 }
 
 const DEFAULT_OPTIONS: AutoDentOptions = {
@@ -463,31 +470,38 @@ function runPlanningPrepass(scriptDir: string, stateFile: string, logDir: string
   console.log('');
 }
 
-function postStructuredSummary(scriptDir: string, logDir: string, progressIssue: string, kaizenRepo: string): void {
+export function postStructuredSummary(
+  scriptDir: string,
+  logDir: string,
+  progressIssue: string,
+  kaizenRepo: string,
+  deps: PostStructuredSummaryDeps = {},
+): void {
+  const log = deps.log ?? console.log;
   if (!existsSync(join(logDir, 'events.jsonl'))) {
-    console.log('>>> No events.jsonl found — skipping structured summary.');
+    log('>>> No events.jsonl found — skipping structured summary.');
     return;
   }
-  console.log('>>> Generating structured batch summary from events.jsonl...');
+  log('>>> Generating structured batch summary from events.jsonl...');
   let summary = '';
   try {
-    summary = execFileSync('npx', ['tsx', join(scriptDir, 'batch-summary.ts'), logDir], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+    summary = (deps.generateSummary ?? ((s, l) =>
+      execFileSync('npx', ['tsx', join(s, 'batch-summary.ts'), l], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })))(scriptDir, logDir).trim();
   } catch {
     summary = '';
   }
   if (summary && progressIssue && kaizenRepo) {
-    console.log(`>>> Posting batch summary to ${progressIssue}...`);
-    const status = spawnSync('gh', ['issue', 'comment', progressIssue, '--repo', kaizenRepo, '--body', summary], {
-      stdio: 'ignore',
-    });
-    if ((status.status ?? 1) !== 0) console.log('>>> Summary posting skipped (non-fatal).');
+    log(`>>> Posting batch summary to ${progressIssue}...`);
+    const postIssueComment = deps.postIssueComment ?? ghResult;
+    const status = postIssueComment(['issue', 'comment', progressIssue, '--repo', kaizenRepo, '--body', summary]);
+    if ((status.status ?? 1) !== 0) log('>>> Summary posting skipped (non-fatal).');
   }
   if (summary) {
     writeFileSync(join(logDir, 'batch-summary-report.md'), `${summary}\n`);
-    console.log(`>>> Structured summary saved to ${join(logDir, 'batch-summary-report.md')}`);
+    log(`>>> Structured summary saved to ${join(logDir, 'batch-summary-report.md')}`);
   }
 }
 

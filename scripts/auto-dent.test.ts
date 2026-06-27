@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -12,6 +12,7 @@ import {
   stopDecision,
   writeBatchSummary,
   formatBatchSummary,
+  postStructuredSummary,
   type AutoDentOptions,
 } from './auto-dent.js';
 import { readState, writeState, type BatchState } from './auto-dent-run.js';
@@ -255,5 +256,57 @@ describe('batch summary', () => {
     expect(formatted).toContain('auto-dent — Batch Summary');
     expect(formatted).toContain('PRs created: none');
     expect(formatted).toContain('Runs:      0');
+  });
+});
+
+describe('postStructuredSummary', () => {
+  it('posts generated batch summary through the shared ghResult-compatible seam', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'auto-dent-summary-test-'));
+    try {
+      writeFileSync(join(dir, 'events.jsonl'), '{}\n');
+      const postIssueComment = vi.fn(() => ({ status: 0, stdout: '', stderr: '' }));
+
+      postStructuredSummary('scripts', dir, '1286', 'Garsson-io/kaizen', {
+        generateSummary: () => 'summary body',
+        postIssueComment,
+        log: () => {},
+      });
+
+      expect(postIssueComment).toHaveBeenCalledWith([
+        'issue',
+        'comment',
+        '1286',
+        '--repo',
+        'Garsson-io/kaizen',
+        '--body',
+        'summary body',
+      ]);
+      expect(readFileSync(join(dir, 'batch-summary-report.md'), 'utf8')).toBe(
+        'summary body\n',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps writing the summary report when posting fails non-fatally', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'auto-dent-summary-test-'));
+    try {
+      writeFileSync(join(dir, 'events.jsonl'), '{}\n');
+      const lines: string[] = [];
+
+      postStructuredSummary('scripts', dir, '1286', 'Garsson-io/kaizen', {
+        generateSummary: () => 'summary body',
+        postIssueComment: () => ({ status: 1, stdout: '', stderr: 'gh error' }),
+        log: (line) => lines.push(line),
+      });
+
+      expect(lines).toContain('>>> Summary posting skipped (non-fatal).');
+      expect(readFileSync(join(dir, 'batch-summary-report.md'), 'utf8')).toBe(
+        'summary body\n',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
