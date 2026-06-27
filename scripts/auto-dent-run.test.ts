@@ -31,6 +31,7 @@ import {
   DEFAULT_BANDIT_C,
   banditExplorationC,
   modeSuccess,
+  deriveRunOutcome,
   weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
@@ -2498,6 +2499,95 @@ describe('modeSuccess', () => {
 
   it('unknown modes fall back to PRs', () => {
     expect(modeSuccess('unknown', makeRunMetrics({ prs: ['pr1'] }))).toBe(1);
+  });
+});
+
+describe('deriveRunOutcome — verdict binding (#1224, meta #1227)', () => {
+  // Baseline: a clean win. Each adversarial test perturbs one verdict.
+  const cleanWin = {
+    stopRequested: false,
+    exitCode: 0,
+    artifactCount: 1,
+    reviewVerdict: 'pass' as const,
+    processVerdict: 'pass' as const,
+    lifecycleHealth: 'clean' as const,
+  };
+
+  it('the #1212 shape: artifact produced but review:fail + process-incomplete ⇒ failure (NOT success)', () => {
+    // The exact run.complete shape from eastern-ant/run-2 that produced PR #1212.
+    expect(
+      deriveRunOutcome({
+        stopRequested: false,
+        exitCode: 0,
+        artifactCount: 1, // a PR was created
+        reviewVerdict: 'fail',
+        processVerdict: 'process-incomplete',
+        lifecycleHealth: 'degraded',
+      }),
+    ).toBe('failure');
+  });
+
+  it('review:fail alone blocks success', () => {
+    expect(deriveRunOutcome({ ...cleanWin, reviewVerdict: 'fail' })).toBe('failure');
+  });
+
+  it('process-incomplete alone blocks success', () => {
+    expect(deriveRunOutcome({ ...cleanWin, processVerdict: 'process-incomplete' })).toBe('failure');
+  });
+
+  it('lifecycle critical alone blocks success', () => {
+    expect(deriveRunOutcome({ ...cleanWin, lifecycleHealth: 'critical' })).toBe('failure');
+  });
+
+  it('a quality-failed run with no artifacts is failure, not empty_success', () => {
+    expect(
+      deriveRunOutcome({ ...cleanWin, artifactCount: 0, processVerdict: 'process-incomplete' }),
+    ).toBe('failure');
+  });
+
+  it('clean win with artifacts ⇒ success (happy path preserved)', () => {
+    expect(deriveRunOutcome(cleanWin)).toBe('success');
+  });
+
+  it('clean run with no artifacts ⇒ empty_success (preserved)', () => {
+    expect(deriveRunOutcome({ ...cleanWin, artifactCount: 0 })).toBe('empty_success');
+  });
+
+  it('fail-open-warning does NOT flip a win (fail-open by design)', () => {
+    expect(deriveRunOutcome({ ...cleanWin, processVerdict: 'fail-open-warning' })).toBe('success');
+  });
+
+  it('lifecycle degraded alone does NOT block (too broad to gate on)', () => {
+    expect(deriveRunOutcome({ ...cleanWin, lifecycleHealth: 'degraded' })).toBe('success');
+  });
+
+  it('skipped review is legitimate ⇒ success', () => {
+    expect(deriveRunOutcome({ ...cleanWin, reviewVerdict: 'skipped' })).toBe('success');
+  });
+
+  it('undefined verdicts are treated as non-failing (no over-broad gate)', () => {
+    expect(
+      deriveRunOutcome({
+        stopRequested: false,
+        exitCode: 0,
+        artifactCount: 1,
+        reviewVerdict: undefined,
+        processVerdict: undefined,
+        lifecycleHealth: undefined,
+      }),
+    ).toBe('success');
+  });
+
+  it('stopRequested ⇒ stop, even with artifacts and verdicts', () => {
+    expect(deriveRunOutcome({ ...cleanWin, stopRequested: true })).toBe('stop');
+  });
+
+  it('nonzero exit code ⇒ failure', () => {
+    expect(deriveRunOutcome({ ...cleanWin, exitCode: 1 })).toBe('failure');
+  });
+
+  it('stop precedence: stopRequested wins over a nonzero exit code', () => {
+    expect(deriveRunOutcome({ ...cleanWin, stopRequested: true, exitCode: 1 })).toBe('stop');
   });
 });
 

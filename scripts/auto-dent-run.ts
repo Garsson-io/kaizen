@@ -687,6 +687,58 @@ export function modeSuccess(mode: string, metrics: RunMetrics): number {
   }
 }
 
+/** Telemetry outcome for a completed run (the `run.complete.outcome` field). */
+export type RunOutcome = 'success' | 'empty_success' | 'failure' | 'stop';
+
+/** Signals consumed to bind a run's outcome to its recorded verdicts. */
+export interface RunOutcomeSignals {
+  stopRequested: boolean;
+  exitCode: number;
+  /** Mode-aware artifact count — the output of {@link modeSuccess}. */
+  artifactCount: number;
+  reviewVerdict?: 'pass' | 'fail' | 'skipped';
+  processVerdict?: ProcessVerdict;
+  lifecycleHealth?: LifecycleHealth;
+}
+
+/**
+ * Derive a run's telemetry `outcome` from BOTH its artifact count and the
+ * quality verdicts the same `run.complete` event already records (#1224,
+ * meta #1227).
+ *
+ * The run-success stamp is a terminal action; binding it to the verdicts means
+ * a run that recorded a quality FAILURE can never roll up to
+ * `success`/`empty_success`. Otherwise a red run reads as green in the batch
+ * summary — which is how PR #1212 (review battery FAIL) got merged (#1220).
+ *
+ * Quality-fail signals (any one ⇒ `failure`, failing closed):
+ *   - `reviewVerdict === 'fail'`         — review battery + fix loop failed/exhausted
+ *   - `processVerdict === 'process-incomplete'` — lifecycle evidence missing
+ *   - `lifecycleHealth === 'critical'`   — structural lifecycle gap
+ *
+ * Intentionally NOT gated (documented, to avoid over-broad false-failures):
+ *   - `processVerdict 'fail-open-warning'` — fail-open by design (validator
+ *     did not run / soft warning); must not flip a real win to a loss.
+ *   - `lifecycleHealth 'degraded'` — set whenever `processVerdict !== 'pass'`
+ *     (see the emit path), so it is a superset of `process-incomplete` and too
+ *     broad to gate on directly; the precise signal already covers the failure.
+ *   - `reviewVerdict 'skipped'` / undefined verdicts — legitimate for modes
+ *     with no PR to review; treated as non-failing.
+ *
+ * Precedence (preserved from the original inline computation): a requested STOP
+ * wins, then a hard nonzero exit, then the verdict gate, then artifact count.
+ */
+export function deriveRunOutcome(signals: RunOutcomeSignals): RunOutcome {
+  if (signals.stopRequested) return 'stop';
+  if (signals.exitCode !== 0) return 'failure';
+  const qualityFailed =
+    signals.reviewVerdict === 'fail' ||
+    signals.processVerdict === 'process-incomplete' ||
+    signals.lifecycleHealth === 'critical';
+  if (qualityFailed) return 'failure';
+  return signals.artifactCount > 0 ? 'success' : 'empty_success';
+}
+
 /** Schedulable cognitive modes (contemplate is an overlay, not bandit-scheduled). */
 export const SCHEDULABLE_MODES = ['exploit', 'explore', 'reflect', 'subtract'] as const;
 
@@ -2307,10 +2359,18 @@ async function main(): Promise<void> {
       lines_deleted: result.linesDeleted,
       issues_pruned: result.issuesPruned,
     };
-    const outcome = result.stopRequested ? 'stop' as const
-      : (exitCode === 0 && modeSuccess(runMode, runMetricsForOutcome) > 0) ? 'success' as const
-      : (exitCode === 0) ? 'empty_success' as const
-      : 'failure' as const;
+    // Bind the run-success stamp to the verdicts this run already recorded
+    // (#1224, meta #1227): a review FAIL / process-incomplete / critical
+    // lifecycle gap must never roll up to `success` — red runs cannot read as
+    // green in the batch summary.
+    const outcome = deriveRunOutcome({
+      stopRequested: result.stopRequested,
+      exitCode,
+      artifactCount: modeSuccess(runMode, runMetricsForOutcome),
+      reviewVerdict,
+      processVerdict,
+      lifecycleHealth,
+    });
     events.emit({
       type: 'run.complete',
       run_id: runId,
