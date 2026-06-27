@@ -28,6 +28,7 @@ import {
   type PlanItem,
 } from './auto-dent-plan.js';
 import type { BatchState } from './auto-dent-run.js';
+import { makeBatchState } from './auto-dent-test-utils.js';
 
 function mkItem(overrides: Partial<PlanItem> & { issue: string; title: string }): PlanItem {
   return {
@@ -70,31 +71,12 @@ function makePlanWithDecompose(): BatchPlan {
 }
 
 function makeState(overrides: Partial<BatchState> = {}): BatchState {
-  return {
+  return makeBatchState({
     batch_id: 'batch-260627-1608-k1146',
     batch_start: 0,
     guidance: 'provider-aware planning',
-    max_runs: 5,
-    cooldown: 30,
-    budget: '3.00',
-    max_failures: 3,
-    kaizen_repo: 'Garsson-io/kaizen',
-    host_repo: 'Garsson-io/kaizen',
-    run: 0,
-    prs: [],
-    issues_filed: [],
-    issues_closed: [],
-    cases: [],
-    consecutive_failures: 0,
-    current_cooldown: 30,
-    stop_reason: '',
-    last_issue: '',
-    last_pr: '',
-    last_case: '',
-    last_branch: '',
-    last_worktree: '',
     ...overrides,
-  };
+  });
 }
 
 describe('provider-aware planning (#1146)', () => {
