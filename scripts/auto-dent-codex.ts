@@ -39,7 +39,7 @@ function collectText(value: unknown, out: string[]): void {
   }
   if (!value || typeof value !== 'object') return;
   const obj = value as Record<string, unknown>;
-  for (const key of ['text', 'message', 'content', 'output', 'final_message']) {
+  for (const key of ['text', 'message', 'content', 'output', 'final_message', 'item', 'aggregated_output']) {
     if (key in obj) collectText(obj[key], out);
   }
 }
@@ -54,6 +54,7 @@ export function parseCodexJsonl(jsonl: string): ParsedCodexJsonl {
   const events: unknown[] = [];
   const textChunks: string[] = [];
   const finalChunks: string[] = [];
+  const agentMessages: string[] = [];
   const malformedLines: string[] = [];
 
   for (const raw of jsonl.split(/\r?\n/)) {
@@ -66,6 +67,13 @@ export function parseCodexJsonl(jsonl: string): ParsedCodexJsonl {
       collectText(event, chunks);
       textChunks.push(...chunks);
       if (isFinalEvent(event)) finalChunks.push(...chunks);
+      const item = (event as Record<string, unknown>).item;
+      if (item && typeof item === 'object') {
+        const itemObj = item as Record<string, unknown>;
+        if (itemObj.type === 'agent_message' && typeof itemObj.text === 'string') {
+          agentMessages.push(itemObj.text);
+        }
+      }
     } catch {
       malformedLines.push(raw);
     }
@@ -74,7 +82,7 @@ export function parseCodexJsonl(jsonl: string): ParsedCodexJsonl {
   return {
     events,
     text: textChunks.join('\n'),
-    finalText: finalChunks.join('\n'),
+    finalText: finalChunks.length > 0 ? finalChunks.join('\n') : (agentMessages.at(-1) ?? ''),
     malformedLines,
   };
 }
