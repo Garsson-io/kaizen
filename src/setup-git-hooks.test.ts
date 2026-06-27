@@ -19,11 +19,13 @@ import {
   injectIntoRaw,
   installGitHooks,
   installStandalone,
+  buildThinWrapper,
   KAIZEN_CHAIN_MARKER,
   KAIZEN_HOOK_ID,
   KAIZEN_ENTRY_PATH,
   writeEntryScript,
 } from './setup-git-hooks.js';
+import { AGENT_ENV_VARS } from './hooks/pre-push.js';
 
 // ── Fixture helpers ───────────────────────────────────────────────────
 
@@ -107,6 +109,67 @@ describe('writeEntryScript', () => {
   it('creates the directory if absent', () => {
     writeEntryScript(tmpDir, 'x');
     expect(fs.statSync(path.join(tmpDir, '.kaizen-hooks')).isDirectory()).toBe(true);
+  });
+});
+
+// ── buildThinWrapper (#1086) ──────────────────────────────────────────
+
+describe('buildThinWrapper — host pre-push is a wrapper, not a copy', () => {
+  const PLUGIN_ROOT = '/home/me/.claude/plugins/cache/kaizen';
+
+  it('bakes the plugin root in as the secondary fallback', () => {
+    const w = buildThinWrapper(PLUGIN_ROOT);
+    // env var first, then the baked-in install path.
+    expect(w).toContain('KAIZEN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"');
+    expect(w).toContain(`KAIZEN_ROOT="${PLUGIN_ROOT}"`);
+  });
+
+  it('execs the plugin-resident canonical entry (does not inline its logic)', () => {
+    const w = buildThinWrapper(PLUGIN_ROOT);
+    expect(w).toContain('ENTRY="$KAIZEN_ROOT/src/hooks/kaizen-host-entry.sh"');
+    expect(w).toContain('exec bash "$ENTRY" "$@"');
+  });
+
+  it('exports CLAUDE_PLUGIN_ROOT so the entry re-resolves to the same plugin', () => {
+    const w = buildThinWrapper(PLUGIN_ROOT);
+    expect(w).toContain('export CLAUDE_PLUGIN_ROOT="$KAIZEN_ROOT"');
+  });
+
+  it('has the full env -> baked-in -> cache -> fail-open resolution chain', () => {
+    const w = buildThinWrapper(PLUGIN_ROOT);
+    expect(w).toContain('.claude/plugins/cache'); // cache search
+    expect(w).toContain('plugin.json');
+    // Fail-open guards: never block a push if kaizen / entry can't be located.
+    expect(w).toContain('[ -d "$KAIZEN_ROOT" ] || exit 0');
+    expect(w).toContain('[ -f "$ENTRY" ] || exit 0');
+  });
+
+  it('is THIN — carries none of the version-sensitive dispatch logic', () => {
+    const w = buildThinWrapper(PLUGIN_ROOT);
+    // These live only in kaizen-host-entry.sh / pre-push.ts. If they leak into
+    // the wrapper, the host has copied logic that goes stale again (#1086).
+    expect(w).not.toContain('pre-push.ts');
+    expect(w).not.toContain('tsx');
+    expect(w).not.toContain('npx');
+    // A wrapper, not a 66-line snapshot.
+    expect(w.split('\n').length).toBeLessThan(40);
+  });
+
+  it('adds NO new copy of the agent-env var list (single-source via entry)', () => {
+    // agent-env-agreement.test.ts pins the var list across pre-push.ts and the
+    // two shell wrappers. The thin wrapper must not introduce a third copy —
+    // the entry it execs already gates. Assert none of the canonical vars are
+    // gated inside the wrapper.
+    const w = buildThinWrapper(PLUGIN_ROOT);
+    for (const v of AGENT_ENV_VARS) {
+      expect(w).not.toContain(`-z "${'$'}{${v}:-}"`);
+    }
+  });
+
+  it('starts with a bash shebang and set -eu', () => {
+    const w = buildThinWrapper(PLUGIN_ROOT);
+    expect(w.startsWith('#!/usr/bin/env bash')).toBe(true);
+    expect(w).toContain('set -eu');
   });
 });
 
@@ -351,5 +414,32 @@ describe('installGitHooks — end-to-end', () => {
     expect(result2.action).toBe('already_installed');
     expect(read('.pre-commit-config.yaml')).toBe(firstConfig);
     expect(read('.kaizen-hooks/pre-push')).toBe(firstEntry);
+  });
+
+  it('install with the thin wrapper writes a wrapper, not a copy of entry logic (#1086)', () => {
+    write('.pre-commit-config.yaml', 'repos: []\n');
+    const wrapper = buildThinWrapper('/plugins/cache/kaizen');
+    installGitHooks({ cwd: tmpDir, entryScriptContent: wrapper });
+    const installed = read('.kaizen-hooks/pre-push');
+    expect(installed).toContain('exec bash "$ENTRY" "$@"');
+    expect(installed).not.toContain('pre-push.ts');
+  });
+
+  it('migration: re-install overwrites a stale 66-line copy with the thin wrapper (#1086)', () => {
+    write('.pre-commit-config.yaml', 'repos: []\n');
+    // Simulate a host that previously installed the old full COPY of the entry.
+    const stale = '#!/usr/bin/env bash\n# stale copy\n' +
+      'HOOK_TS="$KAIZEN_ROOT/src/hooks/pre-push.ts"\n' +
+      'exec npx --no-install tsx "$HOOK_TS" "$@"\n';
+    writeEntryScript(tmpDir, stale);
+    expect(read('.kaizen-hooks/pre-push')).toContain('pre-push.ts');
+
+    // Next /kaizen-setup run installs the thin wrapper.
+    const wrapper = buildThinWrapper('/plugins/cache/kaizen');
+    installGitHooks({ cwd: tmpDir, entryScriptContent: wrapper });
+
+    const migrated = read('.kaizen-hooks/pre-push');
+    expect(migrated).toContain('exec bash "$ENTRY" "$@"');
+    expect(migrated).not.toContain('pre-push.ts'); // stale dispatch logic gone
   });
 });

@@ -4,7 +4,7 @@
 
 ## Problem
 
-Today, kaizen improvement happens one session at a time, always with a human nearby. The auto-dent harness (`scripts/auto-dent.sh` trampoline + `scripts/auto-dent-run.ts` TypeScript runner) is the autonomous batch runner — it delegates to `/kaizen-deep-dive`, tracks artifacts, enforces safety rails, and provides real-time observability via `--output-format stream-json`. A companion control script (`scripts/auto-dent-ctl.ts`) provides status and halt commands.
+Today, kaizen improvement happens one session at a time, always with a human nearby. The auto-dent harness (`scripts/auto-dent.sh` compatibility wrapper + `scripts/auto-dent.ts` batch runner + `scripts/auto-dent-run.ts` single-run runner) is the autonomous batch runner — it delegates to `/kaizen-deep-dive`, tracks artifacts, enforces safety rails, and provides real-time observability via `--output-format stream-json`. A companion control script (`scripts/auto-dent-ctl.ts`) provides status and halt commands.
 
 Without autonomous batch operations:
 - **Improvement velocity is human-gated** — agents only work when Aviad is awake and watching
@@ -20,7 +20,7 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 | Level | Name | What the system can do | Mechanism |
 |-------|------|------------------------|-----------|
 | **L0** | Manual | Human starts each session, watches it | Interactive `claude-wt` |
-| **L1** | Basic loop | Script loops `/kaizen-deep-dive` with guidance. Logs to files. | `auto-dent.sh` (trampoline) |
+| **L1** | Basic loop | Script loops `/kaizen-deep-dive` with guidance. Logs to files. | `auto-dent.ts` (batch runner) |
 | **L2** | Tagged & tracked | Each run gets a unique tag. PRs, issues, and cases created are extracted and logged. Batch creates a summary issue. | Output parsing, `--output-format json`, GitHub issue per batch |
 | **L3** | Governed | Cost caps (per-run and total), consecutive failure detection, tight-loop prevention, graceful shutdown on signals. | Budget tracking, exit code analysis, cooldown escalation, SIGTERM handler |
 | **L4** | Reporting | Admin gets a structured report after each run and a batch summary. Telegram notification with PRs shipped, issues filed, money spent. | IPC messaging to admin channel, structured summaries |
@@ -30,7 +30,7 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 
 ## You Are Here
 
-**L3: Governed + Observable.** Trampoline/runner split: `auto-dent.sh` (bash trampoline with `git pull` self-update between runs) delegates to `auto-dent-run.ts` (TypeScript runner with `--output-format stream-json` real-time observability). Features: batch IDs, per-run tagging, output parsing, stream-json milestone display, heartbeat during silence, `AUTO_DENT_STOP:` loop control (agent can stop the batch), cross-run state in `state.json`, cumulative context, batch progress issues (auto-created GitHub issue per batch with per-run comments), artifact labeling (`auto-dent` label on PRs/issues), safety-net auto-merge queuing. Safety: consecutive failure detection, fast-fail escalating cooldown, graceful SIGTERM/SIGINT shutdown, halt file mechanism for remote stop. Control plane: `auto-dent-ctl.ts` provides `--status` and `--halt` subcommands. Not yet implemented: total budget enforcement, admin notifications (Telegram), strategic planning.
+**L3: Governed + Observable.** Wrapper/batch/single-run split: `auto-dent.sh` is only the stable shell entrypoint, `auto-dent.ts` owns the batch loop and `git pull` self-update between runs, and `auto-dent-run.ts` owns each Claude run with `--output-format stream-json` real-time observability. Features: batch IDs, per-run tagging, output parsing, stream-json milestone display, heartbeat during silence, `AUTO_DENT_STOP:` loop control (agent can stop the batch), cross-run state in `state.json`, cumulative context, batch progress issues (auto-created GitHub issue per batch with per-run comments), artifact labeling (`auto-dent` label on PRs/issues), safety-net auto-merge queuing. Safety: consecutive failure detection, fast-fail escalating cooldown, graceful SIGTERM/SIGINT shutdown, halt file mechanism for remote stop. Control plane: `auto-dent-ctl.ts` provides `--status` and `--halt` subcommands. Not yet implemented: admin notifications (Telegram), strategic planning.
 
 **Multi-axis maturity assessment** (from PRD `docs/prd-overnight-dent-horizon.md`): Runner capability is L3, but surrounding dimensions are lower — Lifecycle Completeness L1, Scope Safety L0-L1, Failure Recovery L1, Observability L1-L2, Throughput Efficiency L0, Quality Assurance L0-L1. Capability has outrun maturity.
 
@@ -38,9 +38,9 @@ The vision: a batch runner that operates like a disciplined team lead. It picks 
 
 | Component | Level | Location |
 |-----------|-------|----------|
-| `auto-dent.sh` | L3 (trampoline) | `scripts/auto-dent.sh` |
-| `auto-dent-run.sh` | L3 (wrapper) | `scripts/auto-dent-run.sh` |
-| `auto-dent-run.ts` | L3 (runner) | `scripts/auto-dent-run.ts` |
+| `auto-dent.sh` | L3 (compat wrapper) | `scripts/auto-dent.sh` |
+| `auto-dent.ts` | L3 (batch runner) | `scripts/auto-dent.ts` |
+| `auto-dent-run.ts` | L3 (single-run runner) | `scripts/auto-dent-run.ts` |
 | `auto-dent-ctl.ts` | L3 (control plane) | `scripts/auto-dent-ctl.ts` |
 | `auto-dent-score.ts` | L3 (scoring) | `scripts/auto-dent-score.ts` |
 | `auto-dent-analyze.ts` | L3 (analysis) | `scripts/auto-dent-analyze.ts` |

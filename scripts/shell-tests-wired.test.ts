@@ -8,9 +8,9 @@ import { join, basename } from 'node:path';
  *
  * A shell test file (`*.test.sh`) that lives in the repo but is wired into no
  * runner silently rots: it passes locally, never runs in CI, and the code it
- * guards drifts unprotected. `scripts/auto-dent.test.sh` (66 tests over the
- * batch-state logic in `auto-dent-lib.sh`) was exactly this — added in
- * 14887d7 for #595/#748, referenced nowhere.
+ * guards drifts unprotected. This test fails if shell tests return without a
+ * runner surface. It also permits zero tracked shell tests now that the
+ * auto-dent batch loop moved to TypeScript.
  *
  * This test fails if ANY tracked `*.test.sh` is not reachable from a CI
  * runner surface, so the next orphaned shell test is caught the moment it
@@ -27,7 +27,10 @@ function trackedShellTests(): string[] {
     cwd: repoRoot,
     encoding: 'utf8',
   });
-  return out.split('\n').filter((l) => l.trim().length > 0);
+  return out
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .filter((l) => existsSync(join(repoRoot, l)));
 }
 
 /** Concatenated text of every CI workflow yml + package.json. */
@@ -74,9 +77,7 @@ describe('shell tests are wired into CI (#806)', () => {
     ).toEqual([]);
   });
 
-  it('finds shell tests to check (guards against a vacuous pass)', () => {
-    // If git ls-files ever returns nothing, the orphan check above is
-    // trivially satisfied and proves nothing. Pin a non-empty expectation.
-    expect(trackedShellTests().length).toBeGreaterThan(0);
+  it('allows the repo to have no tracked shell tests after shell logic is retired', () => {
+    expect(trackedShellTests()).toEqual([]);
   });
 });

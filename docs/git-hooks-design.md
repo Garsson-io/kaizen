@@ -83,7 +83,7 @@ The detection order in `src/setup-git-hooks.ts`:
 
 ### Framework-specific injection
 
-In every case, kaizen writes `.kaizen-hooks/pre-push` (the host-side entry script, see below) to the host project root, then registers it with whichever framework is present.
+In every case, kaizen writes `.kaizen-hooks/pre-push` (a **thin wrapper** that execs the plugin-resident entry — see below) to the host project root, then registers it with whichever framework is present.
 
 **pre-commit** (PRIMARY):
 
@@ -131,15 +131,25 @@ pre-push:
 
 All injection is **idempotent**: running `/kaizen-setup install-git-hooks` twice detects the `KAIZEN_CHAIN_START` marker (or hook `id: kaizen-pre-push` for structured configs) and skips.
 
-### The `.kaizen-hooks/pre-push` entry script
+### The `.kaizen-hooks/pre-push` thin wrapper (#1086)
 
-A thin shell script installed in the host repo. It:
+`/kaizen-setup install-git-hooks` writes a **thin wrapper** (~25–35 lines) into the host repo at `.kaizen-hooks/pre-push`. It is NOT a copy of the gate logic — it only:
 
-1. Runs the agent-env gate (exit 0 for humans).
-2. Resolves `$CLAUDE_PLUGIN_ROOT` (baked in at install time; falls back to `$HOME/.claude/plugins/cache` search).
-3. Execs `npx tsx "$CLAUDE_PLUGIN_ROOT/src/hooks/pre-push.ts"` with stdin and args passed through.
+1. Resolves the kaizen plugin root: `$CLAUDE_PLUGIN_ROOT` → baked-in install path → `$HOME/.claude/plugins/cache` search → fail-open.
+2. Exports the resolved root as `$CLAUDE_PLUGIN_ROOT`.
+3. `exec`s the **plugin-resident** `$KAIZEN_ROOT/src/hooks/kaizen-host-entry.sh` with stdin and args passed through.
 
-The source template lives at `src/hooks/kaizen-host-entry.sh` in the kaizen plugin.
+`kaizen-host-entry.sh` (inside the plugin) then runs the agent-env gate, resolves the runtime, and dispatches to `src/hooks/pre-push.ts`.
+
+**Why a wrapper, not a copy (the self-updating property).** The earlier design wrote a ~66-line *copy* of `kaizen-host-entry.sh` into the host repo. That froze the host's pre-push logic at the kaizen version present when setup last ran — a gate fix learned from an incident could not reach the host until it re-ran `/kaizen-setup`, which most collaborators never do. The opposite of kaizen's continuous-improvement loop. With the wrapper, **all version-sensitive logic lives in the plugin**, so a plugin update reaches every host automatically. The wrapper is so minimal it almost never changes.
+
+**No agent-env gate in the wrapper — deliberate.** `kaizen-host-entry.sh` already gates on the agent-env vars as its first action, and `src/hooks/agent-env-agreement.test.ts` pins that var list against `pre-push.ts` so it can't drift. Adding the gate to the wrapper would create a *third* copy of that list to keep in sync — the exact drift hazard the agreement test exists to prevent. In the common case the baked-in path resolves without a cache scan, so a human push still exits fast once it reaches the entry's gate.
+
+**Migration is automatic.** `writeEntryScript` overwrites `.kaizen-hooks/pre-push` on every setup run, so the next `/kaizen-setup` on an existing host swaps the stale copy for the wrapper. No `.kaizen-hooks/` removal needed.
+
+Builder: `buildThinWrapper(pluginRoot)` in `src/setup-git-hooks.ts`. The dispatch target template lives at `src/hooks/kaizen-host-entry.sh` in the kaizen plugin.
+
+> Remote-repo hook references (pre-commit `repo:`/lefthook `remotes:`, #1087) would remove host-side code entirely. That is a larger architecture change tracked separately; the thin wrapper is the categorical fix for the *staleness* of the host-side file today.
 
 ## Worktree semantics
 

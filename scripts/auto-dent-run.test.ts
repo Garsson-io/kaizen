@@ -3021,3 +3021,20 @@ describe('classifyFailure live wiring (#1102 regression guard)', () => {
     expect(call![1]).not.toBe('');
   });
 });
+
+describe('post-run runId lifetime (#1128 regression guard)', () => {
+  const source = readFileSync(join(__dirname, 'auto-dent-run.ts'), 'utf8');
+
+  it('declares the run id once before all post-run telemetry and review wiring', () => {
+    const declaration = 'const runId = makeRunId(state.batch_id, runNum);';
+    const declarationIndex = source.indexOf(declaration);
+    const runStartIndex = source.indexOf('events.emitAt(runStartDate');
+    const reviewIndex = source.indexOf('const { reviewVerdict, reviewCostUsd } = await runReviewWiring');
+
+    expect(declarationIndex).toBeGreaterThan(-1);
+    expect(declarationIndex).toBeLessThan(runStartIndex);
+    expect(declarationIndex).toBeLessThan(reviewIndex);
+    expect(source.split(declaration).length - 1).toBe(1);
+    expect(source.slice(declarationIndex, reviewIndex)).toContain('run_id: runId');
+  });
+});
