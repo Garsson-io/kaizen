@@ -37,6 +37,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { processHookInput, writeReviewSentinel } from './pr-review-loop.js';
+import { expectedPrReviewDimensions } from '../review-sentinel.js';
 
 /** Run hook with raw string as stdin (for testing malformed input). */
 function runHookRaw(rawStdin: string, extraEnv: Record<string, string> = {}): string {
@@ -281,7 +282,12 @@ describe('pr-review-loop: gh pr diff', () => {
   /** Write a review sentinel to simulate store-review-summary having been called */
   function writeSentinel(stateKey: string, round: string): void {
     const prNumber = stateKey.split('_').pop();
-    writeReviewSentinel(`https://github.com/Garsson-io/kaizen/pull/${prNumber}`, round, testStateDir);
+    const dims = expectedPrReviewDimensions();
+    writeReviewSentinel(`https://github.com/Garsson-io/kaizen/pull/${prNumber}`, round, testStateDir, {
+      dimensionsReviewed: dims,
+      findingCount: dims.length,
+      totalDone: dims.length,
+    });
   }
 
   function createPendingReviewState(prNumber: string, round: string = '1'): void {
@@ -537,7 +543,12 @@ describe('INVARIANT: gate transitions verify outcome, not just trigger command',
         tool_response: { stdout: 'diff --git a/foo b/foo', stderr: '', exit_code: '0' },
       },
       provideOutcome: () => {
-        writeReviewSentinel(PR_URL, '1', testStateDir);
+        const dims = expectedPrReviewDimensions();
+        writeReviewSentinel(PR_URL, '1', testStateDir, {
+          dimensionsReviewed: dims,
+          findingCount: dims.length,
+          totalDone: dims.length,
+        });
       },
       expectBlockedAction: 'needs_review',
       expectPassedAction: 'review_passed',

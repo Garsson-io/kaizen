@@ -63,4 +63,24 @@ describe('review sentinel contract', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('missing_expected_dimensions');
   });
+
+  it('rejects a sentinel with findingCount=0 (no stored findings)', () => {
+    const record = buildReviewSentinelRecord({
+      prUrl: PR_URL,
+      round: 1,
+      dimensionsReviewed: expectedPrReviewDimensions(),
+      findingCount: 0,
+      totalDone: 0,
+      totalPartial: 0,
+      totalMissing: 0,
+    });
+
+    const result = validateReviewSentinel(serializeReviewSentinel(record), {
+      prUrl: PR_URL,
+      round: 1,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('invalid_findingCount');
+  });
 });
