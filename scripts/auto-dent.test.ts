@@ -27,6 +27,7 @@ const baseOpts: AutoDentOptions = {
   testTask: false,
   experiment: false,
   noPlan: false,
+  provider: 'claude',
   guidance: 'focus on hooks',
 };
 
@@ -100,6 +101,22 @@ describe('parseAutoDentArgs', () => {
     expect(parseAutoDentArgs(['--test-task']).guidance).toBe('synthetic pipeline test');
   });
 
+  it('defaults provider to claude', () => {
+    expect(parseAutoDentArgs(['focus']).provider).toBe('claude');
+  });
+
+  it('accepts codex provider only for test-task mode', () => {
+    const opts = parseAutoDentArgs(['--provider', 'codex', '--test-task']);
+    expect(opts.provider).toBe('codex');
+    expect(opts.testTask).toBe(true);
+  });
+
+  it('rejects codex provider for non-synthetic batches', () => {
+    expect(() => parseAutoDentArgs(['--provider', 'codex', 'real work'])).toThrow(
+      'Codex provider is restricted to --test-task synthetic runs',
+    );
+  });
+
   it('rejects unknown options', () => {
     expect(() => parseAutoDentArgs(['--wat'])).toThrow('Unknown option: --wat');
   });
@@ -130,6 +147,21 @@ describe('createInitialState', () => {
     expect(state.test_task).toBe(true);
     expect(state.experiment).toBe(true);
     expect(state.max_run_seconds).toBe(600);
+    expect(state.provider).toBe('claude');
+  });
+
+  it('stores selected provider in initial state for dry-run inspection', () => {
+    const state = createInitialState('batch-1', 'synthetic', 1, {
+      ...baseOpts,
+      testTask: true,
+      provider: 'codex',
+    }, {
+      kaizenRepo: 'Garsson-io/kaizen',
+      hostRepo: 'Garsson-io/kaizen',
+    });
+
+    expect(state.provider).toBe('codex');
+    expect(state.test_task).toBe(true);
   });
 });
 

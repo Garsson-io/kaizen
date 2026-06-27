@@ -1544,6 +1544,17 @@ describe('RunMetrics type', () => {
   });
 });
 
+describe('BatchState provider field (#1144)', () => {
+  it('supports synthetic Codex provider state while preserving optional default', () => {
+    const codexState = makeBatchState({ test_task: true, provider: 'codex' });
+    const legacyState = makeBatchState({});
+
+    expect(codexState.provider).toBe('codex');
+    expect(codexState.test_task).toBe(true);
+    expect(legacyState.provider).toBeUndefined();
+  });
+});
+
 describe('truncateAtWord', () => {
   it('returns short text unchanged', () => {
     expect(truncateAtWord('hello world', 50)).toBe('hello world');
