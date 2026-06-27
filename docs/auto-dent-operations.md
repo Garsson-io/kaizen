@@ -79,6 +79,9 @@ Key variables: `{{guidance}}`, `{{run_tag}}`, `{{run_context}}`, `{{issues_close
 # Preview without executing
 ./scripts/auto-dent.sh --dry-run "focus on observability"
 
+# Run with Codex subscription CLI instead of Claude
+./scripts/auto-dent.sh --provider codex "focus on provider-safe fixes"
+
 # Custom timeout (default 45min per run)
 ./scripts/auto-dent.sh --max-run-seconds 1800 "simple fixes only"
 ```
@@ -93,6 +96,7 @@ Key variables: `{{guidance}}`, `{{run_tag}}`, `{{run_context}}`, `{{issues_close
 | `--max-budget N.NN` | none | Total batch budget — halts when cumulative cost exceeds |
 | `--max-failures N` | 3 | Stop after N consecutive failures |
 | `--max-run-seconds N` | 1200 (20min) | Wall-time timeout per run |
+| `--provider claude\|codex` | claude | Agent provider; Codex uses subscription CLI JSONL output |
 | `--dry-run` | off | Show what would run |
 | `--test-task` | off | Use synthetic fast task |
 | `--experiment` | off | Enable extra pipeline diagnostics |

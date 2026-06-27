@@ -204,7 +204,7 @@ export interface BatchState {
   progress_issue?: string;
   test_task?: boolean;
   experiment?: boolean;
-  /** Agent provider. Defaults to claude for older state files. Codex is synthetic-only (#1144). */
+  /** Agent provider. Defaults to claude for older state files. Codex uses subscription CLI (#1139). */
   provider?: 'claude' | 'codex';
   last_heartbeat?: number;
   max_run_seconds?: number;
@@ -1406,7 +1406,7 @@ interface ProviderRunResult {
   promptMeta: PromptMetadata;
 }
 
-async function runCodexSynthetic(
+async function runCodex(
   input: {
     state: BatchState;
     runNum: number;
@@ -1432,7 +1432,7 @@ async function runCodexSynthetic(
     // Missing version detail should not hide the primary spawn error below.
   }
 
-  appendFileSync(input.logFile, `[provider] codex synthetic test-task\n`);
+  appendFileSync(input.logFile, `[provider] codex subscription-cli\n`);
   appendFileSync(input.logFile, `[provider] version=${version}\n`);
   appendFileSync(input.logFile, `[provider] raw_jsonl=${rawFile}\n`);
   writeFileSync(rawFile, '');
@@ -1549,19 +1549,8 @@ async function runClaude(
   const promptFile = `${logDir}/run-${runNum}-prompt.md`;
   writeFileSync(promptFile, prompt + '\n');
 
-  if (state.provider === 'codex') {
-    if (!state.test_task) {
-      appendFileSync(logFile, '[provider] codex requested for non-synthetic run; refusing\n');
-      return {
-        exitCode: 1,
-        duration: 0,
-        result,
-        mode: modeSelection.mode,
-        modeReason: modeSelection.reason,
-        promptMeta,
-      };
-    }
-    return runCodexSynthetic({
+  if (shouldRunCodexProvider(state)) {
+    return runCodex({
       state,
       runNum,
       logFile,
@@ -1820,6 +1809,10 @@ function phaseProvidersForState(state: BatchState): PhaseProviderRecord {
     reflection: codex,
     validation: { provider: 'provider-independent', billing: 'local-only' },
   };
+}
+
+export function shouldRunCodexProvider(state: Pick<BatchState, 'provider'>): boolean {
+  return state.provider === 'codex';
 }
 
 // Lifecycle validation — implementation lives in ./auto-dent-lifecycle.ts.

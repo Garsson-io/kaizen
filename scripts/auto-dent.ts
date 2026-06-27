@@ -81,7 +81,7 @@ Options:
   --max-failures N     Stop after N consecutive failures (default: 3)
   --max-run-seconds N  Wall-time timeout per run in seconds (default: 1200 = 20min)
   --no-plan            Skip planning pre-pass (use discovery mode)
-  --provider NAME      Agent provider: claude (default) or codex (synthetic --test-task only)
+  --provider NAME      Agent provider: claude (default) or codex
   --dry-run            Show what would run without executing
   --test-task          Use synthetic fast task instead of /kaizen-deep-dive
   --experiment         Enable extra pipeline diagnostics
@@ -177,9 +177,6 @@ export function parseAutoDentArgs(argv: string[]): AutoDentOptions {
 
   opts.guidance = positional.join(' ');
   if (!opts.guidance && opts.testTask) opts.guidance = 'synthetic pipeline test';
-  if (opts.provider === 'codex' && !opts.testTask) {
-    throw new Error('Codex provider is restricted to --test-task synthetic runs');
-  }
   return opts;
 }
 
@@ -584,7 +581,7 @@ async function main(): Promise<void> {
   if (opts.dryRun) {
     console.log('[dry-run] Would execute per run:');
     console.log(`  npx tsx ${join(repoRoot, 'scripts', 'auto-dent-run.ts')} ${stateFile}`);
-    console.log(`[dry-run] Provider: ${opts.provider}${opts.provider === 'codex' ? ' (synthetic test-task only)' : ''}`);
+    console.log(`[dry-run] Provider: ${opts.provider}`);
     console.log('');
     console.log('[dry-run] State file:');
     console.log(readFileSync(stateFile, 'utf8').trimEnd());

@@ -51,6 +51,7 @@ import {
   ensureBatchProgressIssue,
   extractPlanText,
   populateCrossBatchSteering,
+  shouldRunCodexProvider,
 } from './auto-dent-run.js';
 import * as github from './auto-dent-github.js';
 
@@ -1584,6 +1585,13 @@ describe('BatchState provider field (#1144)', () => {
     expect(codexState.provider).toBe('codex');
     expect(codexState.test_task).toBe(true);
     expect(legacyState.provider).toBeUndefined();
+  });
+
+  it('treats Codex as a real run provider outside synthetic test-task mode (#1139)', () => {
+    expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex', test_task: false }))).toBe(true);
+    expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex', test_task: true }))).toBe(true);
+    expect(shouldRunCodexProvider(makeBatchState({ provider: 'claude', test_task: false }))).toBe(false);
+    expect(shouldRunCodexProvider(makeBatchState({ provider: undefined, test_task: false }))).toBe(false);
   });
 });
 
