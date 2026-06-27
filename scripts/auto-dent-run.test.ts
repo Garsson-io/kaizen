@@ -1380,6 +1380,34 @@ describe('processStreamMessage', () => {
     expect(result.issuesClosed).toContain('#451');
   });
 
+  it('captures structured final claims from result text', () => {
+    const result = makeRunResult();
+    processStreamMessage(
+      {
+        type: 'result',
+        subtype: 'success',
+        total_cost_usd: 1.0,
+        result: JSON.stringify({
+          schema_version: 1,
+          selected_issue: '#1145',
+          case_worktree: '2606271547-k1145-final-claim-contract',
+          tests: { status: 'pass', command: 'npm test', count: 5, evidence: ['5 passed'] },
+          pr_url: 'https://github.com/Garsson-io/kaizen/pull/1176',
+          review_status: 'pass',
+          reflection_status: 'done',
+          stop_reason: null,
+          blockers: [],
+        }),
+      },
+      result,
+      Date.now(),
+    );
+
+    expect(result.finalClaimStatus).toBe('valid');
+    expect(result.finalClaim?.selected_issue).toBe('#1145');
+    expect(result.finalClaimWarnings).toEqual([]);
+  });
+
   it('handles messages without content gracefully', () => {
     const result = makeRunResult();
     processStreamMessage({ type: 'assistant' }, result, Date.now());
@@ -1492,11 +1520,15 @@ describe('RunMetrics type', () => {
       process_verdict: 'pass',
       process_issue_count: 0,
       process_summary: 'process verdict pass (durable evidence complete)',
+      final_claim_status: 'valid',
+      final_claim_path: 'logs/auto-dent/batch/run-1-final-claim.json',
+      final_claim_warnings: [],
     };
     expect(metrics.run).toBe(1);
     expect(metrics.cost_usd).toBe(2.5);
     expect(metrics.prs).toHaveLength(1);
     expect(metrics.process_verdict).toBe('pass');
+    expect(metrics.final_claim_status).toBe('valid');
   });
 
   it('supports run_history in BatchState', () => {

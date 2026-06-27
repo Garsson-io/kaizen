@@ -9,6 +9,7 @@
  */
 
 import type { RunResult } from './auto-dent-run.js';
+import { parseFinalRunClaim } from './auto-dent-final-claim.js';
 import { ghExec } from './auto-dent-github.js';
 
 // ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
@@ -441,6 +442,10 @@ export function processStreamMessage(
       }
       if (msg.result) {
         extractArtifacts(msg.result, result);
+        const claimResult = parseFinalRunClaim(msg.result);
+        result.finalClaimStatus = claimResult.status;
+        result.finalClaim = claimResult.claim;
+        result.finalClaimWarnings = claimResult.warnings;
         checkStopSignal(msg.result, result);
         const recs = extractContemplationRecommendations(msg.result);
         if (recs.length > 0) {
