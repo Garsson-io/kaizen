@@ -75,6 +75,30 @@ describe('auto-dent provider capability inventory', () => {
     }
   });
 
+  it('escapes Markdown table metacharacters in rendered cells', () => {
+    const rendered = renderProviderCapabilityMatrix(buildProviderCapabilityMatrix([
+      {
+        id: 'escape-test',
+        label: 'Pipe | Backslash \\',
+        provider: 'provider-independent',
+        billingMode: 'local-only',
+        acceptedForUnattended: true,
+        phaseFit: {
+          planning: 'not-applicable',
+          implementation: 'not-applicable',
+          review: 'not-applicable',
+          fix: 'not-applicable',
+          reflection: 'not-applicable',
+          validation: 'best',
+        },
+        notes: 'line one\nline | two \\',
+      },
+    ]));
+
+    expect(rendered).toContain('Pipe \\| Backslash \\\\');
+    expect(rendered).toContain('line one line \\| two \\\\');
+  });
+
   it('prints the rendered matrix from the CLI entry point', () => {
     const output = execFileSync(
       'npx',
