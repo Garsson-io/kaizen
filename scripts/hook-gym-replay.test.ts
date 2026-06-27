@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   extractToolActions,
@@ -12,6 +12,8 @@ import {
   formatFixture,
   type ToolAction,
 } from './hook-gym-replay.js';
+
+const LIVE_PROBE_FIXTURE = resolve(__dirname, '../fixtures/live/probe-hooks.jsonl');
 
 // ── extractToolActions ────────────────────────────────────────────
 
@@ -237,14 +239,51 @@ describe('extractToolActionsFromFile', () => {
 
   it('returns empty for JSON array (hook-event fixture)', () => {
     const hookEvents = [
-      { type: 'system', subtype: 'hook_started', hook_id: 'h1' },
-      { type: 'system', subtype: 'hook_response', hook_id: 'h1' },
+      {
+        type: 'system',
+        subtype: 'hook_started',
+        hook_id: 'h1',
+        hook_name: 'PreToolUse:Bash',
+        hook_event: 'PreToolUse',
+        uuid: 'u1',
+        session_id: 's',
+      },
+      {
+        type: 'system',
+        subtype: 'hook_response',
+        hook_id: 'h1',
+        hook_name: 'PreToolUse:Bash',
+        hook_event: 'PreToolUse',
+        exit_code: 0,
+        outcome: 'success',
+        uuid: 'u2',
+        session_id: 's',
+      },
     ];
     const path = join(tmpDir, 'hooks.json');
     writeFileSync(path, JSON.stringify(hookEvents));
 
     const actions = extractToolActionsFromFile(path);
     expect(actions).toHaveLength(0);
+  });
+
+  it('extracts actions and tool results from the real captured probe-hooks fixture', () => {
+    const actions = extractToolActionsFromFile(LIVE_PROBE_FIXTURE);
+
+    expect(actions.length).toBeGreaterThan(0);
+    expect(actions.some(
+      (action) =>
+        action.tool === 'Bash' &&
+        String(action.input.command ?? '').includes('git checkout -b'),
+    )).toBe(true);
+    expect(actions.some(
+      (action) =>
+        action.tool === 'Write' &&
+        String(action.input.file_path ?? '').endsWith('hook-gym-probe.md'),
+    )).toBe(true);
+    expect(actions.some(
+      (action) => action.result?.stdout.includes('Switched to a new branch'),
+    )).toBe(true);
   });
 });
 

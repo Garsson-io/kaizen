@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   validateAgainstScenario,
   loadFixture,
@@ -9,7 +9,10 @@ import {
   formatValidationReport,
 } from './hook-gym-validate.js';
 import { parseLogFile } from './hook-gym-stream.js';
+import { getScenario } from './hook-gym-scenarios.js';
 import type { Scenario, HookTimeline } from './hook-gym-schema.js';
+
+const LIVE_PROBE_FIXTURE = resolve(__dirname, '../fixtures/live/probe-hooks.jsonl');
 
 // ── Small helpers to build synthetic timelines ─────────────────────
 
@@ -483,6 +486,40 @@ describe('validateFixtureFile — invariant I1 (PR has Closes #N)', () => {
     expect(report.passed).toBe(false);
     expect(report.criticalMisses).toBe(1);
     expect(report.confusionPairs[0].expected).toBe('deny');
+  });
+});
+
+describe('validateFixtureFile — real captured fixtures', () => {
+  it('scores the live probe-hooks fixture from observed hook verdicts', () => {
+    const probeHooks = getScenario('probe-hooks');
+    expect(probeHooks).toBeDefined();
+
+    const report = validateFixtureFile(LIVE_PROBE_FIXTURE, probeHooks!);
+
+    expect(report.passed).toBe(true);
+    expect(report.criticalMisses).toBe(0);
+    expect(report.hookResults.some(
+      (result) =>
+        result.expected.expectedDecision === 'set-gate' &&
+        result.actualDecision === 'set-gate',
+    )).toBe(true);
+  });
+
+  it('rejects a malformed copy of the live probe-hooks fixture before scoring', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'hg-live-bad-'));
+    const fixturePath = join(tmp, 'probe-hooks-bad.jsonl');
+    const lines = readFileSync(LIVE_PROBE_FIXTURE, 'utf-8').trim().split('\n');
+    const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    const response = events.find(
+      (event) => event.type === 'system' && event.subtype === 'hook_response',
+    );
+    expect(response).toBeDefined();
+    response!.exit_code = '0';
+    writeFileSync(fixturePath, events.map((event) => JSON.stringify(event)).join('\n'));
+
+    const probeHooks = getScenario('probe-hooks');
+    expect(probeHooks).toBeDefined();
+    expect(() => validateFixtureFile(fixturePath, probeHooks!)).toThrow(/Invalid hook-gym fixture/);
   });
 });
 

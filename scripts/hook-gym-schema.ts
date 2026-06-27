@@ -1,9 +1,106 @@
+import { z } from 'zod';
+
 /**
  * hook-gym-schema.ts — TypeScript types for Hook Gym.
  *
  * All types for hook events, scenarios, scoring, and iteration tracking.
- * Uses plain TypeScript (no Zod) — data comes from Claude CLI (controlled format).
+ * Runtime schemas validate captured fixtures before the harness scores or
+ * replays them. The capture source is controlled, but fixture files are durable
+ * test artifacts and must fail closed when their shape drifts.
  */
+
+// ── Runtime fixture schemas ───────────────────────────────────────
+
+const UnknownRecordSchema = z.record(z.string(), z.unknown());
+
+const HookEventBaseSchema = z.object({
+  type: z.literal('system'),
+  hook_id: z.string().min(1),
+  hook_name: z.string().min(1),
+  hook_event: z.string().min(1),
+  uuid: z.string().min(1),
+  session_id: z.string().min(1),
+});
+
+export const HookStartedEventSchema = HookEventBaseSchema.extend({
+  subtype: z.literal('hook_started'),
+});
+
+export const HookResponseEventSchema = HookEventBaseSchema.extend({
+  subtype: z.literal('hook_response'),
+  output: z.string().optional(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
+  exit_code: z.number().int(),
+  outcome: z.string().min(1),
+});
+
+const OtherSystemEventSchema = z.object({
+  type: z.literal('system'),
+  subtype: z.string().optional(),
+}).passthrough().refine(
+  (event) => event.subtype !== 'hook_started' && event.subtype !== 'hook_response',
+  'hook_started and hook_response events must satisfy their hook event schemas',
+);
+
+const AssistantMessageEventSchema = z.object({
+  type: z.literal('assistant'),
+  message: UnknownRecordSchema,
+}).passthrough();
+
+const UserMessageEventSchema = z.object({
+  type: z.literal('user'),
+  message: UnknownRecordSchema,
+}).passthrough();
+
+const RateLimitEventSchema = z.object({
+  type: z.literal('rate_limit_event'),
+}).passthrough();
+
+export const HookGymFixtureEventSchema = z.union([
+  HookStartedEventSchema,
+  HookResponseEventSchema,
+  OtherSystemEventSchema,
+  AssistantMessageEventSchema,
+  UserMessageEventSchema,
+  RateLimitEventSchema,
+]);
+
+export type HookGymFixtureEvent = z.infer<typeof HookGymFixtureEventSchema>;
+
+function parseFixtureJson(raw: string): unknown[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+
+  if (trimmed.startsWith('[')) {
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) {
+      throw new Error('Invalid hook-gym fixture: JSON fixture must be an array');
+    }
+    return parsed;
+  }
+
+  return trimmed.split('\n').map((line, index) => {
+    try {
+      return JSON.parse(line);
+    } catch (error) {
+      throw new Error(`Invalid hook-gym fixture: line ${index + 1} is not valid JSON`, { cause: error });
+    }
+  });
+}
+
+export function parseHookGymFixtureContent(raw: string): HookGymFixtureEvent[] {
+  const records = parseFixtureJson(raw);
+  const result = z.array(HookGymFixtureEventSchema).safeParse(records);
+  if (!result.success) {
+    const issues = result.error.issues
+      .slice(0, 5)
+      .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
+      .join('; ');
+    throw new Error(`Invalid hook-gym fixture: ${issues}`);
+  }
+  return result.data;
+}
 
 // ── Hook Event (from --include-hook-events stream) ─────────────────
 
