@@ -18,6 +18,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import type { HookTimeline, ParsedHookEvent, Scenario } from './hook-gym-schema.js';
+import { parseHookGymFixtureContent } from './hook-gym-schema.js';
 import { validateAgainstScenario, type ValidationReport } from './hook-gym-validate.js';
 import { parseHookDecision } from './hook-gym-stream.js';
 
@@ -150,16 +151,17 @@ function parseToolResult(text: string, _tool: string): ToolAction['result'] {
  * Extract tool actions from a fixture file (stream.jsonl or JSON array).
  */
 export function extractToolActionsFromFile(fixturePath: string): ToolAction[] {
-  const raw = readFileSync(fixturePath, 'utf-8').trim();
+  const raw = readFileSync(fixturePath, 'utf-8');
+  const records = parseHookGymFixtureContent(raw);
 
-  if (raw.startsWith('[')) {
+  if (raw.trim().startsWith('[')) {
     // JSON array form — these are hook events, not tool actions
     // Can't extract tool actions from hook-only fixtures
     return [];
   }
 
   // Stream-json form — each line is a message
-  return extractToolActions(raw.split('\n'));
+  return extractToolActions(records.map((record) => JSON.stringify(record)));
 }
 
 // ── Hook registry (matches plugin.json) ───────────────────────────

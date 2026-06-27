@@ -21,6 +21,7 @@ import type {
   HookDecision,
 } from './hook-gym-schema.js';
 import { SEVERITY_WEIGHT } from './hook-gym-schema.js';
+import { parseHookGymFixtureContent } from './hook-gym-schema.js';
 import { parseLogFile } from './hook-gym-stream.js';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -285,17 +286,9 @@ export function validateAgainstScenario(
  *     hand-written invariant fixtures)
  */
 export function loadFixture(fixturePath: string): HookTimeline {
-  const raw = readFileSync(fixturePath, 'utf-8').trim();
-
-  if (raw.startsWith('[')) {
-    // JSON array form — wrap each event as a stream-json line
-    const events = JSON.parse(raw) as Record<string, any>[];
-    const nld = events.map((e) => JSON.stringify(e)).join('\n');
-    return parseLogFile(nld);
-  }
-
-  // Stream-json (newline-delimited) form
-  return parseLogFile(raw);
+  const raw = readFileSync(fixturePath, 'utf-8');
+  const events = parseHookGymFixtureContent(raw);
+  return parseLogFile(events.map((e) => JSON.stringify(e)).join('\n'));
 }
 
 /**
