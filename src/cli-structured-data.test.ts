@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { readFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { handlers, parseArgs, resolveContent, resolveRound, type CliArgs } from './cli-structured-data.js';
 import {
   nextReviewRound,
@@ -12,7 +12,8 @@ import {
 vi.mock('node:fs', () => ({
   readFileSync: vi.fn().mockReturnValue('file-content'),
   mkdirSync: vi.fn(),
-  appendFileSync: vi.fn(),
+  writeFileSync: vi.fn(),
+  readdirSync: vi.fn(),
 }));
 
 vi.mock('node:child_process', () => ({
@@ -211,14 +212,22 @@ describe('store-review-batch — review sentinel', () => {
     });
     log.mockRestore();
 
-    // appendFileSync must have been called with a path containing '.reviewed-r1'
-    const calls = vi.mocked(appendFileSync).mock.calls;
+    // writeFileSync must have been called with a path containing '.reviewed-r1'
+    const calls = vi.mocked(writeFileSync).mock.calls;
     const sentinelCall = calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r1'),
     );
     expect(sentinelCall).toBeDefined();
     expect(String(sentinelCall![0])).toMatch(/\.reviewed-r1$/);
-    expect(String(sentinelCall![1])).toMatch(/reviewed_at=/);
+    const payload = JSON.parse(String(sentinelCall![1]));
+    expect(payload).toMatchObject({
+      schemaVersion: 1,
+      prUrl: 'https://github.com/org/repo/pull/903',
+      round: 1,
+      dimensionsReviewed: ['correctness', 'security'],
+      dimensionCount: 2,
+    });
+    expect(payload.integrity).toMatch(/^sha256:/);
   });
 
   it('sentinel path encodes PR number and repo', async () => {
@@ -233,7 +242,7 @@ describe('store-review-batch — review sentinel', () => {
     });
     log.mockRestore();
 
-    const calls = vi.mocked(appendFileSync).mock.calls;
+    const calls = vi.mocked(writeFileSync).mock.calls;
     const sentinelCall = calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r'),
     );
@@ -260,10 +269,20 @@ describe('store-review-summary — CI head proof', () => {
       undefined,
       { expectedHeadSha: 'abc123' },
     );
-    const sentinelCall = vi.mocked(appendFileSync).mock.calls.find(
+    const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r5'),
     );
     expect(sentinelCall).toBeDefined();
+    const payload = JSON.parse(String(sentinelCall![1]));
+    expect(payload).toMatchObject({
+      schemaVersion: 1,
+      prUrl: 'https://github.com/Garsson-io/kaizen/pull/903',
+      round: 5,
+      dimensionsReviewed: ['correctness', 'security'],
+      dimensionCount: 2,
+    });
+    expect(payload.findingCount).toBeGreaterThanOrEqual(0);
+    expect(payload.integrity).toMatch(/^sha256:/);
     log.mockRestore();
   });
 });
@@ -364,7 +383,7 @@ describe('store-review-finding — strict payload validation (#1039)', () => {
       text: JSON.stringify([{ dimension: 'correctness', verdict: 'fail', summary: 'bad', findings: [] }]),
     } as CliArgs)).rejects.toThrow('process.exit(1)');
     // Sentinel must NOT be written when batch is rejected
-    const sentinelCall = vi.mocked(appendFileSync).mock.calls.find(
+    const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r'),
     );
     expect(sentinelCall).toBeUndefined();
