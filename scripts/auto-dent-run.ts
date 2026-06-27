@@ -182,6 +182,12 @@ import {
   type ProcessEvidence,
   type ProcessVerdict,
 } from './auto-dent-lifecycle.js';
+import {
+  classifyRunExit,
+  collectRunWorktrees,
+  rescueRun,
+  defaultRescueDeps,
+} from './auto-dent-rescue.js';
 
 // Types
 
@@ -199,6 +205,12 @@ export interface BatchState {
   host_repo: string;
   run: number;
   prs: string[];
+  /**
+   * Draft "[rescue]" PRs created by the failure finalizer (#1255). Kept SEPARATE
+   * from `prs` so unvalidated, gate-skipped rescue output never inflates the
+   * batch's success metrics. Absent on older state files.
+   */
+  rescue_prs?: string[];
   issues_filed: string[];
   issues_closed: string[];
   cases: string[];
@@ -2804,6 +2816,53 @@ async function main(): Promise<void> {
   if (result.stopRequested) {
     freshState.stop_reason = `agent requested stop: ${result.stopReason}`;
     console.log(`>>> Claude requested batch stop: ${result.stopReason}`);
+  }
+
+  // #1255: rescue stranded work. If a run worktree has commits ahead of main or
+  // dirty files, preserve it — push to an existing PR, or open a clearly-marked
+  // DRAFT rescue PR (gates skipped) — so abnormal termination never strands
+  // rescueable work the way it forced the #1252–#1260 manual rescues. Scoped to
+  // THIS run's own case worktrees; best-effort and fully guarded so a rescue
+  // failure can never hide or block the original run outcome.
+  try {
+    const targets = collectRunWorktrees(repoRoot, result.cases);
+    if (targets.length > 0) {
+      const { reason: failureReason } = classifyRunExit({
+        exitCode,
+        timedOut: Boolean(result.timedOut),
+        stopRequested: Boolean(result.stopRequested),
+      });
+      const outcomes = rescueRun(
+        targets,
+        {
+          repo: state.host_repo || state.kaizen_repo,
+          runTag,
+          runId,
+          failureReason,
+          pickedIssue,
+        },
+        defaultRescueDeps((m) => console.log(`  [rescue] ${m}`)),
+      );
+      let rescuedCount = 0;
+      for (const o of outcomes) {
+        if (o.action === 'none') continue;
+        appendFileSync(
+          logFile,
+          `rescue=${o.branch} action=${o.action} pr=${o.prUrl || ''} pushed=${o.pushed} err=${o.error || ''}\n`,
+        );
+        if (o.prUrl && o.action === 'create-draft' && !o.error) {
+          if (!freshState.rescue_prs) freshState.rescue_prs = [];
+          if (!freshState.rescue_prs.includes(o.prUrl)) freshState.rescue_prs.push(o.prUrl);
+        }
+        if (o.pushed || o.prUrl) rescuedCount++;
+      }
+      if (rescuedCount > 0) {
+        console.log(`  ${color.yellow('[rescue]')} preserved ${rescuedCount} stranded worktree(s) — NOT validated work`);
+      }
+    }
+  } catch (err) {
+    // Rescue must never hide the original run failure (#1255).
+    console.warn(`  [rescue] best-effort rescue failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   writeState(stateFile, freshState);
