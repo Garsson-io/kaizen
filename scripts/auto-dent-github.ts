@@ -613,6 +613,17 @@ export function verifyIssuesClosed(
   return results;
 }
 
+export function closedIssueRefsFromVerifyCloseResults(results: VerifyCloseResult[]): string[] {
+  const closed = new Set<string>();
+  for (const r of results) {
+    for (const ref of r.verified) closed.add(ref);
+    for (const ref of r.forceClosed) closed.add(ref);
+  }
+  return [...closed].sort(
+    (a, b) => Number(a.replace('#', '')) - Number(b.replace('#', '')),
+  );
+}
+
 /**
  * Authoritative batch-level set of issues actually closed by a batch's merged PRs.
  *
@@ -633,12 +644,5 @@ export function reconcileBatchClosedIssues(
   repo: string,
 ): string[] {
   const results = verifyIssuesClosed(prUrls, repo);
-  const closed = new Set<string>();
-  for (const r of results) {
-    for (const ref of r.verified) closed.add(ref);
-    for (const ref of r.forceClosed) closed.add(ref);
-  }
-  return [...closed].sort(
-    (a, b) => Number(a.replace('#', '')) - Number(b.replace('#', '')),
-  );
+  return closedIssueRefsFromVerifyCloseResults(results);
 }

@@ -34,6 +34,7 @@ import {
   deriveRunOutcome,
   buildRunMetrics,
   buildRunCompleteEvent,
+  mergeVerifiedClosedIssuesIntoRunResult,
   weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
@@ -3171,6 +3172,45 @@ describe('buildRunMetrics', () => {
     });
 
     expect(event.bandit_decision).toEqual(metrics.bandit_decision);
+  });
+});
+
+describe('mergeVerifiedClosedIssuesIntoRunResult (#1210)', () => {
+  it('adds merged-PR closing refs for this run without importing older batch PRs', () => {
+    const result = makeRunResult({
+      prs: ['https://github.com/owner/repo/pull/2'],
+      issuesClosed: ['#99'],
+    });
+
+    const added = mergeVerifiedClosedIssuesIntoRunResult(result, [
+      {
+        pr: 'https://github.com/owner/repo/pull/1',
+        verified: ['#1'],
+        forceClosed: [],
+      },
+      {
+        pr: 'https://github.com/owner/repo/pull/2',
+        verified: ['#20'],
+        forceClosed: ['#10'],
+      },
+      {
+        pr: 'https://github.com/owner/repo/pull/3',
+        verified: ['#30'],
+        forceClosed: [],
+      },
+    ]);
+
+    expect(added).toEqual(['#10', '#20']);
+    expect(result.issuesClosed).toEqual(['#99', '#10', '#20']);
+  });
+
+  it('runs before persisted run metrics are built', () => {
+    const mergeIndex = AUTO_DENT_RUN_SOURCE.indexOf('mergeVerifiedClosedIssuesIntoRunResult(result, verifyResults)');
+    const metricsIndex = AUTO_DENT_RUN_SOURCE.indexOf('const runMetrics = buildRunMetrics({');
+
+    expect(mergeIndex).toBeGreaterThan(-1);
+    expect(metricsIndex).toBeGreaterThan(-1);
+    expect(mergeIndex).toBeLessThan(metricsIndex);
   });
 });
 
