@@ -28,7 +28,6 @@ const OPT_OUT = new Set<string>([
   'pr-review-loop.ts',
   'pre-push.ts',
   'prehook-no-verify.ts',
-  'post-merge-clear.ts',
   'enforce-plan-stored.ts',
   'pr-quality-checks.ts',
 ]);

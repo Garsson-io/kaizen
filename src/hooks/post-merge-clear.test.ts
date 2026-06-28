@@ -243,3 +243,12 @@ describe('cross-session isolation (kaizen #786)', () => {
     expect(existsSync(join(TEST_STATE_DIR, 'post-merge-org_repo_99'))).toBe(true);
   });
 });
+
+describe('git runner invariant', () => {
+  it('routes post-merge checkout lookup through argv-style gitStdout', () => {
+    const source = readFileSync(new URL('./post-merge-clear.ts', import.meta.url), 'utf-8');
+
+    expect(source).not.toMatch(/execSync\(['"`]git\b/);
+    expect(source).toContain("gitStdout(['worktree', 'list', '--porcelain'])");
+  });
+});
