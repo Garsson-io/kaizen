@@ -217,6 +217,21 @@ function extractIssueRefs(value: string): string[] {
   return refs;
 }
 
+/**
+ * GitHub's post-`git push` "create a pull request" helper URL — `pull/new/<branch>`
+ * or `compare/<branch>?expand=1`. This is NOT a PR: the `pull/\d+` matcher above
+ * already excludes it (no digit follows `pull/`), so detecting it only *adds* the
+ * missing positive "branch pushed, PR pending" signal. Returns the first match, or
+ * null. Single source of truth for the pattern, reused by the ledger and the live
+ * console emitter so the two can never disagree (#1492).
+ */
+export function extractBranchPushUrl(text: string): string | null {
+  const m = text.match(
+    /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/(?:pull\/new\/[^\s)]+|compare\/[^\s)?]+(?:\?[^\s)]*)?)/,
+  );
+  return m ? m[0] : null;
+}
+
 export function extractArtifacts(text: string, result: RunResult): void {
   for (const output of parseHookOutputs(text)) {
     updateProgressFromHookOutput(output, result);
@@ -248,6 +263,21 @@ export function extractArtifacts(text: string, result: RunResult): void {
   }
   for (const m of text.matchAll(/^\s*(?:\*\*)?PRs created:\s*(?:\*\*)?\s*(https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+)/gmi)) {
     pushPr(result, m[1]);
+  }
+  // A GitHub branch-push helper URL is NOT a PR (#1492). Surface it as a
+  // distinct "branch pushed — PR pending" signal so a pushed branch is not
+  // misread as no-progress or conflated with a real PR. Only while no real PR
+  // has landed yet; a later `/pull/<N>` replaces this step via pushPr ('replace').
+  if (result.prs.length === 0) {
+    const pushUrl = extractBranchPushUrl(text);
+    if (pushUrl) {
+      upsertProgressStep(result, {
+        phase: 'PR',
+        state: 'branch-pushed',
+        detail: 'branch pushed — PR pending',
+        url: pushUrl,
+      }, 'replace');
+    }
   }
   for (const m of text.matchAll(/case[:\s]+(\d{6}-\d{4}-[\w-]+)/g)) {
     pushUnique(result.cases, m[1]);
@@ -442,6 +472,12 @@ export interface StreamContext {
   resultReceivedAt?: number;
   lastPhase?: string;
   lastActivity?: string;
+  /**
+   * Rendered run-state lines already printed to the live console, for cross-message
+   * dedup (#1492). A decision echoed through multiple stream messages — e.g. a
+   * marker the agent both narrates and `echo`es to stdout — prints exactly once.
+   */
+  printedMarkers?: Set<string>;
 }
 
 // In-flight progress update interval (10 minutes)
@@ -524,6 +560,81 @@ export function postInFlightUpdate(
   return false;
 }
 
+// Run-text ingestion — one pipeline for every text source (#1492)
+
+/**
+ * Print one derived run-state line to the live console, at most once. Dedup is
+ * keyed on the rendered line via `ctx.printedMarkers`, so the same decision
+ * echoed through several stream messages prints a single time. Returns whether
+ * the line was actually printed. With no `ctx`, prints unconditionally (callers
+ * with no cross-message state — old behaviour preserved).
+ */
+function emitOnce(line: string, elapsed: string, ctx?: StreamContext): boolean {
+  if (ctx) {
+    ctx.printedMarkers ??= new Set<string>();
+    if (ctx.printedMarkers.has(line)) return false;
+    ctx.printedMarkers.add(line);
+  }
+  console.log(`  ${color.dim(`[${elapsed}]`)}  ${line}`);
+  return true;
+}
+
+/**
+ * The single console sink for parsed phase markers. Every text source routes
+ * here, so the live console mirrors the artifact ledger instead of only showing
+ * markers the agent happened to put in assistant prose (#1492).
+ */
+export function emitPhaseMarkers(
+  text: string,
+  elapsed: string,
+  ctx?: StreamContext,
+): void {
+  for (const marker of parsePhaseMarkers(text)) {
+    const line = formatPhaseMarker(marker);
+    if (emitOnce(line, elapsed, ctx) && ctx) ctx.lastPhase = line;
+  }
+}
+
+/**
+ * One pipeline for every run-text source (assistant text, tool results, final
+ * result). Folding the three previously-divergent branches into a single helper
+ * is what keeps the artifact ledger and the live console from drifting — the
+ * exact gap behind #1492, where a phase marker echoed into a tool result fed the
+ * ledger but never reached the console.
+ *
+ * `control` gates the signals that *change run behaviour* (`checkStopSignal`,
+ * contemplation recs, reflection insights). Those are honoured only for
+ * agent-authoritative text — assistant text and the final result — never for
+ * tool results: source/prompt files contain literal `AUTO_DENT_PHASE: STOP`
+ * strings, so a `cat` of one must not be able to halt the batch. Display-only
+ * signals (the artifact ledger and console markers) run for every source.
+ */
+export function ingestRunText(
+  text: string,
+  result: RunResult,
+  elapsed: string,
+  ctx?: StreamContext,
+  opts: { control?: boolean } = {},
+): void {
+  extractArtifacts(text, result);
+  emitPhaseMarkers(text, elapsed, ctx);
+  const pushUrl = extractBranchPushUrl(text);
+  if (pushUrl) {
+    emitOnce(
+      `${color.yellow('◉ [PUSH]')} branch pushed — PR pending ${pushUrl}`,
+      elapsed,
+      ctx,
+    );
+  }
+  if (!opts.control) return;
+
+  checkStopSignal(text, result);
+  const recs = extractContemplationRecommendations(text);
+  if (recs.length > 0) (result.contemplationRecs ??= []).push(...recs);
+  const insights = extractReflectionInsights(text);
+  if (insights.length > 0) (result.reflectionInsights ??= []).push(...insights);
+}
+
 // Main stream message processor
 
 export function processStreamMessage(
@@ -553,24 +664,8 @@ export function processStreamMessage(
             if (ctx) ctx.lastActivity = toolDesc;
           }
           if (block.type === 'text' && block.text) {
-            extractArtifacts(block.text, result);
-            checkStopSignal(block.text, result);
-            // Extract contemplation recommendations (#631)
-            const recs = extractContemplationRecommendations(block.text);
-            if (recs.length > 0) {
-              if (!result.contemplationRecs) result.contemplationRecs = [];
-              result.contemplationRecs.push(...recs);
-            }
-            // Extract reflection insights (#699)
-            const insights = extractReflectionInsights(block.text);
-            if (insights.length > 0) {
-              if (!result.reflectionInsights) result.reflectionInsights = [];
-              result.reflectionInsights.push(...insights);
-            }
-            for (const marker of parsePhaseMarkers(block.text)) {
-              console.log(`  [${elapsed}]  ${formatPhaseMarker(marker)}`);
-              if (ctx) ctx.lastPhase = formatPhaseMarker(marker);
-            }
+            // Assistant prose is agent-authoritative → control signals honoured.
+            ingestRunText(block.text, result, elapsed, ctx, { control: true });
           }
         }
       }
@@ -586,7 +681,9 @@ export function processStreamMessage(
       if (msg.message?.content) {
         for (const block of msg.message.content) {
           if (block.type === 'tool_result' && typeof block.content === 'string') {
-            extractArtifacts(block.content, result);
+            // Tool output is NOT agent-authoritative (a cat'd file may contain a
+            // literal STOP marker) → ledger + console only, no control signals.
+            ingestRunText(block.content, result, elapsed, ctx);
           }
         }
       }
@@ -600,22 +697,12 @@ export function processStreamMessage(
         result.cost = msg.total_cost_usd;
       }
       if (msg.result) {
-        extractArtifacts(msg.result, result);
+        // Final result is agent-authoritative → control signals honoured.
+        ingestRunText(msg.result, result, elapsed, ctx, { control: true });
         const claimResult = parseFinalRunClaim(msg.result);
         result.finalClaimStatus = claimResult.status;
         result.finalClaim = claimResult.claim;
         result.finalClaimWarnings = claimResult.warnings;
-        checkStopSignal(msg.result, result);
-        const recs = extractContemplationRecommendations(msg.result);
-        if (recs.length > 0) {
-          if (!result.contemplationRecs) result.contemplationRecs = [];
-          result.contemplationRecs.push(...recs);
-        }
-        const insights = extractReflectionInsights(msg.result);
-        if (insights.length > 0) {
-          if (!result.reflectionInsights) result.reflectionInsights = [];
-          result.reflectionInsights.push(...insights);
-        }
       }
       {
         const statusText = msg.subtype === 'success'
