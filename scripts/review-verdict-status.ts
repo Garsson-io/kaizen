@@ -68,10 +68,21 @@ export function resolveTarget(): { repo: string; pr: string } {
   return { repo, pr: prRaw };
 }
 
-export function getReviewVerdictStatus(repo: string, pr: string): ReviewVerdictStatus {
+export interface ReviewVerdictReaders {
+  latestReviewRound?: typeof latestReviewRound;
+  deriveStoredRoundVerdict?: typeof deriveStoredRoundVerdict;
+}
+
+export function getReviewVerdictStatus(
+  repo: string,
+  pr: string,
+  readers: ReviewVerdictReaders = {},
+): ReviewVerdictStatus {
   const target = prTarget(pr, repo);
-  const round = latestReviewRound(target);
-  const verdict = round === 0 ? null : deriveStoredRoundVerdict(target, round);
+  const readLatestRound = readers.latestReviewRound ?? latestReviewRound;
+  const readVerdict = readers.deriveStoredRoundVerdict ?? deriveStoredRoundVerdict;
+  const round = readLatestRound(target);
+  const verdict = round === 0 ? null : readVerdict(target, round);
   return decideReviewVerdictStatus(round, verdict);
 }
 

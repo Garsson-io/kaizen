@@ -15,12 +15,19 @@ import {
 } from '../structured-data.js';
 import { readHookInput, traceHookEvent, traceNullInput } from './hook-io.js';
 import {
+  detectGhRepo,
   extractPrNumber,
   extractPrUrl,
   extractRepoFlag,
   isGhPrCommand,
   stripHeredocBody,
 } from './parse-command.js';
+import {
+  createDefaultGitExec,
+  gitStdout,
+  resolveTargetWorktree,
+  type GitExec,
+} from './lib/git-state.js';
 
 export const MERGE_OVERRIDE_ENV = 'KAIZEN_ALLOW_MERGE_ON_FAIL';
 
@@ -36,9 +43,33 @@ export interface MergeGateResult {
   action: 'allow' | 'warn' | 'deny';
   message?: string;
   bypassed?: boolean;
+  target?: MergeTarget;
+  verdict?: MergeVerdict;
 }
 
-export function parseMergeTarget(cmdLine: string): MergeTarget | null {
+export interface ParseMergeTargetOptions {
+  cwd?: string;
+  git?: GitExec;
+}
+
+export function inferGithubRepoFromCommandTarget(
+  cmdLine: string,
+  options: ParseMergeTargetOptions = {},
+): string | null {
+  const target = resolveTargetWorktree(cmdLine, options.cwd ?? process.cwd()).dir;
+  const anchor: readonly string[] = target ? ['-C', target] : [];
+  const remoteUrl = gitStdout(
+    [...anchor, 'remote', 'get-url', 'origin'],
+    '',
+    options.git ?? createDefaultGitExec(),
+  );
+  return detectGhRepo(remoteUrl) ?? null;
+}
+
+export function parseMergeTarget(
+  cmdLine: string,
+  options: ParseMergeTargetOptions = {},
+): MergeTarget | null {
   const url = extractPrUrl(cmdLine);
   const parsedUrl = parseGithubPrUrl(url);
   if (parsedUrl) return { repo: parsedUrl.repo, pr: String(parsedUrl.number) };
@@ -46,6 +77,10 @@ export function parseMergeTarget(cmdLine: string): MergeTarget | null {
   const pr = extractPrNumber(cmdLine, 'merge');
   const repo = extractRepoFlag(cmdLine);
   if (pr && repo) return { pr, repo };
+  if (pr) {
+    const inferredRepo = inferGithubRepoFromCommandTarget(cmdLine, options);
+    if (inferredRepo) return { pr, repo: inferredRepo };
+  }
   return null;
 }
 
@@ -100,6 +135,8 @@ This gate binds the stored review verdict to the irreversible merge step.`,
 export interface CheckMergeVerdictOptions {
   readVerdict?: VerdictReader;
   env?: NodeJS.ProcessEnv;
+  cwd?: string;
+  git?: GitExec;
 }
 
 export function checkMergeVerdict(
@@ -109,7 +146,7 @@ export function checkMergeVerdict(
   const cmdLine = stripHeredocBody(command);
   if (!isGhPrCommand(cmdLine, 'merge')) return { action: 'allow' };
 
-  const target = parseMergeTarget(cmdLine);
+  const target = parseMergeTarget(cmdLine, { cwd: options.cwd, git: options.git });
   if (!target) {
     return {
       action: 'warn',
@@ -123,7 +160,9 @@ export function checkMergeVerdict(
   const override = (options.env ?? process.env)[MERGE_OVERRIDE_ENV] === '1';
 
   try {
-    return decideMergeGate(read(target), { override, target });
+    const verdict = read(target);
+    const result = decideMergeGate(verdict, { override, target });
+    return { ...result, target, verdict };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return {
@@ -146,6 +185,9 @@ async function main(): Promise<void> {
   traceHookEvent('enforce-merge-verdict', {
     action: result.action,
     bypassed: result.bypassed ?? false,
+    pr: result.target?.pr,
+    repo: result.target?.repo,
+    verdict: result.verdict,
     reason: result.bypassed ? 'override' : result.action === 'deny' ? 'fail_verdict' : result.action,
   });
   if (result.action === 'deny') {

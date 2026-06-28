@@ -118,6 +118,21 @@ describe('buildPrompt', () => {
     expect(prompt).not.toContain('gh pr merge');
     expect(prompt).toContain('Garsson-io/kaizen');
     expect(prompt).toContain('The auto-dent harness queues auto-merge after review');
+    expect(prompt).toContain('status=<queued/merged/blocked>');
+  });
+
+  it('keeps merge policy under harness control in subtract mode', () => {
+    const state = makeBatchState({ host_repo: 'Garsson-io/kaizen', guidance: 'mode:subtract' });
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).not.toContain('gh pr merge');
+    expect(prompt).toContain('The auto-dent harness queues auto-merge after review');
+  });
+
+  it('keeps merge policy under harness control in synthetic test-task mode', () => {
+    const state = makeBatchState({ host_repo: 'Garsson-io/kaizen', test_task: true });
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).not.toContain('gh pr merge');
+    expect(prompt).toContain('The auto-dent harness queues auto-merge after review');
   });
 
   it('includes structured STOP phase marker instructions', () => {

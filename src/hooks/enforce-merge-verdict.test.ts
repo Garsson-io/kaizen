@@ -2,10 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
   checkMergeVerdict,
   decideMergeGate,
+  inferGithubRepoFromCommandTarget,
   MERGE_OVERRIDE_ENV,
   parseMergeTarget,
   type VerdictReader,
 } from './enforce-merge-verdict.js';
+
+const gitRunner = (remoteUrl = 'https://github.com/Garsson-io/kaizen.git') => (args: readonly string[]) => {
+  if (args.join(' ').includes('remote get-url origin')) {
+    return { stdout: `${remoteUrl}\n`, stderr: '', exitCode: 0 };
+  }
+  return { stdout: '', stderr: '', exitCode: 1 };
+};
 
 describe('parseMergeTarget', () => {
   it('parses bare PR number + --repo', () => {
@@ -21,8 +29,34 @@ describe('parseMergeTarget', () => {
     ).toEqual({ pr: '456', repo: 'Garsson-io/kaizen' });
   });
 
-  it('returns null when no target repo can be resolved', () => {
-    expect(parseMergeTarget('gh pr merge 123 --squash')).toBeNull();
+  it('infers repo from the command target worktree for bare PR numbers', () => {
+    expect(parseMergeTarget('gh pr merge 123 --squash', {
+      cwd: '/repo',
+      git: gitRunner(),
+    })).toEqual({ pr: '123', repo: 'Garsson-io/kaizen' });
+  });
+
+  it('returns null when no target repo can be resolved from flags, URL, or remote', () => {
+    expect(parseMergeTarget('gh pr merge 123 --squash', {
+      cwd: '/repo',
+      git: gitRunner('not-github'),
+    })).toBeNull();
+  });
+});
+
+describe('inferGithubRepoFromCommandTarget', () => {
+  it('anchors repo inference to cd target before reading origin', () => {
+    const calls: string[][] = [];
+    const git = (args: readonly string[]) => {
+      calls.push([...args]);
+      return { stdout: 'git@github.com:Garsson-io/kaizen.git\n', stderr: '', exitCode: 0 };
+    };
+
+    expect(inferGithubRepoFromCommandTarget('cd /wt && gh pr merge 123 --squash', {
+      cwd: '/cwd',
+      git,
+    })).toBe('Garsson-io/kaizen');
+    expect(calls[0]).toEqual(['-C', '/wt', 'remote', 'get-url', 'origin']);
   });
 });
 
@@ -67,6 +101,18 @@ describe('checkMergeVerdict', () => {
       { readVerdict: failReader, env: {} },
     );
     expect(result.action).toBe('deny');
+  });
+
+  it('blocks a bare gh pr merge <N> command when the current repo has a FAIL verdict', () => {
+    const result = checkMergeVerdict('gh pr merge 1212 --squash', {
+      readVerdict: failReader,
+      env: {},
+      cwd: '/repo',
+      git: gitRunner(),
+    });
+    expect(result.action).toBe('deny');
+    expect(result.target).toEqual({ pr: '1212', repo: 'Garsson-io/kaizen' });
+    expect(result.verdict).toBe('FAIL');
   });
 
   it('allows a merge when the latest round is PASS', () => {

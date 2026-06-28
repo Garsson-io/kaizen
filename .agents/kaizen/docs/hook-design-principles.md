@@ -58,17 +58,20 @@ Every arrow is enforced by hooks. The agent cannot skip steps — hooks block to
 
 ## Merge Workflow (Autonomous)
 
-Branch protection has `strict: true` status checks. Auto-merge is enabled. The agent handles the full merge loop:
+Branch protection has `strict: true` status checks. Auto-merge is enabled. Modern kaizen runs split merge ownership by context:
 
-1. **Queue**: `gh pr merge <url> --repo Garsson-io/kaizen --squash --delete-branch --auto`
-2. **Wait**: `gh pr checks <url> --repo Garsson-io/kaizen --watch` or `gh run watch <id>`
-3. **Verify**: `gh pr view <url> --json state --jq .state` → expect `MERGED`
-4. **Sync**: `MAIN_CHECKOUT="$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"; git -C "$MAIN_CHECKOUT" fetch origin main && git -C "$MAIN_CHECKOUT" merge origin/main --no-edit`
+1. **Auto-dent/headless queue**: the harness, not the worker prompt, queues merge only after review/process/lifecycle verdicts pass. If a verdict is unsafe, it blocks queueing and disables any existing auto-merge request.
+2. **Interactive direct merge**: `kaizen-enforce-merge-verdict-ts.sh` checks direct `gh pr merge` commands against the latest stored review round. A derived `FAIL` denies the merge unless `KAIZEN_ALLOW_MERGE_ON_FAIL=1` is set; that override is traced with PR, repo, and verdict.
+3. **L3 repo backstop**: branch protection should require `Review verdict gate / Review verdict gate`, which fails when the latest stored review round derives `FAIL`.
+4. **Wait**: `gh pr checks <url> --repo Garsson-io/kaizen --watch` or `gh run watch <id>`
+5. **Verify**: `gh pr view <url> --json state --jq .state` → expect `MERGED`
+6. **Sync**: `MAIN_CHECKOUT="$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"; git -C "$MAIN_CHECKOUT" fetch origin main && git -C "$MAIN_CHECKOUT" merge origin/main --no-edit`
 
 **Failure handling** (agent does this autonomously, no human needed):
 - **CI fails**: fix the issue, commit, push. Auto-merge stays queued, CI re-runs.
 - **Branch behind main**: `git fetch origin main && git merge origin/main --no-edit && git push`. CI re-runs, auto-merge retries.
 - **Auto-merge not completing**: check `gh pr view --json mergeStateStatus` and fix.
+- **Review verdict gate fails**: fix findings and store a new review round summary. Do not bypass unless a human explicitly sets `KAIZEN_ALLOW_MERGE_ON_FAIL=1` for a direct merge and accepts the traced override.
 
 **Do NOT ask the user** for merge issues — handle them. Only escalate after multiple failed retries with different root causes.
 

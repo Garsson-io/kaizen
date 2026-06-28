@@ -24,6 +24,7 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 | Hook | Level | Blocking | Purpose |
 |------|-------|----------|---------|
 | `kaizen-enforce-pr-review-ts.sh` → `enforce-pr-review.ts` | L3 | Yes (deny) | **Gate**: Blocks Bash commands when PR review is pending (`needs_review` state). Issue #775. |
+| `kaizen-enforce-merge-verdict-ts.sh` → `enforce-merge-verdict.ts` | L2/L3 | Yes (deny) | **Gate**: Blocks direct `gh pr merge` when the latest stored review round derives `FAIL`; explicit override is traced. Issue #1220. |
 | `kaizen-enforce-case-worktree.sh` | L1 | No (advisory) | Warns on `git commit`/`push` outside a worktree. |
 | `kaizen-pr-quality-checks-ts.sh` → `pr-quality-checks.ts` | L1 | No (advisory) | Consolidated PR quality advisories: test coverage (#8), verification (#10), code quality (#89), practices (#210). Consolidation #800. |
 | `kaizen-check-dirty-files-ts.sh` → `check-dirty-files.ts` | L3 | Yes (deny on PR create) / Warn (push/merge) | Dirty file check. Push downgraded to warn. Skips during merge. Issue #775. |
@@ -89,6 +90,7 @@ All enforcement hooks are now in TypeScript. Each `-ts.sh` shim is a thin bash w
 | `pr-kaizen-clear-ts.sh` | `src/hooks/pr-kaizen-clear.ts` | 84 |
 | `kaizen-stop-gate.sh` | `src/hooks/stop-gate.ts` + `src/hooks/lib/gate-manager.ts` | 21 |
 | `kaizen-enforce-pr-review-ts.sh` | `src/hooks/enforce-pr-review.ts` | 6 |
+| `kaizen-enforce-merge-verdict-ts.sh` | `src/hooks/enforce-merge-verdict.ts` | 16 |
 | `kaizen-enforce-pr-reflect-ts.sh` | `src/hooks/enforce-pr-reflect.ts` | 8 |
 | `kaizen-check-dirty-files-ts.sh` | `src/hooks/check-dirty-files.ts` | 13 |
 | `kaizen-bump-plugin-version-ts.sh` | `src/hooks/bump-plugin-version.ts` | 5 |
