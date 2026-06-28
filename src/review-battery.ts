@@ -445,6 +445,8 @@ export interface SpawnReviewOptions {
   prBody?: string;
   /** PR diff stat (pre-fetched) */
   prDiffStat?: string;
+  /** Additional prompt variables for reflection or specialized dimensions. */
+  extraVars?: Record<string, string>;
   /** Working directory for the claude -p call */
   cwd?: string;
   /** Timeout in ms (default: 120000) */
@@ -485,6 +487,7 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{
   }
 
   const vars: Record<string, string> = {
+    ...(opts.extraVars ?? {}),
     pr_url: opts.prUrl ?? '',
     issue_num: opts.issueNum ?? '',
     repo: opts.repo ?? '',
@@ -589,6 +592,7 @@ export async function spawnBatchReview(
   }
 
   const vars: Record<string, string> = {
+    ...(opts.extraVars ?? {}),
     pr_url: opts.prUrl ?? '',
     issue_num: opts.issueNum ?? '',
     repo: opts.repo ?? '',
@@ -663,6 +667,8 @@ export interface BatteryOptions {
   prDiffStat?: string;
   /** Plan text (for plan reviews) */
   planText?: string;
+  /** Additional prompt variables for reflection or specialized dimensions. */
+  extraVars?: Record<string, string>;
   /** Working directory */
   cwd?: string;
   /** Timeout per review in ms */
@@ -729,7 +735,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   const sharedOpts = {
     prUrl: opts.prUrl, issueNum: opts.issueNum, repo: opts.repo,
     issueBody: opts.issueBody, prBody: opts.prBody, prDiffStat: opts.prDiffStat,
-    planText, cwd: opts.cwd, timeoutMs: opts.timeoutMs, reviewProvider,
+    planText, extraVars: opts.extraVars, cwd: opts.cwd, timeoutMs: opts.timeoutMs, reviewProvider,
   };
 
   const batchResultGroups = await Promise.all(

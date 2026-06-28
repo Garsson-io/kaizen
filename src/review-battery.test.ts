@@ -405,6 +405,51 @@ describe('loadReviewPrompt', () => {
     expect(prompt).toContain('https://github.com/test/test/pull/1');
   });
 
+  it('discovers cross-pr-dry as a reflection dimension with history and codebase needs', () => {
+    const meta = loadDimensionMetas().find(m => m.name === 'cross-pr-dry');
+
+    expect(meta).toBeDefined();
+    expect(meta!.applies_to).toBe('reflection');
+    expect(meta!.needs).toEqual(expect.arrayContaining(['multiple_prs', 'git-history', 'codebase']));
+  });
+
+  it('renders extra review variables for reflection dimensions without breaking standard vars', async () => {
+    const text = JSON.stringify({
+      dimension: 'cross-pr-dry',
+      summary: 'context received',
+      findings: [{ requirement: 'dry sweep context', status: 'DONE', detail: 'ok' }],
+    });
+    let promptSent = '';
+    vi.mocked(spawnSync).mockImplementation((cmd: string) => {
+      if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
+    });
+    vi.mocked(spawn).mockImplementation(() => {
+      const proc = new EventEmitter() as any;
+      proc.stdin = {
+        write: (chunk: string) => { promptSent += chunk; },
+        end: () => {},
+      };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => {
+        proc.stdout.emit('data', Buffer.from(streamJsonPayload(text, 0.04)));
+        proc.emit('close', 0);
+      });
+      return proc;
+    });
+
+    const { review } = await spawnReview({
+      dimension: 'cross-pr-dry',
+      repo: 'Garsson-io/kaizen',
+      extraVars: { dry_sweep_context: 'Candidate: duplicate progress comments' },
+    });
+
+    expect(review?.dimension).toBe('cross-pr-dry');
+    expect(promptSent).toContain('Candidate: duplicate progress comments');
+    expect(promptSent).toContain('Garsson-io/kaizen');
+  });
+
   it('strips YAML frontmatter from rendered prompt', () => {
     // Invariant: the rendered prompt must NOT contain frontmatter fields.
     // If frontmatter is sent to the LLM, haiku treats the prompt as a document
