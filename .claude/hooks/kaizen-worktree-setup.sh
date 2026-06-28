@@ -33,6 +33,27 @@ GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)
 
 # Resolve main repo root from the shared .git directory
 MAIN_REPO=$(dirname "$GIT_COMMON")
+CUR_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+
+# Claude Code's generic EnterWorktree path can sanitize a requested
+# `case/<date>-k<N>-slug` branch into `worktree-case+<date>-k<N>-slug`.
+# Normalize that shape back to the canonical case branch before the binding
+# logic below runs; the canonical branch token is the issue contract.
+case "$CUR_BRANCH" in
+  worktree-case+*-k*)
+    CANONICAL_BRANCH="case/${CUR_BRANCH#worktree-case+}"
+    if git show-ref --verify --quiet "refs/heads/$CANONICAL_BRANCH"; then
+      echo "kaizen-worktree-setup: ⚠️  Cannot normalize $CUR_BRANCH -> $CANONICAL_BRANCH because that branch already exists." >&2
+      echo "kaizen-worktree-setup:    Remediate manually: git branch -m <unique case/... branch> && npx tsx src/cli-issue-binding.ts auto-bind" >&2
+    elif git branch -m "$CANONICAL_BRANCH" 2>/dev/null; then
+      echo "kaizen-worktree-setup: 🔧 Normalized branch $CUR_BRANCH -> $CANONICAL_BRANCH (EnterWorktree case contract)." >&2
+      CUR_BRANCH="$CANONICAL_BRANCH"
+    else
+      echo "kaizen-worktree-setup: ⚠️  Failed to normalize $CUR_BRANCH -> $CANONICAL_BRANCH." >&2
+      echo "kaizen-worktree-setup:    Remediate manually: git branch -m $CANONICAL_BRANCH && npx tsx src/cli-issue-binding.ts auto-bind" >&2
+    fi
+    ;;
+esac
 
 for artifact in node_modules dist; do
   # Skip if the path exists OR is already a symlink (even a broken one)
@@ -57,7 +78,6 @@ done
 # a fast bash mirror that avoids a node startup on every SessionStart.
 WT_ISSUE=$(git config --worktree --get kaizen.issue 2>/dev/null || true)
 if [ -z "$WT_ISSUE" ]; then
-  CUR_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
   BRANCH_TOKEN=$(printf '%s' "$CUR_BRANCH" | sed -n 's#^case/[0-9]\{6,\}-k\([0-9]\+\).*#\1#p')
   if [ -n "$BRANCH_TOKEN" ]; then
     # Authoritative source present — bind mechanically (L3 self-heal). The

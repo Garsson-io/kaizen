@@ -396,6 +396,29 @@ describe('pr-review-loop: gh pr diff', () => {
     expect(state.ROUND).toBe('2');
   });
 
+  it('writes review sentinels owner-only', () => {
+    writeSentinel('Garsson-io_kaizen_1558', '1');
+
+    const sentinelPath = path.join(testStateDir, 'Garsson-io_kaizen_1558.reviewed-r1');
+    const mode = fs.statSync(sentinelPath).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it('clears a stale local round when a later valid passing sentinel exists', () => {
+    createPendingReviewState('1559', '1');
+    writeSentinel('Garsson-io_kaizen_1559', '3');
+
+    const output = runHook(
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/1559'),
+    );
+
+    expect(output).toContain('REVIEW ROUND 3/4');
+    expect(output).toContain('REVIEW PASSED');
+    const state = readState('Garsson-io_kaizen_1559');
+    expect(state.STATUS).toBe('passed');
+    expect(state.ROUND).toBe('3');
+  });
+
   it('denies gate clear and names missing review dimensions', () => {
     createPendingReviewState('1038', '1');
     const allDimensions = expectedPrReviewDimensions();

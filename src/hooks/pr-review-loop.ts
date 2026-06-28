@@ -20,13 +20,12 @@
  * Migration: kaizen #320 (Phase 3 of #223)
  */
 
-import { readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  buildReviewSentinelRecord,
-  serializeReviewSentinel,
   validateReviewSentinel,
   reviewSentinelPath,
+  writeReviewSentinelFile,
   type ReviewSentinelInput,
   type ReviewSentinelValidation,
 } from '../review-sentinel.js';
@@ -121,6 +120,38 @@ function defaultCheckReviewSentinel(prUrl: string, round: string, stateDir: stri
   }
 }
 
+function defaultCheckReviewSentinelAtOrAfter(
+  prUrl: string,
+  round: string,
+  stateDir: string,
+): { round: string; result: ReviewSentinelValidation } {
+  const current = defaultCheckReviewSentinel(prUrl, round, stateDir);
+  if (current.ok) return { round, result: current };
+
+  const minRound = parseInt(round, 10) || 1;
+  const prefix = `${prUrlToStateKey(prUrl)}.reviewed-r`;
+  let candidates: number[] = [];
+  try {
+    candidates = readdirSync(stateDir)
+      .flatMap(entry => {
+        if (!entry.startsWith(prefix)) return [];
+        const parsed = parseInt(entry.slice(prefix.length), 10);
+        return Number.isInteger(parsed) && parsed >= minRound ? [parsed] : [];
+      })
+      .sort((a, b) => b - a);
+  } catch {
+    return { round, result: current };
+  }
+
+  for (const candidate of candidates) {
+    const candidateRound = String(candidate);
+    const result = defaultCheckReviewSentinel(prUrl, candidateRound, stateDir);
+    if (result.ok) return { round: candidateRound, result };
+  }
+
+  return { round, result: current };
+}
+
 /**
  * Write a review sentinel for the given PR and round.
  * Called by store-review-summary after findings are stored.
@@ -131,10 +162,7 @@ export function writeReviewSentinel(
   stateDir: string = DEFAULT_STATE_DIR,
   options: Partial<ReviewSentinelInput> = {},
 ): void {
-  ensureStateDir(stateDir);
-  const sentinel = reviewSentinelPath(stateDir, prUrl, round);
-  const record = buildReviewSentinelRecord({ ...options, prUrl, round });
-  writeFileSync(sentinel, serializeReviewSentinel(record));
+  writeReviewSentinelFile({ ...options, stateDir, prUrl, round });
 }
 
 function printChecklist(
@@ -462,30 +490,35 @@ export function processHookInput(
     // #920: Verify review outcome exists before clearing gate.
     // The sentinel is written by store-review-summary (cli-structured-data.ts).
     // Without it, gh pr diff alone doesn't prove dimension agents were spawned.
-    const sentinelResult = options.checkReviewSentinel
+    const sentinelCheck = options.checkReviewSentinel
       ? {
-          ok: options.checkReviewSentinel(found.prUrl, found.round, stateDir),
-          reason: 'custom_check_failed',
+          round: found.round,
+          result: {
+            ok: options.checkReviewSentinel(found.prUrl, found.round, stateDir),
+            reason: 'custom_check_failed',
+          },
         }
-      : defaultCheckReviewSentinel(found.prUrl, found.round, stateDir);
+      : defaultCheckReviewSentinelAtOrAfter(found.prUrl, found.round, stateDir);
+    const sentinelResult = sentinelCheck.result;
     if (!sentinelResult.ok) {
       const failure = reviewSentinelFailure(found.prUrl, found.round, sentinelResult);
       return decide('needs_review', failure.reason, failure.message, { prUrl: found.prUrl, round: found.round, sentinelReason: sentinelResult.reason },
         { hook: 'pr-review-loop', type: 'gate-set', gate: 'needs_review', pr: found.prUrl, round: parseInt(found.round, 10), reason: failure.reason });
     }
 
+    const passedRound = sentinelCheck.round;
     const sha = gitStdout(['rev-parse', 'HEAD']);
     writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {
       PR_URL: found.prUrl,
-      ROUND: found.round,
+      ROUND: passedRound,
       STATUS: 'passed',
       BRANCH: branch,
       ...(sha ? { LAST_REVIEWED_SHA: sha, LAST_FULL_REVIEW_SHA: sha } : {}),
     });
 
-    const msg = `\n\ud83d\udccb REVIEW ROUND ${found.round}/${MAX_ROUNDS}\n${printChecklist(found.prUrl, found.round, MAX_ROUNDS)}\n\u2705 REVIEW PASSED (round ${found.round}/${MAX_ROUNDS})\n`;
-    return decide('review_passed', 'diff_reviewed', msg, { prUrl: found.prUrl, round: found.round },
-      { hook: 'pr-review-loop', type: 'gate-clear', gate: 'needs_review', pr: found.prUrl, round: parseInt(found.round, 10), reason: 'Review passed' });
+    const msg = `\n\ud83d\udccb REVIEW ROUND ${passedRound}/${MAX_ROUNDS}\n${printChecklist(found.prUrl, passedRound, MAX_ROUNDS)}\n\u2705 REVIEW PASSED (round ${passedRound}/${MAX_ROUNDS})\n`;
+    return decide('review_passed', 'diff_reviewed', msg, { prUrl: found.prUrl, round: passedRound },
+      { hook: 'pr-review-loop', type: 'gate-clear', gate: 'needs_review', pr: found.prUrl, round: parseInt(passedRound, 10), reason: 'Review passed' });
   }
 
   return decide('ignore', 'unmatched_trigger', null);

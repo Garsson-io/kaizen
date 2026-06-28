@@ -68,6 +68,10 @@ export interface ReviewSentinelInput {
   totalMissing?: number;
 }
 
+export interface WriteReviewSentinelInput extends ReviewSentinelInput {
+  stateDir: string;
+}
+
 export interface ReviewSentinelValidation {
   ok: boolean;
   reason: string;
@@ -142,6 +146,14 @@ export function buildReviewSentinelRecord(input: ReviewSentinelInput): ReviewSen
 
 export function serializeReviewSentinel(record: ReviewSentinelRecord): string {
   return `${JSON.stringify(record, null, 2)}\n`;
+}
+
+export function writeReviewSentinelFile(input: WriteReviewSentinelInput): string {
+  fs.mkdirSync(input.stateDir, { recursive: true, mode: 0o700 });
+  const record = buildReviewSentinelRecord(input);
+  const path = reviewSentinelPath(input.stateDir, input.prUrl, input.round);
+  fs.writeFileSync(path, serializeReviewSentinel(record), { mode: 0o600 });
+  return path;
 }
 
 export function validateReviewSentinel(

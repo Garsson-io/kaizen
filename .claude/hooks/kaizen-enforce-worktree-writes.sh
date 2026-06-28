@@ -73,4 +73,49 @@ fi
 
 # Block the write — source code on main branch
 REASON="Cannot write to '$FILE_PATH' — it's source code in the main checkout ($MAIN_ROOT) on main branch. Use a worktree for code changes. Runtime dirs (groups/, data/, store/, logs/) and .claude/ are allowed."
+MATCHING_WORKTREE_TARGET=""
+MATCHING_WORKTREE_COUNT=0
+CURRENT_WT=""
+CURRENT_BRANCH_REF=""
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    worktree\ *)
+      CURRENT_WT="${line#worktree }"
+      CURRENT_BRANCH_REF=""
+      ;;
+    branch\ refs/heads/*)
+      CURRENT_BRANCH_REF="${line#branch refs/heads/}"
+      ;;
+    "")
+      if [ -n "$CURRENT_WT" ] && [ "$CURRENT_WT" != "$MAIN_ROOT" ]; then
+        case "$CURRENT_BRANCH_REF" in
+          case/*)
+            TARGET="$CURRENT_WT/$REL_PATH"
+            TARGET_DIR=$(dirname "$TARGET")
+            if [ -e "$TARGET" ] || [ -d "$TARGET_DIR" ]; then
+              MATCHING_WORKTREE_TARGET="$TARGET"
+              MATCHING_WORKTREE_COUNT=$((MATCHING_WORKTREE_COUNT + 1))
+            fi
+            ;;
+        esac
+      fi
+      CURRENT_WT=""
+      CURRENT_BRANCH_REF=""
+      ;;
+  esac
+done <<EOF
+$(git -C "$MAIN_ROOT" worktree list --porcelain 2>/dev/null)
+
+EOF
+
+if [ "$MATCHING_WORKTREE_COUNT" -eq 1 ]; then
+  REASON="$REASON
+
+Active case worktree target for this file:
+  $MATCHING_WORKTREE_TARGET"
+elif [ "$MATCHING_WORKTREE_COUNT" -gt 1 ]; then
+  REASON="$REASON
+
+Multiple active case worktrees contain this relative path. Choose the intended worktree before editing."
+fi
 emit_deny "$REASON"

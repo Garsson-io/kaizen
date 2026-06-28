@@ -11,7 +11,7 @@
 
 source "$(dirname "$0")/test-helpers.sh"
 
-HOOK="$(dirname "$0")/../kaizen-enforce-worktree-writes.sh"
+HOOK="$(cd "$(dirname "$0")/.." && pwd)/kaizen-enforce-worktree-writes.sh"
 
 # Helper: run the hook with a file_path in the Edit tool input
 run_edit_hook() {
@@ -19,6 +19,14 @@ run_edit_hook() {
   local input
   input=$(jq -n --arg fp "$file_path" '{"tool_input":{"file_path":$fp}}')
   echo "$input" | bash "$HOOK" 2>/dev/null
+}
+
+run_edit_hook_in_dir() {
+  local cwd="$1"
+  local file_path="$2"
+  local input
+  input=$(jq -n --arg fp "$file_path" '{"tool_input":{"file_path":$fp}}')
+  (cd "$cwd" && echo "$input" | bash "$HOOK" 2>/dev/null)
 }
 
 # Detect if we're in main checkout on main branch
@@ -80,5 +88,24 @@ else
   echo "=== (Skipping main-checkout-only tests: not on main checkout + main branch) ==="
   echo "  GIT_COMMON=$GIT_COMMON BRANCH=$CURRENT_BRANCH"
 fi
+
+echo ""
+echo "=== Active case worktree hint for accidental main-checkout source edit ==="
+
+ROOT=$(mktemp -d "/tmp/.kaizen-main-edit-hint-XXXXXX")
+trap 'rm -rf "$ROOT"' EXIT
+MAIN="$ROOT/main"
+git init -q -b main "$MAIN"
+git -C "$MAIN" config user.email "test@example.com"
+git -C "$MAIN" config user.name "Test"
+mkdir -p "$MAIN/src"
+echo "export const value = 1;" > "$MAIN/src/thing.ts"
+git -C "$MAIN" add .
+git -C "$MAIN" commit -q -m init
+WT="$MAIN/.claude/worktrees/260628-k1531-demo"
+git -C "$MAIN" worktree add -q -b case/260628-k1531-demo "$WT"
+
+OUTPUT=$(run_edit_hook_in_dir "$MAIN" "$MAIN/src/thing.ts")
+assert_contains "main checkout denial names active case worktree target" "$WT/src/thing.ts" "$OUTPUT"
 
 print_results

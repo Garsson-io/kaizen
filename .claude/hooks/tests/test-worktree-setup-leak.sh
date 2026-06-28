@@ -23,6 +23,7 @@ git -C "$MAIN" config user.name "Test"
 echo hi > "$MAIN/f.txt"
 git -C "$MAIN" add .
 git -C "$MAIN" commit -q -m init
+mkdir -p "$MAIN/node_modules"
 # A prior run wrote the binding the OLD way — into shared config.
 git -C "$MAIN" config kaizen.issue 1106
 
@@ -55,6 +56,25 @@ OUT3=$(cd "$WT2" && bash "$HOOK" 2>&1 >/dev/null)
 assert_contains "auto-binds a fresh case worktree to its token" "Auto-bound this worktree to #1106" "$OUT3"
 WT2_BOUND=$(cd "$WT2" && git config --worktree --get kaizen.issue 2>/dev/null)
 assert_eq "fresh case worktree bound to its token" "1106" "$WT2_BOUND"
+
+echo ""
+echo "=== EnterWorktree-sanitized case branch: normalized before binding ==="
+WT4="$ROOT/wt4"
+git -C "$MAIN" worktree add -q -b worktree-case+260626-k1506-demo "$WT4"
+OUT5=$(cd "$WT4" && bash "$HOOK" 2>&1 >/dev/null)
+assert_contains "announces sanitized branch normalization" "Normalized branch worktree-case+260626-k1506-demo -> case/260626-k1506-demo" "$OUT5"
+WT4_BRANCH=$(git -C "$WT4" rev-parse --abbrev-ref HEAD 2>/dev/null)
+assert_eq "sanitized branch renamed to canonical case branch" "case/260626-k1506-demo" "$WT4_BRANCH"
+WT4_BOUND=$(cd "$WT4" && git config --worktree --get kaizen.issue 2>/dev/null)
+assert_eq "normalized branch bound to its issue token" "1506" "$WT4_BOUND"
+if [ -L "$WT4/node_modules" ]; then
+  echo "  PASS: normalized worktree gets dependency symlink"
+  ((PASS++))
+else
+  echo "  FAIL: normalized worktree missing dependency symlink"
+  FAILED_NAMES+=("normalized worktree gets dependency symlink")
+  ((FAIL++))
+fi
 
 echo ""
 echo "=== Tokenless run worktree inheriting a shared leak: advisory warning, no auto-bind ==="
