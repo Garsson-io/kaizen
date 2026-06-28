@@ -40,6 +40,7 @@ import {
   formatSteeringReport,
   type ReadOutcomesDeps,
 } from './batch-outcome.js';
+import { truncateDisplay } from './auto-dent-display.js';
 
 function getRepoRoot(): string {
   try {
@@ -988,7 +989,7 @@ export function formatAggregateStats(stats: AggregateStats): string {
     lines.push('| Batch | Guidance | Runs | PRs | Cost | Success |');
     lines.push('|-------|----------|------|-----|------|---------|');
     for (const b of stats.recentBatches) {
-      const guidance = b.guidance.length > 40 ? b.guidance.slice(0, 37) + '...' : b.guidance;
+      const guidance = truncateDisplay(b.guidance, 40, { ellipsis: '...' });
       lines.push(`| ${b.batch_id} | ${guidance} | ${b.runs} | ${b.prs} | $${b.cost.toFixed(2)} | ${(b.success_rate * 100).toFixed(0)}% |`);
     }
   }
