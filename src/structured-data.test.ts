@@ -511,7 +511,7 @@ describe('transcript friction candidates (#1516)', () => {
         count: 1,
         severity: 'medium',
         source: { repo: 'Garsson-io/kaizen', pr: '903', attachment: 'run-transcript' },
-        moments: [{ entryIndex: 1, excerpt: 'error: unknown option --bad', role: 'tool', toolName: 'Bash' }],
+        moments: [{ entryIndex: 1, excerpt: 'error: bad path C:\\tmp | retry\nnext line', role: 'tool', toolName: 'Bash' }],
       }],
     });
 
@@ -520,7 +520,7 @@ describe('transcript friction candidates (#1516)', () => {
     expect(args[bodyIndex]).toContain('<!-- kaizen:friction-candidates -->');
     expect(args[bodyIndex]).toContain('## Transcript Friction Candidates');
     expect(args[bodyIndex]).toContain('"category": "cli_fumble"');
-    expect(args[bodyIndex]).toContain('entryIndex 1');
+    expect(args[bodyIndex]).toContain('entryIndex 1: error: bad path C:\\\\tmp \\| retry next line');
   });
 });
 

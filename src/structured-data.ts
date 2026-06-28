@@ -575,6 +575,13 @@ export function mineRunTranscriptCandidates(
   return mergeFrictionReports(generatedAt, reports);
 }
 
+function markdownTableCell(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ');
+}
+
 export function formatFrictionCandidateReport(report: FrictionCandidateReport): string {
   const lines: string[] = [
     `<!-- meta:${JSON.stringify({ generated_at: report.generatedAt, candidates: report.candidates.length, sources: report.sources.length })} -->`,
@@ -596,9 +603,9 @@ export function formatFrictionCandidateReport(report: FrictionCandidateReport): 
         : '-';
     const firstMoment = candidate.moments[0];
     const evidence = firstMoment
-      ? `entryIndex ${firstMoment.entryIndex}: ${firstMoment.excerpt.replace(/\|/g, '\\|')}`
+      ? markdownTableCell(`entryIndex ${firstMoment.entryIndex}: ${firstMoment.excerpt}`)
       : '-';
-    lines.push(`| ${candidate.category} | ${candidate.severity} | ${candidate.count} | ${source} | ${evidence} |`);
+    lines.push(`| ${candidate.category} | ${candidate.severity} | ${candidate.count} | ${markdownTableCell(source)} | ${evidence} |`);
   }
 
   lines.push('', '```json', JSON.stringify(report, null, 2), '```');
