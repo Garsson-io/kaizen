@@ -185,6 +185,9 @@ export function validateReviewSentinel(
   if (integrity !== digest(unsigned)) {
     return { ok: false, reason: 'integrity_mismatch' };
   }
+  if (record.totalMissing > 0) {
+    return { ok: false, reason: `review_findings_missing:${record.totalMissing}` };
+  }
 
   return { ok: true, reason: 'valid', record: record as ReviewSentinelRecord };
 }

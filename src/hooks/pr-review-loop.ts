@@ -154,6 +154,34 @@ After ${maxRounds} rounds: escalate to human via PR comment + Telegram.
 `;
 }
 
+function reviewSentinelFailure(
+  prUrl: string,
+  round: string,
+  result: ReviewSentinelValidation,
+): { reason: string; message: string } {
+  if (result.reason.startsWith('missing_expected_dimensions:')) {
+    const missing = result.reason.split(':')[1] ?? '';
+    const label = missing.includes(',') ? 'missing review dimensions' : 'missing review dimension';
+    return {
+      reason: 'missing_review_dimensions',
+      message: `\n\ud83d\udccb REVIEW ROUND ${round}/${MAX_ROUNDS}\n\u26a0\ufe0f ${label}: ${missing}.\nRun \`/kaizen-review-pr ${prUrl}\` and store findings for every listed dimension before clearing the gate.\n`,
+    };
+  }
+
+  if (result.reason.startsWith('review_findings_missing:')) {
+    const count = result.reason.split(':')[1] ?? 'unknown';
+    return {
+      reason: 'review_findings_missing',
+      message: `\n\ud83d\udccb REVIEW ROUND ${round}/${MAX_ROUNDS}\n\u26a0\ufe0f review findings still include ${count} MISSING item(s). Fix the findings or escalate; the review gate cannot clear on a failing review round.\n`,
+    };
+  }
+
+  return {
+    reason: result.reason === 'missing_sentinel' ? 'no_review_sentinel' : 'invalid_review_sentinel',
+    message: `\n\ud83d\udccb REVIEW ROUND ${round}/${MAX_ROUNDS}\n${printChecklist(prUrl, round, MAX_ROUNDS)}\n\u26a0\ufe0f invalid review sentinel: no valid review sentinel stored for round ${round} (${result.reason}). Run \`/kaizen-review-pr ${prUrl}\` to spawn dimension agents.\n`,
+  };
+}
+
 /**
  * Find the most recent state file matching any of the given statuses.
  */
@@ -436,9 +464,9 @@ export function processHookInput(
         }
       : defaultCheckReviewSentinel(found.prUrl, found.round, stateDir);
     if (!sentinelResult.ok) {
-      const reason = sentinelResult.reason === 'missing_sentinel' ? 'no_review_sentinel' : 'invalid_review_sentinel';
-      const msg = `\n\ud83d\udccb REVIEW ROUND ${found.round}/${MAX_ROUNDS}\n${printChecklist(found.prUrl, found.round, MAX_ROUNDS)}\n\u26a0\ufe0f invalid review sentinel: no valid review sentinel stored for round ${found.round} (${sentinelResult.reason}). Run \`/kaizen-review-pr ${found.prUrl}\` to spawn dimension agents.\n`;
-      return decide('needs_review', reason, msg, { prUrl: found.prUrl, round: found.round, sentinelReason: sentinelResult.reason });
+      const failure = reviewSentinelFailure(found.prUrl, found.round, sentinelResult);
+      return decide('needs_review', failure.reason, failure.message, { prUrl: found.prUrl, round: found.round, sentinelReason: sentinelResult.reason },
+        { hook: 'pr-review-loop', type: 'gate-set', gate: 'needs_review', pr: found.prUrl, round: parseInt(found.round, 10), reason: failure.reason });
     }
 
     const sha = gitStdout(['rev-parse', 'HEAD']);

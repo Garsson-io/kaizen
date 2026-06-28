@@ -27,4 +27,6 @@ Each event is either `hook_started` or `hook_response` per the schema in `script
 
 ## Current fixtures
 
-See adjacent files for examples matching invariants I1–I4 from `docs/kaizen-invariants.md`.
+See adjacent files for examples matching invariants from `docs/kaizen-invariants.md`,
+including plan/test-plan gates, branch-base gates, and review-gate integrity
+fixtures for I27/I28.

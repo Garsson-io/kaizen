@@ -72,6 +72,7 @@ describe('cli-dimensions against real prompts', () => {
     expect(output).toContain('reflection-quality');
     expect(output).toContain('test-quality');
     expect(output).toContain('skill-changes');
+    expect(output).toContain('plan-completeness');
     // header + separator + N data rows
     const lines = output.split('\n');
     expect(lines.length).toBeGreaterThanOrEqual(12); // 2 header + 10+ dimensions
@@ -88,6 +89,15 @@ describe('cli-dimensions against real prompts', () => {
     const output = cmdShow(['requirements', 'plan-coverage'], realDir);
     expect(output).toContain('--- requirements (review-requirements.md) ---');
     expect(output).toContain('--- plan-coverage (review-plan-coverage.md) ---');
+  });
+
+  it('plan-completeness dimension enforces tracked deferred behaviors', () => {
+    const output = cmdShow(['plan-completeness'], realDir);
+    expect(output).toContain('name: plan-completeness');
+    expect(output).toContain('applies_to: pr');
+    expect(output).toContain('open tracking issue');
+    expect(output).toContain('More than 30%');
+    expect(output).toContain('"dimension": "plan-completeness"');
   });
 
   it('show unknown dimension returns error', () => {

@@ -467,4 +467,50 @@ export const INVARIANT_SCENARIOS: Scenario[] = [
     ],
     expectedGates: [],
   },
+  {
+    name: 'invariant-i27-deny-untracked-deferral',
+    description:
+      'I27: review gate must remain active when plan-completeness stores MISSING findings for untracked deferred test-plan behavior.',
+    prompt: '',
+    model: 'haiku',
+    maxBudget: 0,
+    timeoutSeconds: 0,
+    expectedHooks: [
+      {
+        hookPattern: 'PostToolUse',
+        eventType: 'PostToolUse',
+        expectedDecision: 'set-gate',
+        expectedGate: 'needs_review',
+        severity: 3,
+        description:
+          'pr-review-loop must keep needs_review active when review findings include MISSING items',
+      },
+    ],
+    expectedGates: [
+      { gate: 'needs_review', shouldActivate: true, shouldClear: false },
+    ],
+  },
+  {
+    name: 'invariant-i28-deny-missing-dimension',
+    description:
+      'I28: review gate must remain active when the stored review sentinel omits an applicable PR review dimension.',
+    prompt: '',
+    model: 'haiku',
+    maxBudget: 0,
+    timeoutSeconds: 0,
+    expectedHooks: [
+      {
+        hookPattern: 'PostToolUse',
+        eventType: 'PostToolUse',
+        expectedDecision: 'set-gate',
+        expectedGate: 'needs_review',
+        severity: 3,
+        description:
+          'pr-review-loop must keep needs_review active and name missing review dimensions',
+      },
+    ],
+    expectedGates: [
+      { gate: 'needs_review', shouldActivate: true, shouldClear: false },
+    ],
+  },
 ];
