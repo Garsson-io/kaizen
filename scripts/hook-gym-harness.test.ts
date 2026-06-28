@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { HookTimeline } from './hook-gym-schema.js';
 import type { ValidationReport } from './hook-gym-validate.js';
 import { RunResult } from './hook-gym-harness.js';
@@ -120,6 +122,17 @@ describe('RunResult.gates', () => {
 });
 
 describe('RunResult.agent', () => {
+  it('delegates stream JSON parsing to the shared helper', () => {
+    const source = readFileSync(fileURLToPath(new URL('./hook-gym-harness.ts', import.meta.url)), 'utf8');
+    const agentSection = source.slice(
+      source.indexOf('get agent()'),
+      source.indexOf('/** Diagnose hook behavior'),
+    );
+
+    expect(agentSection).toContain('parsedStreamMessages');
+    expect(agentSection).not.toContain('JSON.parse(line)');
+  });
+
   const toolUseMsg = (name: string, input: Record<string, unknown>) => JSON.stringify({
     type: 'assistant',
     message: { content: [{ type: 'tool_use', name, input }] },
@@ -140,6 +153,21 @@ describe('RunResult.agent', () => {
     expect(result.agent.usedTool('Bash')).toBe(true);
     expect(result.agent.usedTool('Write')).toBe(true);
     expect(result.agent.usedTool('Read')).toBe(false);
+  });
+
+  it('skips malformed stream lines while querying agent actions', () => {
+    const result = makeResult({
+      streamLines: [
+        'not json',
+        toolUseMsg('Bash', { command: 'git status' }),
+        '{broken',
+      ],
+    });
+
+    expect(result.agent.toolUses()).toEqual([
+      { tool: 'Bash', input: { command: 'git status' } },
+    ]);
+    expect(result.agent.usedTool('Bash')).toBe(true);
   });
 
   it('detects skill usage', () => {
