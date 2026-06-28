@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildReviewSentinelRecord,
@@ -9,6 +10,13 @@ import {
 const PR_URL = 'https://github.com/Garsson-io/kaizen/pull/997';
 
 describe('review sentinel contract', () => {
+  it('uses the shared YAML frontmatter parser for expected review dimensions', () => {
+    const source = readFileSync('src/review-sentinel.ts', 'utf8');
+
+    expect(source).not.toContain('content.match(/^---\\n');
+    expect(source).not.toContain('YAML.parse(match[1])');
+  });
+
   it('validates a complete structured sentinel', () => {
     const record = buildReviewSentinelRecord({
       prUrl: PR_URL,

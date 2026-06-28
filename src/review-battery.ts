@@ -14,7 +14,7 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
-import YAML from 'yaml';
+import { readYamlFrontmatter } from './lib/frontmatter.js';
 import { resolveProjectRoot, type GitRunner } from './lib/resolve-project-root.js';
 import { retrievePlan, issueTarget } from './structured-data.js';
 import {
@@ -227,13 +227,7 @@ export function reviewBriefing(
  * Returns null if no frontmatter found or YAML is invalid.
  */
 export function parseFrontmatter(content: string): Record<string, unknown> | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return null;
-  try {
-    return YAML.parse(match[1]) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  return readYamlFrontmatter(content);
 }
 
 /**

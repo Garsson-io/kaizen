@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import { resolve } from 'node:path';
-import YAML from 'yaml';
+import { readYamlFrontmatter } from './lib/frontmatter.js';
 import { parseGithubPrUrl } from './lib/github-pr.js';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
 
@@ -84,9 +84,7 @@ export function expectedPrReviewDimensions(): string[] {
     const files = fs.readdirSync(promptsDir).filter(f => /^review-.*\.md$/.test(f));
     const dimensions = files.flatMap(file => {
       const content = fs.readFileSync(resolve(promptsDir, file), 'utf8');
-      const match = content.match(/^---\n([\s\S]*?)\n---/);
-      if (!match) return [];
-      const frontmatter = YAML.parse(match[1]) as { name?: string; applies_to?: string } | null;
+      const frontmatter = readYamlFrontmatter<{ name?: string; applies_to?: string }>(content);
       if (!frontmatter?.name) return [];
       if (frontmatter.applies_to !== 'pr' && frontmatter.applies_to !== 'both') return [];
       return [frontmatter.name];
