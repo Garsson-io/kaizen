@@ -49,6 +49,17 @@ describe('trace helper source invariant', () => {
   });
 });
 
+describe('branch helper source invariant', () => {
+  it('routes current branch fallback through currentHookBranch with empty fallback', () => {
+    expect(PRE_PUSH_SOURCE).toContain('currentHookBranch');
+    expect(PRE_PUSH_SOURCE).toContain("from './lib/current-branch.js'");
+    expect(PRE_PUSH_SOURCE).toContain("fallback: ''");
+    expect(PRE_PUSH_SOURCE).not.toContain(
+      "gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], '')",
+    );
+  });
+});
+
 describe('detectAgentEnv', () => {
   it('returns detected=false when no agent vars set (I-A)', () => {
     const result = detectAgentEnv({});

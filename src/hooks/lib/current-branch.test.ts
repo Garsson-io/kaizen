@@ -13,6 +13,10 @@ describe('currentHookBranch', () => {
     expect(currentHookBranch({ readBranch: () => '' })).toBe('unknown');
   });
 
+  it('uses caller-provided fallback when branch lookup returns empty output', () => {
+    expect(currentHookBranch({ readBranch: () => '', fallback: '' })).toBe('');
+  });
+
   it('falls back to unknown when branch lookup throws', () => {
     expect(
       currentHookBranch({
@@ -21,5 +25,16 @@ describe('currentHookBranch', () => {
         },
       }),
     ).toBe('unknown');
+  });
+
+  it('uses caller-provided fallback when branch lookup throws', () => {
+    expect(
+      currentHookBranch({
+        readBranch: () => {
+          throw new Error('git failed');
+        },
+        fallback: '',
+      }),
+    ).toBe('');
   });
 });
