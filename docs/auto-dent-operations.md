@@ -25,6 +25,10 @@ auto-dent-ctl.ts (control plane)
 
 auto-dent-score.ts (scoring)
   └── per-run and per-batch quality scoring
+
+kaizen-workflow-driver.ts (workflow forcing/status)
+  ├── renders the headless /goal-equivalent contract into every run prompt
+  └── reports reusable workflow stage status for skills, /goal, and auto-dent
 ```
 
 ### Self-Update And Hot Reload
@@ -64,7 +68,15 @@ All cross-run state lives in `logs/auto-dent/<batch-id>/state.json`. Key fields:
 
 Templates live in `prompts/`. The default is `deep-dive-default.md`. Variables are substituted using `{{variable}}` syntax, with `{{#var}}...{{/var}}` for conditionals.
 
-Key variables: `{{guidance}}`, `{{run_tag}}`, `{{run_context}}`, `{{issues_closed}}`, `{{prs}}`, `{{host_repo}}`.
+Key variables: `{{guidance}}`, `{{run_tag}}`, `{{run_context}}`, `{{issues_closed}}`, `{{prs}}`, `{{host_repo}}`, `{{goal_forcing_contract}}`.
+
+`{{goal_forcing_contract}}` comes from `scripts/kaizen-workflow-driver.ts`. It is the headless equivalent of `/goal`: a run should not finish while applicable kaizen gates remain pending. Keep lifecycle gate wording there instead of copying checklists into individual prompt templates.
+
+Status for a run or issue uses the same shared model:
+
+```bash
+npx tsx scripts/kaizen-workflow-driver.ts status --mode exploit --issue <N> --repo <owner/repo>
+```
 
 ## Running a Batch
 

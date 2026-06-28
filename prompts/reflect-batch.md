@@ -9,6 +9,8 @@ performance and produce insights that will help subsequent runs be more effectiv
 **Total PRs:** {{pr_count}}
 **Issues closed:** {{issues_closed_count}}
 
+{{goal_forcing_contract}}
+
 ## Run History
 
 {{run_history_table}}

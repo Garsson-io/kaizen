@@ -9,6 +9,7 @@ Kaizen is installed at `{{KAIZEN_ROOT}}`. It provides enforcement hooks, reflect
 | Skill | When to Use |
 |-------|-------------|
 | `/kaizen-reflect` | Post-work reflection — classify impediments, file issues (Level 1→2→3) |
+| `/kaizen-do` | Goal-driven workflow driver — sets `/goal`, then drives one issue/task through the full kaizen gates |
 | `/kaizen-pick` | Select next kaizen issue — filters claimed, balances epic momentum vs diversity |
 | `/kaizen-gaps` | Strategic analysis — tooling/testing gaps, horizon concentration, unnamed dimensions |
 | `/kaizen-deep-dive` | Autonomous deep-dive — fix root cause category behind repeated issues |
@@ -22,6 +23,7 @@ Key triggers — activate the right skill for the user's intent:
 
 - "gap analysis", "analyze gaps", "tooling gaps" → `/kaizen-gaps`
 - "make a dent", "hero mode", "deep dive" → `/kaizen-deep-dive`
+- "/kaizen-do <issue|task>", "work this ticket to completion" → `/kaizen-do`
 - "what's next", "pick work", "pick a kaizen" → `/kaizen-pick`
 - "look at issue #N", "evaluate this" → `/kaizen-evaluate`
 - "lets do it", "go ahead", "build it", "ship it" → `/kaizen-implement`

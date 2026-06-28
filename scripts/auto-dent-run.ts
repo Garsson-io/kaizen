@@ -175,6 +175,7 @@ import {
   type FinalClaimStatus,
   type FinalRunClaim,
 } from './auto-dent-final-claim.js';
+import { renderAutoDentGoalContract } from './kaizen-workflow-driver.js';
 import {
   validateRunLifecycle,
   summarizeLifecycle,
@@ -627,6 +628,7 @@ export function buildTemplateVars(
   const crossBatchSteeringText = crossBatchSteering.length > 0
     ? crossBatchSteering.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
+  const modeSelection = selectMode(state, runNum);
 
   return {
     guidance: state.guidance,
@@ -654,6 +656,7 @@ export function buildTemplateVars(
     prior_reflections: priorReflections,
     failure_class_summary: failureClassSummary,
     contemplation_recommendations: contemplationRecsText,
+    goal_forcing_contract: renderAutoDentGoalContract(modeSelection.mode),
   };
 }
 
@@ -1200,6 +1203,8 @@ Include this run tag in any PR descriptions or commit messages you create.
 You are running inside an auto-dent batch loop (run ${runNum}${state.max_runs > 0 ? ` of ${state.max_runs}` : ''}).
 After this run completes, the loop will start another run with fresh context.
 Run to completion. Do not ask for confirmation — make autonomous decisions.`;
+
+  prompt += `\n\n${renderAutoDentGoalContract(selectMode(state, runNum).mode)}`;
 
   if (state.issues_closed.length > 0) {
     prompt += `\n\nIssues already addressed in previous runs (do not rework): ${state.issues_closed.join(' ')}`;

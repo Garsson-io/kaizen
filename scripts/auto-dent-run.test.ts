@@ -140,6 +140,16 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('AUTO_DENT_PHASE: STOP | reason=');
   });
 
+  it('renders the shared headless /goal forcing contract into auto-dent prompts', () => {
+    const state = makeBatchState();
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).toContain('Headless /goal Equivalent');
+    expect(prompt).toContain('same forcing function as /goal');
+    expect(prompt).toContain('Do not finish this run');
+    expect(prompt).toContain('related-area DRY/refactor pass');
+    expect(prompt).toContain('meet reality');
+  });
+
   it('generates test-task prompt when test_task is true', () => {
     const state = makeBatchState({ test_task: true });
     const prompt = buildPrompt(state, 1);
@@ -216,6 +226,13 @@ describe('buildTemplateVars', () => {
     const state = makeBatchState();
     const vars = buildTemplateVars(state, 1, tmpDir);
     expect(vars.claimed_plan_issue).toBe('');
+  });
+
+  it('exposes the shared goal forcing contract as a template variable', () => {
+    const vars = buildTemplateVars(makeBatchState(), 1);
+    expect(vars.goal_forcing_contract).toContain('Headless /goal Equivalent');
+    expect(vars.goal_forcing_contract).toContain('plan/test-plan gate');
+    expect(vars.goal_forcing_contract).toContain('review/requirements/impact gates');
   });
 });
 
@@ -2955,6 +2972,7 @@ describe('buildPromptWithMetadata', () => {
     const meta = buildPromptWithMetadata(state, 1);
     expect(meta.template).toBe('explore-gaps.md');
     expect(meta.hash).toMatch(/^[0-9a-f]{12}$/);
+    expect(meta.prompt).toContain('issues filed');
   });
 
   it('returns different template for reflect mode', () => {

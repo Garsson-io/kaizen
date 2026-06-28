@@ -9,6 +9,8 @@ You are running inside an auto-dent batch loop (run {{run_context}}).
 After this run completes, the loop will start another run with fresh context.
 Run to completion. Do not ask for confirmation — make autonomous decisions.
 
+{{goal_forcing_contract}}
+
 {{#issues_closed}}
 Issues already addressed in previous runs (do not rework): {{issues_closed}}
 {{/issues_closed}}

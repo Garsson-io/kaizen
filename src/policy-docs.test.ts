@@ -71,6 +71,23 @@ describe('canonical invariants doc — B20: test plan mandate', () => {
   });
 });
 
+describe('kaizen-do workflow driver docs', () => {
+  const agents = read('.agents/AGENTS.md');
+  const fragment = read('.agents/kaizen/instructions-fragment.md');
+  const readme = read('README.md');
+
+  it('lists /kaizen-do as the goal-driven workflow driver', () => {
+    expect(agents).toContain('/kaizen-do');
+    expect(fragment).toContain('/kaizen-do');
+    expect(readme).toContain('/kaizen-do');
+    expect(agents).toContain('sets `/goal`');
+  });
+
+  it('documents status calls through the reusable workflow driver CLI', () => {
+    expect(agents).toContain('scripts/kaizen-workflow-driver.ts status');
+  });
+});
+
 // ── kaizen-write-pr SKILL — Issue linkage (B17) ────────────────────
 
 describe('kaizen-write-pr SKILL — B17: Issue linkage section', () => {
