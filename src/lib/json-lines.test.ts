@@ -19,5 +19,9 @@ describe('parseJsonLines', () => {
 
     expect(result.rows).toEqual([{ a: 1 }, { b: 2 }]);
     expect(result.malformedRows).toEqual(['not-json', '{bad']);
+    expect(result.malformed).toEqual([
+      { lineNumber: 3, raw: 'not-json' },
+      { lineNumber: 5, raw: '{bad' },
+    ]);
   });
 });

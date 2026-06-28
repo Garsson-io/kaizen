@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseJsonLinesWithMalformedRows } from '../src/lib/json-lines.js';
 
 /**
  * hook-gym-schema.ts — TypeScript types for Hook Gym.
@@ -80,13 +81,12 @@ function parseFixtureJson(raw: string): unknown[] {
     return parsed;
   }
 
-  return trimmed.split('\n').map((line, index) => {
-    try {
-      return JSON.parse(line);
-    } catch (error) {
-      throw new Error(`Invalid hook-gym fixture: line ${index + 1} is not valid JSON`, { cause: error });
-    }
-  });
+  const parsed = parseJsonLinesWithMalformedRows(raw);
+  const firstMalformed = parsed.malformed[0];
+  if (firstMalformed) {
+    throw new Error(`Invalid hook-gym fixture: line ${firstMalformed.lineNumber} is not valid JSON`);
+  }
+  return parsed.rows;
 }
 
 export function parseHookGymFixtureContent(raw: string): HookGymFixtureEvent[] {

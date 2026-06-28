@@ -39,4 +39,24 @@ describe('hook-gym fixture schema validation', () => {
     expect(() => parseHookGymFixtureContent(malformedFixture)).toThrow(/Invalid hook-gym fixture/);
     expect(HookResponseEventSchema.safeParse(response).success).toBe(false);
   });
+
+  it('reports malformed JSONL fixture rows with source line numbers', () => {
+    expect(() => parseHookGymFixtureContent([
+      '{"type":"rate_limit_event"}',
+      '',
+      '{not-json',
+    ].join('\n'))).toThrow(/line 3 is not valid JSON/);
+  });
+
+  it('delegates JSONL fixture parsing to the shared diagnostics helper', () => {
+    const source = readFileSync(new URL('./hook-gym-schema.ts', import.meta.url), 'utf8');
+    const parserSource = source.slice(
+      source.indexOf('function parseFixtureJson'),
+      source.indexOf('export function parseHookGymFixtureContent'),
+    );
+
+    expect(parserSource).toContain('parseJsonLinesWithMalformedRows');
+    expect(parserSource).not.toContain('JSON.parse(line)');
+    expect(parserSource).not.toContain(".split('\\n')");
+  });
 });
