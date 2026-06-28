@@ -759,6 +759,68 @@ describe('buildPlanPrompt', () => {
     expect(prompt).toContain('decomposition');
     expect(prompt).toContain('item_type');
   });
+
+  it('surfaces recent auto-dent exploration issue sources in plan prompt', () => {
+    const state = {
+      batch_id: 'batch-test',
+      batch_start: 0,
+      guidance: 'close the explore to exploit loop',
+      max_runs: 10,
+      cooldown: 30,
+      budget: '3.00',
+      max_failures: 3,
+      kaizen_repo: 'Garsson-io/kaizen',
+      host_repo: 'Garsson-io/kaizen',
+      run: 0,
+      prs: [],
+      issues_filed: [],
+      issues_closed: [],
+      cases: [],
+      consecutive_failures: 0,
+      current_cooldown: 30,
+      stop_reason: '',
+      last_issue: '',
+      last_pr: '',
+      last_case: '',
+      last_branch: '',
+      last_worktree: '',
+    };
+    const prompt = buildPlanPrompt(state);
+
+    expect(prompt).toContain('source:auto-dent-explore');
+    expect(prompt).toContain('source:ecosystem-research');
+  });
+
+  it('instructs planning to inspect recent candidate task manifests', () => {
+    const state = {
+      batch_id: 'batch-test',
+      batch_start: 0,
+      guidance: 'use explored candidates',
+      max_runs: 10,
+      cooldown: 30,
+      budget: '3.00',
+      max_failures: 3,
+      kaizen_repo: 'Garsson-io/kaizen',
+      host_repo: 'Garsson-io/kaizen',
+      run: 0,
+      prs: [],
+      issues_filed: [],
+      issues_closed: [],
+      cases: [],
+      consecutive_failures: 0,
+      current_cooldown: 30,
+      stop_reason: '',
+      last_issue: '',
+      last_pr: '',
+      last_case: '',
+      last_branch: '',
+      last_worktree: '',
+    };
+    const prompt = buildPlanPrompt(state);
+
+    expect(prompt).toContain('run-*-candidate-tasks-manifest.json');
+    expect(prompt).toContain('candidate task manifest');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -53,6 +53,25 @@ export interface RunPrCreatedEvent extends BaseEvent {
   pr_url: string;
 }
 
+export interface AutoDentBanditDecisionDetail {
+  mode: string;
+  plays: number;
+  mean_reward: number;
+  exploit_term: number;
+  explore_bonus: number;
+  ucb: number;
+  weight: number;
+}
+
+export interface AutoDentBanditDecision {
+  selected_mode: string;
+  reason: string;
+  total_plays: number;
+  exploration_c: number;
+  weights: Record<string, number>;
+  details: AutoDentBanditDecisionDetail[];
+}
+
 export interface RunCompleteEvent extends BaseEvent {
   type: 'run.complete';
   duration_ms: number;
@@ -92,6 +111,8 @@ export interface RunCompleteEvent extends BaseEvent {
   review_cost_usd?: number;
   /** Hook-activation verdict from the session init event or explicit unknown fallback (#1501). */
   hook_activation?: HookActivationVerdict;
+  /** Durable UCB1 decision payload for the selected cognitive mode (#1189). */
+  bandit_decision?: AutoDentBanditDecision;
   /**
    * Provider + billing mode per lifecycle phase (#1143, epic #1134).
    * Absent on older events. Keyed by phase → { provider, billing }.

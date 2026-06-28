@@ -2363,6 +2363,34 @@ describe('checkSignalOverrides', () => {
     expect(result!.reason).toBe('signal:no-recent-prs');
   });
 
+  it('uses learned non-exploit bandit choice for no-recent-prs when history is sufficient', () => {
+    const state = makeBatchState({
+      consecutive_failures: 0,
+      run_history: [
+        makeRunMetrics({ mode: 'exploit', prs: ['pr'] }),
+        makeRunMetrics({ mode: 'explore', issues_filed: ['#1'] }),
+        makeRunMetrics({ mode: 'reflect', issues_filed: ['#2'] }),
+        makeRunMetrics({ mode: 'subtract', lines_deleted: 500 }),
+        makeRunMetrics({ mode: 'subtract', lines_deleted: 500 }),
+        makeRunMetrics({ mode: 'subtract', lines_deleted: 500 }),
+        makeRunMetrics({ mode: 'exploit', prs: [] }),
+        makeRunMetrics({ mode: 'explore', prs: [] }),
+        makeRunMetrics({ mode: 'reflect', prs: [] }),
+        makeRunMetrics({ mode: 'subtract', prs: [], lines_deleted: 500 }),
+        makeRunMetrics({ mode: 'exploit', prs: [] }),
+      ],
+    });
+
+    const result = checkSignalOverrides(state);
+
+    expect(result).toMatchObject({
+      mode: 'subtract',
+      template: 'subtract-prune.md',
+      reason: 'signal:no-recent-prs:bandit',
+    });
+    expect(result!.bandit).toBeDefined();
+  });
+
   it('does not force explore when PRs exist in last 5 runs', () => {
     const state = makeBatchState({
       consecutive_failures: 0,
@@ -2407,6 +2435,34 @@ describe('checkSignalOverrides', () => {
     expect(result).not.toBeNull();
     expect(result!.mode).toBe('contemplate');
     expect(result!.reason).toBe('signal:mode-streak-explore');
+  });
+
+  it('breaks mode streak with learned non-stale schedulable mode instead of contemplate', () => {
+    const state = makeBatchState({
+      consecutive_failures: 0,
+      run_history: [
+        makeRunMetrics({ mode: 'exploit', prs: ['pr'] }),
+        makeRunMetrics({ mode: 'exploit', prs: ['pr'] }),
+        makeRunMetrics({ mode: 'reflect', issues_filed: ['#1', '#2', '#3'] }),
+        makeRunMetrics({ mode: 'reflect', issues_filed: ['#4', '#5', '#6'] }),
+        makeRunMetrics({ mode: 'subtract', lines_deleted: 100 }),
+        makeRunMetrics({ mode: 'exploit', prs: ['pr'] }),
+        makeRunMetrics({ mode: 'explore', prs: ['pr'] }),
+        makeRunMetrics({ mode: 'explore', prs: ['pr'] }),
+        makeRunMetrics({ mode: 'explore', prs: ['pr'] }),
+        makeRunMetrics({ mode: 'explore', prs: ['pr'] }),
+      ],
+    });
+
+    const result = checkSignalOverrides(state);
+
+    expect(result).toMatchObject({
+      mode: 'reflect',
+      template: 'reflect-batch.md',
+      reason: 'signal:mode-streak-explore:bandit',
+    });
+    expect(result!.mode).not.toBe('contemplate');
+    expect(result!.bandit).toBeDefined();
   });
 
   it('consecutive failures takes priority over no-prs signal', () => {
@@ -2848,6 +2904,46 @@ describe('buildRunMetrics', () => {
     });
   });
 
+  it('persists selected bandit decision metadata', () => {
+    const bandit = computeBanditWeights([
+      makeRunMetrics({ mode: 'exploit', prs: ['pr'] }),
+      makeRunMetrics({ mode: 'exploit', prs: ['pr'] }),
+      makeRunMetrics({ mode: 'exploit', prs: ['pr'] }),
+      makeRunMetrics({ mode: 'explore', issues_filed: ['#1'], candidate_manifest_count: 2 }),
+      makeRunMetrics({ mode: 'explore', issues_filed: ['#2'], candidate_manifest_count: 2 }),
+      makeRunMetrics({ mode: 'reflect', issues_filed: ['#3'] }),
+      makeRunMetrics({ mode: 'reflect', issues_filed: ['#4'] }),
+      makeRunMetrics({ mode: 'subtract', lines_deleted: 300 }),
+      makeRunMetrics({ mode: 'subtract', lines_deleted: 300 }),
+      makeRunMetrics({ mode: 'subtract', lines_deleted: 300 }),
+    ], { explorationC: 1.25 })!;
+
+    const metrics = buildRunMetrics({
+      runNum: 5,
+      runStartEpoch: 1742680900,
+      duration: 30,
+      exitCode: 0,
+      runMode: 'subtract',
+      result: makeRunResult(),
+      modeSelection: {
+        mode: 'subtract',
+        template: 'subtract-prune.md',
+        reason: 'bandit',
+        bandit,
+      },
+    });
+
+    expect(metrics.bandit_decision).toMatchObject({
+      selected_mode: 'subtract',
+      reason: 'bandit',
+      total_plays: bandit.totalPlays,
+      exploration_c: 1.25,
+      weights: bandit.weights,
+    });
+    expect(metrics.bandit_decision!.details).toHaveLength(4);
+    expect(metrics.bandit_decision!.details[0]).toHaveProperty('mean_reward');
+  });
+
   it('persists the hook-activation verdict to state.json metrics (#843)', () => {
     const metrics = buildRunMetrics({
       runNum: 5,
@@ -2948,6 +3044,43 @@ describe('buildRunMetrics', () => {
       status: 'unknown',
       degraded: true,
     });
+  });
+
+  it('emits bandit decision metadata on run.complete telemetry', () => {
+    const result = makeRunResult();
+    const metrics = buildRunMetrics({
+      runNum: 8,
+      runStartEpoch: 1742681300,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'explore',
+      result,
+      metadata: {
+        bandit_decision: {
+          selected_mode: 'explore',
+          reason: 'bandit',
+          total_plays: 12,
+          exploration_c: 1.41,
+          weights: { exploit: 0.1, explore: 0.7, reflect: 0.1, subtract: 0.1 },
+          details: [],
+        },
+      },
+    });
+
+    const event = buildRunCompleteEvent({
+      runId: 'batch/run-8',
+      batchId: 'batch',
+      runNum: 8,
+      duration: 8,
+      exitCode: 0,
+      result,
+      runMode: 'explore',
+      outcome: 'success',
+      runMetricsForOutcome: metrics,
+      lifecycleViolationCount: 0,
+    });
+
+    expect(event.bandit_decision).toEqual(metrics.bandit_decision);
   });
 });
 

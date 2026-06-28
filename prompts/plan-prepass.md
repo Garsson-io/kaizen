@@ -22,40 +22,49 @@ PRs already created (avoid overlapping work): {{prs}}
 
 ## Instructions
 
-1. List open issues matching the guidance:
+1. First inspect fresh scouted candidates from exploration runs:
+   ```
+   gh issue list --repo {{host_repo}} --state open --label source:auto-dent-explore --limit 50 --json number,title,labels
+   gh issue list --repo {{host_repo}} --state open --label source:ecosystem-research --limit 50 --json number,title,labels
+   find logs/auto-dent -name 'run-*-candidate-tasks-manifest.json' -mtime -14 -print
+   ```
+   Read any recent candidate task manifest that looks relevant to the guidance.
+   Treat manifest candidates as planning inputs, not as completed work.
+
+2. List open issues matching the guidance:
    ```
    gh issue list --repo {{host_repo}} --state open --limit 100 --json number,title,labels
    ```
 
-2. Check for in-progress work (open PRs, active worktrees):
+3. Check for in-progress work (open PRs, active worktrees):
    ```
    gh pr list --repo {{host_repo}} --state open --json number,title,headRefName
    ```
 
-3. Scan epics, PRDs, and horizons for decomposition opportunities:
+4. Scan epics, PRDs, and horizons for decomposition opportunities:
    ```
    gh issue list --repo {{host_repo}} --state open --label epic --json number,title,body
    gh issue list --repo {{host_repo}} --state open --label prd --json number,title,body
    ```
    Also check horizon docs in `docs/horizons/*.md` for maturity levels with concrete next steps.
 
-4. For each epic/PRD, check if it has concrete child issues already filed:
+5. For each epic/PRD, check if it has concrete child issues already filed:
    - If NO concrete child issues exist: this is a **decomposition opportunity**
    - Read the epic body or linked PRD doc to identify 1-3 concrete, PR-sized pieces
    - Add these as `item_type: "decompose"` items in the plan
 
-5. Score each candidate issue on:
+6. Score each candidate issue on:
    - **Relevance** to the guidance (0-10)
    - **Actionability** — is it concrete enough to implement in one PR? (0-10)
    - **Independence** — can it be done without blocking on other work? (0-10)
    - **Value** — how much does it improve the system? (0-10)
 
-6. Rank by composite score. Interleave regular leaf issues with decomposition items.
+7. Rank by composite score. Interleave regular leaf issues with decomposition items.
    Place at least one decomposition item in the top 5 if any exist.
 
-7. For each selected item, write a one-sentence approach.
+8. For each selected item, write a one-sentence approach.
 
-8. **Group related items into coordinated themes (aim for 3-5 items per theme).**
+9. **Group related items into coordinated themes (aim for 3-5 items per theme).**
    Issues that share a root cause, a file/subsystem, or a parent epic belong
    together so the batch drives a coherent body of work to completion instead
    of hopping across unrelated issues by score. Give each theme a kebab-case
