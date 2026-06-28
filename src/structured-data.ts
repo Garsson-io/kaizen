@@ -37,6 +37,7 @@ import {
   type RoundRow,
   type RoundVerdict,
 } from './review-finding-contract.js';
+import { firstMarkdownFence } from './lib/markdown-fence.js';
 
 // ── Target helpers ──────────────────────────────────────────────────
 
@@ -450,10 +451,9 @@ export function retrieveMetadata(target: AttachmentTarget & SectionTarget): Reco
   for (const src of sources) {
     const text = src();
     if (!text) continue;
-    const match = text.match(/```yaml\n([\s\S]*?)```/);
-    if (match) {
-      try { return YAML.parse(match[1]) as Record<string, unknown>; } catch { continue; }
-    }
+    const block = firstMarkdownFence(text, 'yaml');
+    if (!block) continue;
+    try { return YAML.parse(block.code) as Record<string, unknown>; } catch { continue; }
   }
   return null;
 }
@@ -515,7 +515,7 @@ export function storeIterationState(target: AttachmentTarget, state: Record<stri
 export function retrieveIterationState(target: AttachmentTarget): Record<string, unknown> | null {
   const attachment = readAttachment(target, 'iteration/state');
   if (!attachment) return null;
-  const match = attachment.content.match(/```json\n([\s\S]*?)```/);
-  if (!match) return null;
-  try { return JSON.parse(match[1]); } catch { return null; }
+  const block = firstMarkdownFence(attachment.content, 'json');
+  if (!block) return null;
+  try { return JSON.parse(block.code); } catch { return null; }
 }
