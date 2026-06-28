@@ -131,6 +131,21 @@ describe('parseStreamJsonResult', () => {
   });
 });
 
+describe('review-fix state JSON file helper source invariant', () => {
+  it('delegates state JSON file reads and writes to shared helpers', () => {
+    const source = readFileSync(new URL('./review-fix.ts', import.meta.url), 'utf8');
+    const stateSection = source.slice(
+      source.indexOf('export function loadState'),
+      source.indexOf('// ── Transition guard'),
+    );
+
+    expect(stateSection).toContain('readJsonValueFile');
+    expect(stateSection).toContain('writeJsonObjectFile');
+    expect(stateSection).not.toContain('JSON.parse(readFileSync(path');
+    expect(stateSection).not.toContain('JSON.stringify(state, null, 2)');
+  });
+});
+
 // ── applyFixRunningPhase ─────────────────────────────────────────────
 
 function makeState(overrides: Partial<Parameters<typeof applyFixRunningPhase>[0]> = {}) {
@@ -480,6 +495,7 @@ describe('loadState / saveState (integration: real temp files)', () => {
         rounds: [{ round: 1, verdict: 'fixed' as const, fixCost: 0.55, reviewCost: 0 }],
       };
       saveState(state, dir);
+      expect(readFileSync(join(dir, `${stateKey(state.prUrl)}.json`), 'utf-8')).not.toMatch(/\n$/);
       const loaded = loadState(state.prUrl, dir);
       expect(loaded).toEqual(normalizeReviewFixState(state));
     } finally { teardown(); }

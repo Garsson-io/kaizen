@@ -38,6 +38,7 @@ import {
 } from '../src/review-battery.js';
 import { addSection, writeAttachment } from '../src/section-editor.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
+import { readJsonValueFile, writeJsonObjectFile } from '../src/lib/json-file.js';
 import { ghExec } from './auto-dent-github.js';
 import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
 import {
@@ -329,8 +330,10 @@ export function loadState(prUrl: string, dir?: string): ReviewFixState | null {
   const d = dir ?? stateDir();
   const path = join(d, `${stateKey(prUrl)}.json`);
   if (!existsSync(path)) return null;
+  const raw = readJsonValueFile(path);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   try {
-    return normalizeReviewFixState(JSON.parse(readFileSync(path, 'utf8')) as ReviewFixState);
+    return normalizeReviewFixState(raw as ReviewFixState);
   } catch {
     return null;
   }
@@ -339,7 +342,7 @@ export function loadState(prUrl: string, dir?: string): ReviewFixState | null {
 export function saveState(state: ReviewFixState, dir?: string): void {
   const d = dir ?? stateDir();
   const path = join(d, `${stateKey(state.prUrl)}.json`);
-  writeFileSync(path, JSON.stringify(state, null, 2));
+  writeJsonObjectFile(path, state as unknown as Record<string, unknown>, { trailingNewline: false });
 }
 
 // ── Transition guard (#929, #939) ────────────────────────────────────

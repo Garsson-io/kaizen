@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readJsonObjectFile, readJsonValueFile } from './json-file.js';
+import { readJsonObjectFile, readJsonValueFile, writeJsonObjectFile, writeJsonValueFile } from './json-file.js';
 
 let dir: string;
 
@@ -57,5 +57,35 @@ describe('readJsonObjectFile', () => {
     expect(readJsonObjectFile(malformedPath)).toBeNull();
     expect(readJsonObjectFile(blankPath)).toBeNull();
     expect(readJsonObjectFile(join(dir, 'missing.json'))).toBeNull();
+  });
+});
+
+describe('writeJsonValueFile', () => {
+  it('writes pretty JSON with a trailing newline by default', () => {
+    const path = join(dir, 'value.json');
+
+    writeJsonValueFile(path, { ok: true });
+
+    expect(readFileSync(path, 'utf-8')).toBe('{\n  "ok": true\n}\n');
+    expect(readJsonValueFile(path)).toEqual({ ok: true });
+  });
+
+  it('can preserve existing no-trailing-newline output contracts', () => {
+    const path = join(dir, 'array.json');
+
+    writeJsonValueFile(path, ['x'], { trailingNewline: false });
+
+    expect(readFileSync(path, 'utf-8')).toBe('[\n  "x"\n]');
+    expect(readJsonValueFile(path)).toEqual(['x']);
+  });
+});
+
+describe('writeJsonObjectFile', () => {
+  it('writes object JSON through the shared value writer', () => {
+    const path = join(dir, 'object-write.json');
+
+    writeJsonObjectFile(path, { ok: true });
+
+    expect(readJsonObjectFile(path)).toEqual({ ok: true });
   });
 });
