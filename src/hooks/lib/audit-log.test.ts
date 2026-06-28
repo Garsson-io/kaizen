@@ -3,10 +3,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  appendHookAuditLog,
-  currentHookBranch,
-} from './audit-log.js';
+import { appendHookAuditLog } from './audit-log.js';
+
+const AUDIT_LOG_SOURCE = readFileSync(new URL('./audit-log.ts', import.meta.url), 'utf-8');
 
 let tempDir: string | undefined;
 
@@ -39,24 +38,11 @@ describe('appendHookAuditLog', () => {
   });
 });
 
-describe('currentHookBranch', () => {
-  it('uses the injected branch reader when it returns a branch', () => {
-    expect(currentHookBranch({ readBranch: () => 'feature/refactor\n' })).toBe(
-      'feature/refactor',
-    );
-  });
-
-  it('falls back to unknown when branch lookup returns empty output', () => {
-    expect(currentHookBranch({ readBranch: () => '' })).toBe('unknown');
-  });
-
-  it('falls back to unknown when branch lookup throws', () => {
-    expect(
-      currentHookBranch({
-        readBranch: () => {
-          throw new Error('git failed');
-        },
-      }),
-    ).toBe('unknown');
+describe('branch helper source invariant', () => {
+  it('delegates branch fallback to current-branch helper', () => {
+    expect(AUDIT_LOG_SOURCE).toContain("from './current-branch.js'");
+    expect(AUDIT_LOG_SOURCE).not.toContain("from '../hook-io.js'");
+    expect(AUDIT_LOG_SOURCE).not.toContain('export function currentHookBranch');
+    expect(AUDIT_LOG_SOURCE).not.toContain('readBranch');
   });
 });

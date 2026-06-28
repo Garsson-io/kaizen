@@ -85,6 +85,8 @@ describe('audit logging source invariant', () => {
   it('routes audit logging and branch fallback through shared hook helpers', () => {
     expect(HOOK_SOURCE).toContain('appendHookAuditLog');
     expect(HOOK_SOURCE).toContain('currentHookBranch');
+    expect(HOOK_SOURCE).toContain("from './lib/current-branch.js'");
+    expect(HOOK_SOURCE).not.toContain("currentHookBranch } from './lib/audit-log.js'");
     expect(HOOK_SOURCE).not.toContain('function getAuditDir');
     expect(HOOK_SOURCE).not.toContain('function logAudit');
     expect(HOOK_SOURCE).not.toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown')");
