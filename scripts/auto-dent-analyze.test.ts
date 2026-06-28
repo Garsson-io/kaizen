@@ -5,7 +5,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { basename, join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -85,6 +86,17 @@ function createTmpBatch(runLogs: string[][]): string {
 }
 
 describe('analyzeRunLog', () => {
+  it('delegates JSONL row parsing to the shared helper', () => {
+    const source = readFileSync(fileURLToPath(new URL('./auto-dent-analyze.ts', import.meta.url)), 'utf8');
+    const analyzeSection = source.slice(
+      source.indexOf('export function analyzeRunLog'),
+      source.indexOf('export function analyzeBatch'),
+    );
+
+    expect(analyzeSection).toContain('parseJsonLines');
+    expect(analyzeSection).not.toContain('JSON.parse(line)');
+  });
+
   it('extracts cold-start time from first Edit/Write tool call', () => {
     const log = createTmpLog([
       initMsg(),
@@ -176,6 +188,20 @@ describe('analyzeRunLog', () => {
     expect(result.toolCalls).toBe(0);
     expect(result.coldStartSec).toBeNaN();
     expect(result.totalDurationSec).toBe(0);
+  });
+
+  it('skips malformed rows while preserving valid tool events', () => {
+    const log = createTmpLog([
+      'not json',
+      initMsg(),
+      userMsg('2026-03-22T22:00:00.000Z'),
+      '{broken',
+      assistantToolUse('Read', { file_path: '/foo.ts' }),
+    ]);
+
+    const result = analyzeRunLog(log);
+    expect(result.toolCalls).toBe(1);
+    expect(result.toolEvents[0].name).toBe('Read');
   });
 
   it('handles non-JSON lines gracefully', () => {
