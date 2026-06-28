@@ -188,7 +188,15 @@ describe('derivePushTargetBranches — pushed ref target contract (#1536)', () =
       'delete 0000000000000000000000000000000000000000 refs/heads/worktree-kz-1508-1502-transcripts abc123',
     );
 
-    expect(derivePushTargetBranches(refs, 'main')).toEqual(['main']);
+    expect(derivePushTargetBranches(refs, 'main')).toEqual([]);
+  });
+
+  it('does not fall back to the current branch for non-branch ref updates', () => {
+    const refs = parseStdin(
+      'refs/tags/v1.0 abc123 refs/tags/v1.0 0000000000000000000000000000000000000000',
+    );
+
+    expect(derivePushTargetBranches(refs, 'case/current')).toEqual([]);
   });
 
   it('deduplicates repeated branch targets while preserving order', () => {
@@ -718,7 +726,7 @@ describe('processPrePush — integrated flow with injected query', () => {
     expect(result.decision.context?.branch).toBe('feature/merged');
   });
 
-  it('allows a deletion-only push by evaluating the current-branch fallback, not the deleted target (#1536)', () => {
+  it('allows a deletion-only push without querying the current branch (#1536)', () => {
     const queriedBranches: string[] = [];
     const rawStdin = [
       'delete',
@@ -734,14 +742,14 @@ describe('processPrePush — integrated flow with injected query', () => {
         currentBranch: 'case/current-work',
         queryPrState: (_repo, branch) => {
           queriedBranches.push(branch);
-          return emptyQuery();
+          return mergedQuery();
         },
       },
     );
 
-    expect(queriedBranches).toEqual(['case/current-work']);
+    expect(queriedBranches).toEqual([]);
     expect(result.decision.action).toBe('allow_silent');
-    expect(result.decision.reason).toBe('no_pr_history');
+    expect(result.decision.reason).toBe('no_push_targets');
     expect(result.decision.context?.branch).toBe('case/current-work');
   });
 
