@@ -30,6 +30,7 @@ import {
 import type { DrySweepReport } from './auto-dent-dry-sweep.js';
 import type { RunMetrics } from './auto-dent-run.js';
 import { makeBatchState } from './auto-dent-test-utils.js';
+import { checkpointRunState, writeState } from './auto-dent-run.js';
 
 const AUTO_DENT_CTL_SOURCE = readFileSync(new URL('./auto-dent-ctl.ts', import.meta.url), 'utf8');
 
@@ -71,6 +72,41 @@ describe('discoverBatches', () => {
       expect(source).not.toContain("JSON.parse(readFileSync(stateFile, 'utf8'))");
       expect(source).toMatch(/readState,/);
       expect(source).toContain("from './auto-dent-run.js'");
+    } finally {
+      rmSync(logsDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('watchdog live-run checkpoint reality proof', () => {
+  it('classifies checkpointed active runs by heartbeat age instead of no_heartbeat', () => {
+    const logsDir = mkdtempSync(join(tmpdir(), 'watchdog-checkpoint-'));
+    try {
+      const batchDir = join(logsDir, 'batch-live');
+      mkdirSync(batchDir, { recursive: true });
+      const stateFile = join(batchDir, 'state.json');
+      writeState(stateFile, makeBatchState({
+        batch_id: 'batch-live',
+        run: 0,
+        last_heartbeat: 0,
+      }));
+
+      checkpointRunState(stateFile, { runNum: 1, heartbeatEpoch: 1_742_680_900 });
+      const [fresh] = runWatchdog(logsDir, 60, 1_742_680_930);
+      const [stale] = runWatchdog(logsDir, 60, 1_742_681_100);
+
+      expect(fresh).toMatchObject({
+        batchId: 'batch-live',
+        action: 'healthy',
+        heartbeatAge: 30,
+      });
+      expect(stale).toMatchObject({
+        batchId: 'batch-live',
+        action: 'halt_created',
+        heartbeatAge: 200,
+      });
+      expect(formatWatchdogResult(fresh)).not.toContain('no heartbeat recorded');
+      expect(existsSync(join(batchDir, 'HALT'))).toBe(true);
     } finally {
       rmSync(logsDir, { recursive: true, force: true });
     }
