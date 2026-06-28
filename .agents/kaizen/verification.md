@@ -66,6 +66,25 @@ Always test the **actual deployed artifact**, not just source presence:
 - If a mount provides a file, verify the mount exists AND the consumer reads it
 - "The file exists in the repo" is not verification — "the agent receives it at runtime" is
 
+## Meet Reality Before Declaring Done
+
+Before a PR claims to close an issue, show the issue's goal impact directly. Tests, CI, review verdicts, and prose are proxies; they do not by themselves prove that the problem the issue described is gone.
+
+Every non-docs kaizen PR should carry an Impact proof in the PR description:
+
+```
+## Impact (goal -> before/after -> match)
+- Goal (#N): <observable outcome + direction the issue wanted>
+- Acceptance signal: <what would prove it; selected at plan time>
+- BEFORE: <baseline sample, failing repro, metric, hook decision, or structural state>
+- AFTER: <same scenario after implementation>
+- Delta: <eyeballable difference>
+- Goal met?: yes | partial (deferred #M) | no
+- Residual scan: <done-in-PR | filed #K | none>
+```
+
+The BEFORE belongs in the stored plan's `## Impact Baseline`, captured before implementation changes the system. The AFTER belongs in the PR body after the same scenario is rerun. For pure refactors/no-behavior changes, use honest structural proof such as "three competing paths -> one path"; do not invent a behavior delta.
+
 ## Skill Change Policy — MANDATORY before modifying any SKILL.md (kaizen #959)
 
 **Never change a skill without proving the change improves agent behavior.**

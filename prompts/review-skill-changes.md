@@ -53,7 +53,15 @@ Look for: "Synthetic case", "Test case", "Reproducer", or a fenced code block sh
 **Required section 3 — Before/after evidence**
 Actual output excerpts from running `claude -p` with the old skill AND the new skill on the synthetic case. Not a description of what would happen — actual evidence from a real run.
 
-Look for: "Before evidence", "After evidence", transcript excerpts, or quoted claude-p output.
+If `claude -p` is unavailable for an external provider reason (auth outage, org spend limit, vendor outage), a fallback is acceptable ONLY when the PR body includes all of:
+- the exact attempted `claude -p` command and the provider error/blocker;
+- actual old-vs-new output excerpts from the configured agent provider used for this work session, over the same synthetic case;
+- a statement that the fallback was read-only/non-mutating; and
+- deterministic tests or fixtures that cover the changed instruction text.
+
+Do not accept fallback evidence when Claude was merely skipped for convenience, cost avoidance, or because the author did not try it.
+
+Look for: "Before evidence", "After evidence", transcript excerpts, quoted claude-p output, or a documented provider-fallback transcript meeting the criteria above.
 
 **Required section 4 — Smoke test**
 Either: (a) a reference to a test that runs in CI and asserts the new behavior, OR (b) a `claude -p` invocation that can be re-run by anyone to verify the behavior. The test must name specific expected signals (e.g., "output contains write-attachment", "output does not contain hand-rolled JSON").

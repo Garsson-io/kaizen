@@ -15,14 +15,25 @@
  * Part of kaizen #1055.
  */
 
-import { appendFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  openSync,
+  realpathSync,
+  readFileSync,
+  readSync,
+} from 'node:fs';
+import { isAbsolute, resolve, relative } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { currentHookBranch } from './lib/current-branch.js';
 import { gitStdout } from './lib/git-state.js';
-import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-command.js';
+import { isGhPrCommand, stripHeredocBody, extractRepoFlag, splitCommandSegments, effectiveCwdBeforeCommand } from './parse-command.js';
 import { CaseSystem } from '../case-system.js';
 import { extractCaseIssueFromBranch } from './lib/case-branch.js';
 import { queryIssueState, type IssueState } from '../lib/github-pr.js';
+import { parseSections } from '../section-editor.js';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -194,6 +205,139 @@ export function checkTestPlanSubstance(testPlanText: string): string[] {
   if (tableRows.length < 3 && behaviorHeadings.length < 2) failures.push('Test plan needs behaviors table or headings');
   if (!/\b(Unit|Integration|System|E2E|Agentic|Workflow)\b/i.test(testPlanText)) failures.push('Test plan must specify test levels');
   return failures;
+}
+
+type ImpactField = {
+  name: string;
+  pattern: string;
+};
+
+const IMPACT_FIELDS: ImpactField[] = [
+  { name: 'Goal', pattern: String.raw`Goal(?:\s*\(#[0-9]+\))?` },
+  { name: 'Acceptance signal', pattern: String.raw`Acceptance signal` },
+  { name: 'BEFORE', pattern: String.raw`BEFORE` },
+  { name: 'AFTER', pattern: String.raw`AFTER` },
+  { name: 'Delta', pattern: String.raw`Delta` },
+  { name: 'Goal met?', pattern: String.raw`Goal met\?` },
+  { name: 'Residual scan', pattern: String.raw`Residual scan` },
+];
+
+const PLACEHOLDER_VALUE = /^(?:tbd|todo|pending|placeholder|n\/a|na|<[^>]+>|\.\.\.)$/i;
+const MAX_PR_BODY_FILE_BYTES = 128 * 1024;
+
+export function checkImpactProofSubstance(prBodyText: string): string[] {
+  const section = parseSections(prBodyText).find(s => /^Impact\b/i.test(s.name))?.content ?? null;
+  if (!section) return ['Missing ## Impact (goal -> before/after -> match) section'];
+
+  const failures: string[] = [];
+  for (const field of IMPACT_FIELDS) {
+    const match = section.match(new RegExp(String.raw`(?:^|\n)\s*[-*]?\s*${field.pattern}\s*:\s*(.+)`, 'i'));
+    const value = match?.[1]?.trim() ?? '';
+    if (!value) {
+      failures.push(`Missing Impact field: ${field.name}`);
+    } else if (PLACEHOLDER_VALUE.test(value)) {
+      failures.push(`Impact field uses placeholder value: ${field.name}`);
+    }
+  }
+  return failures;
+}
+
+function extractBodyFilePath(cmdLine: string): string | null {
+  const match = cmdLine.match(/(?:--body-file(?:=|\s+)|-F\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+}
+
+function extractGhPrCreateSegment(cmdLine: string): string | null {
+  return splitCommandSegments(cmdLine).find(seg => /^gh\s+pr\s+create\b/.test(seg)) ?? null;
+}
+
+function countGhPrCreateSegments(cmdLine: string): number {
+  return splitCommandSegments(cmdLine).filter(seg => /^gh\s+pr\s+create\b/.test(seg)).length;
+}
+
+function commandOnlyChangesDirectoryBeforeCreate(cmdLine: string): boolean {
+  const segments = splitCommandSegments(cmdLine);
+  const createIndex = segments.findIndex(seg => /^gh\s+pr\s+create\b/.test(seg));
+  if (createIndex < 0) return false;
+  return segments.slice(0, createIndex).every(seg => /^cd\s+/.test(seg));
+}
+
+function effectiveCwdForPrCreate(cmdLine: string): string | null {
+  return effectiveCwdBeforeCommand(cmdLine, /^gh\s+pr\s+create\b/) ?? null;
+}
+
+function isWithinDirectory(path: string, directory: string): boolean {
+  const rel = relative(directory, path);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
+}
+
+function readSmallRegularFile(path: string): string | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const stats = fstatSync(fd);
+    if (!stats.isFile() || stats.size > MAX_PR_BODY_FILE_BYTES) return null;
+    const buffer = Buffer.alloc(stats.size);
+    const bytesRead = readSync(fd, buffer, 0, stats.size, 0);
+    return buffer.toString('utf-8', 0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { closeSync(fd); } catch { /* ignore close failures */ }
+    }
+  }
+}
+
+function readPrBodyText(fullCommand: string, cmdLine: string): string {
+  const prCreateSegment = extractGhPrCreateSegment(cmdLine);
+  if (!prCreateSegment) return fullCommand;
+
+  const bodyFile = extractBodyFilePath(prCreateSegment);
+  if (!bodyFile || bodyFile === '-') {
+    return countGhPrCreateSegments(cmdLine) === 1 && commandOnlyChangesDirectoryBeforeCreate(cmdLine)
+      ? fullCommand
+      : prCreateSegment;
+  }
+
+  try {
+    const cwdForCreate = effectiveCwdForPrCreate(cmdLine);
+    if (!cwdForCreate) return prCreateSegment;
+    const effectiveCwd = realpathSync(cwdForCreate);
+    const requestedPath = isAbsolute(bodyFile) ? bodyFile : resolve(effectiveCwd, bodyFile);
+    const realPath = realpathSync(requestedPath);
+    if (!isWithinDirectory(realPath, effectiveCwd)) return prCreateSegment;
+
+    return readSmallRegularFile(realPath) ?? prCreateSegment;
+  } catch {
+    // Fail closed against the actual create segment. The full compound command
+    // may contain unrelated Impact text from earlier commands.
+    return prCreateSegment;
+  }
+}
+
+function checkImpactProofBeforePr(prBodyText: string): PlanCheckResult | null {
+  const failures = checkImpactProofSubstance(prBodyText);
+  if (failures.length === 0) return null;
+  return {
+    allowed: false,
+    missing: ['impact-proof'],
+    reason: `BLOCKED: PR body lacks populated Impact proof for the linked issue (#1505).
+
+${failures.map(f => `  - ${f}`).join('\n')}
+
+Non-docs kaizen PRs must show goal impact, not just assert it. Use /kaizen-write-pr
+and include a populated section:
+
+## Impact (goal -> before/after -> match)
+- Goal (#N): <observable outcome + direction>
+- Acceptance signal: <what would prove it; chosen at plan time>
+- BEFORE: <baseline sample or structural proof>
+- AFTER: <same sample post-change>
+- Delta: <eyeballable difference>
+- Goal met?: yes | partial (deferred #M) | no
+- Residual scan: <done-in-PR | filed #K | none>`,
+  };
 }
 
 /**
@@ -411,9 +555,11 @@ export function checkPlanBeforePr(
   const changedFiles = deps.getChangedFiles();
   if (isDocsOnly(changedFiles)) return { allowed: true };
 
+  const prBodyText = readPrBodyText(fullCommand, cmdLine);
+
   // Priority: declared issue > PR body "Closes #N" (canonical GitHub syntax).
   // Arbitrary branch names are not a primary source — too fragile.
-  const issueNum = deps.getDeclaredIssue() ?? extractIssueNumber(fullCommand);
+  const issueNum = deps.getDeclaredIssue() ?? extractIssueNumber(prBodyText) ?? extractIssueNumber(fullCommand);
   if (!issueNum) {
     return {
       allowed: false,
@@ -463,6 +609,9 @@ Run /kaizen-write-plan — the skill knows how to create and store the plan corr
   // gate → one substance bar at both choke points (#1035).
   const substanceResult = checkSubstance(issueNum, gate.planText, gate.testPlanText);
   if (substanceResult) return substanceResult;
+
+  const impactProofResult = checkImpactProofBeforePr(prBodyText);
+  if (impactProofResult) return impactProofResult;
 
   return { allowed: true };
 }
