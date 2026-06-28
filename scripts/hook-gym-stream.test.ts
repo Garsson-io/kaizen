@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   parseHookDecision,
   createHookStreamProcessor,
@@ -447,5 +449,17 @@ describe('parseLogFile', () => {
     const tl = parseLogFile(log);
     expect(tl.events).toHaveLength(1);
     expect(tl.events[0].hookName).toBe('SessionStart:startup');
+  });
+
+  it('delegates JSONL row parsing to the shared helper', () => {
+    const source = readFileSync(resolve(process.cwd(), 'scripts/hook-gym-stream.ts'), 'utf8');
+    const functionBody = source.slice(
+      source.indexOf('export function parseLogFile'),
+      source.indexOf('return processor.getTimeline();') + 'return processor.getTimeline();'.length,
+    );
+
+    expect(functionBody).toContain('parseJsonLines');
+    expect(functionBody).not.toContain("logContent.split('\\n')");
+    expect(functionBody).not.toContain('JSON.parse(trimmed)');
   });
 });
