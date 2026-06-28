@@ -49,6 +49,8 @@ This dimension complements, but does not replace:
 
 **Comparable BEFORE/AFTER evidence**: BEFORE and AFTER use the same scenario, fixture, metric, hook decision, or structural comparison. Fail when BEFORE is absent, reconstructed vaguely, or incomparable to AFTER.
 
+**Artifact-first readability**: When the PR changes generated outputs, rendered UI, comments, reports, files, logs, hook messages, API responses, state, or other visible side effects, the BEFORE and AFTER evidence should include or link to the actual observed artifacts. Prefer a compact table with `Goal | BEFORE artifact | AFTER artifact | Observable delta | Goal met?` and put long transcripts or detailed outputs in a durable evidence bundle. Fail when the PR describes an artifact in prose even though the artifact can be shown. Do not require the table for tiny/simple proofs where the existing bullet rubric is clearer.
+
 **Feasibility class honesty**: Match the proof to the change type:
 - Renderable output: show stdout/console/report before vs after.
 - Metric: show numeric before vs after.

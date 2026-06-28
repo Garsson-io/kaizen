@@ -72,6 +72,16 @@ Follow the story with structured sections:
    - Residual scan:    <frictions / low-hanging fruit -> done-in-PR | filed #K | none>
    ```
 
+   For artifact-heavy proof, prefer a compact comparison table and link the detailed evidence from each cell:
+
+   ```markdown
+   | Goal | BEFORE artifact | AFTER artifact | Observable delta | Goal met? |
+   |---|---|---|---|---|
+   | <issue goal slice> | <link to baseline output, screenshot, log, report, comment, API response, state dump, CI artifact, or structural baseline> | <link to matching post-change artifact> | <what changed that a reviewer can inspect quickly> | yes / partial (deferred #M) / no |
+   ```
+
+   Put long logs, transcripts, generated review rows, screenshots, state dumps, or test output in a durable evidence bundle such as an issue comment, PR comment, named attachment, or CI artifact, then link that bundle from the table. Keep the table scannable; keep the artifacts inspectable. Do not describe the artifact when it can be shown.
+
    For renderable output, show stdout/console/report before vs after. For metrics, show numbers. For bug fixes, the red failing repro is BEFORE and the green result is AFTER. For hook/gate decisions, show allow/block plus reason before vs after. For pure refactors/no behavior change, use honest structural proof such as duplicated paths consolidated or drift vector removed.
 
    If `retrieve-testplan` returns nothing, the issue has no plan — run `/kaizen-write-plan` against the issue first.

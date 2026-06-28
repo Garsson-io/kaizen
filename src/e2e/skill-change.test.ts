@@ -610,6 +610,41 @@ Review this diff for DRY violations. Output JSON only.`;
 });
 
 // ---------------------------------------------------------------------------
+// Impact proof readability — compact linked artifacts (kaizen #1522)
+// ---------------------------------------------------------------------------
+
+describe("kaizen workflow — artifact-first Impact proof readability (#1522)", () => {
+  it("kaizen-write-pr prefers compact artifact tables for artifact-heavy proof", () => {
+    const skill = loadSkill("kaizen-write-pr");
+    expect(skill).toContain("Goal | BEFORE artifact | AFTER artifact | Observable delta | Goal met?");
+    expect(skill).toContain("durable evidence bundle");
+    expect(skill).toContain("Do not describe the artifact when it can be shown");
+  });
+
+  it("verification discipline carries the artifact-first Impact proof rule", () => {
+    const doc = readFileSync(resolve(KAIZEN_ROOT, ".agents/kaizen/verification.md"), "utf-8");
+    expect(doc).toContain("Goal | BEFORE artifact | AFTER artifact | Observable delta | Goal met?");
+    expect(doc).toContain("durable evidence bundle");
+    expect(doc).toContain("Do not describe the artifact when it can be shown");
+  });
+
+  it("impact-proof review flags prose-only proof when artifacts can be shown", () => {
+    const prompt = readFileSync(resolve(KAIZEN_ROOT, "prompts/review-impact-proof.md"), "utf-8");
+    expect(prompt).toContain("Artifact-first readability");
+    expect(prompt).toContain("Fail when the PR describes an artifact in prose even though the artifact can be shown");
+    expect(prompt).toContain("generated outputs, rendered UI, comments, reports, files, logs, hook messages, API responses, state");
+    expect(prompt).toContain("Do not require the table for tiny/simple proofs where the existing bullet rubric is clearer");
+  });
+
+  it("artifact lifecycle documents durable evidence bundles behind compact Impact tables", () => {
+    const doc = readFileSync(resolve(KAIZEN_ROOT, "docs/artifact-lifecycle.md"), "utf-8");
+    expect(doc).toContain("durable evidence bundle");
+    expect(doc).toContain("compact Impact table");
+    expect(doc).toContain("not a new required artifact type");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Behavioral smoke test — simplification-impact detects additive-only workflow
 // ---------------------------------------------------------------------------
 
