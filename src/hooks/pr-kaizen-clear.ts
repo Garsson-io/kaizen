@@ -23,6 +23,7 @@ import { formatGateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
 import { verifyIssueRef, type RefStatus } from './lib/issue-ref-verifier.js';
 import { parseGithubPrUrl } from '../lib/github-pr.js';
+import { parseJsonArrayOrNull } from '../lib/json-value.js';
 import { resolveProjectRoot } from '../lib/resolve-project-root.js';
 import { stripHeredocBody } from './parse-command.js';
 import {
@@ -251,9 +252,7 @@ function extractImpedimentsJson(
   // Fallback: stdout as raw JSON array (kaizen #313)
   if (!raw && stdout) {
     const trimmed = stdout.replace(/\n/g, ' ').trim();
-    try {
-      if (Array.isArray(JSON.parse(trimmed))) raw = trimmed;
-    } catch {}
+    if (parseJsonArrayOrNull(trimmed)) raw = trimmed;
   }
 
   // Fallback: heredoc body from full command (kaizen #313)
@@ -263,9 +262,7 @@ function extractImpedimentsJson(
     );
     if (heredocMatch) {
       const body = heredocMatch[1].replace(/\n/g, ' ').trim();
-      try {
-        if (Array.isArray(JSON.parse(body))) raw = body;
-      } catch {}
+      if (parseJsonArrayOrNull(body)) raw = body;
     }
   }
 
@@ -278,10 +275,8 @@ function extractImpedimentsJson(
   if (!raw) return { json: null, emptyReason: '' };
 
   // Try full parse
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return { json: parsed, emptyReason: '' };
-  } catch {}
+  const parsed = parseJsonArrayOrNull(raw);
+  if (parsed) return { json: parsed, emptyReason: '' };
 
   // "[] reason" format
   const emptyMatch = raw.match(/^\[\]\s*(.*)/);

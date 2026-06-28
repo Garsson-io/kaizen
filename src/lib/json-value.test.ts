@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseJsonArray, parseJsonObject, parseJsonValue } from './json-value.js';
+import { parseJsonArray, parseJsonArrayOrNull, parseJsonObject, parseJsonValue } from './json-value.js';
 
 describe('parseJsonValue', () => {
   it('returns parsed JSON values', () => {
@@ -20,6 +20,16 @@ describe('parseJsonArray', () => {
     expect(parseJsonArray('[{"url":"u"}]')).toEqual([{ url: 'u' }]);
     expect(parseJsonArray('{"url":"u"}')).toEqual([]);
     expect(parseJsonArray('{not json')).toEqual([]);
+  });
+});
+
+describe('parseJsonArrayOrNull', () => {
+  it('distinguishes valid empty arrays from malformed or non-array input', () => {
+    expect(parseJsonArrayOrNull('[]')).toEqual([]);
+    expect(parseJsonArrayOrNull('[{"ok":true}]')).toEqual([{ ok: true }]);
+    expect(parseJsonArrayOrNull('{"ok":true}')).toBeNull();
+    expect(parseJsonArrayOrNull('{not json')).toBeNull();
+    expect(parseJsonArrayOrNull('')).toBeNull();
   });
 });
 

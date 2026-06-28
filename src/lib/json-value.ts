@@ -9,8 +9,12 @@ export function parseJsonValue(text: string): unknown | null {
 }
 
 export function parseJsonArray(text: string): unknown[] {
+  return parseJsonArrayOrNull(text) ?? [];
+}
+
+export function parseJsonArrayOrNull(text: string): unknown[] | null {
   const parsed = parseJsonValue(text);
-  return Array.isArray(parsed) ? parsed : [];
+  return Array.isArray(parsed) ? parsed : null;
 }
 
 export function parseJsonObject(text: string): Record<string, unknown> | null {
