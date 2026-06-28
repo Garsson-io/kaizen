@@ -91,7 +91,7 @@ export function storeQuickPass(
 
 // ── Plan text extraction ────────────────────────────────────────────
 
-const PLAN_SECTION_RE = /## (?:Implementation )?Plan\b[\s\S]*?(?=\n## |\n```yaml|$)/i;
+const PLAN_SECTION_RE = /## (?:Implementation )?Plan\b[\s\S]*?(?=\r?\n## |\r?\n```yaml|$)/i;
 
 /** Extract the first plan section from markdown text. */
 export function extractPlanText(text: string): string | undefined {
@@ -383,9 +383,7 @@ export function retrievePlan(target: AttachmentTarget & SectionTarget): string |
 
   try {
     const body = fetchBody(target);
-    const planRe = /## (?:Implementation )?Plan\b[\s\S]*?(?=\n## |\n```yaml|$)/i;
-    const match = body.match(planRe);
-    return match ? match[0] : null;
+    return extractPlanText(body) ?? null;
   } catch { return null; }
 }
 

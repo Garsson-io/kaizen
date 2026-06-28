@@ -378,6 +378,23 @@ describe('storePlan + retrievePlan — round-trip', () => {
     expect(plan).toContain('Fix it');
     expect(plan).not.toContain('Test Plan');
   });
+
+  it('falls back to issue body ## Plan section with CRLF section boundaries', () => {
+    ghReturns(''); // readAttachment: no attachment
+    ghReturns('## Problem\r\n\r\nBug.\r\n\r\n## Plan\r\n\r\n1. Fix it.\r\n\r\n## Test Plan\r\n\r\n- Verify it.'); // fetchBody
+
+    const plan = retrievePlan(issue);
+
+    expect(plan).toContain('Fix it');
+    expect(plan).not.toContain('Test Plan');
+    expect(plan).not.toContain('Verify it');
+  });
+
+  it('keeps retrievePlan delegated to the shared plan-section extractor', () => {
+    const source = readFileSync(new URL('./structured-data.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toMatch(/const\s+planRe\s*=/);
+  });
 });
 
 describe('storePlan + retrieveTestPlan — round-trip via plan-section fallback (B15)', () => {
