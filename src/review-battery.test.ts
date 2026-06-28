@@ -244,9 +244,11 @@ describe('discoverDimensions', () => {
   it('discovers dimensions from prompts directory', () => {
     const dims = discoverDimensions();
     expect(dims).toHaveProperty('plan-coverage');
+    expect(dims).toHaveProperty('plan-completeness');
     expect(dims).toHaveProperty('requirements');
     expect(dims).toHaveProperty('pr-description');
     expect(dims['plan-coverage']).toBe('review-plan-coverage.md');
+    expect(dims['plan-completeness']).toBe('review-plan-completeness.md');
     expect(dims['requirements']).toBe('review-requirements.md');
     expect(dims['pr-description']).toBe('review-pr-description.md');
   });
@@ -285,6 +287,11 @@ describe('discoverDimensions', () => {
     const plan = metas.find(m => m.name === 'plan-coverage');
     expect(plan).toBeDefined();
     expect(plan!.applies_to).toBe('plan');
+
+    const completeness = metas.find(m => m.name === 'plan-completeness');
+    expect(completeness).toBeDefined();
+    expect(completeness!.applies_to).toBe('pr');
+    expect(completeness!.needs).toEqual(['issue', 'plan', 'pr-body']);
 
     const desc = metas.find(m => m.name === 'pr-description');
     expect(desc).toBeDefined();

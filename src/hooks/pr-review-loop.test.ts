@@ -37,6 +37,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { processHookInput, writeReviewSentinel } from './pr-review-loop.js';
+import { expectedPrReviewDimensions } from '../review-sentinel.js';
 
 /** Run hook with raw string as stdin (for testing malformed input). */
 function runHookRaw(rawStdin: string, extraEnv: Record<string, string> = {}): string {
@@ -279,9 +280,14 @@ describe('pr-review-loop: cross-worktree isolation', () => {
 
 describe('pr-review-loop: gh pr diff', () => {
   /** Write a review sentinel to simulate store-review-summary having been called */
-  function writeSentinel(stateKey: string, round: string): void {
+  function writeSentinel(stateKey: string, round: string, dimensionsReviewed?: string[]): void {
     const prNumber = stateKey.split('_').pop();
-    writeReviewSentinel(`https://github.com/Garsson-io/kaizen/pull/${prNumber}`, round, testStateDir);
+    writeReviewSentinel(
+      `https://github.com/Garsson-io/kaizen/pull/${prNumber}`,
+      round,
+      testStateDir,
+      dimensionsReviewed ? { dimensionsReviewed } : {},
+    );
   }
 
   function createPendingReviewState(prNumber: string, round: string = '1'): void {
@@ -318,6 +324,63 @@ describe('pr-review-loop: gh pr diff', () => {
     const state = readState('Garsson-io_kaizen_55');
     expect(state.STATUS).toBe('passed');
     expect(state.ROUND).toBe('2');
+  });
+
+  it('denies gate clear and names missing review dimensions', () => {
+    createPendingReviewState('1038', '1');
+    const allDimensions = expectedPrReviewDimensions();
+    const omitted = allDimensions[allDimensions.length - 1];
+    const covered = allDimensions.filter(dim => dim !== omitted);
+    writeSentinel('Garsson-io_kaizen_1038', '1', covered);
+
+    const output = runHook(
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/1038'),
+    );
+
+    expect(output).toContain('missing review dimension');
+    expect(output).toContain(omitted);
+    expect(output).toContain(`/kaizen-review-pr https://github.com/Garsson-io/kaizen/pull/1038`);
+    const state = readState('Garsson-io_kaizen_1038');
+    expect(state.STATUS).toBe('needs_review');
+  });
+
+  it('denies gate clear when stored review findings still have missing items', () => {
+    createPendingReviewState('1040', '1');
+    writeReviewSentinel(
+      'https://github.com/Garsson-io/kaizen/pull/1040',
+      '1',
+      testStateDir,
+      {
+        dimensionsReviewed: expectedPrReviewDimensions(),
+        findingCount: 4,
+        totalDone: 3,
+        totalMissing: 1,
+      },
+    );
+
+    const output = runHook(
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/1040'),
+    );
+
+    expect(output).toContain('review findings still include 1 MISSING');
+    const state = readState('Garsson-io_kaizen_1040');
+    expect(state.STATUS).toBe('needs_review');
+  });
+
+  it('does not require non-PR dimensions to clear review gate', () => {
+    createPendingReviewState('1039', '1');
+    const prDimensions = expectedPrReviewDimensions();
+    expect(prDimensions).not.toContain('plan-coverage');
+    expect(prDimensions).not.toContain('multi-pr-spiral');
+    writeSentinel('Garsson-io_kaizen_1039', '1', prDimensions);
+
+    const output = runHook(
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/1039'),
+    );
+
+    expect(output).toContain('REVIEW PASSED');
+    const state = readState('Garsson-io_kaizen_1039');
+    expect(state.STATUS).toBe('passed');
   });
 
   it('records LAST_REVIEWED_SHA (kaizen #117)', () => {

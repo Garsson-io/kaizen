@@ -62,6 +62,7 @@ describe('cli-dimensions against real prompts', () => {
   it('list finds all existing dimensions', () => {
     const output = cmdList(realDir);
     expect(output).toContain('plan-coverage');
+    expect(output).toContain('plan-completeness');
     expect(output).toContain('requirements');
     expect(output).toContain('pr-description');
     expect(output).toContain('scope-fidelity');
@@ -85,9 +86,19 @@ describe('cli-dimensions against real prompts', () => {
   });
 
   it('show multiple dimensions includes headers', () => {
-    const output = cmdShow(['requirements', 'plan-coverage'], realDir);
+    const output = cmdShow(['requirements', 'plan-coverage', 'plan-completeness'], realDir);
     expect(output).toContain('--- requirements (review-requirements.md) ---');
     expect(output).toContain('--- plan-coverage (review-plan-coverage.md) ---');
+    expect(output).toContain('--- plan-completeness (review-plan-completeness.md) ---');
+  });
+
+  it('plan-completeness prompt encodes I27 deferred behavior outcomes', () => {
+    const output = cmdShow(['plan-completeness'], realDir);
+    expect(output).toContain('retrieve-testplan');
+    expect(output).toContain('⏳');
+    expect(output).toContain('More than 30%');
+    expect(output).toContain('closed or missing tracking issues');
+    expect(output).toContain('"dimension": "plan-completeness"');
   });
 
   it('show unknown dimension returns error', () => {
