@@ -198,7 +198,10 @@ export function findInventoryViolations(
 }
 
 function escapeCell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\n/g, '<br>');
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\n/g, '<br>');
 }
 
 export function renderVerdictBindingInventoryMarkdown(

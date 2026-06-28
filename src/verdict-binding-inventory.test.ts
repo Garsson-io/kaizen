@@ -42,4 +42,32 @@ describe('verdict binding inventory (#1227)', () => {
     const doc = readFileSync('docs/verdict-binding-inventory.md', 'utf8');
     expect(doc).toContain(renderVerdictBindingInventoryMarkdown(VERDICT_BINDING_INVENTORY));
   });
+
+  it('escapes markdown table metacharacters in generated docs cells', () => {
+    const rendered = renderVerdictBindingInventoryMarkdown({
+      computedVerdicts: [
+        {
+          id: 'v',
+          label: 'Verdict',
+          producer: 'test',
+          terminalCritical: true,
+        },
+      ],
+      terminalActions: [
+        {
+          id: 'a',
+          label: 'A | B \\ C',
+          terminalAction: 'terminal',
+          consumedVerdicts: ['v'],
+          enforcingConsumer: 'consumer | helper \\ path',
+          failureModeBlocked: 'line 1\nline 2',
+          sourceEvidence: [],
+        },
+      ],
+    });
+
+    expect(rendered).toContain('A \\| B \\\\ C');
+    expect(rendered).toContain('consumer \\| helper \\\\ path');
+    expect(rendered).toContain('line 1<br>line 2');
+  });
 });
