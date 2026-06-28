@@ -577,6 +577,22 @@ describe('buildBatchReflection', () => {
     expect(consecInsight!.message).toContain('2');
   });
 
+  it('does not report no_op runs as failure root causes', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        run_history: [
+          makeRunMetrics({ run: 1, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+          makeRunMetrics({ run: 2, prs: [], issues_closed: [], failure_class: 'no_op', stop_requested: true }),
+          makeRunMetrics({ run: 3, prs: [], issues_closed: [], failure_class: 'no_op', stop_requested: true }),
+        ],
+      }),
+    });
+    const reflection = buildBatchReflection(batch);
+    expect(reflection.insights.some((i) => i.message.includes('Failure root causes'))).toBe(false);
+    expect(reflection.runHistoryTable).toContain('| #2 | 5m0s | $2.50 | 0 | 0 | noop |');
+  });
+
   it('detects stop signal pattern', () => {
     const batch = makeBatchInfo({
       state: makeBatchState({

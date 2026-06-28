@@ -196,6 +196,7 @@ import {
   rescueRun,
   defaultRescueDeps,
 } from './auto-dent-rescue.js';
+import { deriveRunTestHealth } from './auto-dent-test-health.js';
 import { createDefaultGitExec } from '../src/hooks/lib/git-state.js';
 import { runStalePrTriageMaintenance } from './stale-pr-triage.js';
 import { gh as ghArgs } from '../src/lib/gh-exec.js';
@@ -293,6 +294,8 @@ export interface RunMetrics {
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Review battery cost (USD) */
   review_cost_usd?: number;
+  /** Run-level test-health verdict derived from observed failed test ids (#1527). */
+  test_health?: 'pass' | 'unowned-failures' | 'unknown';
   /**
    * Provider + billing mode used for each lifecycle phase (#1143, epic #1134).
    * Absent on older runs (treated as unknown). Defaults to Claude-under-subscription
@@ -2635,6 +2638,8 @@ async function main(): Promise<void> {
   // Post-run hygiene
   const progressIssue = ensureBatchProgressIssue(state, stateFile);
   labelArtifacts(result, 'auto-dent');
+  const runLog = existsSync(logFile) ? readFileSync(logFile, 'utf8') : undefined;
+  const testHealth = deriveRunTestHealth({ runLog });
   const autoMergeDecision = decideAutoMergeSafety({
     prCount: result.prs.length,
     reviewRequired: !state.test_task,
@@ -2647,13 +2652,10 @@ async function main(): Promise<void> {
     // Default provider to 'claude' (hook-expecting) for legacy state → fail-closed.
     hookActivation: result.hookActivation,
     provider: state.provider ?? 'claude',
-    // testHealth (#1481/#1518) is consumed by the shared SSOT and is enforced
-    // provider-agnostically at the test runner (run-all-tests.sh owned/unowned
-    // classification) and the `known-failures` CI gate. The harness does not run
-    // the suite itself, so it has no truthful run-level test signal to pass here
-    // yet — left `unknown` (non-blocking) rather than fabricated. Capturing a
-    // run-level test-failure signal for the harness is tracked as #1527,
-    // mirroring how #1220 deferred run-success consumption to #1501.
+    // Reuse the same known-failures classifier as run-all-tests.sh/CI. Absence
+    // of observed failed test ids stays `unknown`; only real run-log evidence can
+    // become pass/unowned-failures.
+    testHealth,
   });
   const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);
   if (!autoMergeDecision.allow) {
@@ -2796,13 +2798,13 @@ async function main(): Promise<void> {
       process_summary: processSummary,
       review_verdict: reviewVerdict,
       review_cost_usd: reviewCostUsd,
+      test_health: testHealth,
       phase_providers: phaseProvidersForState(state),
     },
   });
   // Classify failure: wall-clock timeout is authoritative (#686), then heuristics.
   // Feed the run log so the log-based branch (hook_rejection, infrastructure,
   // etc.) actually runs — without this argument it was dead code (#1102).
-  const runLog = existsSync(logFile) ? readFileSync(logFile, 'utf8') : undefined;
   runMetrics.failure_class = result.timedOut ? 'timeout' : classifyFailure(runMetrics, runLog);
   if (runMetrics.failure_class === 'hook_rejection' && runLog) {
     runMetrics.hook_rejection_reason = firstHookReason(runLog);

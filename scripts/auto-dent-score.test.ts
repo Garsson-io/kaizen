@@ -1215,6 +1215,27 @@ describe('classifyFailure', () => {
     expect(classifyFailure(makeRunMetrics({ exit_code: 0, prs: [], issues_filed: [], issues_closed: [] }))).toBe('empty_success');
   });
 
+  it('classifies a clean STOP/no-op run distinctly from suspicious empty_success (#1216)', () => {
+    expect(
+      classifyFailure(makeRunMetrics({
+        exit_code: 0,
+        prs: [],
+        issues_filed: [],
+        issues_closed: [],
+        stop_requested: true,
+      })),
+    ).toBe('no_op');
+  });
+
+  it('classifies claimed-work avoidance as no_op even when the process exited cleanly (#1216)', () => {
+    expect(
+      classifyFailure(
+        makeRunMetrics({ exit_code: 0, prs: [], issues_filed: [], issues_closed: [] }),
+        'Issue blocked: open PR already claims the work, stopping without duplicate implementation',
+      ),
+    ).toBe('no_op');
+  });
+
   it('classifies exit 0 with issues filed as success', () => {
     expect(classifyFailure(makeRunMetrics({ exit_code: 0, prs: [], issues_filed: ['#1'], issues_closed: [] }))).toBe('success');
   });
