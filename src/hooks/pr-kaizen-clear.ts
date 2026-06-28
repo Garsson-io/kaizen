@@ -15,13 +15,12 @@
  * Migration: kaizen #320 (Phase 3 of #223)
  */
 
-import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { gh } from '../lib/gh-exec.js';
 import { readJsonObjectFile } from '../lib/json-file.js';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput, traceHookEvent } from './hook-io.js';
+import { appendHookAuditLog, currentHookBranch } from './lib/audit-log.js';
 import { formatGateSignal } from './lib/gate-signal.js';
-import { gitStdout } from './lib/git-state.js';
 import { verifyIssueRef, type RefStatus } from './lib/issue-ref-verifier.js';
 import { parseGithubPrUrl } from '../lib/github-pr.js';
 import { parseJsonArrayOrNull } from '../lib/json-value.js';
@@ -32,7 +31,6 @@ import {
   persistReflection,
 } from './reflection-persistence.js';
 import {
-  DEFAULT_AUDIT_DIR,
   DEFAULT_STATE_DIR,
   clearAllStatesWithStatus,
   clearStateWithStatusAnyBranch,
@@ -62,30 +60,11 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-// ── Audit logging ────────────────────────────────────────────────────
-
-// Read AUDIT_DIR on each call so tests can override via env var (kaizen #438).
-function getAuditDir(): string {
-  return process.env.AUDIT_DIR ?? DEFAULT_AUDIT_DIR;
-}
-
-function currentBranch(): string {
-  return gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown');
-}
-
-function logAudit(file: string, line: string): void {
-  try {
-    const auditDir = getAuditDir();
-    mkdirSync(auditDir, { recursive: true });
-    appendFileSync(join(auditDir, file), line);
-  } catch {}
-}
-
 function logNoAction(category: string, reason: string, prUrl: string): void {
   const ts = new Date().toISOString();
-  logAudit(
+  appendHookAuditLog(
     'no-action.log',
-    `${ts} | branch=${currentBranch()} | category=${category} | pr=${prUrl} | reason=${reason}\n`,
+    `${ts} | branch=${currentHookBranch()} | category=${category} | pr=${prUrl} | reason=${reason}\n`,
   );
 }
 
@@ -501,7 +480,7 @@ export function processHookInput(
     const reasonMatch = stdout.match(/KAIZEN_UNFINISHED:\s*(.*)/);
     const reason = reasonMatch?.[1]?.trim().replace(/^['"]/, '').replace(/['"]$/, '').trim() || 'no reason given';
 
-    const branch = currentBranch();
+    const branch = currentHookBranch();
     const cleared = handleUnfinishedEscape(reason, branch, stateDir);
 
     // Also clear any-branch kaizen gates in case of cross-worktree state
@@ -702,7 +681,7 @@ export function processHookInput(
       undefined,
       gatePrUrl,
     );
-    markReflectionDone(gatePrUrl, currentBranch(), stateDir);
+    markReflectionDone(gatePrUrl, currentHookBranch(), stateDir);
 
     // Post reflection as PR comment for audit trail (kaizen #388, best-effort)
     const postComment = options.postComment ?? defaultPostComment;
@@ -725,7 +704,7 @@ export function processHookInput(
       const quality = classifyReflectionQuality(validatedItems);
       const record = buildReflectionRecord({
         prUrl: gatePrUrl,
-        branch: currentBranch(),
+        branch: currentHookBranch(),
         clearType,
         clearReason,
         quality,
