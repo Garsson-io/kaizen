@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { tmpdir } from 'os';
 import { execSync } from 'child_process';
@@ -139,6 +139,17 @@ describe('replay: edge cases', () => {
     const capture = replayLog(mixedLog);
     expect(capture.rawMessages).toHaveLength(2); // only JSON lines
     expect(capture.result.cost).toBe(0.5);
+  });
+
+  it('uses the shared JSONL parser for replay logs', () => {
+    const source = readFileSync(new URL('./auto-dent-harness.ts', import.meta.url), 'utf8');
+    const replaySection = source.slice(
+      source.indexOf('export function replayLog'),
+      source.indexOf('// Layer 4: Live probe'),
+    );
+
+    expect(replaySection).toContain('parseJsonLines');
+    expect(replaySection).not.toContain('JSON.parse(line)');
   });
 });
 
