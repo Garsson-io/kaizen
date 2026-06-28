@@ -19,6 +19,21 @@ description: Periodic issue taxonomy audit — checks label coverage, epic healt
 
 ## The Audit
 
+### Step 0: Quantitative backlog-health metric
+
+Before the manual drill-downs, get the aggregate health verdict. `scripts/backlog-health.ts`
+computes the Issue Metabolism axes from epic #953 (creation/closure ratio, inactivity-age
+distribution, horizon coverage) and prints a single verdict (`healthy`/`warning`/`pathological`).
+The verdict is bound to the exit code (pathological → exit 1) so it can gate CI or batch runs.
+
+```bash
+npx tsx scripts/backlog-health.ts --repo "$ISSUES_REPO" --window 30
+# machine-readable:
+npx tsx scripts/backlog-health.ts --repo "$ISSUES_REPO" --json
+```
+
+This is the L1 measurement layer; the steps below are the manual inspection it points you at.
+
 ### Step 1: Gather all open issues
 
 ```bash
