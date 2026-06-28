@@ -112,6 +112,20 @@ function getCandidateRepos(gatePrUrl: string): string[] {
   return [...new Set(repos)];
 }
 
+function getConfiguredIssueRepo(): string {
+  try {
+    const root = resolveProjectRoot(process.cwd());
+    const cfg = readJsonObjectFile(join(root, 'kaizen.config.json'));
+    const issuesRepo = objectOrNull(cfg?.issues)?.repo;
+    if (typeof issuesRepo === 'string' && issuesRepo) return issuesRepo;
+    const hostRepo = objectOrNull(cfg?.host)?.repo;
+    if (typeof hostRepo === 'string' && hostRepo) return hostRepo;
+    const kaizenRepo = objectOrNull(cfg?.kaizen)?.repo;
+    if (typeof kaizenRepo === 'string' && kaizenRepo) return kaizenRepo;
+  } catch {}
+  return 'Garsson-io/kaizen';
+}
+
 function validateImpediments(items: Impediment[]): string[] {
   const errors: string[] = [];
   for (const item of items) {
@@ -728,10 +742,36 @@ export function processHookInput(
   return null;
 }
 
-/** Auto-close kaizen issues referenced in a merged PR body. */
-export function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void {
+interface IssueCloseOptions {
+  issueRepo?: string;
+}
+
+interface ClosingIssueRef {
+  repo: string;
+  number: string;
+}
+
+function extractClosingIssueRefs(prBody: string, defaultRepo: string): ClosingIssueRef[] {
+  const refs = new Map<string, ClosingIssueRef>();
+  const re =
+    /\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?):?\s+(?:(?:https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/issues\/)|(?:(?:([^/\s#]+\/[^/\s#]+)#)|#))(\d+)/gi;
+  for (const m of prBody.matchAll(re)) {
+    const repo = m[1] || m[2] || defaultRepo;
+    const number = m[3];
+    refs.set(`${repo}#${number}`, { repo, number });
+  }
+  return [...refs.values()];
+}
+
+/** Auto-close issues referenced by closing keywords in a merged PR body. */
+export function autoCloseKaizenIssues(
+  prUrl: string,
+  ghRun: GhRunner = gh,
+  options: IssueCloseOptions = {},
+): void {
   const parsed = parseGithubPrUrl(prUrl);
   if (!parsed) return;
+  const issueRepo = options.issueRepo ?? getConfiguredIssueRepo();
 
   let prState: string;
   try {
@@ -768,26 +808,18 @@ export function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void
     return;
   }
 
-  const issueNums = new Set<string>();
-  for (const m of prBody.matchAll(/Garsson-io\/kaizen(?:[#/]|\/issues\/)*(\d+)/g))
-    issueNums.add(m[1]);
-  for (const m of prBody.matchAll(
-    /github\.com\/Garsson-io\/kaizen\/issues\/(\d+)/g,
-  ))
-    issueNums.add(m[1]);
-
-  for (const num of issueNums) {
+  for (const ref of extractClosingIssueRefs(prBody, issueRepo)) {
     try {
       // Route through the injected ghRun argv boundary (no shell strings). The
-      // issue refs are extracted by a kaizen-scoped regex above, so these calls
-      // stay pinned to the kaizen repo (NOT the PR-derived repo, which differs
-      // in host-project mode) — behavior-preserving with the pre-migration code.
+      // issue refs resolve against the configured issues repo by default, not
+      // the PR repo. Host projects keep their issue closures in issues.repo
+      // while explicit owner/repo#N refs remain pinned to their own repo.
       const state = ghRun([
         'issue',
         'view',
-        num,
+        ref.number,
         '--repo',
-        'Garsson-io/kaizen',
+        ref.repo,
         '--json',
         'state',
         '--jq',
@@ -797,9 +829,9 @@ export function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void
         ghRun([
           'issue',
           'close',
-          num,
+          ref.number,
           '--repo',
-          'Garsson-io/kaizen',
+          ref.repo,
           '--comment',
           `Auto-closed: PR merged (${prUrl})`,
         ]);
@@ -813,7 +845,7 @@ export function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void
   // status label (status:has-pr/active/...) stale. Strip those and stamp
   // status:done so a PR-closed issue can't retain an in-progress status.
   try {
-    reconcileClosedIssueStatusLabels(prBody, ghRun);
+    reconcileClosedIssueStatusLabels(prBody, ghRun, options);
   } catch {}
 }
 
@@ -833,14 +865,7 @@ export const IN_PROGRESS_STATUS_LABELS = [
  * only genuinely-closed issues get their status labels reconciled.
  */
 export function extractClosingIssues(prBody: string): string[] {
-  const nums = new Set<string>();
-  // Leading \b anchors the keyword to a word start so substrings like
-  // "disclosed"/"prefixed"/"hotfixes" don't false-match; optional `:` accepts
-  // the "Closes: #N" form GitHub also honors.
-  const re =
-    /\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?):?\s+(?:Garsson-io\/kaizen)?#(\d+)/gi;
-  for (const m of prBody.matchAll(re)) nums.add(m[1]);
-  return [...nums];
+  return extractClosingIssueRefs(prBody, 'Garsson-io/kaizen').map((ref) => ref.number);
 }
 
 /**
@@ -855,15 +880,17 @@ export function extractClosingIssues(prBody: string): string[] {
 export function reconcileClosedIssueStatusLabels(
   prBody: string,
   ghRun: GhRunner = gh,
+  options: IssueCloseOptions = {},
 ): void {
-  for (const num of extractClosingIssues(prBody)) {
+  const issueRepo = options.issueRepo ?? getConfiguredIssueRepo();
+  for (const ref of extractClosingIssueRefs(prBody, issueRepo)) {
     try {
       const state = ghRun([
         'issue',
         'view',
-        num,
+        ref.number,
         '--repo',
-        'Garsson-io/kaizen',
+        ref.repo,
         '--json',
         'state',
         '--jq',
@@ -874,9 +901,9 @@ export function reconcileClosedIssueStatusLabels(
       const labelsRaw = ghRun([
         'issue',
         'view',
-        num,
+        ref.number,
         '--repo',
-        'Garsson-io/kaizen',
+        ref.repo,
         '--json',
         'labels',
         '--jq',
@@ -891,7 +918,7 @@ export function reconcileClosedIssueStatusLabels(
       // Remove the stale in-progress label(s) FIRST, in their own call. This is
       // the #1229 invariant ("a PR-closed issue can't stay in-progress") and the
       // labels are known-present on the issue, so it can't fail on a missing one.
-      const removeArgs = ['issue', 'edit', num, '--repo', 'Garsson-io/kaizen'];
+      const removeArgs = ['issue', 'edit', ref.number, '--repo', ref.repo];
       for (const l of toRemove) removeArgs.push('--remove-label', l);
       ghRun(removeArgs);
 
@@ -902,19 +929,20 @@ export function reconcileClosedIssueStatusLabels(
       if (!labels.includes('status:done')) {
         try {
           ghRun([
-            'issue',
-            'edit',
-            num,
-            '--repo',
-            'Garsson-io/kaizen',
-            '--add-label',
-            'status:done',
-          ]);
+          'issue',
+          'edit',
+          ref.number,
+          '--repo',
+          ref.repo,
+          '--add-label',
+          'status:done',
+        ]);
         } catch {}
       }
       traceHookEvent('pr-kaizen-clear', {
         action: 'reconcile-status',
-        issue: num,
+        issue: ref.number,
+        repo: ref.repo,
         removed: toRemove,
       });
     } catch (err) {
@@ -922,7 +950,8 @@ export function reconcileClosedIssueStatusLabels(
       // silent (the #1229 symptom would otherwise recur invisibly).
       traceHookEvent('pr-kaizen-clear', {
         action: 'reconcile-status',
-        issue: num,
+        issue: ref.number,
+        repo: ref.repo,
         error: String(err),
       });
     }
