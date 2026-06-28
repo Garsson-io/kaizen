@@ -2363,6 +2363,24 @@ describe('checkSignalOverrides', () => {
     expect(result!.reason).toBe('signal:no-recent-prs');
   });
 
+  it('uses the highest learned non-exploit schedulable mode for no-recent-prs when bandit history exists', () => {
+    const history = [
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: [] })),
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i + 5, mode: 'reflect', issues_filed: [`#${i}`], prs: [] })),
+      ...Array.from({ length: 3 }, (_, i) => makeRunMetrics({ run: i + 10, mode: 'explore', issues_filed: [], prs: [] })),
+      ...Array.from({ length: 2 }, (_, i) => makeRunMetrics({ run: i + 13, mode: 'subtract', lines_deleted: 0, prs: [] })),
+    ];
+    const state = makeBatchState({ consecutive_failures: 0, run_history: history });
+
+    const result = checkSignalOverrides(state);
+
+    expect(result).toMatchObject({
+      mode: 'reflect',
+      reason: 'signal:no-recent-prs:bandit-non-exploit',
+    });
+    expect(result!.bandit).toBeDefined();
+  });
+
   it('does not force explore when PRs exist in last 5 runs', () => {
     const state = makeBatchState({
       consecutive_failures: 0,
@@ -2393,6 +2411,25 @@ describe('checkSignalOverrides', () => {
     expect(result!.reason).toBe('signal:mode-streak-exploit');
   });
 
+  it('breaks an exploit streak with the highest learned non-stale schedulable mode', () => {
+    const history = [
+      ...Array.from({ length: 6 }, (_, i) => makeRunMetrics({ run: i, mode: 'reflect', issues_filed: [`#${i}`] })),
+      ...Array.from({ length: 6 }, (_, i) => makeRunMetrics({ run: i + 6, mode: 'subtract', lines_deleted: 0 })),
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i + 12, mode: 'explore', issues_filed: [] })),
+      ...Array.from({ length: 4 }, (_, i) => makeRunMetrics({ run: i + 17, mode: 'exploit', prs: [`pr-${i}`] })),
+    ];
+    const state = makeBatchState({ consecutive_failures: 0, run_history: history });
+
+    const result = checkSignalOverrides(state);
+
+    expect(result).toMatchObject({
+      mode: 'reflect',
+      reason: 'signal:mode-streak-exploit:bandit-non-stale',
+    });
+    expect(result!.bandit).toBeDefined();
+    expect(result!.mode).not.toBe('explore');
+  });
+
   it('breaks non-exploit mode streak with contemplate', () => {
     const state = makeBatchState({
       consecutive_failures: 0,
@@ -2407,6 +2444,23 @@ describe('checkSignalOverrides', () => {
     expect(result).not.toBeNull();
     expect(result!.mode).toBe('contemplate');
     expect(result!.reason).toBe('signal:mode-streak-explore');
+  });
+
+  it('does not use contemplate as a learned streak-breaker replacement', () => {
+    const history = [
+      ...Array.from({ length: 6 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: [`pr-${i}`] })),
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i + 6, mode: 'reflect', issues_filed: [] })),
+      ...Array.from({ length: 4 }, (_, i) => makeRunMetrics({ run: i + 11, mode: 'explore', issues_filed: [] })),
+    ];
+    history[history.length - 1] = makeRunMetrics({ run: 14, mode: 'explore', issues_filed: [], prs: ['diagnostic-pr'] });
+    const state = makeBatchState({ consecutive_failures: 0, run_history: history });
+
+    const result = checkSignalOverrides(state);
+
+    expect(result!.reason).toBe('signal:mode-streak-explore:bandit-non-stale');
+    expect(SCHEDULABLE_MODES).toContain(result!.mode as any);
+    expect(result!.mode).not.toBe('contemplate');
+    expect(result!.mode).not.toBe('explore');
   });
 
   it('consecutive failures takes priority over no-prs signal', () => {
@@ -2848,6 +2902,33 @@ describe('buildRunMetrics', () => {
     });
   });
 
+  it('persists bandit decision metadata to run metrics', () => {
+    const bandit = computeBanditWeights([
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: [`pr-${i}`] })),
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i + 5, mode: 'explore', issues_filed: [] })),
+    ], { minRuns: 10 })!;
+
+    const metrics = buildRunMetrics({
+      runNum: 5,
+      runStartEpoch: 1742680900,
+      duration: 30,
+      exitCode: 0,
+      runMode: 'exploit',
+      result: makeRunResult(),
+      modeReason: 'bandit',
+      bandit,
+    });
+
+    expect(metrics.bandit_decision).toMatchObject({
+      selected_mode: 'exploit',
+      reason: 'bandit',
+      total_plays: bandit.totalPlays,
+      exploration_c: bandit.explorationC,
+    });
+    expect(metrics.bandit_decision?.weights).toEqual(bandit.weights);
+    expect(metrics.bandit_decision?.details).toHaveLength(SCHEDULABLE_MODES.length);
+  });
+
   it('persists the hook-activation verdict to state.json metrics (#843)', () => {
     const metrics = buildRunMetrics({
       runNum: 5,
@@ -2948,6 +3029,39 @@ describe('buildRunMetrics', () => {
       status: 'unknown',
       degraded: true,
     });
+  });
+
+  it('emits bandit decision metadata on run.complete telemetry', () => {
+    const bandit = computeBanditWeights([
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: [`pr-${i}`] })),
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i + 5, mode: 'explore', issues_filed: [] })),
+    ], { minRuns: 10 })!;
+    const result = makeRunResult();
+    const metrics = buildRunMetrics({
+      runNum: 9,
+      runStartEpoch: 1742681400,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result,
+      modeReason: 'bandit',
+      bandit,
+    });
+
+    const event = buildRunCompleteEvent({
+      runId: 'batch/run-9',
+      batchId: 'batch',
+      runNum: 9,
+      duration: 8,
+      exitCode: 0,
+      result,
+      runMode: 'exploit',
+      outcome: 'success',
+      runMetricsForOutcome: metrics,
+      lifecycleViolationCount: 0,
+    });
+
+    expect(event.bandit_decision).toEqual(metrics.bandit_decision);
   });
 });
 
@@ -3128,6 +3242,22 @@ describe('formatBatchFooter', () => {
     expect(output).toContain('Modes:');
     expect(output).toContain('exploit:2');
     expect(output).toContain('explore:1');
+  });
+
+  it('shows explore to exploit conversion when explore-filed issues close in exploit runs', () => {
+    const state = makeBatchState({
+      run: 3,
+      prs: ['pr1'],
+      run_history: [
+        makeRunMetrics({ run: 1, mode: 'explore', issues_filed: ['#10', '#11'] }),
+        makeRunMetrics({ run: 2, mode: 'exploit', prs: ['pr1'], issues_closed: ['https://github.com/org/repo/issues/10'] }),
+        makeRunMetrics({ run: 3, mode: 'reflect', issues_closed: ['#11'] }),
+      ],
+    });
+
+    const output = formatBatchFooter(state);
+
+    expect(output).toContain('Explore->exploit: 1/2 (50%)');
   });
 
   it('omits mode line when no history', () => {

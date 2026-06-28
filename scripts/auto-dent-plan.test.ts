@@ -1141,4 +1141,22 @@ describe('plan-prepass template includes theme instructions', () => {
     const prompt = buildPlanPrompt(state);
     expect(prompt.toLowerCase()).toContain('theme');
   });
+
+  it('buildPlanPrompt surfaces explore-sourced issues and candidate manifests', () => {
+    const state = {
+      batch_id: 'b', batch_start: 0, guidance: 'g', max_runs: 10, cooldown: 30,
+      budget: '3.00', max_failures: 3, kaizen_repo: 'Garsson-io/kaizen',
+      host_repo: 'Garsson-io/kaizen', run: 0, prs: [], issues_filed: [],
+      issues_closed: [], cases: [], consecutive_failures: 0, current_cooldown: 30,
+      stop_reason: '', last_issue: '', last_pr: '', last_case: '', last_branch: '',
+      last_worktree: '',
+    };
+
+    const prompt = buildPlanPrompt(state);
+
+    expect(prompt).toContain('source:auto-dent-explore');
+    expect(prompt).toContain('source:ecosystem-research');
+    expect(prompt).toContain('run-*-candidate-tasks-manifest.json');
+    expect(prompt).toContain('candidate-task manifest');
+  });
 });

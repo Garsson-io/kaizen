@@ -24,6 +24,25 @@ import type { WorkflowGateId, WorkflowGateState } from './workflow-gate-ledger.j
 
 // Event type definitions
 
+export interface BanditDecisionDetailTelemetry {
+  mode: string;
+  plays: number;
+  mean_reward: number;
+  exploit_term: number;
+  explore_bonus: number;
+  ucb: number;
+  weight: number;
+}
+
+export interface BanditDecisionTelemetry {
+  selected_mode: string;
+  reason: string;
+  weights: Record<string, number>;
+  details: BanditDecisionDetailTelemetry[];
+  total_plays: number;
+  exploration_c: number;
+}
+
 /** #899: Base fields shared by all auto-dent events */
 export interface BaseEvent {
   run_id: string;
@@ -86,6 +105,8 @@ export interface RunCompleteEvent extends BaseEvent {
   outcome: 'success' | 'empty_success' | 'failure' | 'stop';
   /** Cognitive mode used, for context in analysis */
   mode?: string;
+  /** Durable UCB1 decision breakdown used for this run's mode selection (#1178). */
+  bandit_decision?: BanditDecisionTelemetry;
   /** Review battery verdict for PRs created in this run */
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Review battery cost (USD) */

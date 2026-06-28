@@ -36,7 +36,7 @@ import {
   resolvePromptsDir,
   renderTemplate,
 } from '../src/review-battery.js';
-import { EventEmitter, makeRunId, type AutoDentEvent, type RunCompleteEvent } from './auto-dent-events.js';
+import { EventEmitter, makeRunId, type AutoDentEvent, type BanditDecisionTelemetry, type RunCompleteEvent } from './auto-dent-events.js';
 import { defaultReviewFixProviders, runFixLoop } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
@@ -48,6 +48,7 @@ import {
   computeSteeringRecommendations,
 } from './batch-outcome.js';
 import { phaseProvidersForAgentProvider, type PhaseProviderRecord, type Provider } from './auto-dent-provider.js';
+import { computeExploreExploitConversion, formatExploreExploitConversion } from './auto-dent-explore-conversion.js';
 import {
   buildKaizenCycleSteps,
   formatIssueForDisplay,
@@ -97,6 +98,7 @@ export {
   type RunPrCreatedEvent,
   type RunCompleteEvent,
   type BatchReflectEvent,
+  type BanditDecisionTelemetry,
   type EventEnvelope,
 } from './auto-dent-events.js';
 
@@ -282,6 +284,8 @@ export interface RunMetrics {
   candidate_manifest_count?: number;
   /** Non-fatal candidate manifest parse/read warnings (#1196). */
   candidate_manifest_warnings?: string[];
+  /** Durable UCB1 decision breakdown used for mode selection (#1178). */
+  bandit_decision?: BanditDecisionTelemetry;
   /** Prompt template file name used for this run */
   prompt_template?: string;
   /** SHA-256 hash of the prompt template content (first 12 chars) */
@@ -398,6 +402,7 @@ type RunMetricsBaseField =
   | 'candidate_manifest_path'
   | 'candidate_manifest_count'
   | 'candidate_manifest_warnings'
+  | 'bandit_decision'
   | 'final_claim_status'
   | 'final_claim'
   | 'final_claim_path'
@@ -412,12 +417,14 @@ export interface BuildRunMetricsInput {
   exitCode: number;
   runMode: string;
   result: RunResult;
+  modeReason?: string;
+  bandit?: BanditResult;
   provider?: Provider;
   metadata?: RunMetricsMetadata;
 }
 
 export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
-  const { runNum, runStartEpoch, duration, exitCode, runMode, result, provider, metadata = {} } = input;
+  const { runNum, runStartEpoch, duration, exitCode, runMode, result, modeReason, bandit, provider, metadata = {} } = input;
   const hookActivation = result.hookActivation
     ?? (provider ? unknownHookActivationVerdict(provider, 'no system.init observed') : undefined);
   return {
@@ -438,6 +445,7 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     candidate_manifest_path: result.candidateManifestPath,
     candidate_manifest_count: result.candidateManifestCount,
     candidate_manifest_warnings: result.candidateManifestWarnings,
+    bandit_decision: buildBanditDecisionTelemetry(runMode, modeReason, bandit),
     final_claim_status: result.finalClaimStatus,
     final_claim: result.finalClaim,
     final_claim_path: result.finalClaimPath,
@@ -794,8 +802,8 @@ const MODE_TEMPLATES: Record<string, string> = {
  *
  * Signals (checked in priority order):
  *   1. 3+ consecutive failures -> reflect (diagnose what's going wrong)
- *   2. No PRs in last 5 runs with history -> explore (backlog may be exhausted)
- *   3. Same mode 4+ times consecutively -> force a different mode
+ *   2. No PRs in last 5 runs with history -> learned non-exploit mode, or explore during cold start
+ *   3. Same mode 4+ times consecutively -> learned non-stale schedulable mode, or legacy cold-start fallback
  */
 export function checkSignalOverrides(state: BatchState): ModeSelection | null {
   const history = state.run_history || [];
@@ -810,11 +818,14 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
     };
   }
 
-  // Signal 2: no PRs in last 5 runs -> explore (backlog may be exhausted)
+  // Signal 2: no PRs in last 5 runs -> avoid exploit; let the learned policy
+  // choose among schedulable alternatives once enough history exists.
   if (history.length >= 5) {
     const recent5 = history.slice(-5);
     const recentPRs = recent5.reduce((sum, r) => sum + r.prs.length, 0);
     if (recentPRs === 0) {
+      const learned = learnedSignalMode(state, new Set(['exploit']), 'signal:no-recent-prs:bandit-non-exploit');
+      if (learned) return learned;
       return {
         mode: 'explore',
         template: MODE_TEMPLATES.explore,
@@ -829,6 +840,8 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
     const modes = recent4.map(r => r.mode || 'exploit');
     if (modes.every(m => m === modes[0])) {
       const staleMode = modes[0];
+      const learned = learnedSignalMode(state, new Set([staleMode]), `signal:mode-streak-${staleMode}:bandit-non-stale`);
+      if (learned) return learned;
       // Pick a different mode: if stuck on exploit, explore; otherwise contemplate
       const breakMode = staleMode === 'exploit' ? 'explore' : 'contemplate';
       return {
@@ -840,6 +853,34 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
   }
 
   return null;
+}
+
+function learnedSignalMode(
+  state: BatchState,
+  excludedModes: Set<string>,
+  reason: string,
+): ModeSelection | null {
+  const bandit = computeBanditWeights(state.run_history || [], { explorationC: banditExplorationC() });
+  if (!bandit) return null;
+
+  const best = bandit.details
+    .filter((detail) =>
+      (SCHEDULABLE_MODES as readonly string[]).includes(detail.mode)
+      && !excludedModes.has(detail.mode),
+    )
+    .sort((a, b) =>
+      b.ucb - a.ucb
+      || b.weight - a.weight
+      || a.mode.localeCompare(b.mode),
+    )[0];
+  if (!best) return null;
+
+  return {
+    mode: best.mode,
+    template: MODE_TEMPLATES[best.mode] || MODE_TEMPLATES.exploit,
+    reason,
+    bandit,
+  };
 }
 
 /**
@@ -994,6 +1035,7 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     review_cost_usd: reviewCostUsd,
     phase_providers: phaseProviders,
     hook_activation: runMetricsForOutcome.hook_activation,
+    bandit_decision: runMetricsForOutcome.bandit_decision,
     outcome,
     mode: runMode,
   };
@@ -1087,6 +1129,30 @@ export interface BanditResult {
   totalPlays: number;
   /** Exploration constant actually used. */
   explorationC: number;
+}
+
+export function buildBanditDecisionTelemetry(
+  selectedMode: string,
+  reason: string | undefined,
+  bandit: BanditResult | undefined,
+): BanditDecisionTelemetry | undefined {
+  if (!bandit) return undefined;
+  return {
+    selected_mode: selectedMode,
+    reason: reason ?? 'bandit',
+    weights: bandit.weights,
+    details: bandit.details.map((detail) => ({
+      mode: detail.mode,
+      plays: detail.plays,
+      mean_reward: detail.meanReward,
+      exploit_term: detail.exploitTerm,
+      explore_bonus: detail.exploreBonus,
+      ucb: detail.ucb,
+      weight: detail.weight,
+    })),
+    total_plays: bandit.totalPlays,
+    exploration_c: bandit.explorationC,
+  };
 }
 
 /**
@@ -1890,7 +1956,7 @@ async function runClaude(
   logFile: string,
   repoRoot: string,
   stateFile: string,
-): Promise<{ exitCode: number; duration: number; result: RunResult; mode: string; modeReason: string; promptMeta: PromptMetadata }> {
+): Promise<{ exitCode: number; duration: number; result: RunResult; mode: string; modeReason: string; bandit?: BanditResult; promptMeta: PromptMetadata }> {
   const result: RunResult = {
     prs: [],
     issuesFiled: [],
@@ -1967,7 +2033,7 @@ async function runClaude(
     if (candidateManifestPath) {
       attachCandidateTaskManifest(codexResult.result, candidateManifestPath);
     }
-    return codexResult;
+    return { ...codexResult, bandit: modeSelection.bandit };
   }
 
   const nonce = `${new Date()
@@ -2126,7 +2192,7 @@ async function runClaude(
       if (candidateManifestPath) {
         attachCandidateTaskManifest(result, candidateManifestPath);
       }
-      resolvePromise({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, promptMeta });
+      resolvePromise({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, bandit: modeSelection.bandit, promptMeta });
     });
 
     child.on('error', (err) => {
@@ -2137,7 +2203,7 @@ async function runClaude(
       if (candidateManifestPath) {
         attachCandidateTaskManifest(result, candidateManifestPath);
       }
-      resolvePromise({ exitCode: 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, promptMeta });
+      resolvePromise({ exitCode: 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, bandit: modeSelection.bandit, promptMeta });
     });
   });
 }
@@ -2180,6 +2246,11 @@ export function formatBatchFooter(state: BatchState): string {
 
   if (modeStr) {
     lines.push(`  ${color.dim(`  Modes: ${modeStr}`)}`);
+  }
+
+  const conversion = computeExploreExploitConversion(history);
+  if (conversion.exploreIssuesFiled > 0) {
+    lines.push(`  ${color.dim(`  Explore->exploit: ${formatExploreExploitConversion(conversion)}`)}`);
   }
 
   lines.push(`  ${color.dim(bar)}`);
@@ -2513,7 +2584,7 @@ async function main(): Promise<void> {
 
   const runStartEpoch = Math.floor(Date.now() / 1000);
   const runStartDate = new Date();
-  const { exitCode, duration, result, mode: runMode, modeReason: runModeReason, promptMeta } = await runClaude(
+  const { exitCode, duration, result, mode: runMode, modeReason: runModeReason, bandit: runBandit, promptMeta } = await runClaude(
     state,
     runNum,
     logFile,
@@ -2883,6 +2954,8 @@ async function main(): Promise<void> {
       exitCode,
       runMode,
       result,
+      modeReason: runModeReason,
+      bandit: runBandit,
       provider: state.provider ?? 'claude',
     });
     // Bind the run-success stamp to the verdicts this run already recorded
@@ -3116,6 +3189,8 @@ async function main(): Promise<void> {
     exitCode,
     runMode,
     result,
+    modeReason: runModeReason,
+    bandit: runBandit,
     provider: state.provider ?? 'claude',
     metadata: {
       prompt_template: promptMeta.template,
