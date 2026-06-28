@@ -191,3 +191,15 @@ describe('pr-kaizen-clear-fallback: does not touch other gate types', () => {
     expect(gateStatus('pr-review-Garsson-io_kaizen_55')).toBe('needs_review');
   });
 });
+
+describe('git runner invariant', () => {
+  it('routes fallback branch reads through argv-style gitStdout', () => {
+    const source = fs.readFileSync(
+      new URL('./pr-kaizen-clear-fallback.ts', import.meta.url),
+      'utf-8',
+    );
+
+    expect(source).not.toMatch(/execSync\(['"`]git\b/);
+    expect(source).toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown')");
+  });
+});

@@ -19,10 +19,10 @@
  * Migrated to TS state functions in #790 gap fix.
  */
 
-import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
+import { gitStdout } from './lib/git-state.js';
 import {
   DEFAULT_AUDIT_DIR,
   DEFAULT_STATE_DIR,
@@ -32,14 +32,7 @@ import {
 } from './state-utils.js';
 
 function currentBranch(): string {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-  } catch {
-    return 'unknown';
-  }
+  return gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown');
 }
 
 async function main(): Promise<void> {
