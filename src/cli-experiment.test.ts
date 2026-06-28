@@ -63,6 +63,13 @@ describe('cli-experiment argument parsing', () => {
 });
 
 describe('parseFrontmatter', () => {
+  test('uses the shared YAML frontmatter parser', () => {
+    const source = fs.readFileSync(CLI_SOURCE, 'utf8');
+
+    expect(source).not.toContain('content.match(/^---\\n');
+    expect(source).not.toContain('YAML.parse(match[1])');
+  });
+
   test('parses experiment file with measurements', () => {
     const content = `---
 id: EXP-001
@@ -99,6 +106,31 @@ Some body text.
     expect(frontmatter.measurements[0].name).toBe('count');
     expect(frontmatter.measurements[0].actual).toBeNull();
     expect(body).toContain('## Context');
+  });
+
+  test('parses CRLF experiment frontmatter and preserves body', () => {
+    const content = [
+      '---',
+      'id: EXP-002',
+      'title: crlf test',
+      'hypothesis: handles CRLF',
+      'falsification: CRLF parse fails',
+      'pattern: probe-and-observe',
+      'status: pending',
+      'issue: 388',
+      'created: 2026-03-21',
+      'completed: null',
+      'result: null',
+      '---',
+      '## Body',
+      '',
+    ].join('\r\n');
+
+    const { frontmatter, body } = parseFrontmatter(content);
+
+    expect(frontmatter.id).toBe('EXP-002');
+    expect(frontmatter.measurements).toEqual([]);
+    expect(body).toBe('## Body\r\n');
   });
 
   test('roundtrips through serialize → parse', () => {
