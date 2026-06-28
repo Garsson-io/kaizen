@@ -21,6 +21,7 @@ import {
   validateProviderPlan,
 } from './auto-dent-provider.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
+import { escapeMarkdownTableCell } from './markdown-table.js';
 
 export type ReviewQuality = 'strong' | 'adequate' | 'weak' | 'missing';
 export type CostSignal = 'available' | 'partial' | 'missing';
@@ -422,13 +423,6 @@ function formatRate(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function escapeMarkdownCell(value: string): string {
-  return value
-    .replace(/\\/g, '\\\\')
-    .replace(/\|/g, '\\|')
-    .replace(/\n/g, ' ');
-}
-
 export function formatProviderComparisonReport(artifact: ProviderComparisonArtifact): string {
   const lines: string[] = [];
   lines.push(`## Provider Comparison Matrix: ${artifact.batchId}`);
@@ -448,7 +442,7 @@ export function formatProviderComparisonReport(artifact: ProviderComparisonArtif
       phaseCell(result.phaseProviders, 'validation'),
       result.processVerdict,
       result.failureClass ?? 'none',
-    ].map(escapeMarkdownCell).join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
+    ].map(escapeMarkdownTableCell).join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
   }
 
   lines.push('');
@@ -465,7 +459,7 @@ export function formatProviderComparisonReport(artifact: ProviderComparisonArtif
       result.metrics.costSignal,
       String(result.metrics.hookRejections),
       result.metrics.operatorInspectability,
-    ].map(escapeMarkdownCell).join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
+    ].map(escapeMarkdownTableCell).join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
   }
 
   lines.push('');

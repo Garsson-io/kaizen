@@ -6,6 +6,8 @@
  * runtime behavior; later provider-aware phases can consume the same inventory.
  */
 
+import { escapeMarkdownTableCell } from './markdown-table.js';
+
 export const AUTO_DENT_PHASES = [
   'planning',
   'implementation',
@@ -197,7 +199,7 @@ export function renderProviderCapabilityMatrix(matrix: ProviderCapabilityMatrix)
       row.phaseFit.reflection,
       row.phaseFit.validation,
       row.notes,
-    ].map(escapeCell).join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
+    ].map(escapeMarkdownTableCell).join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
   }
 
   return lines.join('\n');
@@ -212,13 +214,6 @@ function providerLabel(provider: AgentProvider): string {
     case 'provider-independent':
       return 'Provider-independent';
   }
-}
-
-function escapeCell(value: string): string {
-  return value
-    .replace(/\\/g, '\\\\')
-    .replace(/\|/g, '\\|')
-    .replace(/\n/g, ' ');
 }
 
 const isDirectRun = process.argv[1]?.endsWith('auto-dent-provider-capabilities.ts') ||
