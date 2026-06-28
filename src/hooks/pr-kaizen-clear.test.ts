@@ -199,6 +199,17 @@ describe('pr-kaizen-clear: empty array', () => {
 });
 
 describe('pr-kaizen-clear: validation', () => {
+  it('delegates tolerant JSON array parsing to the shared helper', () => {
+    const source = fs.readFileSync(HOOK_PATH, 'utf8');
+    const extractSection = source.slice(
+      source.indexOf('function extractImpedimentsJson'),
+      source.indexOf('/**\n * Extract kaizen-bg results'),
+    );
+
+    expect(extractSection).toContain('parseJsonArrayOrNull');
+    expect(extractSection).not.toContain('Array.isArray(JSON.parse');
+  });
+
   it('rejects missing impediment/finding field', () => {
     const json = JSON.stringify([{ disposition: 'filed', ref: '#1' }]);
     const output = runHook(impedimentsInput(json));
