@@ -31,6 +31,7 @@ import { dirname } from 'node:path';
 import { join, resolve, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
+import { parseJsonValue } from '../src/lib/json-value.js';
 
 export type CheckStatus = 'PASS' | 'WARN' | 'FAIL';
 
@@ -76,7 +77,7 @@ const REQUIRED_CODEX_FEATURES = ['shell_tool', 'unified_exec', 'hooks'] as const
 
 function safeReadJson(path: string): unknown | null {
   try {
-    return JSON.parse(readFileSync(path, 'utf-8'));
+    return parseJsonValue(readFileSync(path, 'utf-8'));
   } catch {
     return null;
   }

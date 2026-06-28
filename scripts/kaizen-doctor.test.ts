@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -47,6 +47,19 @@ function writeHook(projectRoot: string, rel: string, executable = true): string 
   else chmodSync(p, 0o644);
   return p;
 }
+
+describe('safe JSON parsing', () => {
+  it('delegates safeReadJson parsing to the shared value helper', () => {
+    const source = readFileSync(new URL('./kaizen-doctor.ts', import.meta.url), 'utf-8');
+    const helperSection = source.slice(
+      source.indexOf('function safeReadJson'),
+      source.indexOf('function sha256File'),
+    );
+
+    expect(helperSection).toContain('parseJsonValue');
+    expect(helperSection).not.toContain('JSON.parse');
+  });
+});
 
 describe('resolveHookPath', () => {
   it('expands ${CLAUDE_PLUGIN_ROOT} against projectRoot', () => {
