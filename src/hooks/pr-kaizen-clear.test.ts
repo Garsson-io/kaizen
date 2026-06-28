@@ -93,7 +93,15 @@ describe('audit logging source invariant', () => {
   });
 });
 
-function runHook(input: object): string {
+describe('test runtime invariant', () => {
+  it('keeps repeated hook behavior cases on the in-process seam', () => {
+    expect(runHook.toString()).toContain('processHookInput');
+    expect(runHook.toString()).not.toContain('execSync');
+    expect(runHookSubprocess.toString()).toContain('execSync');
+  });
+});
+
+function runHookSubprocess(input: object): string {
   const json = JSON.stringify(input);
   try {
     return execSync(
@@ -108,6 +116,29 @@ function runHook(input: object): string {
   } catch (err: any) {
     return err.stdout?.trim?.() ?? '';
   }
+}
+
+function localHookOptions(
+  stateDir: string,
+  overrides: Parameters<typeof processHookInput>[1] = {},
+): NonNullable<Parameters<typeof processHookInput>[1]> {
+  return {
+    stateDir,
+    postComment: () => {},
+    getPrFiles: () => [],
+    gh: () => '',
+    verifyRef: () => 'exists',
+    ...overrides,
+  };
+}
+
+function runHook(input: object): string {
+  return (
+    processHookInput(
+      input as Parameters<typeof processHookInput>[0],
+      localHookOptions(testStateDir),
+    ) ?? ''
+  ).trim();
 }
 
 function impedimentsInput(impedimentsJson: string): object {
@@ -145,6 +176,15 @@ function gateExists(): boolean {
 // ── KAIZEN_IMPEDIMENTS tests ─────────────────────────────────────────
 
 describe('pr-kaizen-clear: valid impediments', () => {
+  it('subprocess smoke: clears gate from stdin', () => {
+    const json = JSON.stringify([
+      { impediment: 'subprocess path', disposition: 'fixed-in-pr' },
+    ]);
+    const output = runHookSubprocess(impedimentsInput(json));
+    expect(output).toContain('PR kaizen gate cleared');
+    expect(gateExists()).toBe(false);
+  });
+
   it('clears gate with valid filed impediment', () => {
     const json = JSON.stringify([
       { impediment: 'test issue', disposition: 'filed', ref: '#123' },
@@ -582,10 +622,7 @@ describe('processHookInput: reflection persistence (kaizen #388)', () => {
       },
     };
 
-    const result = processHookInput(input, {
-      stateDir: unitStateDir,
-      postComment,
-    });
+    const result = processHookInput(input, localHookOptions(unitStateDir, { postComment }));
     expect(result).toContain('PR kaizen gate cleared');
     expect(postComment).toHaveBeenCalledOnce();
     expect(postComment.mock.calls[0][0]).toBe(
@@ -610,10 +647,7 @@ describe('processHookInput: reflection persistence (kaizen #388)', () => {
       },
     };
 
-    const result = processHookInput(input, {
-      stateDir: unitStateDir,
-      postComment,
-    });
+    const result = processHookInput(input, localHookOptions(unitStateDir, { postComment }));
     expect(result).toContain('PR kaizen gate cleared');
     expect(postComment).toHaveBeenCalledOnce();
     const comment = postComment.mock.calls[0][1];
@@ -631,10 +665,7 @@ describe('processHookInput: reflection persistence (kaizen #388)', () => {
       },
     };
 
-    const result = processHookInput(input, {
-      stateDir: unitStateDir,
-      postComment,
-    });
+    const result = processHookInput(input, localHookOptions(unitStateDir, { postComment }));
     expect(result).toContain('PR kaizen gate cleared');
     expect(postComment).toHaveBeenCalledOnce();
     const comment = postComment.mock.calls[0][1];
@@ -655,10 +686,7 @@ describe('processHookInput: reflection persistence (kaizen #388)', () => {
       },
     };
 
-    const result = processHookInput(input, {
-      stateDir: unitStateDir,
-      postComment,
-    });
+    const result = processHookInput(input, localHookOptions(unitStateDir, { postComment }));
     expect(result).toContain('no longer accepted');
     expect(postComment).not.toHaveBeenCalled();
   });
@@ -679,10 +707,7 @@ describe('processHookInput: reflection persistence (kaizen #388)', () => {
       },
     };
 
-    const result = processHookInput(input, {
-      stateDir: unitStateDir,
-      postComment,
-    });
+    const result = processHookInput(input, localHookOptions(unitStateDir, { postComment }));
     expect(result).toContain('PR kaizen gate cleared');
     expect(postComment).toHaveBeenCalledOnce();
   });
@@ -853,10 +878,7 @@ describe('processHookInput: quality advisory (kaizen #446)', () => {
       },
     };
 
-    const result = processHookInput(input, {
-      stateDir: unitStateDir,
-      postComment,
-    });
+    const result = processHookInput(input, localHookOptions(unitStateDir, { postComment }));
     expect(result).toContain('PR kaizen gate cleared');
     expect(result).toContain('Reflection quality: LOW');
   });
@@ -875,10 +897,7 @@ describe('processHookInput: quality advisory (kaizen #446)', () => {
       },
     };
 
-    const result = processHookInput(input, {
-      stateDir: unitStateDir,
-      postComment,
-    });
+    const result = processHookInput(input, localHookOptions(unitStateDir, { postComment }));
     expect(result).toContain('PR kaizen gate cleared');
     expect(result).not.toContain('Reflection quality: LOW');
   });
@@ -994,10 +1013,7 @@ describe('processHookInput: fixable-filed advisory (kaizen #401)', () => {
       },
     };
 
-    const result = processHookInput(input, {
-      stateDir: unitStateDir,
-      postComment,
-    });
+    const result = processHookInput(input, localHookOptions(unitStateDir, { postComment }));
     expect(result).toContain('PR kaizen gate cleared');
     expect(result).toContain('hand-rolled');
     expect(result).toContain('fixed-in-pr');
@@ -1017,10 +1033,7 @@ describe('processHookInput: fixable-filed advisory (kaizen #401)', () => {
       },
     };
 
-    const result = processHookInput(input, {
-      stateDir: unitStateDir,
-      postComment,
-    });
+    const result = processHookInput(input, localHookOptions(unitStateDir, { postComment }));
     expect(result).toContain('PR kaizen gate cleared');
     expect(result).not.toContain('Advisory');
   });
@@ -1089,11 +1102,10 @@ describe('processHookInput PRD blocking gate (kaizen #683, upgraded from #694)',
     });
     const input = noActionInput('docs-only', 'PRD creation only');
 
-    const result = processHookInput(input, {
-      stateDir: testStateDir,
-      postComment: () => {},
-      gh,
-    });
+    const result = processHookInput(
+      input,
+      localHookOptions(testStateDir, { gh, getPrFiles: undefined }),
+    );
 
     expect(result).toContain('BLOCKED');
     expect(result).toContain('PRD but filed no actionable issues');
@@ -1109,11 +1121,12 @@ describe('processHookInput PRD blocking gate (kaizen #683, upgraded from #694)',
 
   it('blocks gate when PRD in diff and KAIZEN_NO_ACTION', () => {
     const input = noActionInput('docs-only', 'PRD creation only');
-    const result = processHookInput(input, {
-      stateDir: testStateDir,
-      postComment: () => {},
-      getPrFiles: () => ['docs/prd-agent-diagnosis.md', 'CLAUDE.md'],
-    });
+    const result = processHookInput(
+      input,
+      localHookOptions(testStateDir, {
+        getPrFiles: () => ['docs/prd-agent-diagnosis.md', 'CLAUDE.md'],
+      }),
+    );
     expect(result).toContain('BLOCKED');
     expect(result).toContain('PRD but filed no actionable issues');
     expect(result).not.toContain('gate cleared');
@@ -1123,11 +1136,12 @@ describe('processHookInput PRD blocking gate (kaizen #683, upgraded from #694)',
     const input = impedimentsInput(
       '[{"impediment":"cosmetic","disposition":"no-action","type":"positive","reason":"style only"}]',
     );
-    const result = processHookInput(input, {
-      stateDir: testStateDir,
-      postComment: () => {},
-      getPrFiles: () => ['docs/prd-agent-diagnosis.md'],
-    });
+    const result = processHookInput(
+      input,
+      localHookOptions(testStateDir, {
+        getPrFiles: () => ['docs/prd-agent-diagnosis.md'],
+      }),
+    );
     expect(result).toContain('BLOCKED');
     expect(result).not.toContain('gate cleared');
   });
@@ -1136,33 +1150,34 @@ describe('processHookInput PRD blocking gate (kaizen #683, upgraded from #694)',
     const input = impedimentsInput(
       '[{"impediment":"P0 from PRD","disposition":"filed","ref":"#999"}]',
     );
-    const result = processHookInput(input, {
-      stateDir: testStateDir,
-      postComment: () => {},
-      getPrFiles: () => ['docs/prd-agent-diagnosis.md'],
-    });
+    const result = processHookInput(
+      input,
+      localHookOptions(testStateDir, {
+        getPrFiles: () => ['docs/prd-agent-diagnosis.md'],
+      }),
+    );
     expect(result).not.toContain('BLOCKED');
     expect(result).toContain('gate cleared');
   });
 
   it('clears gate when no PRD files in diff', () => {
     const input = noActionInput('config-only', 'just config');
-    const result = processHookInput(input, {
-      stateDir: testStateDir,
-      postComment: () => {},
-      getPrFiles: () => ['vitest.config.ts'],
-    });
+    const result = processHookInput(
+      input,
+      localHookOptions(testStateDir, { getPrFiles: () => ['vitest.config.ts'] }),
+    );
     expect(result).not.toContain('PRD');
     expect(result).toContain('gate cleared');
   });
 
   it('preserves gate state when PRD blocks clearing', () => {
     const input = noActionInput('docs-only', 'PRD creation only');
-    processHookInput(input, {
-      stateDir: testStateDir,
-      postComment: () => {},
-      getPrFiles: () => ['docs/prd-agent-diagnosis.md'],
-    });
+    processHookInput(
+      input,
+      localHookOptions(testStateDir, {
+        getPrFiles: () => ['docs/prd-agent-diagnosis.md'],
+      }),
+    );
     const stateContent = fs.readFileSync(
       path.join(testStateDir, 'pr-kaizen-Garsson-io_kaizen_42'),
       'utf-8',
@@ -1187,11 +1202,10 @@ describe('processHookInput auto-close PR metadata gh seam', () => {
     });
     const input = noActionInput('trivial-refactor', 'metadata path only');
 
-    const result = processHookInput(input, {
-      stateDir: testStateDir,
-      postComment: () => {},
-      gh,
-    });
+    const result = processHookInput(
+      input,
+      localHookOptions(testStateDir, { gh, getPrFiles: undefined }),
+    );
 
     expect(result).toContain('gate cleared');
     expect(gh).toHaveBeenCalledWith([
@@ -1235,10 +1249,10 @@ describe('pr-kaizen-clear: KAIZEN_UNFINISHED escape', () => {
   }
 
   it('clears kaizen gate and reports escape', () => {
-    const result = processHookInput(unfinishedInput('session timeout'), {
-      stateDir: testStateDir,
-      postComment: () => {},
-    });
+    const result = processHookInput(
+      unfinishedInput('session timeout'),
+      localHookOptions(testStateDir),
+    );
     expect(result).toContain('KAIZEN_UNFINISHED');
     expect(result).toContain('All gates cleared');
     expect(result).toContain('session timeout');
@@ -1259,10 +1273,10 @@ describe('pr-kaizen-clear: KAIZEN_UNFINISHED escape', () => {
       `PR_URL=https://github.com/org/repo/pull/99\nSTATUS=needs_post_merge\nBRANCH=${branch}\n`,
     );
 
-    processHookInput(unfinishedInput('context switch'), {
-      stateDir: testStateDir,
-      postComment: () => {},
-    });
+    processHookInput(
+      unfinishedInput('context switch'),
+      localHookOptions(testStateDir),
+    );
 
     // All gates should be cleared
     const remaining = fs.readdirSync(testStateDir).filter(
@@ -1272,10 +1286,10 @@ describe('pr-kaizen-clear: KAIZEN_UNFINISHED escape', () => {
   });
 
   it('writes deferred items file', () => {
-    processHookInput(unfinishedInput('too tired'), {
-      stateDir: testStateDir,
-      postComment: () => {},
-    });
+    processHookInput(
+      unfinishedInput('too tired'),
+      localHookOptions(testStateDir),
+    );
 
     const deferredFile = path.join(testStateDir, '.kaizen-deferred-items.json');
     expect(fs.existsSync(deferredFile)).toBe(true);
@@ -1295,10 +1309,10 @@ describe('pr-kaizen-clear: KAIZEN_UNFINISHED escape', () => {
       `PR_URL=https://github.com/org/repo/pull/99\nSTATUS=needs_review\nBRANCH=${branch}\nROUND=1\n`,
     );
 
-    const result = processHookInput(unfinishedInput('session timeout'), {
-      stateDir: testStateDir,
-      postComment: () => {},
-    });
+    const result = processHookInput(
+      unfinishedInput('session timeout'),
+      localHookOptions(testStateDir),
+    );
     expect(result).toContain('KAIZEN_UNFINISHED');
     expect(result).toContain('All gates cleared');
   });
@@ -1309,10 +1323,7 @@ describe('pr-kaizen-clear: KAIZEN_UNFINISHED escape', () => {
       tool_input: { command: "echo 'KAIZEN_UNFINISHED:'" },
       tool_response: { stdout: 'KAIZEN_UNFINISHED:', stderr: '', exit_code: '0' },
     };
-    const result = processHookInput(input, {
-      stateDir: testStateDir,
-      postComment: () => {},
-    });
+    const result = processHookInput(input, localHookOptions(testStateDir));
     expect(result).toContain('no reason given');
   });
 });
@@ -1362,10 +1373,10 @@ describe('pr-kaizen-clear: KAIZEN_BG_RESULTS trigger', () => {
     const json = JSON.stringify([
       { impediment: 'slow tests', disposition: 'filed', ref: '#100' },
     ]);
-    const result = processHookInput(bgResultsInput(json), {
-      stateDir: testStateDir,
-      postComment: () => {},
-    });
+    const result = processHookInput(
+      bgResultsInput(json),
+      localHookOptions(testStateDir),
+    );
     expect(result).toContain('kaizen-bg agent');
     expect(result).toContain('gate cleared');
     expect(gateExists()).toBe(false);
@@ -1375,10 +1386,10 @@ describe('pr-kaizen-clear: KAIZEN_BG_RESULTS trigger', () => {
     const json = JSON.stringify([
       { impediment: 'missing disposition' },
     ]);
-    const result = processHookInput(bgResultsInput(json), {
-      stateDir: testStateDir,
-      postComment: () => {},
-    });
+    const result = processHookInput(
+      bgResultsInput(json),
+      localHookOptions(testStateDir),
+    );
     expect(result).toContain('Validation failed');
     expect(gateExists()).toBe(true);
   });
@@ -1386,20 +1397,17 @@ describe('pr-kaizen-clear: KAIZEN_BG_RESULTS trigger', () => {
   it('clears gate with empty bg results and reason', () => {
     const result = processHookInput(
       bgResultsInput('[] no friction observed'),
-      {
-        stateDir: testStateDir,
-        postComment: () => {},
-      },
+      localHookOptions(testStateDir),
     );
     expect(result).toContain('gate cleared');
     expect(gateExists()).toBe(false);
   });
 
   it('rejects empty bg results without reason', () => {
-    const result = processHookInput(bgResultsInput('[]'), {
-      stateDir: testStateDir,
-      postComment: () => {},
-    });
+    const result = processHookInput(
+      bgResultsInput('[]'),
+      localHookOptions(testStateDir),
+    );
     expect(result).toContain('Empty array requires a reason');
     expect(gateExists()).toBe(true);
   });
@@ -1410,10 +1418,10 @@ describe('pr-kaizen-clear: KAIZEN_BG_RESULTS trigger', () => {
     const json = JSON.stringify([
       { impediment: 'test', disposition: 'filed', ref: '#1' },
     ]);
-    const result = processHookInput(bgResultsInput(json), {
-      stateDir: testStateDir,
-      postComment: () => {},
-    });
+    const result = processHookInput(
+      bgResultsInput(json),
+      localHookOptions(testStateDir),
+    );
     expect(result).toBeNull();
   });
 });
