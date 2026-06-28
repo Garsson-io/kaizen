@@ -7,6 +7,7 @@ import {
   storeMetadata,
   storeReviewFinding,
   storeReviewSummary,
+  readReviewFinding,
 } from './structured-data.js';
 
 vi.mock('node:fs', () => ({
@@ -228,6 +229,37 @@ describe('store-review-batch — review sentinel', () => {
       dimensionCount: 2,
     });
     expect(payload.integrity).toMatch(/^sha256:/);
+  });
+
+  it('derives sentinel totals through the shared review finding metadata contract (#1362)', async () => {
+    vi.mocked(readReviewFinding).mockImplementation((_target, _round, dim) =>
+      `leading text\n<!-- meta:{"round":1,"dimension":"${dim}","verdict":"pass","done":2,"partial":1,"missing":0} -->\n### ${dim}`,
+    );
+
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await handlers['store-review-batch']({
+      ...baseArgs,
+      text: JSON.stringify([{ dimension: 'dry', verdict: 'pass', summary: 'ok', findings: [] }]),
+    });
+    log.mockRestore();
+
+    const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === 'string' && path.includes('.reviewed-r1'),
+    );
+    expect(sentinelCall).toBeDefined();
+    const payload = JSON.parse(String(sentinelCall![1]));
+    expect(payload).toMatchObject({
+      findingCount: 6,
+      totalDone: 4,
+      totalPartial: 2,
+      totalMissing: 0,
+    });
+  });
+
+  it('does not keep a private review finding metadata parser in the CLI (#1362)', async () => {
+    const fs = await vi.importActual<typeof import('node:fs')>('node:fs');
+    const source = fs.readFileSync(new URL('./cli-structured-data.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/function\s+parseFindingMeta\s*\(/);
   });
 
   it('sentinel path encodes PR number and repo', async () => {

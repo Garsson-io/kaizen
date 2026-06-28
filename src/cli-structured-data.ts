@@ -64,7 +64,12 @@ import {
   buildReviewSentinelRecord,
   serializeReviewSentinel,
 } from './review-sentinel.js';
-import { normalizeReviewFindingData, validateReviewFindingPayload, summarizeFindingStatuses } from './review-finding-contract.js';
+import {
+  normalizeReviewFindingData,
+  validateReviewFindingPayload,
+  summarizeFindingStatuses,
+  extractReviewFindingMeta,
+} from './review-finding-contract.js';
 
 export type CliArgs = Record<string, string> & { command: string };
 type Handler = (a: CliArgs) => Promise<void>;
@@ -128,21 +133,6 @@ export function resolveRound(a: CliArgs): number {
   return 1;
 }
 
-function parseFindingMeta(content: string): { done: number; partial: number; missing: number } | null {
-  const match = content.match(/^<!-- meta:(\{.*\}) -->/);
-  if (!match) return null;
-  try {
-    const meta = JSON.parse(match[1]) as { done?: number; partial?: number; missing?: number };
-    return {
-      done: Number.isInteger(meta.done) ? meta.done! : 0,
-      partial: Number.isInteger(meta.partial) ? meta.partial! : 0,
-      missing: Number.isInteger(meta.missing) ? meta.missing! : 0,
-    };
-  } catch {
-    return null;
-  }
-}
-
 function writeReviewSentinel(repo: string, pr: string | undefined, round: number): void {
   if (!pr) return;
   try {
@@ -153,7 +143,7 @@ function writeReviewSentinel(repo: string, pr: string | undefined, round: number
     const totals = dimensionsReviewed.reduce(
       (acc, dim) => {
         const content = readReviewFinding(target, round, dim);
-        const meta = content ? parseFindingMeta(content) : null;
+        const meta = content ? extractReviewFindingMeta(content) : null;
         if (!meta) return acc;
         acc.totalDone += meta.done;
         acc.totalPartial += meta.partial;
