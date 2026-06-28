@@ -25,6 +25,7 @@ import {
   KAIZEN_ENTRY_PATH,
   writeEntryScript,
   KAIZEN_PRE_COMMIT_REPO,
+  resolveKaizenPreCommitRev,
 } from './setup-git-hooks.js';
 import { AGENT_ENV_VARS } from './hooks/pre-push.js';
 
@@ -53,6 +54,11 @@ const read = (relPath: string): string => fs.readFileSync(path.join(tmpDir, relP
 const exists = (relPath: string): boolean => fs.existsSync(path.join(tmpDir, relPath));
 
 const stubEntryContent = '#!/usr/bin/env bash\necho kaizen-entry\n';
+
+const commitFixtureRepo = () => {
+  execSync('git add .', { cwd: tmpDir });
+  execSync('git -c user.name=Test -c user.email=test@example.com commit -m init --quiet', { cwd: tmpDir });
+};
 
 // ── detectHostFramework ───────────────────────────────────────────────
 
@@ -278,6 +284,27 @@ describe('injectIntoPreCommit — PRIMARY host framework', () => {
     expect(localRepo.hooks.map((h: { id: string }) => h.id)).toEqual(['existing-local-hook']);
     const kaizenRepo = parsed.repos.find((r: { repo: string }) => r.repo === KAIZEN_PRE_COMMIT_REPO);
     expect(kaizenRepo.hooks.map((h: { id: string }) => h.id)).toEqual([KAIZEN_HOOK_ID]);
+  });
+});
+
+describe('resolveKaizenPreCommitRev', () => {
+  it('uses plugin version only when the matching local git tag exists', () => {
+    write('.claude-plugin/plugin.json', JSON.stringify({ version: '1.2.3' }));
+    write('marker.txt', 'tagged\n');
+    commitFixtureRepo();
+    execSync('git tag v1.2.3', { cwd: tmpDir });
+
+    expect(resolveKaizenPreCommitRev(tmpDir)).toBe('v1.2.3');
+  });
+
+  it('falls back to the current commit when plugin version tag is absent', () => {
+    write('.claude-plugin/plugin.json', JSON.stringify({ version: '1.2.3' }));
+    write('marker.txt', 'untagged\n');
+    commitFixtureRepo();
+
+    const expected = execSync('git rev-parse --short=12 HEAD', { cwd: tmpDir, encoding: 'utf-8' }).trim();
+    expect(resolveKaizenPreCommitRev(tmpDir)).toBe(expected);
+    expect(resolveKaizenPreCommitRev(tmpDir)).not.toBe('v1.2.3');
   });
 });
 

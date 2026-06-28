@@ -13,7 +13,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, readdirSync, renameSync, unlinkSync, rmSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
@@ -118,12 +118,23 @@ export function resolveKaizenPreCommitRev(pluginRoot?: string): string {
     const parsed = JSON.parse(pluginJson) as { version?: unknown };
     if (typeof parsed.version === 'string' && parsed.version.trim() !== '') {
       const version = parsed.version.trim();
-      return version.startsWith('v') ? version : `v${version}`;
+      const tag = version.startsWith('v') ? version : `v${version}`;
+      try {
+        execFileSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${tag}^{commit}`], {
+          cwd: root,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        });
+        return tag;
+      } catch {
+        // Do not emit an unfetchable provider rev. The plugin version is only
+        // a valid pre-commit rev once the corresponding git tag exists.
+      }
     }
   }
 
   try {
-    return execSync('git rev-parse --short=12 HEAD', { cwd: root, encoding: 'utf-8', stdio: 'pipe' }).trim();
+    return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: root, encoding: 'utf-8', stdio: 'pipe' }).trim();
   } catch {
     return 'main';
   }
