@@ -2,8 +2,10 @@
  * Integration tests for pr-review-loop.ts — the TypeScript port.
  *
  * Tests mirror (and exceed) the bash tests in tests/test-pr-review-loop.sh.
- * Each test creates a temporary STATE_DIR, runs the hook via `npx tsx`
- * with simulated JSON stdin, and verifies both stdout AND state files.
+ * Each test creates a temporary STATE_DIR and verifies both hook output and
+ * state files. A small smoke set runs the real project-local `tsx` entrypoint; repeated
+ * state-machine assertions use processHookInput directly to avoid paying
+ * subprocess startup cost for every behavior.
  *
  * Parity checklist vs bash tests:
  * [x] pr_url_to_state_file produces repo-specific keys
@@ -32,7 +34,7 @@
  * [x] Auto-merge (--auto) flag produces awaiting_merge state
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -41,11 +43,13 @@ import { expectedPrReviewDimensions } from '../review-sentinel.js';
 
 /** Run hook with raw string as stdin (for testing malformed input). */
 function runHookRaw(rawStdin: string, extraEnv: Record<string, string> = {}): string {
-  const escaped = rawStdin.replace(/'/g, "'\\''");
   try {
-    return execSync(
-      `printf '%s' '${escaped}' | npx tsx "${HOOK_PATH}"`,
+    return execFileSync(
+      process.execPath,
+      ['--import', 'tsx', HOOK_PATH],
       {
+        cwd: REPO_ROOT,
+        input: rawStdin,
         encoding: 'utf-8',
         env: { ...process.env, STATE_DIR: testStateDir, ...extraEnv },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -58,8 +62,12 @@ function runHookRaw(rawStdin: string, extraEnv: Record<string, string> = {}): st
 }
 
 let testStateDir: string;
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const HOOK_PATH = path.resolve(__dirname, 'pr-review-loop.ts');
 const PR_REVIEW_LOOP_SOURCE = fs.readFileSync(HOOK_PATH, 'utf-8');
+const TEST_BRANCH = execSync('git rev-parse --abbrev-ref HEAD', {
+  encoding: 'utf-8',
+}).trim();
 
 beforeEach(() => {
   testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-test-'));
@@ -107,9 +115,12 @@ describe('branch helper source invariant', () => {
 function runHook(input: object): string {
   const json = JSON.stringify(input);
   try {
-    return execSync(
-      `echo '${json.replace(/'/g, "'\\''")}' | npx tsx "${HOOK_PATH}"`,
+    return execFileSync(
+      process.execPath,
+      ['--import', 'tsx', HOOK_PATH],
       {
+        cwd: REPO_ROOT,
+        input: json,
         encoding: 'utf-8',
         env: { ...process.env, STATE_DIR: testStateDir },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -120,6 +131,21 @@ function runHook(input: object): string {
     // Hook always exits 0, but if it exits 0 with output, execSync still works
     return err.stdout?.trim?.() ?? '';
   }
+}
+
+/** Run the hook state machine directly and return the user-visible message. */
+function runHookDecision(
+  input: object,
+  options: Parameters<typeof processHookInput>[1] = {},
+): string {
+  const decision = processHookInput(input as any, {
+    stateDir: testStateDir,
+    branch: TEST_BRANCH,
+    repoFromGit: 'Garsson-io/kaizen',
+    isMergeFromMainPush: () => false,
+    ...options,
+  });
+  return decision.message?.trim() ?? '';
 }
 
 /** Create a state file directly for test setup. */
@@ -203,7 +229,7 @@ describe('pr-review-loop: PR create', () => {
   });
 
   it('records LAST_REVIEWED_SHA (kaizen #117)', () => {
-    runHook(prCreateInput('https://github.com/Garsson-io/kaizen/pull/200'));
+    runHookDecision(prCreateInput('https://github.com/Garsson-io/kaizen/pull/200'));
     const state = readState('Garsson-io_kaizen_200');
     expect(state.LAST_REVIEWED_SHA).toBeTruthy();
   });
@@ -245,10 +271,10 @@ describe('pr-review-loop: PR create', () => {
 
 describe('pr-review-loop: two repos', () => {
   it('creates independent state files for different repos', () => {
-    runHook(
+    runHookDecision(
       prCreateInput('https://github.com/Garsson-io/garsson-prints/pull/2'),
     );
-    runHook(prCreateInput('https://github.com/Garsson-io/kaizen/pull/40'));
+    runHookDecision(prCreateInput('https://github.com/Garsson-io/kaizen/pull/40'));
 
     expect(
       fs.existsSync(path.join(testStateDir, 'Garsson-io_garsson-prints_2')),
@@ -261,14 +287,12 @@ describe('pr-review-loop: two repos', () => {
 
 describe('pr-review-loop: git push', () => {
   it('exits silently with no active state', () => {
-    const output = runHook(gitPushInput());
+    const output = runHookDecision(gitPushInput());
     expect(output).toBe('');
   });
 
   it('increments round for same-branch state', () => {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-    }).trim();
+    const branch = TEST_BRANCH;
     createState('Garsson-io_kaizen_80', {
       PR_URL: 'https://github.com/Garsson-io/kaizen/pull/80',
       ROUND: '1',
@@ -298,7 +322,7 @@ describe('pr-review-loop: cross-worktree isolation', () => {
       BRANCH: 'wt/other-worktree-branch',
     });
 
-    const output = runHook(gitPushInput());
+    const output = runHookDecision(gitPushInput());
     expect(output).toBe('');
 
     // Verify other branch's state was NOT modified
@@ -314,14 +338,12 @@ describe('pr-review-loop: cross-worktree isolation', () => {
       'PR_URL=https://github.com/Garsson-io/kaizen/pull/50\nROUND=1\nSTATUS=needs_review\n',
     );
 
-    const output = runHook(gitPushInput());
+    const output = runHookDecision(gitPushInput());
     expect(output).toBe('');
   });
 
   it('ignores stale state (>MAX_STATE_AGE)', () => {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-    }).trim();
+    const branch = TEST_BRANCH;
     const f = path.join(testStateDir, 'Garsson-io_kaizen_90');
     fs.writeFileSync(
       f,
@@ -331,7 +353,7 @@ describe('pr-review-loop: cross-worktree isolation', () => {
     const pastTime = new Date(Date.now() - 3 * 60 * 60 * 1000);
     fs.utimesSync(f, pastTime, pastTime);
 
-    const output = runHook(gitPushInput());
+    const output = runHookDecision(gitPushInput());
     expect(output).toBe('');
   });
 });
@@ -361,9 +383,7 @@ describe('pr-review-loop: gh pr diff', () => {
   }
 
   function createPendingReviewState(prNumber: string, round: string = '1'): void {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-    }).trim();
+    const branch = TEST_BRANCH;
     createState(`Garsson-io_kaizen_${prNumber}`, {
       PR_URL: `https://github.com/Garsson-io/kaizen/pull/${prNumber}`,
       ROUND: round,
@@ -373,9 +393,7 @@ describe('pr-review-loop: gh pr diff', () => {
   }
 
   it('outputs checklist and transitions to passed (with sentinel)', () => {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-    }).trim();
+    const branch = TEST_BRANCH;
     createState('Garsson-io_kaizen_55', {
       PR_URL: 'https://github.com/Garsson-io/kaizen/pull/55',
       ROUND: '2',
@@ -384,7 +402,7 @@ describe('pr-review-loop: gh pr diff', () => {
     });
     writeSentinel('Garsson-io_kaizen_55', '2');
 
-    const output = runHook(
+    const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/55'),
     );
     expect(output).toContain('REVIEW ROUND 2/4');
@@ -408,7 +426,7 @@ describe('pr-review-loop: gh pr diff', () => {
     createPendingReviewState('1559', '1');
     writeSentinel('Garsson-io_kaizen_1559', '3');
 
-    const output = runHook(
+    const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/1559'),
     );
 
@@ -424,7 +442,7 @@ describe('pr-review-loop: gh pr diff', () => {
     writeSentinel('Garsson-io_kaizen_1560', '2');
     fs.writeFileSync(path.join(testStateDir, 'Garsson-io_kaizen_1560.reviewed-r4'), 'not json\n');
 
-    const output = runHook(
+    const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/1560'),
     );
 
@@ -438,7 +456,7 @@ describe('pr-review-loop: gh pr diff', () => {
     createPendingReviewState('1561', '2');
     writeSentinel('Garsson-io_kaizen_1561', '1');
 
-    const output = runHook(
+    const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/1561'),
     );
 
@@ -460,7 +478,7 @@ describe('pr-review-loop: gh pr diff', () => {
       totalDone: covered.length,
     });
 
-    const output = runHook(
+    const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/1038'),
     );
 
@@ -479,7 +497,7 @@ describe('pr-review-loop: gh pr diff', () => {
       totalMissing: 1,
     });
 
-    const output = runHook(
+    const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/1040'),
     );
 
@@ -499,7 +517,7 @@ describe('pr-review-loop: gh pr diff', () => {
       totalDone: prDimensions.length,
     });
 
-    const output = runHook(
+    const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/1039'),
     );
 
@@ -509,9 +527,7 @@ describe('pr-review-loop: gh pr diff', () => {
   });
 
   it('records LAST_REVIEWED_SHA (kaizen #117)', () => {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-    }).trim();
+    const branch = TEST_BRANCH;
     createState('Garsson-io_kaizen_201', {
       PR_URL: 'https://github.com/Garsson-io/kaizen/pull/201',
       ROUND: '1',
@@ -520,7 +536,7 @@ describe('pr-review-loop: gh pr diff', () => {
     });
     writeSentinel('Garsson-io_kaizen_201', '1');
 
-    runHook(prDiffInput('https://github.com/Garsson-io/kaizen/pull/201'));
+    runHookDecision(prDiffInput('https://github.com/Garsson-io/kaizen/pull/201'));
 
     const state = readState('Garsson-io_kaizen_201');
     expect(state.LAST_REVIEWED_SHA).toBeTruthy();
@@ -530,7 +546,7 @@ describe('pr-review-loop: gh pr diff', () => {
     createPendingReviewState('997', '1');
     fs.closeSync(fs.openSync(path.join(testStateDir, 'Garsson-io_kaizen_997.reviewed-r1'), 'w'));
 
-    const output = runHook(
+    const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/997'),
     );
 
@@ -544,7 +560,7 @@ describe('pr-review-loop: gh pr diff', () => {
     createPendingReviewState('998', '1');
     fs.writeFileSync(path.join(testStateDir, 'Garsson-io_kaizen_998.reviewed-r1'), `reviewed_at=${new Date().toISOString()}\n`);
 
-    const output = runHook(
+    const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/998'),
     );
 
@@ -572,9 +588,7 @@ describe('pr-review-loop: gh pr diff', () => {
   });
 
   it('exits silently when already passed', () => {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-    }).trim();
+    const branch = TEST_BRANCH;
     createState('Garsson-io_kaizen_56', {
       PR_URL: 'https://github.com/Garsson-io/kaizen/pull/56',
       ROUND: '2',
@@ -582,7 +596,7 @@ describe('pr-review-loop: gh pr diff', () => {
       BRANCH: branch,
     });
 
-    const output = runHook(
+    const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/56'),
     );
     expect(output).toBe('');
@@ -591,7 +605,7 @@ describe('pr-review-loop: gh pr diff', () => {
 
 describe('pr-review-loop: gh pr merge', () => {
   it('outputs post-merge checklist with all items', () => {
-    const output = runHook(
+    const output = runHookDecision(
       prMergeInput('https://github.com/Garsson-io/kaizen/pull/42'),
     );
     expect(output).toContain('Kaizen reflection');
@@ -602,16 +616,14 @@ describe('pr-review-loop: gh pr merge', () => {
   });
 
   it('creates post-merge state file', () => {
-    runHook(prMergeInput('https://github.com/Garsson-io/kaizen/pull/42'));
+    runHookDecision(prMergeInput('https://github.com/Garsson-io/kaizen/pull/42'));
     const state = readState('post-merge-Garsson-io_kaizen_42');
     expect(state.STATUS).toBe('needs_post_merge');
     expect(state.PR_URL).toBe('https://github.com/Garsson-io/kaizen/pull/42');
   });
 
   it('cleans up review state file on merge', () => {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-    }).trim();
+    const branch = TEST_BRANCH;
     createState('Garsson-io_kaizen_42', {
       PR_URL: 'https://github.com/Garsson-io/kaizen/pull/42',
       ROUND: '2',
@@ -619,14 +631,14 @@ describe('pr-review-loop: gh pr merge', () => {
       BRANCH: branch,
     });
 
-    runHook(prMergeInput('https://github.com/Garsson-io/kaizen/pull/42'));
+    runHookDecision(prMergeInput('https://github.com/Garsson-io/kaizen/pull/42'));
     expect(
       fs.existsSync(path.join(testStateDir, 'Garsson-io_kaizen_42')),
     ).toBe(false);
   });
 
   it('creates awaiting_merge state for --auto flag', () => {
-    runHook(
+    runHookDecision(
       prMergeInput(
         'https://github.com/Garsson-io/kaizen/pull/42',
         '--squash --auto',
@@ -637,7 +649,7 @@ describe('pr-review-loop: gh pr merge', () => {
   });
 
   it('warns when PR URL cannot be determined', () => {
-    const output = runHook({
+    const output = runHookDecision({
       tool_input: { command: 'gh pr merge' },
       tool_response: { stdout: 'merged something', stderr: '', exit_code: '0' },
     });
@@ -647,9 +659,7 @@ describe('pr-review-loop: gh pr merge', () => {
 
 describe('pr-review-loop: escalation', () => {
   it('escalates after MAX_ROUNDS pushes', () => {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-    }).trim();
+    const branch = TEST_BRANCH;
     createState('Garsson-io_kaizen_60', {
       PR_URL: 'https://github.com/Garsson-io/kaizen/pull/60',
       ROUND: '4',
@@ -671,9 +681,7 @@ describe('pr-review-loop: escalation', () => {
   });
 
   it('exits silently after escalation', () => {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-    }).trim();
+    const branch = TEST_BRANCH;
     createState('Garsson-io_kaizen_60', {
       PR_URL: 'https://github.com/Garsson-io/kaizen/pull/60',
       ROUND: '4',
@@ -681,7 +689,7 @@ describe('pr-review-loop: escalation', () => {
       BRANCH: branch,
     });
 
-    const output = runHook(gitPushInput());
+    const output = runHookDecision(gitPushInput());
     expect(output).toBe('');
   });
 });
@@ -693,7 +701,7 @@ describe('pr-review-loop: failed commands ignored', () => {
   });
 
   it('exits silently on non-zero exit code', () => {
-    const output = runHook({
+    const output = runHookDecision({
       tool_input: { command: 'gh pr create' },
       tool_response: { stdout: '', stderr: 'error', exit_code: '1' },
     });
@@ -703,7 +711,7 @@ describe('pr-review-loop: failed commands ignored', () => {
 
 describe('pr-review-loop: non-PR commands ignored', () => {
   it('exits silently for npm run build', () => {
-    const output = runHook({
+    const output = runHookDecision({
       tool_input: { command: 'npm run build' },
       tool_response: { stdout: 'done', stderr: '', exit_code: '0' },
     });
@@ -715,7 +723,7 @@ describe('pr-review-loop: non-PR commands ignored', () => {
 // Gate transitions must verify structured outcomes, not just command detection.
 // Parameterized over all gate transitions in the system.
 describe('INVARIANT: gate transitions verify outcome, not just trigger command', () => {
-  const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
+  const branch = TEST_BRANCH;
   const PR_URL = 'https://github.com/Garsson-io/kaizen/pull/999';
 
   const gates = [
