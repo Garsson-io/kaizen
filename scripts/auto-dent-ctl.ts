@@ -476,7 +476,7 @@ export function buildBatchReflection(batch: BatchInfo): BatchReflection {
 
   // Insight: failure class distribution
   const failureClasses = scores.map(s => s.failure_class);
-  const nonSuccessClasses = failureClasses.filter(fc => fc !== 'success' && fc !== 'empty_success');
+  const nonSuccessClasses = failureClasses.filter(fc => fc !== 'success' && fc !== 'empty_success' && fc !== 'no_op');
   if (nonSuccessClasses.length >= 2) {
     const dist = formatFailureDistribution(nonSuccessClasses);
     insights.push({

@@ -54,6 +54,7 @@ import {
   populateCrossBatchSteering,
   shouldRunCodexProvider,
 } from './auto-dent-run.js';
+import { deriveRunTestHealth } from './auto-dent-test-health.js';
 import * as github from './auto-dent-github.js';
 import { makeBatchState, makeRunResult } from './auto-dent-test-utils.js';
 import { decideAutoMergeSafety } from './auto-dent-merge-policy.js';
@@ -3582,6 +3583,18 @@ describe('auto-merge verdict binding wiring (#1220)', () => {
     expect(callSite).toContain("provider: state.provider ?? 'claude'");
   });
 
+  it('feeds observed run-level test health into the merge decision (#1527)', () => {
+    const callSite = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeDecision = decideAutoMergeSafety({'),
+      AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeQueue = queueAutoMerge('),
+    );
+    expect(callSite).toContain('testHealth');
+    const derivationIndex = AUTO_DENT_RUN_SOURCE.indexOf('const testHealth = deriveRunTestHealth({ runLog });');
+    const decisionIndex = AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeDecision = decideAutoMergeSafety({');
+    expect(derivationIndex).toBeGreaterThan(-1);
+    expect(derivationIndex).toBeLessThan(decisionIndex);
+  });
+
   it('stream → verdict → gate: a degraded claude run is blocked from auto-merge end-to-end', () => {
     // Build a REAL degraded verdict by replaying a captured plugins:[] system.init
     // through the production stream processor (the same path main() uses), then feed
@@ -3632,6 +3645,37 @@ describe('auto-merge verdict binding wiring (#1220)', () => {
       provider: state.provider ?? 'claude',
     });
     expect(decision.allow).toBe(true);
+  });
+
+  it('run log → testHealth → gate: an observed unowned test failure blocks auto-merge end-to-end', () => {
+    const testHealth = deriveRunTestHealth({
+      runLog: 'FAILED FILES:\n  - test-unowned-hook\n',
+      load: () => ({ ok: true, errors: [], entries: [] }),
+    });
+    expect(testHealth).toBe('unowned-failures');
+
+    const result = makeRunResult({ prs: ['https://github.com/Garsson-io/kaizen/pull/1527'] });
+    const ctx: StreamContext = { provider: 'claude' };
+    processStreamMessage(
+      { type: 'system', subtype: 'init', session_id: 'healthyhooks1527', model: 'claude-opus-4-6', plugins: [{ name: 'kaizen' }] },
+      result,
+      Date.now(),
+      ctx,
+    );
+
+    const state = makeBatchState({ test_task: false });
+    const decision = decideAutoMergeSafety({
+      prCount: result.prs.length,
+      reviewRequired: !state.test_task,
+      reviewVerdict: 'pass',
+      processVerdict: 'pass',
+      lifecycleHealth: 'clean',
+      hookActivation: result.hookActivation,
+      provider: state.provider ?? 'claude',
+      testHealth,
+    });
+    expect(decision.allow).toBe(false);
+    expect(decision.reasons).toContain('test health unowned-failures (failing test with no owning open issue, #1518)');
   });
 });
 

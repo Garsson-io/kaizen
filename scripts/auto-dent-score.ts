@@ -16,6 +16,7 @@ import { hasHookRejection } from './hook-signals.js';
  */
 export type FailureClass =
   | 'success'           // exit 0, produced artifacts (PRs or issues)
+  | 'no_op'             // exit 0, no artifacts, but a conscious STOP/skip/no-op
   | 'empty_success'     // exit 0 but no PRs/issues (wasted run)
   | 'hook_rejection'    // hook blocked the PR/commit
   | 'issue_blocked'     // picked an issue that couldn't be resolved
@@ -30,19 +31,33 @@ export type FailureClass =
  *
  * Classification priority:
  *   1. exit 0 + artifacts → 'success'
- *   2. exit 0 + no artifacts → 'empty_success'
- *   3. Log-based heuristics (hook_rejection, infrastructure, timeout, scope_overflow, issue_blocked)
- *   4. Fallback to 'crash' for non-zero exit, 'unknown' otherwise
+ *   2. exit 0 + no artifacts + STOP/claimed-work marker → 'no_op'
+ *   3. exit 0 + no artifacts → 'empty_success'
+ *   4. Log-based heuristics (hook_rejection, infrastructure, timeout, scope_overflow, issue_blocked)
+ *   5. Fallback to 'crash' for non-zero exit, 'unknown' otherwise
  */
 export function classifyFailure(
   metrics: RunMetrics,
   logOutput?: string,
 ): FailureClass {
   const hasArtifacts = metrics.prs.length > 0 || metrics.issues_filed.length > 0 || metrics.issues_closed.length > 0;
+  const log = logOutput?.toLowerCase() ?? '';
 
   if (metrics.exit_code === 0 && hasArtifacts) return 'success';
   // Contemplate/reflect runs are strategic — they don't produce PRs by design (#631)
   if (metrics.exit_code === 0 && !hasArtifacts && (metrics.mode === 'contemplate' || metrics.mode === 'reflect')) return 'success';
+  if (
+    metrics.exit_code === 0 &&
+    !hasArtifacts &&
+    (metrics.stop_requested ||
+      log.includes('already claimed') ||
+      log.includes('already claims the work') ||
+      log.includes('legitimate no-op') ||
+      log.includes('noop') ||
+      log.includes('no-op'))
+  ) {
+    return 'no_op';
+  }
   if (metrics.exit_code === 0 && !hasArtifacts) return 'empty_success';
 
   if (logOutput) {
@@ -52,7 +67,6 @@ export function classifyFailure(
     if (hasHookRejection(logOutput)) {
       return 'hook_rejection';
     }
-    const log = logOutput.toLowerCase();
     // Legacy fallback: pre-commit / framework hooks that don't speak the kaizen
     // structured contract still surface as English prose. Kept as a safety net.
     if (log.includes('hook rejected') || log.includes('hook blocked') || log.includes('pre-commit hook') || log.includes('hook failed')) {
@@ -93,6 +107,7 @@ export function classifyFailure(
 export function failureClassLabel(fc: FailureClass): string {
   const labels: Record<FailureClass, string> = {
     success: 'ok',
+    no_op: 'noop',
     empty_success: 'empty',
     hook_rejection: 'hook',
     issue_blocked: 'blocked',
