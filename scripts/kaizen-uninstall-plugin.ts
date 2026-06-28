@@ -30,6 +30,7 @@ import {
 import { join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { parseJsonObject } from '../src/lib/json-value.js';
 
 export interface UninstallOpts {
   plugin: string;
@@ -64,9 +65,7 @@ function shortNameOf(plugin: string): string {
 
 function readJsonOrNull(path: string): Record<string, unknown> | null {
   try {
-    const raw = readFileSync(path, 'utf-8');
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    return parseJsonObject(readFileSync(path, 'utf-8'));
   } catch {
     return null;
   }
