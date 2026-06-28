@@ -8,6 +8,8 @@
  * - review finding metadata shape
  */
 
+import { parseJsonMetaComment } from './lib/meta-comment.js';
+
 export type FindingStatus = 'DONE' | 'PARTIAL' | 'MISSING';
 
 export interface ReviewFinding {
@@ -302,11 +304,5 @@ export function parseReviewFindingMeta(value: unknown): ReviewFindingMeta | null
 }
 
 export function extractReviewFindingMeta(content: string): ReviewFindingMeta | null {
-  const match = content.match(/<!-- meta:(\{.*?\}) -->/);
-  if (!match) return null;
-  try {
-    return parseReviewFindingMeta(JSON.parse(match[1]));
-  } catch {
-    return null;
-  }
+  return parseReviewFindingMeta(parseJsonMetaComment(content));
 }

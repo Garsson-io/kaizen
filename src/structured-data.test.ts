@@ -357,6 +357,12 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     // Pre-revert this threw via `if (target.kind !== 'pr') throw`; now it stores like any target.
     expect(() => storeReviewSummary(issue, 3)).not.toThrow();
   });
+
+  it('keeps review summary verdict metadata on the shared meta-comment parser', () => {
+    const source = readFileSync(new URL('./structured-data.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toMatch(/\.match\(\s*\/\^<!--\s*meta:/);
+  });
 });
 
 describe('storePlan + retrievePlan — round-trip', () => {

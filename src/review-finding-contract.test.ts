@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   normalizeFindingStatus,
   deriveVerdictFromFindings,
@@ -48,6 +49,12 @@ describe('review-finding-contract', () => {
     });
     const content = `<!-- meta:${JSON.stringify(meta)} -->\n### correctness — FAIL`;
     expect(extractReviewFindingMeta(content)).toEqual(meta);
+  });
+
+  it('keeps review finding metadata on the shared meta-comment parser', () => {
+    const source = readFileSync(new URL('./review-finding-contract.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toMatch(/\.match\(\s*\/<!--\s*meta:/);
   });
 });
 
