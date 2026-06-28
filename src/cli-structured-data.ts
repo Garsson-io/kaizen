@@ -163,10 +163,14 @@ function writeSentinelRecord(
     dimensionsReviewed,
     ...totals,
   });
-  mkdirSync(stateDir, { recursive: true });
+  // Owner-only dir + file (0o700/0o600): the sentinel gates merges, so it must
+  // not be readable/tamperable by other users of a shared /tmp — matching the
+  // hook path's `ensureStateDir` posture and closing CWE-377/378 (insecure temp
+  // file). The deterministic name is required by the reader/writer contract.
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   // Shared path SSOT so the writer can never drift from the hook reader (#1481).
   const path = reviewSentinelPath(stateDir, prUrl, round);
-  writeFileSync(path, serializeReviewSentinel(record));
+  writeFileSync(path, serializeReviewSentinel(record), { mode: 0o600 });
   return path;
 }
 
