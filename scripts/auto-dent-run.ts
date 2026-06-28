@@ -22,7 +22,7 @@
 
 import { spawn, execFileSync, execSync } from 'child_process';
 import { createHash } from 'crypto';
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, join, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
@@ -606,7 +606,7 @@ export function buildTemplateVars(
   state: BatchState,
   runNum: number,
   logDir?: string,
-  options: { claimPlanItem?: boolean } = {},
+  options: { claimPlanItem?: boolean; preferredPlanIssue?: string; modeSelection?: ModeSelection } = {},
 ): Record<string, string> {
   const runTag = `${state.batch_id}/run-${runNum}`;
   const hostRepo = state.host_repo || state.kaizen_repo || 'unknown';
@@ -619,7 +619,7 @@ export function buildTemplateVars(
   let reflectionInsights = '';
   let priorReflections = '';
   if (logDir) {
-    const planItem = shouldClaimPlanItem ? claimNextItem(logDir) : null;
+    const planItem = shouldClaimPlanItem ? claimNextItem(logDir, { preferredIssue: options.preferredPlanIssue }) : null;
     if (planItem) {
       claimedPlanIssue = planItem.issue;
       const lines = [
@@ -719,7 +719,7 @@ export function buildTemplateVars(
   const crossBatchSteeringText = crossBatchSteering.length > 0
     ? crossBatchSteering.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
-  const modeSelection = selectMode(state, runNum);
+  const modeSelection = options.modeSelection ?? selectMode(state, runNum, { logDir });
   const manifestPath = logDir
     ? candidateTaskManifestPath(logDir, runNum)
     : `run-${runNum}-candidate-tasks-manifest.json`;
@@ -784,6 +784,8 @@ export interface ModeSelection {
   template: string;
   /** Why this mode was selected (signal name, 'schedule', 'guidance', or 'bandit') */
   reason: string;
+  /** Preferred plan issue to claim when this selection is manifest-forced (#1213). */
+  targetIssue?: string;
   /** Full bandit breakdown when the selection came from the UCB1 policy (reason === 'bandit') */
   bandit?: BanditResult;
 }
@@ -1291,18 +1293,86 @@ export function weightedModeSelect(
   return entries[entries.length - 1][0];
 }
 
+function normalizeIssueRef(ref: string): string | null {
+  const match = ref.match(/(?:issues\/|#)?(\d+)\b/);
+  return match ? `#${match[1]}` : null;
+}
+
+function firstCandidateIssueRef(raw: unknown): string | null {
+  const parsed = typeof raw === 'string' ? parseJsonObject(raw) : raw;
+  if (!parsed || typeof parsed !== 'object') return null;
+  const candidates = (parsed as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates) || candidates.length === 0) return null;
+  const first = candidates[0];
+  if (!first || typeof first !== 'object') return null;
+  const suggestedMode = (first as { suggested_mode?: unknown }).suggested_mode;
+  if (typeof suggestedMode === 'string' && suggestedMode !== 'exploit') return null;
+  const refs = (first as { refs?: unknown }).refs;
+  if (!Array.isArray(refs)) return null;
+  for (const ref of refs) {
+    if (typeof ref !== 'string') continue;
+    const issue = normalizeIssueRef(ref);
+    if (issue) return issue;
+  }
+  return null;
+}
+
+function recentCandidateManifestPaths(logDir: string): string[] {
+  try {
+    return readdirSync(logDir)
+      .map((name) => {
+        const match = name.match(/^run-(\d+)-candidate-tasks-manifest\.json$/);
+        return match ? { name, run: Number(match[1]) } : null;
+      })
+      .filter((entry): entry is { name: string; run: number } => Boolean(entry))
+      .sort((a, b) => b.run - a.run)
+      .map((entry) => join(logDir, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function selectManifestForcedTarget(logDir: string | undefined, threshold = 2): string | null {
+  if (!logDir || threshold <= 0) return null;
+  const plan = readPlan(logDir);
+  if (!plan) return null;
+  const pending = new Set(plan.items.filter((item) => item.status === 'pending').map((item) => item.issue));
+  if (pending.size === 0) return null;
+
+  const issues = recentCandidateManifestPaths(logDir)
+    .map((path) => {
+      try {
+        return firstCandidateIssueRef(readFileSync(path, 'utf8'));
+      } catch {
+        return null;
+      }
+    })
+    .filter((issue): issue is string => Boolean(issue));
+  if (issues.length < threshold) return null;
+
+  const target = issues[0];
+  const repeated = issues.slice(0, threshold).every((issue) => issue === target);
+  return repeated && pending.has(target) ? target : null;
+}
+
 /**
  * Select the cognitive mode for a given run.
  *
  * Priority (highest first):
  *   1. Guidance override: "mode:<name>" in guidance forces that mode
  *   2. Test task: always exploit with test template
- *   3. Signal-driven: reactive to batch state (failures, stalls, streaks)
- *   4. Contemplate overlay: every 15th run for strategic assessment
- *   5. Bandit selection: UCB1 explore/exploit weighting from run history
- *   6. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
+ *   3. Manifest-forced: repeated explore manifests bind a pending plan target
+ *   4. Signal-driven: reactive to batch state (failures, stalls, streaks)
+ *   5. Contemplate overlay: every 15th run for strategic assessment
+ *   6. Bandit selection: UCB1 explore/exploit weighting from run history
+ *   7. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
  */
-export function selectMode(state: BatchState, runNum: number): ModeSelection {
+export interface SelectModeOptions {
+  logDir?: string;
+  manifestForceThreshold?: number;
+}
+
+export function selectMode(state: BatchState, runNum: number, options: SelectModeOptions = {}): ModeSelection {
   // Force mode from guidance (e.g., "mode:explore")
   const modeOverride = state.guidance.match(/\bmode:(\w+)/i);
   if (modeOverride) {
@@ -1317,6 +1387,16 @@ export function selectMode(state: BatchState, runNum: number): ModeSelection {
   // Test task always uses test template
   if (state.test_task) {
     return { mode: 'exploit', template: 'test-task.md', reason: 'test-task' };
+  }
+
+  const manifestTarget = selectManifestForcedTarget(options.logDir, options.manifestForceThreshold);
+  if (manifestTarget) {
+    return {
+      mode: 'exploit',
+      template: MODE_TEMPLATES.exploit,
+      reason: 'manifest-forced',
+      targetIssue: manifestTarget,
+    };
   }
 
   // Signal-driven overrides (reactive to batch state)
@@ -1427,9 +1507,13 @@ export function populateCrossBatchSteering(
 }
 
 export function buildPromptWithMetadata(state: BatchState, runNum: number, logDir?: string): PromptMetadata {
-  const modeSelection = selectMode(state, runNum);
+  const modeSelection = selectMode(state, runNum, { logDir });
   const shouldClaimPlanItem = modeSelection.mode === 'exploit' && !state.test_task;
-  const vars = buildTemplateVars(state, runNum, logDir, { claimPlanItem: shouldClaimPlanItem });
+  const vars = buildTemplateVars(state, runNum, logDir, {
+    claimPlanItem: shouldClaimPlanItem,
+    preferredPlanIssue: modeSelection.targetIssue,
+    modeSelection,
+  });
   const claimedPlanIssue = vars.claimed_plan_issue || undefined;
 
   const templateFile = modeSelection.template;
@@ -1973,7 +2057,7 @@ async function runClaude(
   const ctx: StreamContext = { provider: 'claude' };
 
   const logDir = dirname(stateFile);
-  const modeSelection = selectMode(state, runNum);
+  const modeSelection = selectMode(state, runNum, { logDir });
   if (modeSelection.mode !== 'exploit' || modeSelection.reason !== 'schedule') {
     console.log(`  [mode] run #${runNum}: ${modeSelection.mode} (${modeSelection.reason}, template: ${modeSelection.template})`);
   }

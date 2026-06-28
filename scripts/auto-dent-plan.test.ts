@@ -446,6 +446,30 @@ describe('plan file operations', () => {
     expect(item!.issue).toBe('#451');
   });
 
+  it('claimNextItem claims a preferred pending issue before normal order', () => {
+    const plan = makePlan();
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const item = claimNextItem(tmpDir, { preferredIssue: '#451' });
+
+    expect(item).not.toBeNull();
+    expect(item!.issue).toBe('#451');
+    const updated = readPlan(tmpDir)!;
+    expect(updated.items.find((i) => i.issue === '#451')!.status).toBe('assigned');
+    expect(updated.items.find((i) => i.issue === '#302')!.status).toBe('pending');
+  });
+
+  it('claimNextItem falls back when preferred issue is not pending', () => {
+    const plan = makePlan();
+    plan.items.find((i) => i.issue === '#451')!.status = 'done';
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const item = claimNextItem(tmpDir, { preferredIssue: '#451' });
+
+    expect(item).not.toBeNull();
+    expect(item!.issue).toBe('#302');
+  });
+
   it('claimNextItem returns null when all items are done', () => {
     const plan = makePlan();
     plan.items.forEach((i) => (i.status = 'done'));

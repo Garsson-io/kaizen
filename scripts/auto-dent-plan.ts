@@ -601,9 +601,13 @@ export function readPlan(logDir: string): BatchPlan | null {
  * When the plan carries no themes, this reduces to the legacy behavior
  * (first pending item in plan/array order) — a strict no-op for theme-less plans.
  */
-export function selectNextItem(plan: BatchPlan): PlanItem | null {
+export function selectNextItem(plan: BatchPlan, preferredIssue?: string): PlanItem | null {
   const pending = plan.items.filter((i) => i.status === 'pending');
   if (pending.length === 0) return null;
+  if (preferredIssue) {
+    const preferred = pending.find((i) => i.issue === preferredIssue);
+    if (preferred) return preferred;
+  }
 
   const themes = plan.themes || [];
   if (themes.length > 0) {
@@ -629,11 +633,11 @@ export function selectNextItem(plan: BatchPlan): PlanItem | null {
 /**
  * Get the next item to work from a plan and mark it 'assigned' in the file.
  */
-export function claimNextItem(logDir: string): PlanItem | null {
+export function claimNextItem(logDir: string, options: { preferredIssue?: string } = {}): PlanItem | null {
   const plan = readPlan(logDir);
   if (!plan) return null;
 
-  const next = selectNextItem(plan);
+  const next = selectNextItem(plan, options.preferredIssue);
   if (!next) return null;
 
   next.status = 'assigned';
