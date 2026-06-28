@@ -30,6 +30,8 @@ import {
 import type { RunMetrics } from './auto-dent-run.js';
 import { makeBatchState } from './auto-dent-test-utils.js';
 
+const AUTO_DENT_CTL_SOURCE = readFileSync(new URL('./auto-dent-ctl.ts', import.meta.url), 'utf8');
+
 function makeBatchInfo(overrides: Partial<BatchInfo> = {}): BatchInfo {
   return {
     batchId: 'batch-260322-2100-a1b2',
@@ -768,6 +770,19 @@ describe('buildReflectionTemplateVars', () => {
 // Reflection persistence tests (#603)
 
 describe('persistReflectionSummary', () => {
+  it('routes reflection JSON persistence through shared JSON file contracts', () => {
+    const persistSection = AUTO_DENT_CTL_SOURCE.slice(
+      AUTO_DENT_CTL_SOURCE.indexOf('export function persistReflectionSummary'),
+      AUTO_DENT_CTL_SOURCE.indexOf('export interface AggregateBatchRecord'),
+    );
+
+    expect(persistSection).toContain('readJsonValueFile');
+    expect(persistSection).toContain('writeJsonValueFile');
+    expect(persistSection).not.toContain("JSON.parse(readFileSync(historyPath, 'utf8'))");
+    expect(persistSection).not.toContain('JSON.stringify(summary, null, 2)');
+    expect(persistSection).not.toContain('JSON.stringify(history, null, 2)');
+  });
+
   it('writes reflection-summary.json to the batch directory', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-persist-'));
     const batch = makeBatchInfo({
@@ -791,6 +806,7 @@ describe('persistReflectionSummary', () => {
     expect(data.insights).toBeInstanceOf(Array);
     expect(data.avoidIssues).toBeInstanceOf(Array);
     expect(data.timestamp).toBeTruthy();
+    expect(readFileSync(path!, 'utf8')).toMatch(/\n$/);
   });
 
   it('extracts issue numbers from failure insights into avoidIssues', () => {
@@ -857,6 +873,22 @@ describe('persistReflectionSummary', () => {
     history = JSON.parse(readFileSync(historyPath, 'utf8'));
     expect(history).toHaveLength(2);
     expect(history[1].insights[0].message).toBe('Testing works well');
+    expect(readFileSync(historyPath, 'utf8')).toMatch(/\n$/);
+  });
+
+  it('resets corrupted reflection history through the shared JSON reader contract', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'reflect-history-corrupt-'));
+    const batch = makeBatchInfo({ dir: tmpDir });
+    const historyPath = join(tmpDir, 'reflection-history.json');
+    writeFileSync(historyPath, '{not json');
+
+    const reflection = buildBatchReflection(batch);
+    reflection.insights = [{ type: 'recommendation', message: 'Fresh history' }];
+    persistReflectionSummary(batch, reflection);
+
+    const history = JSON.parse(readFileSync(historyPath, 'utf8'));
+    expect(history).toHaveLength(1);
+    expect(history[0].insights[0].message).toBe('Fresh history');
   });
 });
 

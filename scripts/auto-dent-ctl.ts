@@ -42,6 +42,7 @@ import {
 } from './batch-outcome.js';
 import { truncateDisplay } from './auto-dent-display.js';
 import { appendJsonLine, parseJsonLines } from '../src/lib/json-lines.js';
+import { readJsonValueFile, writeJsonValueFile } from '../src/lib/json-file.js';
 
 function getRepoRoot(): string {
   try {
@@ -686,18 +687,17 @@ export function persistReflectionSummary(
   };
 
   try {
-    writeFileSync(summaryPath, JSON.stringify(summary, null, 2) + '\n');
+    writeJsonValueFile(summaryPath, summary);
 
     // Append to reflection history so consecutive reflections can see prior conclusions
     const historyPath = join(batch.dir, 'reflection-history.json');
     let history: PersistedReflection[] = [];
-    try {
-      if (existsSync(historyPath)) {
-        history = JSON.parse(readFileSync(historyPath, 'utf8'));
-      }
-    } catch { /* start fresh if corrupted */ }
+    const persistedHistory = readJsonValueFile(historyPath);
+    if (Array.isArray(persistedHistory)) {
+      history = persistedHistory as PersistedReflection[];
+    }
     history.push(summary);
-    writeFileSync(historyPath, JSON.stringify(history, null, 2) + '\n');
+    writeJsonValueFile(historyPath, history);
 
     console.log(`  [reflect] persisted reflection summary to ${summaryPath} (history: ${history.length} entries)`);
     return summaryPath;

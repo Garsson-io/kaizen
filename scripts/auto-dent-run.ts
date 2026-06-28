@@ -22,7 +22,7 @@
 
 import { spawn, execFileSync, execSync } from 'child_process';
 import { createHash } from 'crypto';
-import { readFileSync, writeFileSync, appendFileSync, existsSync, renameSync, copyFileSync } from 'fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
@@ -58,6 +58,7 @@ import {
 } from './auto-dent-progress.js';
 import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
+import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -407,31 +408,16 @@ export { extractPlanText };
 // State I/O
 
 export function readState(stateFile: string): BatchState {
-  try {
-    return JSON.parse(readFileSync(stateFile, 'utf8'));
-  } catch {
-    // Primary file corrupt/missing — try backup
-    const bak = stateFile + '.bak';
-    if (existsSync(bak)) {
-      console.error(`[state-io] Primary state corrupt, falling back to ${bak}`);
-      return JSON.parse(readFileSync(bak, 'utf8'));
-    }
-    throw new Error(`State file corrupt and no backup available: ${stateFile}`);
-  }
+  const state = readDurableJsonValueFile(stateFile, {
+    backup: true,
+    onBackupRead: (bak) => console.error(`[state-io] Primary state corrupt, falling back to ${bak}`),
+  });
+  if (state && typeof state === 'object' && !Array.isArray(state)) return state as BatchState;
+  throw new Error(`State file corrupt and no backup available: ${stateFile}`);
 }
 
 export function writeState(stateFile: string, state: BatchState): void {
-  const tmp = stateFile + '.tmp';
-  const content = JSON.stringify(state, null, 2) + '\n';
-  // Validate we can round-trip before writing
-  JSON.parse(content);
-  // Backup current state before overwriting
-  if (existsSync(stateFile)) {
-    copyFileSync(stateFile, stateFile + '.bak');
-  }
-  // Atomic write: write to temp, then rename
-  writeFileSync(tmp, content);
-  renameSync(tmp, stateFile);
+  writeDurableJsonValueFile(stateFile, state, { backup: true });
 }
 
 // Resolve repo root
@@ -463,12 +449,14 @@ export function loadReflectionInsights(logDir: string): { text: string; avoidIss
   const summaryPath = resolve(logDir, 'reflection-summary.json');
   try {
     if (!existsSync(summaryPath)) return { text: '', avoidIssues: [] };
-    const raw = JSON.parse(readFileSync(summaryPath, 'utf8'));
-    const insights: Array<{ type: string; message: string }> = raw.insights || [];
-    if (insights.length === 0) return { text: '', avoidIssues: raw.avoidIssues || [] };
+    const raw = readJsonValueFile(summaryPath);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { text: '', avoidIssues: [] };
+    const summary = raw as Record<string, any>;
+    const insights: Array<{ type: string; message: string }> = Array.isArray(summary.insights) ? summary.insights : [];
+    if (insights.length === 0) return { text: '', avoidIssues: summary.avoidIssues || [] };
 
     const lines = [
-      `_Mid-batch reflection (after run ${raw.runCount}, success rate: ${(raw.successRate * 100).toFixed(0)}%):_`,
+      `_Mid-batch reflection (after run ${summary.runCount}, success rate: ${(summary.successRate * 100).toFixed(0)}%):_`,
       '',
     ];
     for (const insight of insights) {
@@ -478,7 +466,7 @@ export function loadReflectionInsights(logDir: string): { text: string; avoidIss
       lines.push(`- **[${icon}]** ${insight.message}`);
     }
 
-    return { text: lines.join('\n'), avoidIssues: raw.avoidIssues || [] };
+    return { text: lines.join('\n'), avoidIssues: summary.avoidIssues || [] };
   } catch {
     return { text: '', avoidIssues: [] };
   }
@@ -492,7 +480,7 @@ export function loadReflectionHistory(logDir: string): string {
   const historyPath = resolve(logDir, 'reflection-history.json');
   try {
     if (!existsSync(historyPath)) return '';
-    const entries = JSON.parse(readFileSync(historyPath, 'utf8'));
+    const entries = readJsonValueFile(historyPath);
     if (!Array.isArray(entries) || entries.length === 0) return '';
 
     return entries.map((entry: any, idx: number) => {

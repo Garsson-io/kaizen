@@ -2,7 +2,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readJsonObjectFile, readJsonValueFile, writeJsonObjectFile, writeJsonValueFile } from './json-file.js';
+import {
+  readDurableJsonValueFile,
+  readJsonObjectFile,
+  readJsonValueFile,
+  writeDurableJsonValueFile,
+  writeJsonObjectFile,
+  writeJsonValueFile,
+} from './json-file.js';
 
 let dir: string;
 
@@ -87,5 +94,38 @@ describe('writeJsonObjectFile', () => {
     writeJsonObjectFile(path, { ok: true });
 
     expect(readJsonObjectFile(path)).toEqual({ ok: true });
+  });
+});
+
+describe('durable JSON file contract', () => {
+  it('writes through a temp file and can back up the previous primary', () => {
+    const path = join(dir, 'state.json');
+
+    writeDurableJsonValueFile(path, { run: 1 }, { backup: true });
+    writeDurableJsonValueFile(path, { run: 2 }, { backup: true });
+
+    expect(readJsonValueFile(path)).toEqual({ run: 2 });
+    expect(readJsonValueFile(`${path}.bak`)).toEqual({ run: 1 });
+    expect(readFileSync(path, 'utf-8')).toMatch(/\n$/);
+    expect(readFileSync(`${path}.bak`, 'utf-8')).toMatch(/\n$/);
+    expect(() => readFileSync(`${path}.tmp`, 'utf-8')).toThrow();
+  });
+
+  it('reads a backup when the primary is missing or malformed', () => {
+    const path = join(dir, 'recoverable.json');
+    writeJsonValueFile(`${path}.bak`, { from: 'backup' });
+
+    expect(readDurableJsonValueFile(path, { backup: true })).toEqual({ from: 'backup' });
+
+    writeFileSync(path, '{not json');
+    expect(readDurableJsonValueFile(path, { backup: true })).toEqual({ from: 'backup' });
+  });
+
+  it('returns null when both durable primary and backup are unreadable', () => {
+    const path = join(dir, 'unrecoverable.json');
+    writeFileSync(path, '{not json');
+    writeFileSync(`${path}.bak`, '{also bad');
+
+    expect(readDurableJsonValueFile(path, { backup: true })).toBeNull();
   });
 });
