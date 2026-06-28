@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { parseSections, listSections, readSection, addSection, replaceSection, removeSection, listAttachments, readAttachment, writeAttachment, removeAttachment, listAttachmentSections, readAttachmentSection, addAttachmentSection, removeAttachmentSection, clearCommentCache, type AttachmentTarget } from './section-editor.js';
 
 vi.mock('node:child_process', () => ({
@@ -273,6 +274,12 @@ describe('listAttachments', () => {
   it('returns empty for no attachments', () => {
     ghReturns('');
     expect(listAttachments(issueAttach)).toEqual([]);
+  });
+
+  it('keeps comment JSONL parsing on the shared helper', () => {
+    const source = readFileSync(new URL('./section-editor.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('JSON.parse(line)');
   });
 });
 

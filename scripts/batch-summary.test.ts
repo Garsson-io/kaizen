@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { EventEnvelope } from './auto-dent-events.js';
@@ -69,6 +69,24 @@ describe('parseEventsFile', () => {
 
     const result = parseEventsFile(join(tmpDir, 'events.jsonl'));
     expect(result).toHaveLength(2);
+  });
+
+  it('parses CRLF JSONL while skipping blank and malformed lines', () => {
+    const first = JSON.stringify(makeCompleteEvent({ run_num: 1 }));
+    const second = JSON.stringify(makeCompleteEvent({ run_num: 2 }));
+    const content = `${first}\r\n\r\nnot-json\r\n${second}\r\n`;
+    writeFileSync(join(tmpDir, 'events.jsonl'), content);
+
+    const result = parseEventsFile(join(tmpDir, 'events.jsonl'));
+
+    expect(result.map(e => e.event.type)).toEqual(['run.complete', 'run.complete']);
+    expect(result).toHaveLength(2);
+  });
+
+  it('keeps JSONL parsing on the shared helper', () => {
+    const source = readFileSync(new URL('./batch-summary.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('JSON.parse(line)');
   });
 });
 

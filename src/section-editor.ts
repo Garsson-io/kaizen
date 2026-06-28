@@ -12,6 +12,7 @@
  */
 
 import { gh } from './lib/gh-exec.js';
+import { parseJsonLines } from './lib/json-lines.js';
 
 export type TargetKind = 'pr' | 'issue';
 
@@ -261,11 +262,12 @@ function fetchComments(target: AttachmentTarget): Array<{ url: string; body: str
       '--jq', '.[] | {url: .html_url, body: .body} | @json',
     ]);
     if (!raw) return [];
-    const results: Array<{ url: string; body: string }> = [];
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue;
-      try { results.push(JSON.parse(line)); } catch { continue; }
-    }
+    const results = parseJsonLines<Record<string, unknown>>(raw)
+      .filter(row => typeof row.body === 'string')
+      .map(row => ({
+        url: typeof row.url === 'string' ? row.url : '',
+        body: row.body as string,
+      }));
     // Only cache non-empty results — empty results may be from a new PR
     // with no comments yet, and the next call might be after a write.
     if (results.length > 0) {
