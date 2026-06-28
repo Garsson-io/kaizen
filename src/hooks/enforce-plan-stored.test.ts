@@ -465,6 +465,24 @@ describe('checkPlanBeforePr', () => {
     }
   });
 
+  it('DENIES when an earlier cd has a valid body file but the create cwd body lacks Impact proof', () => {
+    const good = mkdtempSync(join(tmpdir(), 'kaizen-pr-body-good-'));
+    const actual = mkdtempSync(join(tmpdir(), 'kaizen-pr-body-actual-'));
+    writeFileSync(join(good, 'body.md'), `${GOOD_IMPACT_SECTION}\n\nCloses #1055`);
+    writeFileSync(join(actual, 'body.md'), 'Closes #1055');
+    try {
+      const result = checkPlanBeforePr(
+        `cd "${good}" && cd "${actual}" && gh pr create --title "feat: test" --body-file body.md`,
+        makeDeps(),
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('impact-proof');
+    } finally {
+      rmSync(good, { recursive: true, force: true });
+      rmSync(actual, { recursive: true, force: true });
+    }
+  });
+
   it('DENIES when only an earlier non-create command has inline Impact proof', () => {
     const compound = `${ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`)}; gh pr create --title "feat: test" --body "Closes #1055"`;
     const result = checkPlanBeforePr(compound, makeDeps());
