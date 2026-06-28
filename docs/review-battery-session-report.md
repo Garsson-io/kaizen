@@ -75,7 +75,7 @@ Features:
 - Posted as a PR comment (best effort)
 - Recorded as `review_verdict` and `review_cost_usd` fields on the `RunCompleteEvent` in events.jsonl
 
-The review is **advisory, not blocking**. A failing review does not prevent merge. This is a v1 design decision -- the signal needs more validation before it should block.
+The original v1 review was advisory. Current auto-dent runs consume the verdict as a merge gate: a failing required review blocks auto-merge and disables any existing auto-merge request. Direct interactive `gh pr merge` commands are also guarded by the stored round verdict, with an explicit `KAIZEN_ALLOW_MERGE_ON_FAIL=1` human override.
 
 **kaizen-evaluate** (Phase 5.5): After plan formulation, agents run the plan-coverage review battery via the Agent tool. MISSING findings must be fixed before presenting the plan to the admin; PARTIAL findings are reviewed for intentional scope reductions.
 
@@ -213,12 +213,7 @@ Currently, review cost is tracked in events.jsonl (`review_cost_usd`) but not in
 
 ### Should failed reviews block merge in auto-dent?
 
-Currently the review is advisory. A failing review is logged, posted as a comment, and recorded in events -- but the PR still gets merged if it passes CI and code review. Making it blocking would require:
-1. Higher confidence in the 0% FP rate (27 findings is a small sample)
-2. A mechanism for human override (not all gaps are bugs -- some are intentional scope reductions)
-3. Integration with the auto-dent merge flow (currently `queueAutoMerge` doesn't check review results)
-
-The conservative approach: keep advisory for 2-3 more batches, measure FP rate, then decide.
+This has moved from advisory to binding for merge paths controlled by kaizen. Auto-dent blocks unsafe auto-merge queueing, direct `gh pr merge` is denied when the latest stored round derives `FAIL`, and the `Review verdict gate` GitHub Actions check can be marked required in branch protection for a non-Claude backstop. Human override remains explicit through `KAIZEN_ALLOW_MERGE_ON_FAIL=1`.
 
 ### Expanding review dimensions
 

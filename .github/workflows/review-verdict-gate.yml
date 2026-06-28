@@ -1,0 +1,35 @@
+name: Review verdict gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: review-verdict-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review-verdict:
+    name: Review verdict gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check latest stored review verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+        run: npx tsx scripts/review-verdict-status.ts --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER"

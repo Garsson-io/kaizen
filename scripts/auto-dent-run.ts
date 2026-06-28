@@ -83,6 +83,7 @@ export {
   type EpicSyncResult,
   type VerifyCloseResult,
 } from './auto-dent-github.js';
+import { decideAutoMergeSafety } from './auto-dent-merge-policy.js';
 
 export {
   EventEmitter,
@@ -1185,7 +1186,7 @@ Run tag: ${runTag}
    \`\`\`
 3. Commit with message: "test: probe ${runTag}"
 4. Create a PR: \`gh pr create --title "test: probe ${runTag}" --body "Synthetic test task for pipeline validation. Run tag: ${runTag}" --repo ${hostRepo}\`
-5. Queue auto-merge: \`gh pr merge <url> --repo ${hostRepo} --squash --delete-branch --auto\`
+5. Leave auto-merge to the harness after review verdicts are known
 
 Do not ask for confirmation. Complete all steps.`;
   } else {
@@ -1215,10 +1216,9 @@ Run to completion. Do not ask for confirmation — make autonomous decisions.`;
 
 ## Merge & Labeling Policy
 
-After creating a PR, you MUST queue it for auto-merge:
-  gh pr merge <url> --repo ${hostRepo} --squash --delete-branch --auto
-Do NOT leave PRs open for manual review — this is an unattended batch.
-The harness will also attempt auto-merge as a safety net, but do it yourself first.
+After creating a PR, do NOT run merge commands yourself.
+The auto-dent harness queues auto-merge after review verdicts and process evidence are known.
+Leave the PR open for the harness-owned terminal action.
 
 ## Stopping the Loop
 
@@ -1251,7 +1251,7 @@ Phases and their expected keys:
 | IMPLEMENT | Starting implementation | case=<case-id>, branch=<branch-name> |
 | TEST | After running tests | result=<pass/fail>, count=<number of tests> |
 | PR | After creating a PR | url=<PR URL> |
-| MERGE | After queuing auto-merge | url=<PR URL>, status=<queued/merged> |
+| MERGE | After the harness reports merge status | url=<PR URL>, status=<queued/merged/blocked> |
 | REFLECT | After reflection | issues_filed=<N>, lessons=<short summary> |
 
 Example:
@@ -2648,7 +2648,22 @@ async function main(): Promise<void> {
   // Post-run hygiene
   const progressIssue = ensureBatchProgressIssue(state, stateFile);
   labelArtifacts(result, 'auto-dent');
-  queueAutoMerge(result, state.host_repo || state.kaizen_repo);
+  const autoMergeDecision = decideAutoMergeSafety({
+    prCount: result.prs.length,
+    reviewRequired: !state.test_task,
+    reviewVerdict,
+    processVerdict,
+    lifecycleHealth,
+  });
+  const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);
+  if (!autoMergeDecision.allow) {
+    appendFileSync(logFile, `auto_merge_blocked=${autoMergeDecision.reasons.join('; ')}\n`);
+    if (autoMergeQueue.cancelFailed.length > 0) {
+      appendFileSync(logFile, `auto_merge_cancel_failed=${autoMergeQueue.cancelFailed.join(',')}\n`);
+    }
+  } else if (autoMergeQueue.queueFailed.length > 0) {
+    appendFileSync(logFile, `auto_merge_queue_failed=${autoMergeQueue.queueFailed.join(',')}\n`);
+  }
 
   for (const pr of result.prs) {
     const status = checkMergeStatus(pr);
@@ -2668,7 +2683,11 @@ async function main(): Promise<void> {
   // full batch, so PRs continue to be driven across the trampoline without any
   // single run blocking for long. `--auto` stays queued, so GitHub may still
   // merge a "timed_out" PR server-side after the batch ends.
-  const allBatchPRs = [...new Set([...state.prs, ...result.prs])];
+  const cancelFailed = new Set(autoMergeQueue.cancelFailed);
+  const unsafeCurrentPRs = autoMergeDecision.allow
+    ? new Set<string>()
+    : new Set(result.prs.filter((pr) => !cancelFailed.has(pr)));
+  const allBatchPRs = [...new Set([...state.prs, ...result.prs])].filter((pr) => !unsafeCurrentPRs.has(pr));
   if (allBatchPRs.length > 0) {
     const driveResults = driveBatchToMerge(allBatchPRs, {
       maxAttempts: 6,

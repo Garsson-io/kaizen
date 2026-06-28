@@ -64,14 +64,13 @@ already resolved, skip it and pick from the backlog as usual.
 
 After creating a PR, you MUST:
 
-1. Queue it for auto-merge:
-     gh pr merge <url> --repo {{host_repo}} --squash --delete-branch --auto
-   Do NOT leave PRs open for manual review — this is an unattended batch.
-   The harness will also attempt auto-merge as a safety net, but do it yourself first.
+1. Leave merge commands to the harness.
+   The auto-dent harness queues auto-merge after review verdicts and process evidence are known.
+   Do NOT run merge commands yourself; the harness owns the terminal action.
 
 2. Explicitly close every issue this PR fixes:
      gh issue close <num> --repo {{host_repo}}
-   Do this immediately after queueing auto-merge — do NOT rely on "Closes #N"
+   Do this after creating the PR — do NOT rely on "Closes #N"
    keywords in the PR body, because GitHub only auto-closes issues that way
    when the PR targets the repository's default branch. Explicit close always works.
 
@@ -131,7 +130,7 @@ Phases and their expected keys:
 | IMPLEMENT | Starting implementation | case=<case-id>, branch=<branch-name> |
 | TEST | After running tests | result=<pass/fail>, count=<number of tests> |
 | PR | After creating a PR | url=<PR URL> |
-| MERGE | After queuing auto-merge | url=<PR URL>, status=<queued/merged> |
+| MERGE | After the harness reports merge status | url=<PR URL>, status=<queued/merged/blocked> |
 | DECOMPOSE | After breaking down an epic/PRD | epic=<#NNN>, issues_created=<#X,#Y,#Z> |
 | REFLECT | After reflection | issues_filed=<N>, issues_closed=<#A,#B,...>, lessons=<short summary> |
 

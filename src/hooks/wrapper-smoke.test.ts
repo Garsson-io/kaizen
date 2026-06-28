@@ -229,6 +229,7 @@ describe('wrapper smoke: null stdin — all traceNullInput hooks exit 0 silently
     'kaizen-check-dirty-files-ts.sh',
     'kaizen-bump-plugin-version-ts.sh',
     'kaizen-enforce-pr-review-ts.sh',
+    'kaizen-enforce-merge-verdict-ts.sh',
     'kaizen-pr-kaizen-clear-fallback.sh',
     'kaizen-enforce-pr-reflect-ts.sh',
     'kaizen-post-merge-clear-ts.sh',

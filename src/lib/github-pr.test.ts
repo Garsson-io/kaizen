@@ -4,6 +4,7 @@ import {
   findOpenPrUrlForBranch,
   parseBranchPrQueryResult,
   parseFirstPrUrl,
+  parseGithubIssueUrl,
   parseGithubPrUrl,
   parseIssueNumber,
   parseIssueState,
@@ -24,6 +25,22 @@ describe('parseGithubPrUrl', () => {
     expect(parseGithubPrUrl('https://gitlab.com/Garsson-io/kaizen/pull/997')).toBeNull();
     expect(parseGithubPrUrl('https://github.com/Garsson-io/kaizen/pull/not-a-number')).toBeNull();
     expect(parseGithubPrUrl('')).toBeNull();
+  });
+});
+
+describe('parseGithubIssueUrl', () => {
+  it('returns repo and issue number for a full GitHub issue URL', () => {
+    expect(parseGithubIssueUrl('https://github.com/Garsson-io/kaizen/issues/1220')).toEqual({
+      repo: 'Garsson-io/kaizen',
+      number: 1220,
+    });
+  });
+
+  it('returns null for non-issue, non-GitHub, and malformed numeric URLs', () => {
+    expect(parseGithubIssueUrl('https://github.com/Garsson-io/kaizen/pull/1220')).toBeNull();
+    expect(parseGithubIssueUrl('https://gitlab.com/Garsson-io/kaizen/issues/1220')).toBeNull();
+    expect(parseGithubIssueUrl('https://github.com/Garsson-io/kaizen/issues/not-a-number')).toBeNull();
+    expect(parseGithubIssueUrl('')).toBeNull();
   });
 });
 

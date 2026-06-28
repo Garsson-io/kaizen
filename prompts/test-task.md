@@ -13,7 +13,7 @@ Run tag: {{run_tag}}
    ```
 3. Commit with message: "test: probe {{run_tag}}"
 4. Create a PR: `gh pr create --title "test: probe {{run_tag}}" --body "Synthetic test task for pipeline validation. Run tag: {{run_tag}}" --repo {{host_repo}}`
-5. Queue auto-merge: `gh pr merge <url> --repo {{host_repo}} --squash --delete-branch --auto`
+5. Leave auto-merge to the harness after review verdicts are known
 
 Do not ask for confirmation. Complete all steps.
 
@@ -36,10 +36,9 @@ PRs already created in this batch (avoid overlapping work): {{prs}}
 
 ## Merge & Labeling Policy
 
-After creating a PR, you MUST queue it for auto-merge:
-  gh pr merge <url> --repo {{host_repo}} --squash --delete-branch --auto
-Do NOT leave PRs open for manual review — this is an unattended batch.
-The harness will also attempt auto-merge as a safety net, but do it yourself first.
+After creating a PR, do NOT run merge commands yourself.
+The auto-dent harness queues auto-merge after review verdicts and process evidence are known.
+Leave the PR open for the harness-owned terminal action.
 
 ## Stopping the Loop
 

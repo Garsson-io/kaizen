@@ -8,8 +8,10 @@
  * (logging warnings rather than throwing).
  */
 
-import { ghExec, parseGhCommandArgs } from '../src/lib/gh-exec.js';
+import { ghExec, ghResult, parseGhCommandArgs } from '../src/lib/gh-exec.js';
+import { parseGithubIssueUrl, parseGithubPrUrl } from '../src/lib/github-pr.js';
 import type { RunResult } from './auto-dent-run.js';
+import type { AutoMergeSafetyDecision } from './auto-dent-merge-policy.js';
 
 export { ghExec };
 export const parseShellArgs = parseGhCommandArgs;
@@ -48,11 +50,11 @@ export type MergeStatus =
   | 'unknown';
 
 export function checkMergeStatus(prUrl: string): MergeStatus {
-  const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-  if (!m) return 'unknown';
+  const pr = parseGithubPrUrl(prUrl);
+  if (!pr) return 'unknown';
   try {
     const json = ghExec(
-      `gh pr view ${m[2]} --repo ${m[1]} --json state,mergeStateStatus,autoMergeRequest`,
+      `gh pr view ${pr.number} --repo ${pr.repo} --json state,mergeStateStatus,autoMergeRequest`,
     );
     if (!json) return 'unknown';
     const data = JSON.parse(json);
@@ -151,7 +153,7 @@ export function classifyMergeView(
 interface PrPollState {
   pr: string;
   repo: string;
-  num: string;
+  num: number;
   status: DriveStatus | 'pending';
   reason?: DriveReason;
   attempts: number;
@@ -167,9 +169,9 @@ export function driveBatchToMerge(
 
   const states: PrPollState[] = [];
   for (const pr of prUrls) {
-    const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (!m) continue; // skip invalid URLs (best-effort, module convention)
-    states.push({ pr, repo: m[1], num: m[2], status: 'pending', attempts: 0 });
+    const parsed = parseGithubPrUrl(pr);
+    if (!parsed) continue; // skip invalid URLs (best-effort, module convention)
+    states.push({ pr, repo: parsed.repo, num: parsed.number, status: 'pending', attempts: 0 });
   }
   if (states.length === 0) return [];
 
@@ -243,33 +245,86 @@ export function driveBatchToMerge(
 
 export function labelArtifacts(result: RunResult, label: string): void {
   for (const pr of result.prs) {
-    const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (m) {
-      ghExec(`gh pr edit ${m[2]} --repo ${m[1]} --add-label ${label}`);
+    const parsed = parseGithubPrUrl(pr);
+    if (parsed) {
+      ghExec(`gh pr edit ${parsed.number} --repo ${parsed.repo} --add-label ${label}`);
       console.log(`  [hygiene] labeled PR ${pr}`);
     }
   }
   for (const issue of result.issuesFiled) {
-    const m = issue.match(/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)/);
-    if (m) {
-      ghExec(`gh issue edit ${m[2]} --repo ${m[1]} --add-label ${label}`);
+    const parsed = parseGithubIssueUrl(issue);
+    if (parsed) {
+      ghExec(`gh issue edit ${parsed.number} --repo ${parsed.repo} --add-label ${label}`);
       console.log(`  [hygiene] labeled issue ${issue}`);
     }
   }
 }
 
-export function queueAutoMerge(result: RunResult, hostRepo: string): void {
+export interface AutoMergeQueueResult {
+  queued: string[];
+  blocked: string[];
+  cancelFailed: string[];
+  queueFailed: string[];
+}
+
+export function cancelAutoMerge(result: RunResult): string[] {
+  const failed: string[] = [];
   for (const pr of result.prs) {
-    const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (m) {
-      const out = ghExec(
-        `gh pr merge ${m[2]} --repo ${m[1]} --squash --delete-branch --auto`,
-      );
-      if (out) {
-        console.log(`  [hygiene] queued auto-merge for PR ${pr}`);
+    const parsed = parseGithubPrUrl(pr);
+    if (parsed) {
+      const out = ghResult([
+        'pr', 'merge', String(parsed.number),
+        '--repo', parsed.repo,
+        '--disable-auto',
+      ]);
+      if (out.status === 0) {
+        console.log(`  [hygiene] disabled auto-merge for PR ${pr}`);
+      } else {
+        failed.push(pr);
+        console.log(`  [hygiene] failed to disable auto-merge for PR ${pr}: ${out.stderr || 'gh failed'}`);
       }
     }
   }
+  return failed;
+}
+
+export function queueAutoMerge(
+  result: RunResult,
+  _hostRepo: string,
+  decision: AutoMergeSafetyDecision = { allow: true, reasons: [] },
+): AutoMergeQueueResult {
+  if (!decision.allow) {
+    console.log(`  [hygiene] auto-merge blocked: ${decision.reasons.join('; ')}`);
+    return {
+      queued: [],
+      blocked: [...result.prs],
+      cancelFailed: cancelAutoMerge(result),
+      queueFailed: [],
+    };
+  }
+
+  const queued: string[] = [];
+  const queueFailed: string[] = [];
+  for (const pr of result.prs) {
+    const parsed = parseGithubPrUrl(pr);
+    if (parsed) {
+      const out = ghResult([
+        'pr', 'merge', String(parsed.number),
+        '--repo', parsed.repo,
+        '--squash',
+        '--delete-branch',
+        '--auto',
+      ]);
+      if (out.status === 0) {
+        queued.push(pr);
+        console.log(`  [hygiene] queued auto-merge for PR ${pr}`);
+      } else {
+        queueFailed.push(pr);
+        console.log(`  [hygiene] failed to queue auto-merge for PR ${pr}: ${out.stderr || 'gh failed'}`);
+      }
+    }
+  }
+  return { queued, blocked: [], cancelFailed: [], queueFailed };
 }
 
 // PR cleanup — close superseded PRs whose target issues are already closed
@@ -320,15 +375,13 @@ export function cleanupSupersededPRs(
   const results: CleanupResult[] = [];
 
   for (const prUrl of prUrls) {
-    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (!m) continue;
-
-    const [, prRepo, prNum] = m;
+    const parsed = parseGithubPrUrl(prUrl);
+    if (!parsed) continue;
 
     try {
       // Get PR state and body
       const json = ghExec(
-        `gh pr view ${prNum} --repo ${prRepo} --json state,body`,
+        `gh pr view ${parsed.number} --repo ${parsed.repo} --json state,body`,
       );
       if (!json) {
         results.push({ pr: prUrl, action: 'failed' });
@@ -357,10 +410,10 @@ export function cleanupSupersededPRs(
       if (isIssueClosed(issueNum, repo)) {
         // Close the superseded PR
         const closeResult = ghExec(
-          `gh pr close ${prNum} --repo ${prRepo} --comment "Superseded — issue #${issueNum} was already resolved by another PR in this batch."`,
+          `gh pr close ${parsed.number} --repo ${parsed.repo} --comment "Superseded — issue #${issueNum} was already resolved by another PR in this batch."`,
         );
         if (closeResult !== undefined) {
-          console.log(`  [cleanup] closed superseded PR #${prNum} (issue #${issueNum} already resolved)`);
+          console.log(`  [cleanup] closed superseded PR #${parsed.number} (issue #${issueNum} already resolved)`);
           results.push({ pr: prUrl, action: 'closed', issue: `#${issueNum}` });
         } else {
           results.push({ pr: prUrl, action: 'failed', issue: `#${issueNum}` });
@@ -501,13 +554,12 @@ export function verifyIssuesClosed(
   const results: VerifyCloseResult[] = [];
 
   for (const prUrl of prUrls) {
-    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (!m) continue;
-    const [, prRepo, prNum] = m;
+    const parsed = parseGithubPrUrl(prUrl);
+    if (!parsed) continue;
 
     try {
       const json = ghExec(
-        `gh pr view ${prNum} --repo ${prRepo} --json state,body`,
+        `gh pr view ${parsed.number} --repo ${parsed.repo} --json state,body`,
       );
       if (!json) continue;
 
@@ -526,10 +578,10 @@ export function verifyIssuesClosed(
         } else {
           // Force-close the issue
           ghExec(
-            `gh issue close ${issueNum} --repo ${repo} --comment "Auto-closed: PR #${prNum} was merged but GitHub did not auto-close this issue (squash-merge edge case)."`,
+            `gh issue close ${issueNum} --repo ${repo} --comment "Auto-closed: PR #${parsed.number} was merged but GitHub did not auto-close this issue (squash-merge edge case)."`,
           );
           console.log(
-            `  [verify-close] force-closed #${issueNum} (PR #${prNum} merged but issue remained open)`,
+            `  [verify-close] force-closed #${issueNum} (PR #${parsed.number} merged but issue remained open)`,
           );
           forceClosed.push(`#${issueNum}`);
         }

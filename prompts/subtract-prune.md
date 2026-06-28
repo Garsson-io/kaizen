@@ -30,8 +30,9 @@ PRs already created in this batch (avoid overlapping work): {{prs}}
 
 ## Merge & Labeling Policy
 
-After creating a PR, you MUST queue it for auto-merge:
-  gh pr merge <url> --repo {{kaizen_repo}} --squash --delete-branch --auto
+After creating a PR, do NOT run merge commands yourself.
+The auto-dent harness queues auto-merge after review verdicts and process evidence are known.
+Leave the PR open for the harness-owned terminal action.
 
 ## Subtraction Tasks
 

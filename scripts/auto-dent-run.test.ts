@@ -112,12 +112,27 @@ describe('buildPrompt', () => {
     expect(prompt).not.toContain('avoid overlapping');
   });
 
-  it('includes merge policy with host repo', () => {
+  it('keeps merge policy under harness control after review', () => {
     const state = makeBatchState({ host_repo: 'Garsson-io/kaizen' });
     const prompt = buildPrompt(state, 1);
-    expect(prompt).toContain('gh pr merge');
+    expect(prompt).not.toContain('gh pr merge');
     expect(prompt).toContain('Garsson-io/kaizen');
-    expect(prompt).toContain('--squash --delete-branch --auto');
+    expect(prompt).toContain('The auto-dent harness queues auto-merge after review');
+    expect(prompt).toContain('status=<queued/merged/blocked>');
+  });
+
+  it('keeps merge policy under harness control in subtract mode', () => {
+    const state = makeBatchState({ host_repo: 'Garsson-io/kaizen', guidance: 'mode:subtract' });
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).not.toContain('gh pr merge');
+    expect(prompt).toContain('The auto-dent harness queues auto-merge after review');
+  });
+
+  it('keeps merge policy under harness control in synthetic test-task mode', () => {
+    const state = makeBatchState({ host_repo: 'Garsson-io/kaizen', test_task: true });
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).not.toContain('gh pr merge');
+    expect(prompt).toContain('The auto-dent harness queues auto-merge after review');
   });
 
   it('includes structured STOP phase marker instructions', () => {
@@ -3512,6 +3527,24 @@ describe('test-task lifecycle evidence regression guard', () => {
 
   it('does not treat skipped review as process-incomplete for synthetic test tasks', () => {
     expect(source).toContain("reviewVerdict: state.test_task ? 'pass' : result.reviewVerdict");
+  });
+});
+
+describe('auto-merge verdict binding wiring (#1220)', () => {
+  it('routes post-review safety decisions into queueing and merge babysitting', () => {
+    const decisionIndex = AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeDecision = decideAutoMergeSafety({');
+    const queueIndex = AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);');
+    const cancelFailedIndex = AUTO_DENT_RUN_SOURCE.indexOf('const cancelFailed = new Set(autoMergeQueue.cancelFailed);');
+    const unsafeSetIndex = AUTO_DENT_RUN_SOURCE.indexOf('result.prs.filter((pr) => !cancelFailed.has(pr))');
+    const filterIndex = AUTO_DENT_RUN_SOURCE.indexOf('filter((pr) => !unsafeCurrentPRs.has(pr))');
+    const driveIndex = AUTO_DENT_RUN_SOURCE.indexOf('driveBatchToMerge(allBatchPRs');
+
+    expect(decisionIndex).toBeGreaterThan(-1);
+    expect(queueIndex).toBeGreaterThan(decisionIndex);
+    expect(cancelFailedIndex).toBeGreaterThan(queueIndex);
+    expect(unsafeSetIndex).toBeGreaterThan(cancelFailedIndex);
+    expect(filterIndex).toBeGreaterThan(unsafeSetIndex);
+    expect(driveIndex).toBeGreaterThan(filterIndex);
   });
 });
 
