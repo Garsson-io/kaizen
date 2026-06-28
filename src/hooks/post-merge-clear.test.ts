@@ -252,3 +252,12 @@ describe('git runner invariant', () => {
     expect(source).toContain("gitStdout(['worktree', 'list', '--porcelain'])");
   });
 });
+
+describe('branch helper source invariant', () => {
+  it('passes the Bash command into command-target branch resolution', () => {
+    const source = readFileSync(new URL('./post-merge-clear.ts', import.meta.url), 'utf-8');
+
+    expect(source).toContain('const branch = getCurrentBranch(command);');
+    expect(source).not.toContain('const branch = getCurrentBranch();');
+  });
+});

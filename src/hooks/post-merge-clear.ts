@@ -98,7 +98,8 @@ async function main(): Promise<void> {
   if (!input) { traceNullInput("post-merge-clear"); process.exit(0); }
 
   const toolName = input.tool_name ?? '';
-  const branch = getCurrentBranch();
+  const command = input.tool_input?.command ?? '';
+  const branch = getCurrentBranch(command);
 
   const output = processPostMergeClear(
     toolName,
