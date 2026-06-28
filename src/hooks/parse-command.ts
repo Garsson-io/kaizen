@@ -36,12 +36,23 @@ export function stripHeredocBody(command: string): string {
 }
 
 /**
- * Split a command line by pipe/chain operators (|, &&, ||, ;)
- * and return individual segments trimmed.
+ * Split a command line by pipe/chain operators (|, &&, ||, ;) AND bare newlines,
+ * returning individual segments trimmed.
+ *
+ * Newlines are delimiters because a multi-statement Bash block separates
+ * statements with bare `\n` (e.g. variable assignments on their own lines
+ * before `gh pr create`). Without splitting on `\n` the whole block is one
+ * segment beginning with the first assignment, so anchored detectors like
+ * `isGhPrCommand` (`^gh\s+pr\s+create`) never match and the review/plan/dirty
+ * gates silently no-op (#1013). The bash original
+ * (`.claude/hooks/lib/parse-command.sh`) already splits on newlines via its
+ * line-based sed pipeline; this restores that parity. Callers strip heredoc
+ * bodies first, so an embedded `gh pr create` in a commit message is not
+ * resurrected as a false segment.
  */
 export function splitCommandSegments(cmdLine: string): string[] {
   return cmdLine
-    .split(/[|;&]{1,2}/)
+    .split(/[\n|;&]{1,2}/)
     .map((s) => s.trim())
     .filter(Boolean);
 }

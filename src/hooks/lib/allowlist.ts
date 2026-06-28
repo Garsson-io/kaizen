@@ -6,16 +6,22 @@
  * enforce-pr-reflect to ensure consistent command allowlists.
  */
 
-import { isGhPrCommand, isGitCommand } from '../parse-command.js';
+import {
+  isGhPrCommand,
+  isGitCommand,
+  splitCommandSegments,
+} from '../parse-command.js';
 
 /**
- * Split a command line by pipe/chain operators and return segments.
+ * Split a command line into statements. Delegates to the canonical
+ * `splitCommandSegments` so the allowlist splits identically to every gate
+ * detector — previously this was a private copy that split on `|;&` but NOT
+ * bare newlines, diverging from the canonical splitter after #1013. The
+ * divergence let a multi-line command whose readonly statement sits on a
+ * separate line classify inconsistently across hooks.
  */
 function splitSegments(cmdLine: string): string[] {
-  return cmdLine
-    .split(/[|;&]{1,2}/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return splitCommandSegments(cmdLine);
 }
 
 /**

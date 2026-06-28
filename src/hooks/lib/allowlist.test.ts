@@ -54,6 +54,16 @@ describe('isReadonlyMonitoringCommand', () => {
     expect(isReadonlyMonitoringCommand('gh pr create --title "test"')).toBe(false);
     expect(isReadonlyMonitoringCommand('gh pr merge 42')).toBe(false);
   });
+
+  it('splits on bare newlines like the canonical splitter (#1013)', () => {
+    // A readonly command on its own line after env assignments must still be
+    // recognized — same newline-split parity the gate detectors rely on.
+    expect(
+      isReadonlyMonitoringCommand('export PATH=/x\ngit status'),
+    ).toBe(true);
+    // And a pure write command on its own line stays blocked.
+    expect(isReadonlyMonitoringCommand('export PATH=/x\ngit push')).toBe(false);
+  });
 });
 
 describe('isReviewCommand', () => {

@@ -10,6 +10,7 @@ import {
   isGhPrCommand,
   isGitCommand,
   reconstructPrUrl,
+  splitCommandSegments,
   stripHeredocBody,
 } from './parse-command.js';
 
@@ -57,6 +58,32 @@ describe('stripHeredocBody', () => {
   });
 });
 
+describe('splitCommandSegments', () => {
+  it('splits on bare newlines (#1013)', () => {
+    expect(splitCommandSegments('a\nb\nc')).toEqual(['a', 'b', 'c']);
+  });
+
+  it('still collapses operator chains', () => {
+    expect(splitCommandSegments('npm run build && gh pr create')).toEqual([
+      'npm run build',
+      'gh pr create',
+    ]);
+    expect(splitCommandSegments('a || b ; c | d')).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ]);
+  });
+
+  it('collapses an operator+newline run into a single delimiter', () => {
+    expect(splitCommandSegments('a &&\ngh pr create')).toEqual([
+      'a',
+      'gh pr create',
+    ]);
+  });
+});
+
 describe('isGhPrCommand', () => {
   it('detects gh pr create', () => {
     expect(isGhPrCommand('gh pr create --title "test"', 'create')).toBe(true);
@@ -89,6 +116,21 @@ describe('isGhPrCommand', () => {
       isGhPrCommand('npm run build && gh pr create --title x', 'create'),
     ).toBe(true);
   });
+
+  it('detects gh pr create after newline-separated assignments (#1013)', () => {
+    const cmd = `KAIZEN_REPO=$(jq -r '.kaizen.repo' kaizen.config.json)\nHOST_REPO=$(jq -r '.host.repo' kaizen.config.json)\ngh pr create --repo "$HOST_REPO" --title x`;
+    expect(isGhPrCommand(cmd, 'create')).toBe(true);
+  });
+
+  it('detects gh pr create when backslash-continued across lines (#1013)', () => {
+    const cmd = `export PATH="/x"\ngh pr create \\\n  --repo R \\\n  --title x`;
+    expect(isGhPrCommand(cmd, 'create')).toBe(true);
+  });
+
+  it('does not resurrect heredoc false-positive after stripHeredocBody (#1013)', () => {
+    const cmd = `git commit -m "$(cat <<'EOF'\ngh pr create --title sneaky\nEOF\n)"`;
+    expect(isGhPrCommand(stripHeredocBody(cmd), 'create')).toBe(false);
+  });
 });
 
 describe('isGitCommand', () => {
@@ -104,6 +146,12 @@ describe('isGitCommand', () => {
 
   it('rejects non-git commands', () => {
     expect(isGitCommand('npm run build', 'push')).toBe(false);
+  });
+
+  it('detects git push after newline-separated assignments (#1013)', () => {
+    expect(
+      isGitCommand('export PATH=/x\ngit push -u origin main', 'push'),
+    ).toBe(true);
   });
 });
 
