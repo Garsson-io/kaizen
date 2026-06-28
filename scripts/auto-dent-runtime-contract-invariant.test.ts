@@ -17,12 +17,13 @@ function stripComments(content: string): string {
 describe('auto-dent runtime contract source invariants (#1490, #1489)', () => {
   it('keeps provider lifecycle files from defining local phase-order arrays (#1490)', () => {
     const providerLifecycleFiles = [
+      'scripts/auto-dent-provider-capabilities.ts',
       'scripts/auto-dent-provider-matrix.ts',
       'scripts/auto-dent-run.ts',
       'scripts/auto-dent-events.ts',
       'scripts/batch-summary.ts',
     ];
-    const localPhaseOrder = /\b(?:const|export\s+const)\s+\w*PHASE\w*(?:ORDER|DISPLAY_ORDER)\s*=\s*\[/;
+    const localPhaseOrder = /\b(?:const|export\s+const)\s+(?:\w*PHASE\w*|PHASES)\s*=\s*\[/;
 
     const offenders = providerLifecycleFiles.filter((file) => localPhaseOrder.test(stripComments(readRepoFile(file))));
 
@@ -43,11 +44,14 @@ describe('auto-dent runtime contract source invariants (#1490, #1489)', () => {
   });
 
   it('fails synthetic local phase-order and truncate-helper fixtures', () => {
-    const localPhaseOrder = /\b(?:const|export\s+const)\s+\w*PHASE\w*(?:ORDER|DISPLAY_ORDER)\s*=\s*\[/;
+    const localPhaseOrder = /\b(?:const|export\s+const)\s+(?:\w*PHASE\w*|PHASES)\s*=\s*\[/;
     const localTruncateHelper = /\b(?:function|const|let|var)\s+truncate[A-Z]\w*\s*(?:[:=(]|=)/;
 
     expect(localPhaseOrder.test('const PHASE_ORDER = ["planning"];')).toBe(true);
     expect(localPhaseOrder.test('const PHASE_DISPLAY_ORDER = ["planning"];')).toBe(true);
+    expect(localPhaseOrder.test('const PHASES = ["planning"];')).toBe(true);
+    expect(localPhaseOrder.test('const PROVIDER_PHASES = ["planning"];')).toBe(true);
+    expect(localPhaseOrder.test('export const LIFECYCLE_PHASES = ["planning"];')).toBe(true);
     expect(localTruncateHelper.test('function truncateCommand(input: string) { return input; }')).toBe(true);
     expect(localTruncateHelper.test('const truncatePath = (input: string) => input;')).toBe(true);
   });
