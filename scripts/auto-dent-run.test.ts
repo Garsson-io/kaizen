@@ -38,6 +38,7 @@ import {
   weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
+  checkpointRunState,
   readState,
   writeState,
   color,
@@ -2241,9 +2242,7 @@ describe('selectMode', () => {
     cleanupDirs.length = 0;
   });
 
-  it('forces exploit with a target issue when repeated candidate manifests name the same top candidate', () => {
-    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-mode-'));
-    cleanupDirs.push(tmpDir);
+  function writeRepeatedCandidateManifests(tmpDir: string, issue = '#1213', suggestedMode = 'exploit') {
     for (const run of [1, 2, 3]) {
       writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
         version: 1,
@@ -2253,12 +2252,18 @@ describe('selectMode', () => {
             id: 'self-steering',
             title: 'Self-steering bundle',
             rationale: 'Repeated top candidate',
-            refs: ['#1213', '#1189'],
-            suggested_mode: 'exploit',
+            refs: [issue, '#1189'],
+            suggested_mode: suggestedMode,
           },
         ],
       }));
     }
+  }
+
+  it('forces exploit with a target issue when repeated candidate manifests name the same top candidate', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-mode-'));
+    cleanupDirs.push(tmpDir);
+    writeRepeatedCandidateManifests(tmpDir);
 
     const result = selectMode(makeBatchState(), 7, { logDir: tmpDir });
 
@@ -2273,13 +2278,7 @@ describe('selectMode', () => {
   it('does not force a consumed manifest target again', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-consumed-'));
     cleanupDirs.push(tmpDir);
-    for (const run of [1, 2, 3]) {
-      writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
-        version: 1,
-        runTag: `batch/run-${run}`,
-        candidates: [{ id: 'self-steering', title: 'Self-steering bundle', refs: ['#1213'] }],
-      }));
-    }
+    writeRepeatedCandidateManifests(tmpDir);
 
     const result = selectMode(
       makeBatchState({ manifest_forced_targets_consumed: ['#1213'] }),
@@ -2288,6 +2287,36 @@ describe('selectMode', () => {
     );
 
     expect(result.reason).not.toBe('manifest-forced');
+    expect(result.target_issue).toBeUndefined();
+  });
+
+  it('short-circuits forced explore when a fresh repeated manifest target exists', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-fresh-explore-'));
+    cleanupDirs.push(tmpDir);
+    writeRepeatedCandidateManifests(tmpDir, '#1191');
+
+    const result = selectMode(makeBatchState({ guidance: 're-scout gaps mode:explore' }), 7, { logDir: tmpDir });
+
+    expect(result).toMatchObject({
+      mode: 'exploit',
+      template: 'deep-dive-default.md',
+      reason: 'manifest-fresh-short-circuit',
+      target_issue: '#1191',
+    });
+  });
+
+  it('does not short-circuit non-explore guidance', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-fresh-reflect-'));
+    cleanupDirs.push(tmpDir);
+    writeRepeatedCandidateManifests(tmpDir, '#1191');
+
+    const result = selectMode(makeBatchState({ guidance: 'think about the batch mode:reflect' }), 7, { logDir: tmpDir });
+
+    expect(result).toMatchObject({
+      mode: 'reflect',
+      template: 'reflect-batch.md',
+      reason: 'guidance',
+    });
     expect(result.target_issue).toBeUndefined();
   });
 
@@ -3525,6 +3554,81 @@ describe('formatBatchFooter', () => {
     const state = makeBatchState({ run: 0, prs: [], run_history: [] });
     const output = formatBatchFooter(state);
     expect(output).not.toContain('Modes:');
+  });
+});
+
+describe('run state checkpointing', () => {
+  it('checkpoints run identity and heartbeat before provider work finishes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-checkpoint-start-'));
+    const stateFile = join(dir, 'state.json');
+    writeState(stateFile, makeBatchState({ run: 0, last_heartbeat: 0 }));
+
+    checkpointRunState(stateFile, { runNum: 1, heartbeatEpoch: 1742680900 });
+
+    const updated = readState(stateFile);
+    expect(updated.run).toBe(1);
+    expect(updated.last_heartbeat).toBe(1742680900);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('checkpoints assigned issue and observed artifacts idempotently for recovery', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-checkpoint-artifacts-'));
+    const stateFile = join(dir, 'state.json');
+    writeState(stateFile, makeBatchState({
+      run: 0,
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1'],
+      issues_filed: ['#10'],
+      issues_closed: [],
+      cases: [],
+    }));
+    const result = makeRunResult({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1', 'https://github.com/Garsson-io/kaizen/pull/2'],
+      issuesFiled: ['#10', '#11'],
+      issuesClosed: ['https://github.com/Garsson-io/kaizen/issues/12'],
+      cases: ['260629-k1591-run-state-heartbeat'],
+    });
+
+    checkpointRunState(stateFile, {
+      runNum: 1,
+      heartbeatEpoch: 1742680910,
+      pickedIssue: '#1591',
+      result,
+    });
+    checkpointRunState(stateFile, {
+      runNum: 1,
+      heartbeatEpoch: 1742680920,
+      pickedIssue: '#1591',
+      result,
+    });
+
+    const updated = readState(stateFile);
+    expect(updated.run).toBe(1);
+    expect(updated.last_heartbeat).toBe(1742680920);
+    expect(updated.prs).toEqual([
+      'https://github.com/Garsson-io/kaizen/pull/1',
+      'https://github.com/Garsson-io/kaizen/pull/2',
+    ]);
+    expect(updated.issues_filed).toEqual(['#10', '#11']);
+    expect(updated.issues_closed).toEqual(['https://github.com/Garsson-io/kaizen/issues/12']);
+    expect(updated.cases).toEqual(['260629-k1591-run-state-heartbeat']);
+    expect(updated.last_issue).toBe('https://github.com/Garsson-io/kaizen/issues/12');
+    expect(updated.last_pr).toBe('https://github.com/Garsson-io/kaizen/pull/2');
+    expect(updated.last_case).toBe('260629-k1591-run-state-heartbeat');
+    expect(updated.last_branch).toBe('case/260629-k1591-run-state-heartbeat');
+    expect(updated.last_worktree).toBe('.claude/worktrees/260629-k1591-run-state-heartbeat');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('starts live state heartbeat around runClaude instead of inside a provider-only branch', () => {
+    const mainStart = AUTO_DENT_RUN_SOURCE.indexOf('async function main()');
+    const runClaudeStart = AUTO_DENT_RUN_SOURCE.indexOf('async function runClaude(');
+    const runClaudeEnd = AUTO_DENT_RUN_SOURCE.indexOf('// Main', runClaudeStart);
+    const mainSection = AUTO_DENT_RUN_SOURCE.slice(mainStart);
+    const runClaudeSection = AUTO_DENT_RUN_SOURCE.slice(runClaudeStart, runClaudeEnd);
+
+    expect(mainSection).toContain('startRunStateHeartbeat(stateFile, runNum');
+    expect(mainSection).toContain('runHeartbeat.stop()');
+    expect(runClaudeSection).not.toContain('s.last_heartbeat = Math.floor(Date.now() / 1000)');
   });
 });
 
