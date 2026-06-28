@@ -16,10 +16,10 @@
  */
 
 import { readdirSync, readFileSync, existsSync } from 'fs';
-import { join, basename, resolve } from 'path';
+import { basename, join, resolve } from 'path';
 import { execSync } from 'child_process';
 import { readState, type BatchState } from './auto-dent-run.js';
-import { truncateDisplay } from './auto-dent-display.js';
+import { renderToolInputSummary } from './auto-dent-display.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 
 // Types
@@ -151,26 +151,7 @@ const DISCOVERY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Agent', 'ToolSearch'])
 const SHIPPING_TOOLS = new Set(['Bash']); // git/gh commands
 
 function formatToolInputSummary(name: string, input: Record<string, any>): string {
-  switch (name) {
-    case 'Read':
-    case 'Edit':
-    case 'Write':
-      return basename(input?.file_path || '?');
-    case 'Bash': {
-      const cmd = input?.command || input?.description || '?';
-      return truncateDisplay(cmd, 60, { ellipsis: '' });
-    }
-    case 'Grep':
-      return `"${truncateDisplay(input?.pattern || '?', 30, { ellipsis: '' })}"`;
-    case 'Glob':
-      return truncateDisplay(input?.pattern || '?', 40, { ellipsis: '' });
-    case 'Skill':
-      return `/${input?.skill_name || input?.skill || '?'}`;
-    case 'Agent':
-      return truncateDisplay(input?.description || '?', 40, { ellipsis: '' });
-    default:
-      return '';
-  }
+  return renderToolInputSummary(name, input);
 }
 
 function categorizeToolPhase(

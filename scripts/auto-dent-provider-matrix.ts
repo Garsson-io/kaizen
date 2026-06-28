@@ -9,80 +9,84 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
+import { z } from 'zod';
 import {
   CAPABILITY_INVENTORY,
-  type Phase,
+  PHASES,
+  PhaseProviderRecordSchema,
+  PlanValidationSchema,
   type PhaseProvider,
   type PhaseProviderRecord,
   type PlanValidation,
   type Provider,
   type ProviderCapability,
-  type ProviderPlan,
+  phaseProvider,
+  phaseProviderRecordToProviderPlan,
   validateProviderPlan,
 } from './auto-dent-provider.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 import { escapeMarkdownTableCell } from './markdown-table.js';
 
-export type ReviewQuality = 'strong' | 'adequate' | 'weak' | 'missing';
-export type CostSignal = 'available' | 'partial' | 'missing';
-export type OperatorInspectability = 'high' | 'medium' | 'low';
+const ReviewQualitySchema = z.enum(['strong', 'adequate', 'weak', 'missing']);
+const CostSignalSchema = z.enum(['available', 'partial', 'missing']);
+const OperatorInspectabilitySchema = z.enum(['high', 'medium', 'low']);
+const ProcessVerdictSchema = z.enum(['pass', 'process-incomplete', 'fail-open-warning']);
+export type ReviewQuality = z.infer<typeof ReviewQualitySchema>;
+export type CostSignal = z.infer<typeof CostSignalSchema>;
+export type OperatorInspectability = z.infer<typeof OperatorInspectabilitySchema>;
 
-export interface ProviderComparisonScenario {
-  id: string;
-  label: string;
-  description: string;
-  phaseProviders: PhaseProviderRecord;
-}
+const ProviderComparisonMetricsSchema = z.object({
+  processPassRate: z.number().min(0).max(1),
+  emptySuccessRate: z.number().min(0).max(1),
+  processIncompleteRate: z.number().min(0).max(1),
+  reviewQuality: ReviewQualitySchema,
+  costSignal: CostSignalSchema,
+  hookRejections: z.number().int().nonnegative(),
+  operatorInspectability: OperatorInspectabilitySchema,
+}).strict();
+export type ProviderComparisonMetrics = z.infer<typeof ProviderComparisonMetricsSchema>;
 
-export interface ProviderComparisonMetrics {
-  processPassRate: number;
-  emptySuccessRate: number;
-  processIncompleteRate: number;
-  reviewQuality: ReviewQuality;
-  costSignal: CostSignal;
-  hookRejections: number;
-  operatorInspectability: OperatorInspectability;
-}
+export const ProviderComparisonScenarioSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().min(1),
+  phaseProviders: PhaseProviderRecordSchema,
+}).strict();
+export type ProviderComparisonScenario = z.infer<typeof ProviderComparisonScenarioSchema>;
 
-export interface ProviderComparisonResult {
-  scenarioId: string;
-  label: string;
-  description: string;
-  phaseProviders: PhaseProviderRecord;
-  processVerdict: ProcessVerdict;
-  failureClass: string | null;
-  metrics: ProviderComparisonMetrics;
-  validation: PlanValidation;
-  notes: string[];
-}
+export const ProviderComparisonResultSchema = z.object({
+  scenarioId: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().min(1),
+  phaseProviders: PhaseProviderRecordSchema,
+  processVerdict: ProcessVerdictSchema,
+  failureClass: z.string().nullable(),
+  metrics: ProviderComparisonMetricsSchema,
+  validation: PlanValidationSchema,
+  notes: z.array(z.string()),
+}).strict();
+export type ProviderComparisonResult = z.infer<typeof ProviderComparisonResultSchema>;
 
-export interface ProviderComparisonArtifact {
-  version: 1;
-  batchId: string;
-  scenario: string;
-  generatedAt: string;
-  recommendation: ProviderStrategyRecommendation;
-  results: ProviderComparisonResult[];
-}
+const ProviderStrategyRecommendationSchema = z.object({
+  scenarioId: z.string().min(1),
+  label: z.string().min(1),
+  reason: z.string().min(1),
+  score: z.number(),
+}).strict();
+export type ProviderStrategyRecommendation = z.infer<typeof ProviderStrategyRecommendationSchema>;
 
-export interface ProviderStrategyRecommendation {
-  scenarioId: string;
-  label: string;
-  reason: string;
-  score: number;
-}
-
-const PHASE_ORDER: Phase[] = [
-  'planning',
-  'implementation',
-  'review',
-  'fix',
-  'reflection',
-  'validation',
-];
+export const ProviderComparisonArtifactSchema = z.object({
+  version: z.literal(1),
+  batchId: z.string().min(1),
+  scenario: z.string().min(1),
+  generatedAt: z.string().min(1),
+  recommendation: ProviderStrategyRecommendationSchema,
+  results: z.array(ProviderComparisonResultSchema),
+}).strict();
+export type ProviderComparisonArtifact = z.infer<typeof ProviderComparisonArtifactSchema>;
 
 function pp(provider: Provider, billing: PhaseProvider['billing']): PhaseProvider {
-  return { provider, billing };
+  return phaseProvider(provider, billing);
 }
 
 const CLAUDE = pp('claude', 'subscription-cli');
@@ -146,32 +150,23 @@ export function providerComparisonScenarios(): ProviderComparisonScenario[] {
   ];
 }
 
-function providerPlanFromRecord(record: PhaseProviderRecord): ProviderPlan {
-  const plan: ProviderPlan = {};
-  for (const phase of PHASE_ORDER) {
-    const provider = record[phase]?.provider;
-    if (provider) plan[phase] = provider;
-  }
-  return plan;
-}
-
 export function validateProviderComparisonScenario(
   scenario: ProviderComparisonScenario,
   inventory: readonly ProviderCapability[] = CAPABILITY_INVENTORY,
 ): PlanValidation {
-  const validation = validateProviderPlan(providerPlanFromRecord(scenario.phaseProviders), inventory);
+  const validation = validateProviderPlan(phaseProviderRecordToProviderPlan(scenario.phaseProviders), inventory);
   return {
     ...validation,
     violations: [...validation.violations].sort((a, b) => {
       const aApi = a.reason.includes('api-token') ? 0 : 1;
       const bApi = b.reason.includes('api-token') ? 0 : 1;
-      return aApi - bApi || PHASE_ORDER.indexOf(a.phase) - PHASE_ORDER.indexOf(b.phase);
+      return aApi - bApi || PHASES.indexOf(a.phase) - PHASES.indexOf(b.phase);
     }),
   };
 }
 
 function phaseSummary(record: PhaseProviderRecord): string {
-  return PHASE_ORDER
+  return PHASES
     .map((phase) => {
       const provider = record[phase];
       return provider ? `${phase}=${provider.provider} (${provider.billing})` : `${phase}=unassigned`;
@@ -373,34 +368,13 @@ export function buildProviderComparisonArtifact(input: {
   };
 }
 
-function assertArtifactShape(value: unknown): asserts value is ProviderComparisonArtifact {
-  if (!value || typeof value !== 'object') throw new Error('comparison artifact must be an object');
-  const artifact = value as Partial<ProviderComparisonArtifact>;
-  if (artifact.version !== 1) throw new Error('comparison artifact version must be 1');
-  if (typeof artifact.batchId !== 'string') throw new Error('comparison artifact batchId must be a string');
-  if (typeof artifact.scenario !== 'string') throw new Error('comparison artifact scenario must be a string');
-  if (!Array.isArray(artifact.results)) throw new Error('comparison artifact results must be an array');
-  for (const result of artifact.results as Partial<ProviderComparisonResult>[]) {
-    if (typeof result.scenarioId !== 'string') throw new Error('comparison result scenarioId must be a string');
-    if (!result.phaseProviders || typeof result.phaseProviders !== 'object') {
-      throw new Error(`${result.scenarioId}: phaseProviders must be an object`);
-    }
-    if (!result.metrics || typeof result.metrics !== 'object') {
-      throw new Error(`${result.scenarioId}: metrics must be an object`);
-    }
-    if (typeof result.processVerdict !== 'string') {
-      throw new Error(`${result.scenarioId}: processVerdict must be a string`);
-    }
-    if (!('failureClass' in result)) {
-      throw new Error(`${result.scenarioId}: failureClass must be present`);
-    }
-  }
-}
-
 export function parseProviderComparisonArtifact(raw: string): ProviderComparisonArtifact {
   const parsed = JSON.parse(raw);
-  assertArtifactShape(parsed);
-  return parsed;
+  const result = ProviderComparisonArtifactSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(`invalid provider comparison artifact: ${result.error.message}`);
+  }
+  return result.data;
 }
 
 export function writeProviderComparisonArtifact(

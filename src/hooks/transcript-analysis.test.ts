@@ -84,6 +84,15 @@ describe('truncation ownership (#1351)', () => {
     const source = readFileSync('src/hooks/transcript-analysis.ts', 'utf8');
     expect(source).not.toMatch(/function\s+truncate\s*\(/);
   });
+
+  it('documents why transcript evidence keeps prefix-preserving truncation outside auto-dent display (#1489)', () => {
+    const hookSource = readFileSync('src/hooks/transcript-analysis.ts', 'utf8');
+    const utilSource = readFileSync('src/analysis/util.ts', 'utf8');
+
+    expect(hookSource).toContain("import { truncateAfterPrefix } from '../analysis/util.js'");
+    expect(utilSource).toContain('preserves the transcript-analysis evidence contract');
+    expect(utilSource).toContain('choose how many source characters remain visible');
+  });
 });
 
 describe('analyzeTranscript', () => {

@@ -7,7 +7,7 @@
  * combination is accepted for unattended batches.
  *
  * It deliberately holds NO orchestration logic and changes NO run behavior. It
- * exposes a typed inventory plus two consumers:
+ * exposes a schema-backed runtime contract plus consumers:
  *   - #1141 renderCapabilityMatrix() — print the provider × phase × billing matrix.
  *   - #1142 validateProviderPlan()   — reject API-token-only (subscription-
  *           incompatible) provider plans with a clear reason.
@@ -21,26 +21,20 @@
  * acceptedForUnattended=false and rejected by validateProviderPlan.
  */
 
+import { z } from 'zod';
+
 /** Agent providers auto-dent can reason about. */
-export type Provider = 'claude' | 'codex' | 'provider-independent';
+export const PROVIDERS = ['claude', 'codex', 'provider-independent'] as const;
+export const ProviderSchema = z.enum(PROVIDERS);
+export type Provider = z.infer<typeof ProviderSchema>;
+
+/** Providers that can run the agent-facing lifecycle phases. */
+export const AGENT_PROVIDERS = ['claude', 'codex'] as const;
+export const AgentProviderSchema = z.enum(AGENT_PROVIDERS);
+export type AgentProvider = z.infer<typeof AgentProviderSchema>;
 
 /** Lifecycle phases where a provider choice is meaningful (epic #1134 vocabulary). */
-export type Phase =
-  | 'planning'
-  | 'implementation'
-  | 'review'
-  | 'fix'
-  | 'reflection'
-  | 'validation';
-
-/** How a capability is billed. Only subscription-compatible modes are accepted. */
-export type BillingMode = 'subscription-cli' | 'local-only' | 'api-token';
-
-/** How well a provider fits a phase. */
-export type Fit = 'best' | 'works' | 'avoid';
-
-/** Canonical phase order — drives matrix layout and ensures every phase is named. */
-export const PHASES: readonly Phase[] = [
+export const PHASES = [
   'planning',
   'implementation',
   'review',
@@ -48,9 +42,18 @@ export const PHASES: readonly Phase[] = [
   'reflection',
   'validation',
 ] as const;
+export const PhaseSchema = z.enum(PHASES);
+export type Phase = z.infer<typeof PhaseSchema>;
 
-/** Providers in canonical display order. */
-export const PROVIDERS: readonly Provider[] = ['claude', 'codex', 'provider-independent'] as const;
+/** How a capability is billed. Only subscription-compatible modes are accepted. */
+export const BILLING_MODES = ['subscription-cli', 'local-only', 'api-token'] as const;
+export const BillingModeSchema = z.enum(BILLING_MODES);
+export type BillingMode = z.infer<typeof BillingModeSchema>;
+
+/** How well a provider fits a phase. */
+export const FITS = ['best', 'works', 'avoid'] as const;
+export const FitSchema = z.enum(FITS);
+export type Fit = z.infer<typeof FitSchema>;
 
 /**
  * Billing modes that are compatible with the hard subscription-only constraint.
@@ -61,17 +64,33 @@ export const SUBSCRIPTION_COMPATIBLE_BILLING: readonly BillingMode[] = [
   'local-only',
 ] as const;
 
+/** Provider + billing recorded for a single phase of a run (#1143). */
+export const PhaseProviderSchema = z.object({
+  provider: ProviderSchema,
+  billing: BillingModeSchema,
+}).strict();
+export type PhaseProvider = z.infer<typeof PhaseProviderSchema>;
+
+/** Per-phase provider/billing record stored on run metrics (#1143). */
+export const PhaseProviderRecordSchema = z.partialRecord(PhaseSchema, PhaseProviderSchema);
+export type PhaseProviderRecord = z.infer<typeof PhaseProviderRecordSchema>;
+
+/** Provider plan schema: which provider runs each phase (phases may be omitted). */
+export const ProviderPlanSchema = z.partialRecord(PhaseSchema, ProviderSchema);
+export type ProviderPlan = z.infer<typeof ProviderPlanSchema>;
+
 /** One row of the capability matrix: a (provider, phase) cell with its properties. */
-export interface ProviderCapability {
-  provider: Provider;
-  phase: Phase;
-  billingMode: BillingMode;
-  fit: Fit;
-  /** Whether this capability is accepted for unattended auto-dent batches. */
-  acceptedForUnattended: boolean;
-  /** One-line human rationale for the fit/accepted decision. */
-  rationale: string;
-}
+export const ProviderCapabilitySchema = z.object({
+  provider: ProviderSchema,
+  phase: PhaseSchema,
+  billingMode: BillingModeSchema,
+  fit: FitSchema,
+  acceptedForUnattended: z.boolean(),
+  rationale: z.string().min(1),
+}).strict();
+
+/** One row of the capability matrix: a (provider, phase) cell with its properties. */
+export type ProviderCapability = z.infer<typeof ProviderCapabilitySchema>;
 
 /**
  * Hand-authored capability inventory. Reflects today's reality plus the Codex
@@ -103,21 +122,20 @@ export const CAPABILITY_INVENTORY: readonly ProviderCapability[] = [
   { provider: 'codex', phase: 'implementation', billingMode: 'api-token', fit: 'avoid', acceptedForUnattended: false, rationale: 'API-token implementation is an optional future path, not required.' },
 ];
 
-/** A provider plan: which provider runs each phase (phases may be omitted). */
-export type ProviderPlan = Partial<Record<Phase, Provider>>;
-
 /** A single reason a provider plan was rejected. */
-export interface PlanViolation {
-  phase: Phase;
-  provider: Provider;
-  reason: string;
-}
+export const PlanViolationSchema = z.object({
+  phase: PhaseSchema,
+  provider: ProviderSchema,
+  reason: z.string(),
+}).strict();
+export type PlanViolation = z.infer<typeof PlanViolationSchema>;
 
 /** Result of validating a provider plan against the capability inventory. */
-export interface PlanValidation {
-  ok: boolean;
-  violations: PlanViolation[];
-}
+export const PlanValidationSchema = z.object({
+  ok: z.boolean(),
+  violations: z.array(PlanViolationSchema),
+}).strict();
+export type PlanValidation = z.infer<typeof PlanValidationSchema>;
 
 /**
  * Is this (phase, provider) runnable under the subscription-only constraint?
@@ -172,14 +190,27 @@ export function validateProviderPlan(
   return { ok: violations.length === 0, violations };
 }
 
-/** Provider + billing recorded for a single phase of a run (#1143). */
-export interface PhaseProvider {
-  provider: Provider;
-  billing: BillingMode;
+export function parsePhaseProviderRecord(input: unknown): PhaseProviderRecord {
+  return PhaseProviderRecordSchema.parse(input);
 }
 
-/** Per-phase provider/billing record stored on run metrics (#1143). */
-export type PhaseProviderRecord = Partial<Record<Phase, PhaseProvider>>;
+export function safeParsePhaseProviderRecord(input: unknown): PhaseProviderRecord | null {
+  const parsed = PhaseProviderRecordSchema.safeParse(input);
+  return parsed.success ? parsed.data : null;
+}
+
+export function phaseProviderRecordToProviderPlan(record: PhaseProviderRecord): ProviderPlan {
+  const plan: ProviderPlan = {};
+  for (const phase of PHASES) {
+    const provider = record[phase]?.provider;
+    if (provider) plan[phase] = provider;
+  }
+  return plan;
+}
+
+export function phaseProvider(provider: Provider, billing: BillingMode): PhaseProvider {
+  return PhaseProviderSchema.parse({ provider, billing });
+}
 
 /**
  * #1143 — The provider/billing reality of an auto-dent run today.
@@ -189,15 +220,28 @@ export type PhaseProviderRecord = Partial<Record<Phase, PhaseProvider>>;
  * run auditable for provider usage and billing mode without changing behavior.
  */
 export function defaultPhaseProviders(): PhaseProviderRecord {
-  const claude: PhaseProvider = { provider: 'claude', billing: 'subscription-cli' };
-  return {
+  const claude = phaseProvider('claude', 'subscription-cli');
+  return parsePhaseProviderRecord({
     planning: claude,
     implementation: claude,
     review: claude,
     fix: claude,
     reflection: claude,
-    validation: { provider: 'provider-independent', billing: 'local-only' },
-  };
+    validation: phaseProvider('provider-independent', 'local-only'),
+  });
+}
+
+export function phaseProvidersForAgentProvider(provider: AgentProvider): PhaseProviderRecord {
+  if (provider !== 'codex') return defaultPhaseProviders();
+  const codex = phaseProvider('codex', 'subscription-cli');
+  return parsePhaseProviderRecord({
+    planning: codex,
+    implementation: codex,
+    review: phaseProvider('claude', 'subscription-cli'),
+    fix: codex,
+    reflection: codex,
+    validation: phaseProvider('provider-independent', 'local-only'),
+  });
 }
 
 /**
