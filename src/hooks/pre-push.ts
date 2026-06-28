@@ -135,8 +135,10 @@ function branchNameFromRef(ref: string): string | null {
  *
  * Git pre-push receives the actual ref update list. That list is the authority:
  * `HEAD` can be on a different branch when an explicit refspec recreates a
- * deleted remote PR branch (#1536). Branch deletions are intentionally ignored;
- * deleting a stale merged PR branch is the cleanup path, not orphan work.
+ * deleted remote PR branch (#1536). Branch deletions and non-branch ref
+ * updates are intentionally ignored; deleting a stale merged PR branch is the
+ * cleanup path, not orphan work. Only genuinely empty stdin falls back to the
+ * current branch for manual/test invocations that lack Git's ref list.
  */
 export function derivePushTargetBranches(refs: GitPushRef[], currentBranch: string): string[] {
   const targets: string[] = [];
@@ -151,6 +153,7 @@ export function derivePushTargetBranches(refs: GitPushRef[], currentBranch: stri
   }
 
   if (targets.length > 0) return targets;
+  if (refs.length > 0) return [];
   const fallback = currentBranch.trim();
   return fallback ? [fallback] : [];
 }

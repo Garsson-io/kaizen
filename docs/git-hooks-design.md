@@ -58,8 +58,11 @@ current checkout branch. Git sends each ref update on stdin as:
 This matters when an explicit refspec recreates a deleted remote PR branch while
 `HEAD` is on a different branch: `gh pr list --head <remote branch> --state all`
 can still find the merged PR, but querying the current checkout branch would
-miss it. Branch deletion refs (`local_sha` all zeros) are ignored because
-deleting a stale merged PR branch is the cleanup path, not new orphan work.
+miss it. Branch deletion refs (`local_sha` all zeros) and non-branch ref updates
+are ignored because deleting a stale merged PR branch or pushing a tag is not
+new branch work. When stdin contains refs but none are pushed branch targets,
+the hook allows silently with `no_push_targets` instead of falling back to the
+current branch.
 
 ### Agent-env gating
 
