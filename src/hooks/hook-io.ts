@@ -5,7 +5,7 @@
  * This module handles the boilerplate.
  */
 
-import { appendFileSync } from 'node:fs';
+import { appendJsonLine } from '../lib/json-lines.js';
 import { createDefaultGitExec, resolveTargetWorktree, type GitExec } from './lib/git-state.js';
 
 export interface HookTraceOptions {
@@ -59,10 +59,7 @@ export function traceHookEvent(
 ): void {
   if (!isTraceEnabled()) return;
   try {
-    appendFileSync(
-      getTraceFile(options),
-      JSON.stringify({ ts: new Date().toISOString(), hook, ...fields }) + '\n',
-    );
+    appendJsonLine(getTraceFile(options), { ts: new Date().toISOString(), hook, ...fields });
   } catch { /* never fail on trace */ }
 }
 

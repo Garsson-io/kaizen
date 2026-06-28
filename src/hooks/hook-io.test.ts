@@ -258,6 +258,13 @@ describe('hook-io', () => {
       expect(HOOK_IO_SOURCE).toContain('options.traceFile');
     });
 
+    it('INVARIANT: routes hook trace JSONL appends through appendJsonLine', () => {
+      expect(HOOK_IO_SOURCE).toContain('appendJsonLine');
+      expect(HOOK_IO_SOURCE).toContain("from '../lib/json-lines.js'");
+      expect(HOOK_IO_SOURCE).not.toContain('appendFileSync');
+      expect(HOOK_IO_SOURCE).not.toContain("JSON.stringify({ ts: new Date().toISOString(), hook, ...fields }) + '\\n'");
+    });
+
     it('INVARIANT: writes to explicit trace file override', () => {
       const traceDir = mkdtempSync(join(tmpdir(), 'hook-io-override-'));
       const traceFile = join(traceDir, 'trace.jsonl');
@@ -277,6 +284,12 @@ describe('hook-io', () => {
         else delete process.env.KAIZEN_HOOK_TRACE;
         rmSync(traceDir, { recursive: true, force: true });
       }
+    });
+
+    it('INVARIANT: trace write errors remain best-effort', () => {
+      expect(() => {
+        traceHookEvent('test-hook', { action: 'observe' }, { traceFile: '/dev/null/impossible/trace.jsonl' });
+      }).not.toThrow();
     });
   });
 });
