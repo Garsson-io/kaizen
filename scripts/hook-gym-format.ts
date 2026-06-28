@@ -10,6 +10,7 @@
  */
 
 import { escapeMarkdownTableCell } from './markdown-table.js';
+import { truncateDisplay } from './auto-dent-display.js';
 import type { HookTimeline, ParsedHookEvent } from './hook-gym-schema.js';
 
 /**
@@ -68,7 +69,7 @@ export function formatTimeline(timeline: HookTimeline): string {
 
 function renderEventRow(e: ParsedHookEvent): string {
   const decision = e.decision ?? 'none';
-  const reason = e.reason ? truncate(e.reason, 60) : '—';
+  const reason = e.reason ? truncateDisplay(e.reason, 60, { collapse: false }) : '—';
   const hook = e.hookName || e.eventType;
   const escapedHook = escapeMarkdownTableCell(hook, { carriageReturn: 'drop' });
   const escapedReason = escapeMarkdownTableCell(reason, { carriageReturn: 'drop' });
@@ -90,11 +91,6 @@ function formatGateLine(name: string, t: HookTimeline): string {
     return `**${name}**: cleared @${cleared}ms (no activation observed this run)`;
   }
   return `**${name}**: (unknown)`;
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max - 1) + '…';
 }
 
 /**
