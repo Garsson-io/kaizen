@@ -2638,6 +2638,12 @@ async function main(): Promise<void> {
     reviewVerdict,
     processVerdict,
     lifecycleHealth,
+    // Bind the hook-activation verdict (#843/#1500) to the merge decision (#1220):
+    // a run whose kaizen hooks did not load (degraded), or one where no
+    // `system.init` was observed on a hook-expecting provider, is not merge-ready.
+    // Default provider to 'claude' (hook-expecting) for legacy state → fail-closed.
+    hookActivation: result.hookActivation,
+    provider: state.provider ?? 'claude',
   });
   const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);
   if (!autoMergeDecision.allow) {
