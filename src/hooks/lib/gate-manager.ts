@@ -28,6 +28,7 @@ import {
   parseStateFile,
   readStateFile,
 } from '../state-utils.js';
+import { readJsonValueFile } from '../../lib/json-file.js';
 
 export interface PendingGate {
   type: 'review' | 'reflection' | 'post_merge';
@@ -42,6 +43,13 @@ export interface GateReport {
   gates: PendingGate[];
   message: string;
   shouldBlock: boolean;
+}
+
+export interface DeferredItems {
+  timestamp: string;
+  branch: string;
+  reason: string;
+  items: Array<{ type: string; prUrl: string; label: string }>;
 }
 
 const DEFERRED_ITEMS_FILE = '.kaizen-deferred-items.json';
@@ -175,14 +183,10 @@ export function handleUnfinishedEscape(
  */
 export function readDeferredItems(
   stateDir: string = DEFAULT_STATE_DIR,
-): { timestamp: string; branch: string; reason: string; items: Array<{ type: string; prUrl: string; label: string }> } | null {
+): DeferredItems | null {
   const filepath = join(stateDir, DEFERRED_ITEMS_FILE);
   if (!existsSync(filepath)) return null;
-  try {
-    return JSON.parse(readFileSync(filepath, 'utf-8'));
-  } catch {
-    return null;
-  }
+  return readJsonValueFile(filepath) as DeferredItems | null;
 }
 
 /**

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeStateFile } from '../state-utils.js';
@@ -50,6 +51,13 @@ describe('state file read helper source invariant', () => {
     expect(GATE_MANAGER_SOURCE).toContain('readStateFile');
     expect(GATE_MANAGER_SOURCE).not.toContain('function readStateFromFile');
     expect(GATE_MANAGER_SOURCE).not.toContain('parseStateFile(readFileSync');
+  });
+});
+
+describe('deferred items JSON helper source invariant', () => {
+  it('uses the shared JSON file helper for deferred items reads', () => {
+    expect(GATE_MANAGER_SOURCE).toContain('readJsonValueFile');
+    expect(GATE_MANAGER_SOURCE).not.toContain('JSON.parse(readFileSync');
   });
 });
 
@@ -294,6 +302,17 @@ describe('scanStateDirectoryDiagnostics', () => {
 describe('readDeferredItems / clearDeferredItems', () => {
   it('returns null when no deferred items exist', () => {
     expect(readDeferredItems(TEST_STATE_DIR)).toBeNull();
+  });
+
+  it('returns null when deferred items file is malformed JSON', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'gate-manager-malformed-'));
+    try {
+      writeFileSync(join(stateDir, '.kaizen-deferred-items.json'), '{not json');
+
+      expect(readDeferredItems(stateDir)).toBeNull();
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   it('clears deferred items file', () => {
