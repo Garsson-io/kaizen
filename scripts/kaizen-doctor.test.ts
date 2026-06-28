@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,6 +9,7 @@ import {
   checkStalePluginCache,
   checkRestartNeeded,
   checkHookExecSmoke,
+  checkHookSyntaxSmoke,
   checkSingleRegistrationPath,
   checkCodexReadiness,
   runAllChecks,
@@ -39,10 +41,10 @@ function writePluginJson(projectRoot: string, content: unknown): void {
   writeFileSync(join(projectRoot, '.claude-plugin/plugin.json'), JSON.stringify(content, null, 2));
 }
 
-function writeHook(projectRoot: string, rel: string, executable = true): string {
+function writeHook(projectRoot: string, rel: string, executable = true, content = '#!/bin/bash\nexit 0\n'): string {
   const p = join(projectRoot, rel);
   mkdirSync(join(p, '..'), { recursive: true });
-  writeFileSync(p, '#!/bin/bash\nexit 0\n');
+  writeFileSync(p, content);
   if (executable) chmodSync(p, 0o755);
   else chmodSync(p, 0o644);
   return p;
@@ -316,6 +318,110 @@ describe('checkHookExecSmoke', () => {
   });
 });
 
+describe('checkHookSyntaxSmoke', () => {
+  let proj: string, home: string;
+  beforeEach(() => { proj = makeProject(); home = makeHome(); });
+  afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+
+  it('PASS when referenced hooks have valid bash syntax', () => {
+    writeHook(proj, '.claude/hooks/foo.sh', true);
+    writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/foo.sh' }] }] } });
+
+    const r = checkHookSyntaxSmoke({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('PASS');
+    expect(r.detail).toContain('all 1 hook files pass syntax checks');
+  });
+
+  it('FAILs on conflict markers even when the hook is present and executable', () => {
+    writeHook(proj, '.claude/hooks/conflicted.sh', true, [
+      '#!/bin/bash',
+      '<<<<<<< HEAD',
+      'echo ours',
+      '=======',
+      'echo theirs',
+      '>>>>>>> branch',
+      '',
+    ].join('\n'));
+    writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/conflicted.sh' }] }] } });
+
+    const r = checkHookSyntaxSmoke({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('FAIL');
+    expect(r.detail).toContain('conflicted.sh');
+    expect(r.detail).toContain('conflict markers');
+  });
+
+  it('FAILs on shell syntax errors with bounded diagnostic detail', () => {
+    writeHook(proj, '.claude/hooks/bad.sh', true, '#!/bin/bash\necho "unterminated\n');
+    writeSettings(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './.claude/hooks/bad.sh' }] }] } });
+
+    const r = checkHookSyntaxSmoke({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('FAIL');
+    expect(r.detail).toContain('bad.sh');
+    expect(r.detail).toContain('syntax error');
+    expect(r.detail.length).toBeLessThan(700);
+  });
+});
+
+describe('hook-syntax CLI and SessionStart wrapper', () => {
+  let proj: string, home: string;
+  beforeEach(() => { proj = makeProject(); home = makeHome(); });
+  afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+
+  function writeConflictedPluginHook(): void {
+    writeHook(proj, '.claude/hooks/conflicted.sh', true, [
+      '#!/bin/bash',
+      '<<<<<<< HEAD',
+      'echo ours',
+      '=======',
+      'echo theirs',
+      '>>>>>>> branch',
+      '',
+    ].join('\n'));
+    writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/conflicted.sh' }] }] } });
+  }
+
+  it('hook-syntax --quiet is silent on pass and exits non-zero on corrupt hooks', () => {
+    writeHook(proj, '.claude/hooks/foo.sh', true);
+    writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/foo.sh' }] }] } });
+
+    const ok = spawnSync('npx', ['--prefix', process.cwd(), 'tsx', join(process.cwd(), 'scripts/kaizen-doctor.ts'), 'hook-syntax', '--quiet'], {
+      cwd: proj,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    });
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toBe('');
+
+    rmSync(join(proj, '.claude/hooks/foo.sh'));
+    writeConflictedPluginHook();
+    const bad = spawnSync('npx', ['--prefix', process.cwd(), 'tsx', join(process.cwd(), 'scripts/kaizen-doctor.ts'), 'hook-syntax', '--quiet'], {
+      cwd: proj,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    });
+    expect(bad.status).toBe(1);
+    expect(bad.stdout).toContain('[FAIL] hook-syntax-smoke');
+    expect(bad.stdout).toContain('conflict markers');
+  });
+
+  it('SessionStart snapshot hook surfaces corrupt hooks but exits 0', () => {
+    writeConflictedPluginHook();
+
+    const result = spawnSync('bash', [join(process.cwd(), '.claude/hooks/kaizen-session-snapshot.sh')], {
+      cwd: proj,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('[FAIL] hook-syntax-smoke');
+    expect(result.stdout).toContain('conflict markers');
+  });
+});
+
 describe('checkSingleRegistrationPath (#1063)', () => {
   let proj: string, home: string;
   beforeEach(() => { proj = makeProject(); home = makeHome(); });
@@ -569,6 +675,7 @@ describe('runAllChecks + exitCodeFor', () => {
       'stale-plugin-cache',
       'restart-needed',
       'hook-exec-smoke',
+      'hook-syntax-smoke',
       'codex-readiness',
     ]);
     expect(codexRun).toHaveBeenCalledWith('codex', ['--version']);

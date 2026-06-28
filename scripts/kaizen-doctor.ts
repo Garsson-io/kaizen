@@ -103,6 +103,32 @@ function collectHookCommands(cfg: unknown): string[] {
   return out;
 }
 
+interface ReferencedHook {
+  label: string;
+  command: string;
+  path: string;
+}
+
+function collectReferencedHooks(opts: DoctorOpts): ReferencedHook[] {
+  const cfgs: Array<{ path: string; label: string }> = [
+    { path: join(opts.projectRoot, '.claude/settings.json'), label: 'settings.json' },
+    { path: join(opts.projectRoot, '.claude-plugin/plugin.json'), label: 'plugin.json' },
+  ];
+  const hooks: ReferencedHook[] = [];
+  for (const cfg of cfgs) {
+    const data = readJsonValueFile(cfg.path);
+    if (!data) continue;
+    for (const command of collectHookCommands(data)) {
+      hooks.push({
+        label: cfg.label,
+        command,
+        path: resolveHookPath(command, opts.projectRoot),
+      });
+    }
+  }
+  return hooks;
+}
+
 /** Extract the executable path from a hook `command` string.
  *  Handles:
  *    - shell-style quotes: `"path with spaces/foo.sh" arg`  → `path with spaces/foo.sh`
@@ -182,24 +208,14 @@ export function checkPluginDoubleInstall(opts: DoctorOpts): CheckResult {
 
 /** Check 2: every referenced hook command resolves to an existing file. */
 export function checkDanglingHookPaths(opts: DoctorOpts): CheckResult {
-  const cfgs: Array<{ path: string; label: string }> = [
-    { path: join(opts.projectRoot, '.claude/settings.json'), label: 'settings.json' },
-    { path: join(opts.projectRoot, '.claude-plugin/plugin.json'), label: 'plugin.json' },
-  ];
   const missing: string[] = [];
-  let total = 0;
-  for (const cfg of cfgs) {
-    const data = readJsonValueFile(cfg.path);
-    if (!data) continue;
-    for (const c of collectHookCommands(data)) {
-      total++;
-      const hookPath = resolveHookPath(c, opts.projectRoot);
-      if (!existsSync(hookPath)) {
-        missing.push(`${cfg.label}: ${hookPath}`);
-      }
+  const hooks = collectReferencedHooks(opts);
+  for (const hook of hooks) {
+    if (!existsSync(hook.path)) {
+      missing.push(`${hook.label}: ${hook.path}`);
     }
   }
-  if (total === 0) {
+  if (hooks.length === 0) {
     return {
       name: 'dangling-hook-paths',
       status: 'WARN',
@@ -210,13 +226,13 @@ export function checkDanglingHookPaths(opts: DoctorOpts): CheckResult {
     return {
       name: 'dangling-hook-paths',
       status: 'FAIL',
-      detail: `${missing.length}/${total} hook paths missing: ${missing.slice(0, 3).join('; ')}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ''}`,
+      detail: `${missing.length}/${hooks.length} hook paths missing: ${missing.slice(0, 3).join('; ')}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ''}`,
     };
   }
   return {
     name: 'dangling-hook-paths',
     status: 'PASS',
-    detail: `all ${total} hook paths resolve.`,
+    detail: `all ${hooks.length} hook paths resolve.`,
   };
 }
 
@@ -402,24 +418,15 @@ export function checkSingleRegistrationPath(opts: DoctorOpts): CheckResult {
 
 /** Check 5: every referenced hook file is executable. */
 export function checkHookExecSmoke(opts: DoctorOpts): CheckResult {
-  const cfgs = [
-    join(opts.projectRoot, '.claude/settings.json'),
-    join(opts.projectRoot, '.claude-plugin/plugin.json'),
-  ];
   const nonExec: string[] = [];
   let total = 0;
-  for (const cfgPath of cfgs) {
-    const data = readJsonValueFile(cfgPath);
-    if (!data) continue;
-    for (const c of collectHookCommands(data)) {
-      const hookPath = resolveHookPath(c, opts.projectRoot);
-      if (!existsSync(hookPath)) continue;
-      total++;
-      try {
-        accessSync(hookPath, fsConstants.X_OK);
-      } catch {
-        nonExec.push(hookPath);
-      }
+  for (const hook of collectReferencedHooks(opts)) {
+    if (!existsSync(hook.path)) continue;
+    total++;
+    try {
+      accessSync(hook.path, fsConstants.X_OK);
+    } catch {
+      nonExec.push(hook.path);
     }
   }
   if (total === 0) {
@@ -440,6 +447,75 @@ export function checkHookExecSmoke(opts: DoctorOpts): CheckResult {
     name: 'hook-exec-smoke',
     status: 'PASS',
     detail: `all ${total} hook files executable.`,
+  };
+}
+
+function bounded(text: string, max = 240): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= max) return compact;
+  return compact.slice(0, max - 12) + '...<truncated>';
+}
+
+function hasConflictMarkers(body: string): boolean {
+  return /^(<<<<<<<|=======|>>>>>>>)(?:\s|$)/m.test(body);
+}
+
+/** Check 6: referenced hook files must be parseable shell scripts.
+ *
+ * CI already runs validate-hook-integrity.sh before merge. This doctor check
+ * covers the runtime/install-state version of #371: a local or cached hook can
+ * be present and executable while containing merge markers or broken syntax.
+ */
+export function checkHookSyntaxSmoke(opts: DoctorOpts): CheckResult {
+  const bad: string[] = [];
+  let total = 0;
+  for (const hook of collectReferencedHooks(opts)) {
+    if (!existsSync(hook.path)) continue;
+    total++;
+
+    let body = '';
+    try {
+      body = readFileSync(hook.path, 'utf8');
+    } catch (err) {
+      bad.push(`${hook.path}: unreadable (${bounded(String(err))})`);
+      continue;
+    }
+
+    if (hasConflictMarkers(body)) {
+      bad.push(`${hook.path}: conflict markers present`);
+      continue;
+    }
+
+    try {
+      execFileSync('bash', ['-n', hook.path], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 5_000,
+      });
+    } catch (err) {
+      const e = err as { stderr?: string; message?: string };
+      bad.push(`${hook.path}: syntax error${e.stderr ? ` (${bounded(e.stderr)})` : e.message ? ` (${bounded(e.message)})` : ''}`);
+    }
+  }
+
+  if (total === 0) {
+    return {
+      name: 'hook-syntax-smoke',
+      status: 'PASS',
+      detail: 'no resolvable hook paths to check.',
+    };
+  }
+  if (bad.length > 0) {
+    return {
+      name: 'hook-syntax-smoke',
+      status: 'FAIL',
+      detail: `${bad.length}/${total} hook files failed syntax checks: ${bad.slice(0, 3).join('; ')}${bad.length > 3 ? ` (+${bad.length - 3} more)` : ''}`,
+    };
+  }
+  return {
+    name: 'hook-syntax-smoke',
+    status: 'PASS',
+    detail: `all ${total} hook files pass syntax checks.`,
   };
 }
 
@@ -611,6 +687,7 @@ export function runAllChecks(opts: DoctorOpts): CheckResult[] {
     checkStalePluginCache(opts),
     checkRestartNeeded(opts),
     checkHookExecSmoke(opts),
+    checkHookSyntaxSmoke(opts),
     checkCodexReadiness(opts.codexReadiness),
   ];
 }
@@ -648,6 +725,16 @@ if (isMain) {
   if (argv[0] === 'snapshot') {
     try { writeSessionSnapshot(opts); } catch {}
     process.exit(0);
+  }
+
+  // Narrow SessionStart/doctor path for #371. Avoids noisy unrelated WARNs
+  // (for example Codex readiness) while still surfacing corrupt hook files.
+  if (argv[0] === 'hook-syntax') {
+    const result = checkHookSyntaxSmoke(opts);
+    if (!(argv.includes('--quiet') && result.status === 'PASS')) {
+      process.stdout.write(formatResult(result) + '\n');
+    }
+    process.exit(result.status === 'FAIL' ? 1 : 0);
   }
 
   const json = argv.includes('--json');
