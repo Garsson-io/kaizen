@@ -5,7 +5,7 @@
  * Subcommands:
  *   status              List active batches with last-worked-on info
  *   halt [batch-id]     Halt a specific batch (or all active batches)
- *   score [batch-id]    Score batches — efficiency, success rate, cost-per-PR
+ *   score [batch-id]    Score batches — efficiency, success rate, cost-per-PR, hook activation health
  *   score --post-hoc    Include live merge status checks
  *   cleanup [batch-id]  Close superseded PRs whose issues are already resolved from GitHub
  *   reflect [batch-id]  Cross-run pattern analysis (#551)

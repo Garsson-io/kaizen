@@ -19,6 +19,7 @@ import { parseJsonLines } from '../src/lib/json-lines.js';
 import type { EventEnvelope, RunCompleteEvent, RunIssuePickedEvent, RunPrCreatedEvent } from './auto-dent-events.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 import {
+  computeHookActivationCounts,
   hookActivationStatus,
   type HookActivationStatus,
 } from './auto-dent-hook-activation.js';
@@ -190,14 +191,11 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
   const processVerdictDistribution: Partial<Record<ProcessVerdict, number>> = {};
   const workflowRepairGateDistribution: Partial<Record<WorkflowGateId, number>> = {};
   const workflowRepairStateDistribution: Record<string, number> = {};
-  const hookActivationDistribution: Partial<Record<HookActivationStatus, number>> = {};
+  const hookActivationStatuses: Array<HookActivationStatus | undefined> = [];
   for (const e of completeEvents) {
     const verdict = e.event.process_verdict;
     if (verdict) processVerdictDistribution[verdict] = (processVerdictDistribution[verdict] ?? 0) + 1;
-    const hookStatus = hookActivationStatus(e.event.hook_activation);
-    if (hookStatus) {
-      hookActivationDistribution[hookStatus] = (hookActivationDistribution[hookStatus] ?? 0) + 1;
-    }
+    hookActivationStatuses.push(hookActivationStatus(e.event.hook_activation));
     for (const gate of e.event.workflow_repair_gates ?? []) {
       workflowRepairGateDistribution[gate] = (workflowRepairGateDistribution[gate] ?? 0) + 1;
     }
@@ -209,9 +207,7 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
 
   const runCount = completeEvents.length || 1;
   const totalDurationMinutes = Math.round(totalDurationMs / 60000 * 10) / 10;
-  const hasHookActivationDistribution = Object.keys(hookActivationDistribution).length > 0;
-  const hookActivationDegradedCount =
-    (hookActivationDistribution.degraded ?? 0) + (hookActivationDistribution.unknown ?? 0);
+  const hookActivationCounts = computeHookActivationCounts(hookActivationStatuses);
 
   return {
     batch_id: batchId,
@@ -242,8 +238,8 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     process_verdict_distribution: processVerdictDistribution,
     workflow_repair_gate_distribution: workflowRepairGateDistribution,
     workflow_repair_state_distribution: workflowRepairStateDistribution,
-    hook_activation_distribution: hasHookActivationDistribution ? hookActivationDistribution : undefined,
-    hook_activation_degraded_count: hasHookActivationDistribution ? hookActivationDegradedCount : undefined,
+    hook_activation_distribution: hookActivationCounts.distribution,
+    hook_activation_degraded_count: hookActivationCounts.degradedCount,
   };
 }
 

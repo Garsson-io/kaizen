@@ -21,6 +21,12 @@ import { execSync } from 'child_process';
 import { readState, type BatchState } from './auto-dent-run.js';
 import { renderToolInputSummary } from './auto-dent-display.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
+import {
+  computeHookActivationCounts,
+  formatHookActivationDistribution,
+  hookActivationStatus,
+  type HookActivationStatus,
+} from './auto-dent-hook-activation.js';
 
 // Types
 
@@ -114,6 +120,10 @@ export interface BatchAnalysis {
   recommendations: string[];
   /** Regression reports for underperforming runs */
   regressions: RegressionReport[];
+  /** Hook activation distribution from state.json run_history (#1501). */
+  hookActivationDistribution?: Partial<Record<HookActivationStatus, number>>;
+  /** Runs whose hook activation was degraded or unknown (#1501). */
+  hookActivationDegradedCount?: number;
 }
 
 export type RegressionSeverity = 'none' | 'warning' | 'regression';
@@ -653,7 +663,7 @@ export function analyzeBatch(batchDir: string): BatchAnalysis {
 
   // Enrich runs with prompt metadata from state.json run_history (#602)
   const stateData = readBatchState(batchDir);
-  const history: Array<{ run: number; prompt_template?: string; prompt_hash?: string }> = stateData?.run_history || [];
+  const history = stateData?.run_history || [];
   for (const run of runs) {
     // Extract run number from filename (e.g., "run-5-230323120000.log" -> 5)
     const runNumMatch = basename(run.runFile).match(/^run-(\d+)/);
@@ -770,6 +780,9 @@ export function analyzeBatch(batchDir: string): BatchAnalysis {
 
   // Regression detection
   const regressions = detectBatchRegressions(runs);
+  const hookActivationCounts = computeHookActivationCounts(
+    history.map(h => hookActivationStatus(h.hook_activation)),
+  );
 
   return {
     batchDir,
@@ -788,6 +801,8 @@ export function analyzeBatch(batchDir: string): BatchAnalysis {
     globalWastePatterns,
     recommendations,
     regressions,
+    hookActivationDistribution: hookActivationCounts.distribution,
+    hookActivationDegradedCount: hookActivationCounts.degradedCount,
   };
 }
 
@@ -894,6 +909,12 @@ export function formatBatchAnalysis(batch: BatchAnalysis): string {
     ).sort((a, b) => b[1] - a[1])) {
       lines.push(`- **${phase}**: ${(frac * 100).toFixed(1)}%`);
     }
+  }
+
+  if (batch.hookActivationDistribution) {
+    lines.push('', '### Hook Activation', '');
+    lines.push(`- **Distribution:** ${formatHookActivationDistribution(batch.hookActivationDistribution)}`);
+    lines.push(`- **Degraded/unknown runs:** ${batch.hookActivationDegradedCount ?? 0}`);
   }
 
   if (batch.globalTopPatterns.length > 0) {

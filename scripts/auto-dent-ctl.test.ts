@@ -297,6 +297,44 @@ describe('formatBatchScoreOutput', () => {
     expect(output).toContain('PR/$');
   });
 
+  it('shows hook activation health in score output', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 2,
+        run_history: [
+          makeRunMetrics({
+            run: 1,
+            hook_activation: {
+              provider: 'claude',
+              expected: true,
+              active: true,
+              degraded: false,
+              status: 'active',
+              observedPlugins: ['kaizen'],
+              message: 'active',
+            } as any,
+          }),
+          makeRunMetrics({
+            run: 2,
+            hook_activation: {
+              provider: 'claude',
+              expected: true,
+              active: false,
+              degraded: true,
+              status: 'unknown',
+              observedPlugins: [],
+              message: 'no system.init observed',
+            } as any,
+          }),
+        ],
+      }),
+    });
+
+    const output = formatBatchScoreOutput(batch);
+    expect(output).toContain('Hook activation');
+    expect(output).toContain('active:1, unknown:1 (1 degraded/unknown)');
+  });
+
   it('does not include post-hoc section when postHoc=false', () => {
     const batch = makeBatchInfo({
       state: makeBatchState({

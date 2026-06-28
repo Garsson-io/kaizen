@@ -9,6 +9,7 @@
 
 import type { RunMetrics, RunResult, MergeStatus } from './auto-dent-run.js';
 import {
+  computeHookActivationCounts,
   formatHookActivationDistribution,
   hookActivationStatus,
   type HookActivationStatus,
@@ -421,14 +422,7 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
   const reviewFailCount = reviewedRuns.filter(r => r.review_verdict === 'fail').length;
   const reviewFailRate = reviewedRuns.length > 0 ? reviewFailCount / reviewedRuns.length : 0;
   const reviewTotalCost = runs.reduce((s, r) => s + (r.review_cost_usd ?? 0), 0);
-  const hookActivationDistribution: Partial<Record<HookActivationStatus, number>> = {};
-  for (const run of runs) {
-    if (!run.hook_activation_status) continue;
-    hookActivationDistribution[run.hook_activation_status] = (hookActivationDistribution[run.hook_activation_status] ?? 0) + 1;
-  }
-  const hasHookActivationDistribution = Object.keys(hookActivationDistribution).length > 0;
-  const hookActivationDegradedCount =
-    (hookActivationDistribution.degraded ?? 0) + (hookActivationDistribution.unknown ?? 0);
+  const hookActivationCounts = computeHookActivationCounts(runs.map(run => run.hook_activation_status));
 
   return {
     total_runs: runs.length,
@@ -455,8 +449,8 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     review_fail_count: reviewFailCount,
     review_fail_rate: reviewFailRate,
     review_total_cost_usd: reviewTotalCost,
-    hook_activation_distribution: hasHookActivationDistribution ? hookActivationDistribution : undefined,
-    hook_activation_degraded_count: hasHookActivationDistribution ? hookActivationDegradedCount : undefined,
+    hook_activation_distribution: hookActivationCounts.distribution,
+    hook_activation_degraded_count: hookActivationCounts.degradedCount,
   };
 }
 

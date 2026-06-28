@@ -164,6 +164,24 @@ export function formatHookActivationDistribution(distribution: Partial<Record<Ho
     .join(', ');
 }
 
+export interface HookActivationCounts {
+  distribution?: Partial<Record<HookActivationStatus, number>>;
+  degradedCount?: number;
+}
+
+export function computeHookActivationCounts(statuses: Array<HookActivationStatus | undefined>): HookActivationCounts {
+  const distribution: Partial<Record<HookActivationStatus, number>> = {};
+  for (const status of statuses) {
+    if (!status) continue;
+    distribution[status] = (distribution[status] ?? 0) + 1;
+  }
+  if (Object.keys(distribution).length === 0) return {};
+  return {
+    distribution,
+    degradedCount: (distribution.degraded ?? 0) + (distribution.unknown ?? 0),
+  };
+}
+
 /**
  * Render a verdict for the run log/console. Degraded/unknown verdicts produce
  * loud, unmissable banners; active verdicts produce a single confirmation line;
