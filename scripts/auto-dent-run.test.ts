@@ -1730,9 +1730,14 @@ describe('BatchState provider field (#1144)', () => {
   });
 
   it('fails Codex runs that emit malformed JSONL despite a zero provider exit (#1580)', () => {
-    expect(normalizeCodexRunExitCode(0, 1)).toBe(1);
-    expect(normalizeCodexRunExitCode(0, 0)).toBe(0);
-    expect(normalizeCodexRunExitCode(2, 1)).toBe(2);
+    expect(normalizeCodexRunExitCode(0, 1, true)).toBe(1);
+    expect(normalizeCodexRunExitCode(0, 0, true)).toBe(0);
+    expect(normalizeCodexRunExitCode(2, 1, true)).toBe(2);
+  });
+
+  it('fails Codex runs that exit without terminal result evidence (#1580)', () => {
+    expect(normalizeCodexRunExitCode(0, 0, false)).toBe(1);
+    expect(normalizeCodexRunExitCode(3, 0, false)).toBe(3);
   });
 });
 

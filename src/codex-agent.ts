@@ -47,14 +47,14 @@ function collectText(value: unknown, out: string[]): void {
   }
 }
 
-function isFinalEvent(event: unknown): boolean {
+export function isCodexTerminalEvent(event: unknown): boolean {
   if (!event || typeof event !== 'object') return false;
   const type = String((event as Record<string, unknown>).type ?? '').toLowerCase();
   return type.includes('final') || type === 'result';
 }
 
 export function hasCodexTerminalEvent(parsed: ParsedCodexJsonl): boolean {
-  return parsed.events.some(isFinalEvent);
+  return parsed.events.some(isCodexTerminalEvent);
 }
 
 function textFrom(value: unknown): string {
@@ -146,7 +146,7 @@ export function normalizeCodexEventToStreamMessages(event: unknown): AutoDentStr
     }
   }
 
-  if (!isFinalEvent(event)) return [];
+  if (!isCodexTerminalEvent(event)) return [];
   const text = textFrom(event);
   return normalizeCodexFinalTextToStreamMessages(text);
 }
@@ -161,7 +161,7 @@ export function parseCodexJsonl(jsonl: string): ParsedCodexJsonl {
     const chunks: string[] = [];
     collectText(event, chunks);
     textChunks.push(...chunks);
-    if (isFinalEvent(event)) finalChunks.push(...chunks);
+    if (isCodexTerminalEvent(event)) finalChunks.push(...chunks);
     if (!event || typeof event !== 'object') continue;
     const item = (event as Record<string, unknown>).item;
     if (item && typeof item === 'object') {

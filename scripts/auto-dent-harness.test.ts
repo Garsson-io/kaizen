@@ -215,10 +215,16 @@ describe('replay: edge cases', () => {
   });
 
   it('fails Codex live probes that emit malformed JSONL despite a zero provider exit (#1580)', () => {
-    expect(normalizeLiveProbeExitCode('codex', 0, 1)).toBe(1);
-    expect(normalizeLiveProbeExitCode('codex', 0, 0)).toBe(0);
-    expect(normalizeLiveProbeExitCode('codex', 2, 1)).toBe(2);
-    expect(normalizeLiveProbeExitCode('claude', 0, 1)).toBe(0);
+    expect(normalizeLiveProbeExitCode('codex', 0, 1, true)).toBe(1);
+    expect(normalizeLiveProbeExitCode('codex', 0, 0, true)).toBe(0);
+    expect(normalizeLiveProbeExitCode('codex', 2, 1, true)).toBe(2);
+    expect(normalizeLiveProbeExitCode('claude', 0, 1, true)).toBe(0);
+  });
+
+  it('fails Codex live probes that exit without terminal result evidence (#1580)', () => {
+    expect(normalizeLiveProbeExitCode('codex', 0, 0, false)).toBe(1);
+    expect(normalizeLiveProbeExitCode('codex', 2, 0, false)).toBe(2);
+    expect(normalizeLiveProbeExitCode('claude', 0, 0, false)).toBe(0);
   });
 });
 

@@ -64,7 +64,7 @@ function streamJsonPayload(text: string, costUsd: number): string {
 }
 
 function codexJsonlPayload(text: string): string {
-  return JSON.stringify({ item: { type: 'agent_message', text } }) + '\n';
+  return JSON.stringify({ type: 'result', final_message: text }) + '\n';
 }
 
 /** Build a minimal DimensionMeta for unit tests. */

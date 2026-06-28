@@ -27,6 +27,7 @@ import {
 } from './auto-dent-run.js';
 import {
   buildCodexExecArgs,
+  isCodexTerminalEvent,
   normalizeCodexEventToStreamMessages,
 } from './auto-dent-codex.js';
 import { parsePhaseMarkers as parsePhaseMarkersLocal } from './auto-dent-stream.js';
@@ -225,8 +226,13 @@ export function buildLiveProbeCommand(opts: Required<Pick<LiveProbeOpts, 'provid
   };
 }
 
-export function normalizeLiveProbeExitCode(provider: 'claude' | 'codex', exitCode: number, malformedJsonlLines: number): number {
-  if (provider === 'codex' && malformedJsonlLines > 0 && exitCode === 0) return 1;
+export function normalizeLiveProbeExitCode(
+  provider: 'claude' | 'codex',
+  exitCode: number,
+  malformedJsonlLines: number,
+  hasTerminalEvent = true,
+): number {
+  if (provider === 'codex' && (malformedJsonlLines > 0 || !hasTerminalEvent) && exitCode === 0) return 1;
   return exitCode;
 }
 
@@ -248,6 +254,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
   const start = Date.now();
   const command = buildLiveProbeCommand({ provider, prompt, cwd, maxBudget, extraArgs });
   let malformedJsonlLines = 0;
+  let hasTerminalEvent = provider !== 'codex';
 
   // Save the raw log for replay/debugging
   const tmpDir = mkdtempSync(join(tmpdir(), 'auto-dent-probe-'));
@@ -283,6 +290,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
       rawMessages.push(parsed);
       try {
         if (provider === 'codex') {
+          if (isCodexTerminalEvent(parsed)) hasTerminalEvent = true;
           for (const streamMessage of normalizeCodexEventToStreamMessages(parsed)) {
             processStreamMessage(streamMessage, result, start, ctx);
           }
@@ -316,7 +324,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
         phases: extractPhasesFromLog(logLines),
         rawMessages,
         durationMs,
-        exitCode: normalizeLiveProbeExitCode(provider, providerExitCode, malformedJsonlLines),
+        exitCode: normalizeLiveProbeExitCode(provider, providerExitCode, malformedJsonlLines, hasTerminalEvent),
       });
     });
 

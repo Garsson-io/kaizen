@@ -24,6 +24,10 @@ function codexJsonlPayload(text: string): string {
   return JSON.stringify({ item: { type: 'agent_message', text } }) + '\n';
 }
 
+function codexResultPayload(text: string): string {
+  return JSON.stringify({ type: 'result', final_message: text }) + '\n';
+}
+
 function mockClaude(stdout: string, stderr = '', exitCode = 0): void {
   vi.mocked(spawn).mockImplementation(() => {
     const proc = new EventEmitter() as any;
@@ -192,7 +196,7 @@ describe('spawnAgent provider adapter', () => {
       summary: 'ok',
       findings: [],
     });
-    const raw = codexJsonlPayload(reviewJson);
+    const raw = codexJsonlPayload('working') + codexResultPayload(reviewJson);
     mockClaude(raw, 'codex stderr');
 
     const result = await spawnAgent('review this', {
@@ -212,6 +216,25 @@ describe('spawnAgent provider adapter', () => {
         stdio: ['pipe', 'pipe', 'pipe'],
       }),
     );
+  });
+
+  it('fails Codex JSONL that has agent text but no terminal result event', async () => {
+    const reviewJson = JSON.stringify({
+      dimension: 'requirements',
+      summary: 'ok',
+      findings: [],
+    });
+    const raw = codexJsonlPayload(reviewJson);
+    mockClaude(raw);
+
+    const result = await spawnAgent('review this', {
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      cwd: '/repo/kaizen',
+    });
+
+    expect(result.text).toBe(reviewJson);
+    expect(result.exitCode).toBe(-1);
+    expect(result.rawStderr).toContain('missing codex terminal event');
   });
 
   it('resolves spawn errors as failed agent results instead of hanging', async () => {

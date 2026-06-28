@@ -11,7 +11,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { buildCodexExecArgs, parseCodexJsonl } from './codex-agent.js';
+import { buildCodexExecArgs, hasCodexTerminalEvent, parseCodexJsonl } from './codex-agent.js';
 import { parseJsonLines } from './lib/json-lines.js';
 
 interface StreamJsonContentBlock {
@@ -217,12 +217,17 @@ function parseClaudeStreamResult(stdout: string): { text: string; costUsd: numbe
   return { text, costUsd };
 }
 
-function parseAgentResult(provider: SpawnAgentProvider['provider'], stdout: string): { text: string; costUsd: number; malformedLines: string[] } {
+function parseAgentResult(provider: SpawnAgentProvider['provider'], stdout: string): { text: string; costUsd: number; malformedLines: string[]; hasTerminalEvent: boolean } {
   if (provider === 'codex') {
     const parsed = parseCodexJsonl(stdout);
-    return { text: parsed.finalText || parsed.text, costUsd: 0, malformedLines: parsed.malformedLines };
+    return {
+      text: parsed.finalText || parsed.text,
+      costUsd: 0,
+      malformedLines: parsed.malformedLines,
+      hasTerminalEvent: hasCodexTerminalEvent(parsed),
+    };
   }
-  return { ...parseClaudeStreamResult(stdout), malformedLines: [] };
+  return { ...parseClaudeStreamResult(stdout), malformedLines: [], hasTerminalEvent: true };
 }
 
 /**
@@ -275,13 +280,17 @@ export const spawnAgent: SpawnClaudeFn = (prompt, opts) => {
       settled = true;
       clearTimeout(timer);
       const durationMs = Date.now() - start;
-      const { text, costUsd, malformedLines } = parseAgentResult(provider, stdout);
-      const malformedStderr = malformedLines.length > 0
-        ? `${stderr}${stderr ? '\n' : ''}malformed codex jsonl lines: ${malformedLines.length}`
+      const { text, costUsd, malformedLines, hasTerminalEvent } = parseAgentResult(provider, stdout);
+      const codexFailureNotes = [
+        ...(malformedLines.length > 0 ? [`malformed codex jsonl lines: ${malformedLines.length}`] : []),
+        ...(provider === 'codex' && !hasTerminalEvent ? ['missing codex terminal event'] : []),
+      ];
+      const normalizedStderr = codexFailureNotes.length > 0
+        ? `${stderr}${stderr ? '\n' : ''}${codexFailureNotes.join('\n')}`
         : stderr;
-      const exitCode = malformedLines.length > 0 ? -1 : (code ?? -1);
+      const exitCode = codexFailureNotes.length > 0 ? -1 : (code ?? -1);
 
-      resolve({ text, costUsd, durationMs, exitCode, rawStdout: stdout, rawStderr: malformedStderr, args });
+      resolve({ text, costUsd, durationMs, exitCode, rawStdout: stdout, rawStderr: normalizedStderr, args });
     });
   });
 };
