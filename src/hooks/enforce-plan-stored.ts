@@ -17,6 +17,7 @@
 
 import { appendFileSync } from 'node:fs';
 import { readHookInput, traceNullInput } from './hook-io.js';
+import { currentHookBranch } from './lib/current-branch.js';
 import { gitStdout } from './lib/git-state.js';
 import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-command.js';
 import { CaseSystem } from '../case-system.js';
@@ -54,7 +55,7 @@ export interface PlanCheckDeps {
 // ── Defaults ────────────────────────────────────────────────────────
 
 function currentGitBranch(): string {
-  return gitStdout(['rev-parse', '--abbrev-ref', 'HEAD']);
+  return currentHookBranch({ fallback: '' });
 }
 
 function gitCommonDir(): string {
