@@ -13,6 +13,10 @@ import {
 
 const TEST_STATE_DIR = '/tmp/.test-gate-manager';
 const TEST_BRANCH = 'worktree-test-branch';
+const GATE_MANAGER_SOURCE = readFileSync(
+  new URL('./gate-manager.ts', import.meta.url),
+  'utf-8',
+);
 
 function createState(
   filename: string,
@@ -39,6 +43,14 @@ afterEach(() => {
   if (existsSync(TEST_STATE_DIR)) {
     rmSync(TEST_STATE_DIR, { recursive: true });
   }
+});
+
+describe('state file read helper source invariant', () => {
+  it('uses the shared readStateFile helper for gate state reads', () => {
+    expect(GATE_MANAGER_SOURCE).toContain('readStateFile');
+    expect(GATE_MANAGER_SOURCE).not.toContain('function readStateFromFile');
+    expect(GATE_MANAGER_SOURCE).not.toContain('parseStateFile(readFileSync');
+  });
 });
 
 describe('readAllPendingGates', () => {

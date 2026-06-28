@@ -26,6 +26,7 @@ import {
   DEFAULT_STATE_DIR,
   findAllStatesWithStatus,
   parseStateFile,
+  readStateFile,
 } from '../state-utils.js';
 
 export interface PendingGate {
@@ -59,7 +60,7 @@ export function readAllPendingGates(
   // Check review gates
   const reviews = findAllStatesWithStatus('needs_review', currentBranch, stateDir, maxAge);
   for (const r of reviews) {
-    const state = readStateFromFile(r.filepath);
+    const state = readStateFile(r.filepath);
     const round = state.ROUND || '1';
     gates.push({
       type: 'review',
@@ -195,17 +196,6 @@ export function clearDeferredItems(stateDir: string = DEFAULT_STATE_DIR): void {
     }
   } catch {
     // ignore
-  }
-}
-
-// Helpers
-
-function readStateFromFile(filepath: string): Record<string, string> {
-  try {
-    const content = readFileSync(filepath, 'utf-8');
-    return parseStateFile(content) as Record<string, string>;
-  } catch {
-    return {};
   }
 }
 

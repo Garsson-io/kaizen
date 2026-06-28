@@ -57,6 +57,16 @@ export function parseStateFile(content: string): Partial<StateFile> {
   return result as Partial<StateFile>;
 }
 
+/** Read and parse a state file, returning empty state when it cannot be read. */
+export function readStateFile(filepath: string): Partial<StateFile> {
+  try {
+    const content = readFileSync(filepath, 'utf-8');
+    return parseStateFile(content);
+  } catch {
+    return {};
+  }
+}
+
 /** Serialize a state file to key=value format. */
 export function serializeStateFile(state: StateFile): string {
   let content = `PR_URL=${state.PR_URL}\nSTATUS=${state.STATUS}\nBRANCH=${state.BRANCH}\n`;
@@ -108,9 +118,7 @@ function isStateForCurrentWorktree(
   // Without a branch, we can't scope — fail closed to prevent cross-session contamination.
   if (!currentBranch) return false;
 
-  // Read and parse
-  const content = readFileSync(filepath, 'utf-8');
-  const state = parseStateFile(content);
+  const state = readStateFile(filepath);
 
   // Skip legacy state files without BRANCH
   if (!state.BRANCH) return false;
@@ -163,8 +171,7 @@ export function listStateFilesAnyBranch(
   for (const entry of readdirSync(stateDir)) {
     const filepath = join(stateDir, entry);
     try {
-      const content = readFileSync(filepath, 'utf-8');
-      const state = parseStateFile(content);
+      const state = readStateFile(filepath);
       if (!state.BRANCH) continue;
 
       files.push(filepath);
@@ -268,7 +275,7 @@ export function findStateWithStatus(
     stateDir,
     maxAge,
   )) {
-    const state = parseStateFile(readFileSync(filepath, 'utf-8'));
+    const state = readStateFile(filepath);
     if (state.STATUS === wantedStatus) {
       return { prUrl: state.PR_URL ?? '', status: state.STATUS, round: state.ROUND, filepath };
     }
@@ -317,7 +324,7 @@ export function findAllStatesWithStatus(
     stateDir,
     maxAge,
   )) {
-    const state = parseStateFile(readFileSync(filepath, 'utf-8'));
+    const state = readStateFile(filepath);
     if (state.STATUS === wantedStatus) {
       results.push({
         prUrl: state.PR_URL ?? '',
@@ -370,7 +377,7 @@ export function findStateWithStatusAnyBranch(
   maxAge: number = DEFAULT_MAX_STATE_AGE,
 ): StateQueryResult | null {
   for (const filepath of listStateFilesAnyBranch(stateDir, maxAge)) {
-    const state = parseStateFile(readFileSync(filepath, 'utf-8'));
+    const state = readStateFile(filepath);
     if (state.STATUS === wantedStatus) {
       return { prUrl: state.PR_URL ?? '', status: state.STATUS, filepath };
     }
@@ -390,7 +397,7 @@ export function clearStateWithStatusAnyBranch(
   specificPrUrl?: string,
 ): boolean {
   for (const filepath of listStateFilesAnyBranch(stateDir, maxAge)) {
-    const state = parseStateFile(readFileSync(filepath, 'utf-8'));
+    const state = readStateFile(filepath);
     if (state.STATUS !== wantedStatus) continue;
     if (specificPrUrl && state.PR_URL !== specificPrUrl) continue;
     try {
@@ -417,7 +424,7 @@ export function findNewestStateWithStatusAnyBranch(
   let newestMtime = 0;
 
   for (const filepath of listStateFilesAnyBranch(stateDir, maxAge)) {
-    const state = parseStateFile(readFileSync(filepath, 'utf-8'));
+    const state = readStateFile(filepath);
     if (state.STATUS !== wantedStatus) continue;
 
     const mtime = statSync(filepath).mtimeMs;
