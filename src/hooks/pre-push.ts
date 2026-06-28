@@ -26,10 +26,10 @@
  */
 
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { DEFAULT_STATE_DIR, ensureStateDir, parseStateFile, prUrlToStateKey, writeStateFile } from './state-utils.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
+import { gitStdout } from './lib/git-state.js';
 import { queryBranchPrState, type BranchPrQueryResult } from '../lib/github-pr.js';
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -222,19 +222,8 @@ function buildMergedBranchMessage(branch: string, pr: { number: number; url: str
 
 // ── Wiring helpers (I/O boundary) ─────────────────────────────────────
 
-function git(args: string, fallback = ''): string {
-  try {
-    return execSync(`git ${args}`, {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-  } catch {
-    return fallback;
-  }
-}
-
 export function detectRepo(): string {
-  const url = git('remote get-url origin');
+  const url = gitStdout(['remote', 'get-url', 'origin']);
   // GitHub repo names may contain dots (owner/site.github.io, owner/foo.bar).
   // Match "owner/repo" stopping at whitespace, .git suffix, or slash.
   const match = url.match(/github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?(?:\/|\s|$)/);
@@ -242,7 +231,7 @@ export function detectRepo(): string {
 }
 
 export function getCurrentBranch(): string {
-  return git('rev-parse --abbrev-ref HEAD', '');
+  return gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], '');
 }
 
 /**

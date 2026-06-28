@@ -102,6 +102,16 @@ export function createDefaultGitExec(): GitExec {
   };
 }
 
+export function gitStdout(
+  args: readonly string[],
+  fallback = '',
+  exec: GitExec = createDefaultGitExec(),
+): string {
+  const result = exec(args);
+  if (result.exitCode !== 0) return fallback;
+  return result.stdout.trim();
+}
+
 /**
  * Parse porcelain v1 output into staged/modified/untracked buckets.
  * Exported so check-dirty-files.ts can reuse the single parser.
