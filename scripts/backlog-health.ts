@@ -38,6 +38,11 @@ export interface ClosedIssue {
   closedAt: string;
 }
 
+export interface CreatedIssue {
+  number: number;
+  createdAt: string;
+}
+
 export interface AgeDistribution {
   total: number;
   /** open issues with no activity for > 30 days */
@@ -122,15 +127,23 @@ export function computeCreationClosureRatio(created: number, closed: number): Cr
   return { created, closed, ratio: created / Math.max(closed, 1) };
 }
 
-/** Assemble every axis into a single report for a window ending at `now`. */
+/**
+ * Assemble every axis into a single report for a window ending at `now`.
+ *
+ * `created` is the set of issues *created* in the window across ALL states —
+ * not derived from `open` — so an issue created and closed inside the window
+ * still counts toward the creation rate (otherwise the ratio is biased low on
+ * the numerator and the backlog looks healthier than it is).
+ */
 export function buildBacklogHealthReport(
   open: OpenIssue[],
+  created: CreatedIssue[],
   closed: ClosedIssue[],
   now: Date,
   windowDays: number,
   repo?: string,
 ): BacklogHealthReport {
-  const createdInWindow = open.filter((i) => inactivityDays(i.createdAt, now) <= windowDays).length;
+  const createdInWindow = created.filter((i) => inactivityDays(i.createdAt, now) <= windowDays).length;
   const closedInWindow = closed.filter((i) => inactivityDays(i.closedAt, now) <= windowDays).length;
   return {
     repo,
@@ -187,13 +200,34 @@ interface GhOpenIssue {
   labels: { name: string }[];
 }
 
+const FETCH_LIMIT = 500;
+
+/** UTC `YYYY-MM-DD` `windowDays` before `now`, for gh `--search` date filters. */
+function windowSince(windowDays: number, now: Date): string {
+  return new Date(now.getTime() - windowDays * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * Warn (loudly, on stderr) when a fetch hit the limit — the result is
+ * truncated and any count derived from it is a floor, not the truth. Silent
+ * caps read as "we measured everything" when we did not.
+ */
+function warnIfTruncated(label: string, count: number): void {
+  if (count >= FETCH_LIMIT) {
+    console.error(
+      `WARNING: ${label} hit the ${FETCH_LIMIT}-issue fetch cap — counts are truncated (floor, not exact). Narrow --window or paginate.`,
+    );
+  }
+}
+
 export function fetchOpenIssues(repo: string): OpenIssue[] {
   const raw = gh(
-    ['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '500',
+    ['issue', 'list', '--repo', repo, '--state', 'open', '--limit', String(FETCH_LIMIT),
       '--json', 'number,createdAt,updatedAt,labels'],
     60_000,
   );
   const issues: GhOpenIssue[] = JSON.parse(raw);
+  warnIfTruncated('open issues', issues.length);
   return issues.map((i) => ({
     number: i.number,
     createdAt: i.createdAt,
@@ -202,14 +236,27 @@ export function fetchOpenIssues(repo: string): OpenIssue[] {
   }));
 }
 
-export function fetchClosedInWindow(repo: string, windowDays: number, now: Date): ClosedIssue[] {
-  const since = new Date(now.getTime() - windowDays * DAY_MS).toISOString().slice(0, 10);
+export function fetchCreatedInWindow(repo: string, windowDays: number, now: Date): CreatedIssue[] {
+  const since = windowSince(windowDays, now);
   const raw = gh(
-    ['issue', 'list', '--repo', repo, '--state', 'closed', '--limit', '500',
+    ['issue', 'list', '--repo', repo, '--state', 'all', '--limit', String(FETCH_LIMIT),
+      '--search', `created:>=${since}`, '--json', 'number,createdAt'],
+    60_000,
+  );
+  const issues: CreatedIssue[] = JSON.parse(raw);
+  warnIfTruncated('created-in-window issues', issues.length);
+  return issues.map((i) => ({ number: i.number, createdAt: i.createdAt }));
+}
+
+export function fetchClosedInWindow(repo: string, windowDays: number, now: Date): ClosedIssue[] {
+  const since = windowSince(windowDays, now);
+  const raw = gh(
+    ['issue', 'list', '--repo', repo, '--state', 'closed', '--limit', String(FETCH_LIMIT),
       '--search', `closed:>=${since}`, '--json', 'number,closedAt'],
     60_000,
   );
-  const issues: { number: number; closedAt: string }[] = JSON.parse(raw);
+  const issues: ClosedIssue[] = JSON.parse(raw);
+  warnIfTruncated('closed-in-window issues', issues.length);
   return issues.map((i) => ({ number: i.number, closedAt: i.closedAt }));
 }
 
@@ -242,23 +289,45 @@ interface CliArgs {
   json: boolean;
 }
 
-function parseArgs(argv: string[]): CliArgs {
+/** Parse argv, validating every value. Throws on a missing/invalid flag value. */
+export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = { repo: 'Garsson-io/kaizen', window: 30, json: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--repo') args.repo = argv[++i];
-    else if (a === '--window') args.window = Number(argv[++i]);
-    else if (a === '--json') args.json = true;
+    if (a === '--repo') {
+      const v = argv[++i];
+      if (!v || v.startsWith('--')) throw new Error('--repo requires an owner/repo value');
+      args.repo = v;
+    } else if (a === '--window') {
+      const v = argv[++i];
+      const n = Number(v);
+      if (!v || !Number.isFinite(n) || n <= 0) {
+        throw new Error(`--window requires a positive number (got ${v ?? 'nothing'})`);
+      }
+      args.window = n;
+    } else if (a === '--json') {
+      args.json = true;
+    } else {
+      throw new Error(`unknown argument: ${a}`);
+    }
   }
   return args;
 }
 
 function main(): void {
-  const args = parseArgs(process.argv.slice(2));
+  let args: CliArgs;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    console.error(`backlog-health: ${(err as Error).message}`);
+    process.exitCode = 2;
+    return;
+  }
   const now = new Date();
   const open = fetchOpenIssues(args.repo);
+  const created = fetchCreatedInWindow(args.repo, args.window, now);
   const closed = fetchClosedInWindow(args.repo, args.window, now);
-  const report = buildBacklogHealthReport(open, closed, now, args.window, args.repo);
+  const report = buildBacklogHealthReport(open, created, closed, now, args.window, args.repo);
   const verdict = classifyBacklogHealth(report);
 
   if (args.json) {

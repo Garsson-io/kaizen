@@ -5,8 +5,10 @@ import {
   computeCreationClosureRatio,
   buildBacklogHealthReport,
   classifyBacklogHealth,
+  parseArgs,
   type OpenIssue,
   type ClosedIssue,
+  type CreatedIssue,
 } from './backlog-health.js';
 
 const NOW = new Date('2026-06-28T00:00:00.000Z');
@@ -81,6 +83,7 @@ describe('computeCreationClosureRatio', () => {
 describe('classifyBacklogHealth', () => {
   const baseReport = buildBacklogHealthReport(
     [open({ number: 1, updatedAt: daysAgo(5), labels: ['horizon/a'] })],
+    [{ number: 1, createdAt: daysAgo(5) }],
     [{ number: 99, closedAt: daysAgo(5) }],
     NOW,
     30,
@@ -121,6 +124,28 @@ describe('classifyBacklogHealth', () => {
     };
     expect(classifyBacklogHealth(report)).toBe('warning');
   });
+
+  it('returns warning in the >90d stale-share band (0.1 <= share < 0.25)', () => {
+    // 2 of 10 stale >90d = 20% → warning band, not pathological
+    const report = {
+      ...baseReport,
+      ratio: { created: 1, closed: 1, ratio: 1.0 },
+      age: { total: 10, stale30: 2, stale60: 2, stale90: 2 },
+      horizon: { byHorizon: { 'horizon/a': 1 }, noHorizon: 0, distinctHorizons: 1 },
+    };
+    expect(classifyBacklogHealth(report)).toBe('warning');
+  });
+
+  it('suppresses horizon concentration on a tiny backlog (< MIN_LABELED)', () => {
+    // one horizon holds 100% but only 3 labeled issues → below the min, stays healthy
+    const report = {
+      ...baseReport,
+      ratio: { created: 1, closed: 1, ratio: 1.0 },
+      age: { total: 3, stale30: 0, stale60: 0, stale90: 0 },
+      horizon: { byHorizon: { 'horizon/a': 3 }, noHorizon: 0, distinctHorizons: 1 },
+    };
+    expect(classifyBacklogHealth(report)).toBe('healthy');
+  });
 });
 
 describe('buildBacklogHealthReport', () => {
@@ -129,17 +154,60 @@ describe('buildBacklogHealthReport', () => {
       open({ number: 1, createdAt: daysAgo(5), updatedAt: daysAgo(5), labels: ['horizon/a'] }),
       open({ number: 2, createdAt: daysAgo(120), updatedAt: daysAgo(100), labels: [] }),
     ];
+    // `created` is fetched across ALL states — includes a created-and-closed issue (#9)
+    const createdIssues: CreatedIssue[] = [
+      { number: 1, createdAt: daysAgo(5) },
+      { number: 9, createdAt: daysAgo(3) }, // created+closed inside window, not in `open`
+      { number: 2, createdAt: daysAgo(120) }, // outside window
+    ];
     const closedIssues: ClosedIssue[] = [{ number: 50, closedAt: daysAgo(2) }];
-    const report = buildBacklogHealthReport(openIssues, closedIssues, NOW, 30);
+    const report = buildBacklogHealthReport(openIssues, createdIssues, closedIssues, NOW, 30);
 
     expect(report.totalOpen).toBe(2);
     expect(report.windowDays).toBe(30);
-    // only issue #1 was created within the 30-day window
-    expect(report.ratio.created).toBe(1);
+    // #1 and #9 were created within the 30-day window (#9 counts even though closed);
+    // this is the bias fix — a derive-from-open numerator would have reported 1.
+    expect(report.ratio.created).toBe(2);
     expect(report.ratio.closed).toBe(1);
     expect(report.age.total).toBe(2);
     expect(report.age.stale90).toBe(1);
     expect(report.horizon.noHorizon).toBe(1);
     expect(typeof report.generatedAt).toBe('string');
+  });
+
+  it('feeds computed ratio into the verdict end-to-end (6 created / 2 closed → pathological)', () => {
+    const createdIssues: CreatedIssue[] = Array.from({ length: 6 }, (_, i) => ({
+      number: 100 + i,
+      createdAt: daysAgo(3),
+    }));
+    const closedIssues: ClosedIssue[] = [
+      { number: 200, closedAt: daysAgo(2) },
+      { number: 201, closedAt: daysAgo(2) },
+    ];
+    const report = buildBacklogHealthReport([], createdIssues, closedIssues, NOW, 30);
+    expect(report.ratio.ratio).toBe(3);
+    expect(classifyBacklogHealth(report)).toBe('pathological');
+  });
+});
+
+describe('parseArgs', () => {
+  it('parses repo/window/json with defaults', () => {
+    expect(parseArgs([])).toEqual({ repo: 'Garsson-io/kaizen', window: 30, json: false });
+    expect(parseArgs(['--repo', 'o/r', '--window', '60', '--json'])).toEqual({
+      repo: 'o/r',
+      window: 60,
+      json: true,
+    });
+  });
+
+  it('rejects a missing or non-numeric --window instead of producing NaN', () => {
+    expect(() => parseArgs(['--window'])).toThrow(/positive number/);
+    expect(() => parseArgs(['--window', 'abc'])).toThrow(/positive number/);
+    expect(() => parseArgs(['--window', '0'])).toThrow(/positive number/);
+  });
+
+  it('rejects a missing --repo value and unknown flags', () => {
+    expect(() => parseArgs(['--repo'])).toThrow(/--repo requires/);
+    expect(() => parseArgs(['--bogus'])).toThrow(/unknown argument/);
   });
 });
