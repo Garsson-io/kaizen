@@ -10,7 +10,7 @@
  *
  * Previously untested (kaizen #928 — fallback hook test desert).
  */
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -20,6 +20,7 @@ const HOOK_PATH = path.resolve(
   __dirname,
   'pr-kaizen-clear-fallback.ts',
 );
+const TSX_CLI = findAncestorFile(__dirname, 'node_modules/tsx/dist/cli.mjs');
 const HOOK_SOURCE = fs.readFileSync(HOOK_PATH, 'utf-8');
 
 let testStateDir: string;
@@ -28,6 +29,21 @@ let testAuditDir: string;
 const GATE_FILE = 'pr-kaizen-Garsson-io_kaizen_55';
 const PR_URL = 'https://github.com/Garsson-io/kaizen/pull/55';
 const BRANCH = 'test-branch';
+
+function findAncestorFile(startDir: string, relativePath: string): string {
+  let dir = startDir;
+
+  while (true) {
+    const candidate = path.join(dir, relativePath);
+    if (fs.existsSync(candidate)) return candidate;
+
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      throw new Error(`Unable to find ${relativePath} from ${startDir}`);
+    }
+    dir = parent;
+  }
+}
 
 beforeEach(() => {
   testStateDir = fs.mkdtempSync(
@@ -60,9 +76,9 @@ function gateStatus(filename = GATE_FILE): string | null {
 }
 
 function runFallback(input: object): void {
-  const json = JSON.stringify(input);
-  execSync(
-    `echo '${json.replace(/'/g, "'\\''")}' | npx tsx "${HOOK_PATH}"`,
+  const result = spawnSync(
+    process.execPath,
+    [TSX_CLI, HOOK_PATH],
     {
       encoding: 'utf-8',
       env: {
@@ -70,10 +86,12 @@ function runFallback(input: object): void {
         STATE_DIR: testStateDir,
         AUDIT_DIR: testAuditDir,
       },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      input: JSON.stringify(input),
       timeout: 15000,
     },
   );
+
+  expect(result.status, result.stderr || result.stdout).toBe(0);
 }
 
 function bashInput(command: string, stdout: string): object {
