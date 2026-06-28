@@ -20,6 +20,7 @@ import { join, basename, resolve } from 'path';
 import { execSync } from 'child_process';
 import { readState, type BatchState } from './auto-dent-run.js';
 import { truncateDisplay } from './auto-dent-display.js';
+import { parseJsonLines } from '../src/lib/json-lines.js';
 
 // Types
 
@@ -515,7 +516,6 @@ export function formatRegressionReports(reports: RegressionReport[]): string {
  */
 export function analyzeRunLog(logPath: string): RunAnalysis {
   const content = readFileSync(logPath, 'utf8');
-  const lines = content.split('\n');
 
   const toolEvents: ToolEvent[] = [];
   const phaseEvents: PhaseEvent[] = [];
@@ -523,16 +523,7 @@ export function analyzeRunLog(logPath: string): RunAnalysis {
   let firstTimestampMs: number | null = null;
   let lastKnownTimestampMs: number | null = null;
 
-  for (const line of lines) {
-    if (!line.trim()) continue;
-
-    let msg: Record<string, any>;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
+  for (const msg of parseJsonLines<Record<string, any>>(content)) {
     // Track timestamps from any message that has one (primarily `user` messages)
     if (msg.timestamp) {
       const ts = new Date(msg.timestamp).getTime();
