@@ -18,6 +18,7 @@
 import { resolve } from 'path';
 import { appendJsonLine } from '../src/lib/json-lines.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
+import type { PhaseProviderRecord } from './auto-dent-provider.js';
 
 // Event type definitions
 
@@ -83,7 +84,7 @@ export interface RunCompleteEvent extends BaseEvent {
    * Provider + billing mode per lifecycle phase (#1143, epic #1134).
    * Absent on older events. Keyed by phase → { provider, billing }.
    */
-  phase_providers?: Record<string, { provider: string; billing: string }>;
+  phase_providers?: PhaseProviderRecord;
 }
 
 export interface BatchReflectEvent extends BaseEvent {

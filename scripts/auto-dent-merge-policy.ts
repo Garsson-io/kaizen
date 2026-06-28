@@ -1,6 +1,10 @@
-import type { LifecycleHealth, ProcessVerdict } from './auto-dent-lifecycle.js';
+import {
+  qualityVerdictBlockReasons,
+  type LifecycleHealth,
+  type ProcessVerdict,
+  type ReviewVerdict,
+} from '../src/verdict-binding-policy.js';
 
-export type ReviewVerdict = 'pass' | 'fail' | 'skipped';
 
 export interface AutoMergeSafetySignals {
   /** Number of PRs this terminal action would affect. Non-PR runs have no merge action. */
@@ -19,26 +23,7 @@ export interface AutoMergeSafetyDecision {
 
 export function autoMergeBlockReasons(signals: AutoMergeSafetySignals): string[] {
   if (signals.prCount <= 0) return [];
-
-  const reasons: string[] = [];
-
-  if (signals.reviewVerdict === 'fail') {
-    reasons.push('review verdict fail');
-  } else if (signals.reviewRequired && signals.reviewVerdict === 'skipped') {
-    reasons.push('review verdict skipped');
-  } else if (signals.reviewRequired && signals.reviewVerdict == null) {
-    reasons.push('review verdict missing');
-  }
-
-  if (signals.processVerdict === 'process-incomplete') {
-    reasons.push('process verdict process-incomplete');
-  }
-
-  if (signals.lifecycleHealth === 'critical') {
-    reasons.push('lifecycle health critical');
-  }
-
-  return reasons;
+  return qualityVerdictBlockReasons(signals, { requireReview: signals.reviewRequired });
 }
 
 export function decideAutoMergeSafety(signals: AutoMergeSafetySignals): AutoMergeSafetyDecision {

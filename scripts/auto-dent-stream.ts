@@ -19,8 +19,8 @@ import {
   type RunProgressStep,
 } from './auto-dent-progress.js';
 import {
-  collapseWhitespace,
-  truncateDisplay,
+  renderPhaseMarkerSummary,
+  renderToolUse,
 } from './auto-dent-display.js';
 import { parseHookOutputs, type HookOutput } from '../src/hooks/lib/gate-signal.js';
 import type { Provider } from './auto-dent-provider.js';
@@ -73,46 +73,12 @@ function formatElapsed(startMs: number): string {
   return `${m}m${s.toString().padStart(2, '0')}s`;
 }
 
-export { collapseWhitespace } from './auto-dent-display.js';
-
-// Semantic line budget (#1157)
-//
-// In an auto-dent run worktree every command is prefixed with
-// `cd /home/.../.claude/worktrees/<id>; ...` and every path is absolute under
-// that worktree. That low-signal prefix consumes the truncation budget, pushing
-// the high-value tail (the real command / file) past the cutoff. These pure
-// helpers reclaim the budget for the meaningful part. Display-only: they never
-// touch the machine-readable logs.
-
-/** Matches a `.../.claude/worktrees/<id>` prefix; capture group 1 is the trailing slash, if any. */
-const WORKTREE_PREFIX_RE = /\S*?\/\.claude\/worktrees\/[^/\s;|&]+(\/?)/g;
-
-/**
- * Render worktree-absolute paths repo-relative. A path *under* the worktree
- * (trailing slash present) collapses to its remainder (`scripts/x.ts`); a bare
- * worktree root collapses to `.`. Non-worktree paths are returned unchanged.
- */
-export function relativizeWorktreePath(s: string): string {
-  if (!s) return s;
-  return s.replace(WORKTREE_PREFIX_RE, (_m, slash) => (slash ? '' : '.'));
-}
-
-/**
- * Collapse noisy absolute prefixes for display: worktree paths become
- * repo-relative, then a remaining `/home/<user>/` collapses to `~/`.
- */
-export function prettifyPath(s: string): string {
-  if (!s) return s;
-  return relativizeWorktreePath(s).replace(/\/home\/[^/\s;|&]+\//g, '~/');
-}
-
-/**
- * Drop a leading `cd <path>;` / `cd <path> &&` prefix from a command. The
- * worktree is implied by the run, so the `cd` is pure boilerplate.
- */
-export function stripCdPrefix(cmd: string): string {
-  return cmd.replace(/^\s*cd\s+\S+\s*(?:;|&&)\s*/, '');
-}
+export {
+  collapseWhitespace,
+  prettifyPath,
+  relativizeWorktreePath,
+  stripCdPrefix,
+} from './auto-dent-display.js';
 
 // Tool use formatting
 
@@ -120,36 +86,7 @@ export function formatToolUse(
   name: string,
   input: Record<string, any>,
 ): string {
-  switch (name) {
-    case 'Read':
-      return `Read ${truncateDisplay(prettifyPath(input?.file_path || '?'), 60)}`;
-    case 'Edit':
-      return `Edit ${truncateDisplay(prettifyPath(input?.file_path || '?'), 60)}`;
-    case 'Write':
-      return `Write ${truncateDisplay(prettifyPath(input?.file_path || '?'), 60)}`;
-    case 'Bash':
-      return `$ ${truncateDisplay(prettifyPath(stripCdPrefix(collapseWhitespace(input?.command || input?.description || '?'))), 90)}`;
-    case 'Grep':
-      return `Grep "${truncateDisplay(input?.pattern || '?', 30)}" ${prettifyPath(input?.path || '')}`;
-    case 'Glob':
-      return `Glob ${truncateDisplay(input?.pattern || '?', 50)}`;
-    case 'Skill':
-      return `Skill /${input?.skill_name || input?.skill || '?'}`;
-    case 'Agent':
-      return `Agent: ${truncateDisplay(input?.description || '?', 50)}`;
-    case 'TaskCreate':
-      return `Task+ ${truncateDisplay(input?.subject || '?', 50)}`;
-    case 'TaskUpdate':
-      return `Task~ #${input?.taskId || '?'} -> ${input?.status || '?'}`;
-    case 'EnterWorktree':
-      return `EnterWorktree ${input?.name || ''}`;
-    case 'ExitWorktree':
-      return `ExitWorktree`;
-    case 'ToolSearch':
-      return `ToolSearch`;
-    default:
-      return name;
-  }
+  return renderToolUse(name, input);
 }
 
 // Structured phase marker parsing
@@ -187,27 +124,7 @@ export function parsePhaseMarkers(text: string): PhaseMarker[] {
 export function formatPhaseMarker(marker: PhaseMarker): string {
   const styleFn = PHASE_STYLE[marker.phase] || color.dim;
   const icon = marker.phase === 'STOP' ? '\u25cf' : '\u25c9';
-  const parts = [styleFn(`${icon} [${marker.phase}]`)];
-
-  // Show the most informative fields for each phase
-  const { fields } = marker;
-  if (fields.kind) parts.push(fields.kind);
-  if (fields.issue) parts.push(fields.issue);
-  if (fields.title) parts.push(fields.title);
-  if (fields.verdict) parts.push(fields.verdict);
-  if (fields.reason) parts.push(`(${fields.reason})`);
-  if (fields.case) parts.push(`case:${fields.case}`);
-  if (fields.branch) parts.push(`branch:${fields.branch}`);
-  if (fields.result) parts.push(fields.result);
-  if (fields.count) parts.push(`${fields.count} tests`);
-  if (fields.url) parts.push(fields.url);
-  if (fields.status) parts.push(fields.status);
-  if (fields.epic) parts.push(`epic:${fields.epic}`);
-  if (fields.issues_created) parts.push(`created:${fields.issues_created}`);
-  if (fields.issues_filed) parts.push(`${fields.issues_filed} issues filed`);
-  if (fields.lessons) parts.push(fields.lessons);
-
-  return truncateDisplay(parts.join(' '), 120);
+  return renderPhaseMarkerSummary(marker, styleFn(`${icon} [${marker.phase}]`));
 }
 
 // Artifact extraction from agent output

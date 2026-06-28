@@ -1,27 +1,54 @@
 import { describe, it, expect } from 'vitest';
 import {
   CAPABILITY_INVENTORY,
+  BillingModeSchema,
   PHASES,
-  PROVIDERS,
+  PhaseProviderRecordSchema,
+  PhaseProviderSchema,
+  PhaseSchema,
+  ProviderCapabilitySchema,
   SUBSCRIPTION_COMPATIBLE_BILLING,
+  phaseProviderRecordToProviderPlan,
   renderCapabilityMatrix,
   validateProviderPlan,
   defaultPhaseProviders,
+  phaseProvidersForAgentProvider,
+  parsePhaseProviderRecord,
+  ProviderSchema,
   type ProviderCapability,
   type ProviderPlan,
 } from './auto-dent-provider.js';
 
 describe('capability inventory (#1141)', () => {
+  it('exports runtime schemas for provider lifecycle records (#1490)', () => {
+    expect(ProviderSchema.parse('claude')).toBe('claude');
+    expect(PhaseSchema.parse('planning')).toBe('planning');
+    expect(BillingModeSchema.parse('subscription-cli')).toBe('subscription-cli');
+    expect(PhaseProviderSchema.parse({ provider: 'codex', billing: 'subscription-cli' })).toEqual({
+      provider: 'codex',
+      billing: 'subscription-cli',
+    });
+
+    expect(() => ProviderSchema.parse('gpt-five')).toThrow();
+    expect(() => PhaseSchema.parse('deploy')).toThrow();
+    expect(() => BillingModeSchema.parse('credit-card')).toThrow();
+    expect(() => PhaseProviderSchema.parse({ provider: 'claude', billing: 'credit-card' })).toThrow();
+    expect(() => PhaseProviderRecordSchema.parse({
+      deploy: { provider: 'claude', billing: 'subscription-cli' },
+    })).toThrow();
+    expect(() => ProviderCapabilitySchema.parse({
+      provider: 'claude',
+      phase: 'planning',
+      billingMode: 'subscription-cli',
+      fit: 'best',
+      acceptedForUnattended: true,
+      rationale: '',
+    })).toThrow();
+  });
+
   it('validates inventory shape — every entry is well-formed', () => {
-    const fits = new Set(['best', 'works', 'avoid']);
-    const billings = new Set(['subscription-cli', 'local-only', 'api-token']);
     for (const c of CAPABILITY_INVENTORY) {
-      expect(PROVIDERS).toContain(c.provider);
-      expect(PHASES).toContain(c.phase);
-      expect(billings.has(c.billingMode)).toBe(true);
-      expect(fits.has(c.fit)).toBe(true);
-      expect(typeof c.acceptedForUnattended).toBe('boolean');
-      expect(c.rationale.length).toBeGreaterThan(0);
+      expect(ProviderCapabilitySchema.parse(c)).toEqual(c);
     }
   });
 
@@ -119,10 +146,18 @@ describe('defaultPhaseProviders (#1143)', () => {
   });
 
   it('produces a plan that passes validateProviderPlan', () => {
-    const plan: ProviderPlan = {};
-    for (const [phase, pp] of Object.entries(defaultPhaseProviders())) {
-      plan[phase as keyof ProviderPlan] = pp!.provider;
-    }
+    const plan = phaseProviderRecordToProviderPlan(defaultPhaseProviders());
     expect(validateProviderPlan(plan).ok).toBe(true);
+  });
+
+  it('parses and serializes existing default Claude and Codex records through one contract (#1490)', () => {
+    const claude = parsePhaseProviderRecord(defaultPhaseProviders());
+    const codex = parsePhaseProviderRecord(phaseProvidersForAgentProvider('codex'));
+
+    expect(claude).toEqual(defaultPhaseProviders());
+    expect(codex.implementation).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(codex.review).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(codex.validation).toEqual({ provider: 'provider-independent', billing: 'local-only' });
+    expect(validateProviderPlan(phaseProviderRecordToProviderPlan(codex)).ok).toBe(true);
   });
 });

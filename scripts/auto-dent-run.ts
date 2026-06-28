@@ -47,7 +47,7 @@ import {
   readBatchOutcomesFromGithub,
   computeSteeringRecommendations,
 } from './batch-outcome.js';
-import { defaultPhaseProviders, type PhaseProviderRecord } from './auto-dent-provider.js';
+import { phaseProvidersForAgentProvider, type PhaseProviderRecord } from './auto-dent-provider.js';
 import {
   buildKaizenCycleSteps,
   formatIssueForDisplay,
@@ -60,6 +60,7 @@ import {
 import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
+import { hasHardQualityFailure } from '../src/verdict-binding-policy.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -821,11 +822,7 @@ export interface RunOutcomeSignals {
 export function deriveRunOutcome(signals: RunOutcomeSignals): RunOutcome {
   if (signals.stopRequested) return 'stop';
   if (signals.exitCode !== 0) return 'failure';
-  const qualityFailed =
-    signals.reviewVerdict === 'fail' ||
-    signals.processVerdict === 'process-incomplete' ||
-    signals.lifecycleHealth === 'critical';
-  if (qualityFailed) return 'failure';
+  if (hasHardQualityFailure(signals)) return 'failure';
   return signals.artifactCount > 0 ? 'success' : 'empty_success';
 }
 
@@ -1269,10 +1266,6 @@ Emit these naturally as you complete each phase. Missing keys are fine — emit 
   return prompt;
 }
 
-// Text utilities
-
-export const truncateAtWord = truncateAtWordBoundary;
-
 /**
  * Clean raw guidance into a readable title.
  * Fixes obvious typos, normalizes whitespace, sentence-cases.
@@ -1323,7 +1316,7 @@ export function ensureBatchProgressIssue(
   }
 
   const cleanGuidance = cleanGuidanceForTitle(state.guidance);
-  const title = `[Auto-Dent] ${truncateAtWord(cleanGuidance, 70)} (${state.batch_id})`;
+  const title = `[Auto-Dent] ${truncateAtWordBoundary(cleanGuidance, 70)} (${state.batch_id})`;
   const startedAt = new Date(state.batch_start * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
   const body = [
     `## Auto-Dent Batch`,
@@ -2068,16 +2061,7 @@ function printRunSummary(
 }
 
 function phaseProvidersForState(state: BatchState): PhaseProviderRecord {
-  if (state.provider !== 'codex') return defaultPhaseProviders();
-  const codex = { provider: 'codex' as const, billing: 'subscription-cli' as const };
-  return {
-    planning: codex,
-    implementation: codex,
-    review: { provider: 'claude', billing: 'subscription-cli' },
-    fix: codex,
-    reflection: codex,
-    validation: { provider: 'provider-independent', billing: 'local-only' },
-  };
+  return phaseProvidersForAgentProvider(state.provider);
 }
 
 export function shouldRunCodexProvider(state: Pick<BatchState, 'provider'>): boolean {
