@@ -8,8 +8,8 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { gh as defaultGh } from '../src/lib/gh-exec.js';
+import { resolveProjectRoot } from '../src/lib/resolve-project-root.js';
 import { writeAttachment } from '../src/section-editor.js';
 import { escapeMarkdownTableCell } from './markdown-table.js';
 
@@ -395,14 +395,9 @@ function argValue(args: string[], flag: string): string | undefined {
   return idx >= 0 ? args[idx + 1] : undefined;
 }
 
-function getRepoRoot(): string {
-  const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
-  return result.status === 0 ? result.stdout.trim() : process.cwd();
-}
-
 function main(): void {
   const args = process.argv.slice(2);
-  const root = resolve(argValue(args, '--root') ?? getRepoRoot());
+  const root = resolve(argValue(args, '--root') ?? resolveProjectRoot(process.cwd()));
   const repo = argValue(args, '--repo');
   const limit = Number(argValue(args, '--limit') ?? '20');
   const report = buildDrySweepReport({ root, repo, recentPrLimit: Number.isFinite(limit) ? limit : 20 });
