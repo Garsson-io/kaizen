@@ -6,6 +6,7 @@ import {
   analyzeTranscript,
   analyzeTranscriptFile,
   formatAnalysisSummary,
+  mineFrictionCandidates,
   parseTranscript,
 } from './transcript-analysis.js';
 import {
@@ -68,7 +69,7 @@ describe('parseTranscript', () => {
   });
 
   it('delegates tolerant JSONL decoding to the shared parser', () => {
-    const source = readFileSync('src/hooks/transcript-analysis.ts', 'utf8');
+    const source = readFileSync('src/transcript-analysis.ts', 'utf8');
     const parserSource = source.slice(
       source.indexOf('export function parseTranscript'),
       source.indexOf('/** Read and parse a transcript file. */'),
@@ -81,15 +82,15 @@ describe('parseTranscript', () => {
 
 describe('truncation ownership (#1351)', () => {
   it('does not keep a private generic truncate helper in transcript analysis', () => {
-    const source = readFileSync('src/hooks/transcript-analysis.ts', 'utf8');
+    const source = readFileSync('src/transcript-analysis.ts', 'utf8');
     expect(source).not.toMatch(/function\s+truncate\s*\(/);
   });
 
   it('documents why transcript evidence keeps prefix-preserving truncation outside auto-dent display (#1489)', () => {
-    const hookSource = readFileSync('src/hooks/transcript-analysis.ts', 'utf8');
+    const hookSource = readFileSync('src/transcript-analysis.ts', 'utf8');
     const utilSource = readFileSync('src/analysis/util.ts', 'utf8');
 
-    expect(hookSource).toContain("import { truncateAfterPrefix } from '../analysis/util.js'");
+    expect(hookSource).toContain("import { truncateAfterPrefix } from './analysis/util.js'");
     expect(utilSource).toContain('preserves the transcript-analysis evidence contract');
     expect(utilSource).toContain('choose how many source characters remain visible');
   });
@@ -236,6 +237,69 @@ describe('analyzeTranscript', () => {
       expect(analysis.summary.userCorrections).toBe(0);
       expect(analysis.summary.hookDenials).toBe(0);
     });
+  });
+});
+
+describe('mineFrictionCandidates', () => {
+  it('emits structured backlog candidates with a transcript moment for CLI fumbles', () => {
+    const session = new SyntheticSession()
+      .toolUse('Bash', { command: 'git push --bad-flag' })
+      .toolError('error: unknown option bad-flag')
+      .toolUse('Bash', { command: 'git push --bad-flag' })
+      .toolError('error: unknown option bad-flag');
+
+    const report = mineFrictionCandidates(session.getEntries(), {
+      repo: 'Garsson-io/kaizen',
+      pr: '1515',
+      attachment: 'run-transcript',
+    });
+
+    const cliFumble = report.candidates.find((c) => c.category === 'cli_fumble');
+    expect(cliFumble).toBeDefined();
+    expect(cliFumble).toMatchObject({
+      source: {
+        repo: 'Garsson-io/kaizen',
+        pr: '1515',
+        attachment: 'run-transcript',
+      },
+    });
+    expect(cliFumble!.count).toBeGreaterThanOrEqual(2);
+    expect(cliFumble!.moments[0]).toMatchObject({
+      entryIndex: expect.any(Number),
+      excerpt: expect.stringContaining('unknown option'),
+    });
+  });
+
+  it('classifies hook denials as gate-reconciliation candidates', () => {
+    const session = new SyntheticSession()
+      .toolUse('Bash', { command: 'git commit -m test' })
+      .toolError('BLOCKED: review gate requires stored findings before commit');
+
+    const report = mineFrictionCandidates(session.getEntries());
+
+    expect(report.candidates).toContainEqual(
+      expect.objectContaining({
+        category: 'gate_reconciliation',
+        title: expect.stringContaining('Hook blocked'),
+        moments: [expect.objectContaining({ excerpt: expect.stringContaining('BLOCKED') })],
+      }),
+    );
+  });
+
+  it('detects context-growth reread events as structured candidates', () => {
+    const session = new SyntheticSession()
+      .assistantText('I need to re-read the issue and source files after context compaction.')
+      .toolUse('Read', { file_path: 'src/transcript-analysis.ts' })
+      .toolResult('file contents');
+
+    const report = mineFrictionCandidates(session.getEntries());
+
+    expect(report.candidates).toContainEqual(
+      expect.objectContaining({
+        category: 'context_growth',
+        moments: [expect.objectContaining({ excerpt: expect.stringContaining('re-read') })],
+      }),
+    );
   });
 });
 

@@ -363,6 +363,19 @@ describe('generateCreateReflection', () => {
     expect(output).toContain('failed tool calls');
   });
 
+  it('requires transcript-backed impediments to cite a specific moment (#1516)', () => {
+    const output = generateCreateReflection(
+      'url',
+      'branch',
+      'files',
+      '/home/user/.claude/sessions/abc123.jsonl',
+    );
+
+    expect(output).toContain('specific transcript moment');
+    expect(output).toContain('entryIndex');
+    expect(output).toContain('KAIZEN_IMPEDIMENTS');
+  });
+
   it('shows fallback message when no transcript_path', () => {
     const output = generateCreateReflection('url', 'branch', 'files');
     expect(output).toContain('no transcript path available');
@@ -393,6 +406,7 @@ describe('generateMergeReflection', () => {
     );
     expect(output).toContain('Session transcript: /tmp/transcript.jsonl');
     expect(output).toContain('Read the transcript file');
+    expect(output).toContain('specific transcript moment');
   });
 
   it('shows fallback message when no transcript_path', () => {

@@ -24,6 +24,8 @@
  *   npx tsx src/cli-structured-data.ts retrieve-metadata --issue 904 --repo R
  *   npx tsx src/cli-structured-data.ts query-connected --issue 904 --repo R
  *   npx tsx src/cli-structured-data.ts query-pr --issue 904 --repo R
+ *   npx tsx src/cli-structured-data.ts mine-transcripts --prs 100,101 --repo R
+ *   npx tsx src/cli-structured-data.ts store-friction-candidates --prs 100,101 --issue 904 --repo R
  *
  * PR sections:
  *   npx tsx src/cli-structured-data.ts update-pr-section --pr 903 --repo R --name "Validation" --text "..."
@@ -55,6 +57,8 @@ import {
   retrieveMetadata,
   queryConnectedIssues,
   queryPrNumber,
+  mineRunTranscriptCandidates,
+  storeFrictionCandidateReport,
   updatePrSection,
   storeIterationState,
   retrieveIterationState,
@@ -364,6 +368,38 @@ async function handleAttachTranscript(a: CliArgs): Promise<void> {
   console.log(`Transcript attached: ${url}`);
 }
 
+function transcriptPrTargets(a: CliArgs): ReturnType<typeof prTarget>[] {
+  const raw = a.prs ?? a.pr;
+  if (!raw) {
+    console.error('transcript mining requires --prs <N[,N...]> or --pr <N>');
+    process.exit(1);
+  }
+  return raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((pr) => prTarget(pr, a.repo));
+}
+
+async function handleMineTranscripts(a: CliArgs): Promise<void> {
+  const report = mineRunTranscriptCandidates(transcriptPrTargets(a), new Date().toISOString());
+  console.log(JSON.stringify(report, null, 2));
+}
+
+async function handleStoreFrictionCandidates(a: CliArgs): Promise<void> {
+  const prTargetNumber = a['pr-target'];
+  if (!a.issue && !prTargetNumber) {
+    console.error('store-friction-candidates requires --issue <N> or --pr-target <N>');
+    process.exit(1);
+  }
+  const report = mineRunTranscriptCandidates(transcriptPrTargets(a), new Date().toISOString());
+  const target = a.issue
+    ? issueTarget(a.issue, a.repo)
+    : prTarget(prTargetNumber, a.repo);
+  const url = storeFrictionCandidateReport(target, report);
+  console.log(`Friction candidates stored: ${url}`);
+}
+
 // Metadata handlers
 
 async function handleStoreMetadata(a: CliArgs): Promise<void> {
@@ -463,6 +499,8 @@ export const handlers: Record<string, Handler> = {
   'store-testplan': handleStoreTestplan,
   'retrieve-testplan': handleRetrieveTestplan,
   'attach-transcript': handleAttachTranscript,
+  'mine-transcripts': handleMineTranscripts,
+  'store-friction-candidates': handleStoreFrictionCandidates,
   'store-metadata': handleStoreMetadata,
   'retrieve-metadata': handleRetrieveMetadata,
   'query-connected': handleQueryConnected,

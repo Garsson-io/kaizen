@@ -7,6 +7,8 @@ import {
   storeMetadata,
   storeReviewFinding,
   storeReviewSummary,
+  mineRunTranscriptCandidates,
+  storeFrictionCandidateReport,
   readReviewFinding,
 } from './structured-data.js';
 
@@ -37,6 +39,22 @@ vi.mock('./structured-data.js', () => ({
   issueTarget: vi.fn((issue: string, repo: string) => ({ kind: 'issue', number: Number(issue), repo })),
   storeReviewFinding: vi.fn().mockReturnValue('https://example.com/finding'),
   storeReviewSummary: vi.fn().mockReturnValue('https://example.com/summary'),
+  mineRunTranscriptCandidates: vi.fn().mockReturnValue({
+    generatedAt: '2026-06-29T00:00:00.000Z',
+    sources: [{ repo: 'Garsson-io/kaizen', pr: '1515', attachment: 'run-transcript' }],
+    candidates: [
+      {
+        category: 'cli_fumble',
+        title: 'Repeated failed Bash command',
+        summary: 'Bash command failed and was retried.',
+        count: 2,
+        severity: 'medium',
+        source: { repo: 'Garsson-io/kaizen', pr: '1515', attachment: 'run-transcript' },
+        moments: [{ entryIndex: 3, excerpt: 'unknown option --bad', role: 'tool' }],
+      },
+    ],
+  }),
+  storeFrictionCandidateReport: vi.fn().mockReturnValue('https://example.com/friction-candidates'),
   storeReviewBatch: vi.fn().mockReturnValue({ urls: ['u1'], summaryUrl: 'https://example.com/batch-summary' }),
   storeQuickPass: vi.fn().mockReturnValue('https://example.com/quick-pass'),
   nextReviewRound: vi.fn().mockReturnValue(3),
@@ -81,7 +99,7 @@ describe('handler registry', () => {
       'store-review-summary', 'list-review-rounds', 'list-review-dims',
       'read-review-finding', 'read-review-summary',
       'store-plan', 'retrieve-plan', 'store-testplan', 'retrieve-testplan',
-      'attach-transcript',
+      'attach-transcript', 'mine-transcripts', 'store-friction-candidates',
       'store-metadata', 'retrieve-metadata', 'query-connected', 'query-pr',
       'update-pr-section',
       'store-iteration', 'retrieve-iteration',
@@ -98,12 +116,17 @@ describe('handler registry', () => {
     }
   });
 
-  it('has exactly 22 handlers (no stale entries)', () => {
-    expect(Object.keys(handlers).length).toBe(22);
+  it('has exactly 24 handlers (no stale entries)', () => {
+    expect(Object.keys(handlers).length).toBe(24);
   });
 
   it('registers the attach-transcript handler (#1508)', () => {
     expect(handlers['attach-transcript']).toBeTypeOf('function');
+  });
+
+  it('registers transcript mining handlers (#1516)', () => {
+    expect(handlers['mine-transcripts']).toBeTypeOf('function');
+    expect(handlers['store-friction-candidates']).toBeTypeOf('function');
   });
 });
 
@@ -205,6 +228,52 @@ describe('individual command handlers', () => {
     await handlers['store-metadata']({ ...baseArgs, issue: '904', text: 'type: bug' });
     expect(vi.mocked(storeMetadata)).toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Metadata stored'));
+    log.mockRestore();
+  });
+
+  it('mine-transcripts emits structured friction candidates from run-transcript attachments', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await handlers['mine-transcripts']({
+      ...baseArgs,
+      prs: '1515,1516',
+    });
+
+    expect(vi.mocked(mineRunTranscriptCandidates)).toHaveBeenCalledWith(
+      [
+        { kind: 'pr', number: 1515, repo: 'Garsson-io/kaizen' },
+        { kind: 'pr', number: 1516, repo: 'Garsson-io/kaizen' },
+      ],
+      expect.any(String),
+    );
+    const payload = JSON.parse(String(log.mock.calls[0][0]));
+    expect(payload.candidates[0]).toMatchObject({
+      category: 'cli_fumble',
+      source: { pr: '1515', attachment: 'run-transcript' },
+    });
+    log.mockRestore();
+  });
+
+  it('store-friction-candidates persists mined candidates as a named issue attachment', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await handlers['store-friction-candidates']({
+      ...baseArgs,
+      prs: '1515',
+      issue: '1516',
+    });
+
+    expect(vi.mocked(mineRunTranscriptCandidates)).toHaveBeenCalledWith(
+      [{ kind: 'pr', number: 1515, repo: 'Garsson-io/kaizen' }],
+      expect.any(String),
+    );
+    expect(vi.mocked(storeFrictionCandidateReport)).toHaveBeenCalledWith(
+      { kind: 'issue', number: 1516, repo: 'Garsson-io/kaizen' },
+      expect.objectContaining({
+        candidates: [expect.objectContaining({ category: 'cli_fumble' })],
+      }),
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Friction candidates stored'));
     log.mockRestore();
   });
 });

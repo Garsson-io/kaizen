@@ -10,6 +10,7 @@
  *   plan                     — implementation plan
  *   testplan                 — test plan
  *   metadata                 — YAML structured metadata (connected issues, PR number, etc.)
+ *   friction-candidates      — mined transcript friction candidates (#1516)
  *   iteration/state          — current iteration/fix-loop state
  */
 
@@ -39,6 +40,13 @@ import {
 } from './review-finding-contract.js';
 import { firstMarkdownFence } from './lib/markdown-fence.js';
 import { parseJsonMetaComment } from './lib/meta-comment.js';
+import { RUN_TRANSCRIPT_ATTACHMENT } from './transcript-attach.js';
+import {
+  mineFrictionCandidates,
+  parseTranscript,
+  type FrictionCandidateReport,
+  type FrictionCandidateSource,
+} from './transcript-analysis.js';
 
 // ── Target helpers ──────────────────────────────────────────────────
 
@@ -477,6 +485,135 @@ export function queryPrNumber(target: AttachmentTarget & SectionTarget): number 
   if (!meta) return null;
   const deepDive = meta.deep_dive as Record<string, unknown> | undefined;
   return deepDive?.pr ? Number(deepDive.pr) : null;
+}
+
+// ── Transcript friction candidates (#1516) ─────────────────────────
+
+export const FRICTION_CANDIDATES_ATTACHMENT = 'friction-candidates';
+
+export function extractRunTranscriptJsonl(attachmentBody: string): string | null {
+  return firstMarkdownFence(attachmentBody, 'jsonl')?.code ?? null;
+}
+
+function sourceForTarget(target: AttachmentTarget, url?: string): FrictionCandidateSource {
+  const source: FrictionCandidateSource = {
+    repo: target.repo,
+    attachment: RUN_TRANSCRIPT_ATTACHMENT,
+    url,
+  };
+  if (target.kind === 'pr') {
+    source.pr = String(target.number);
+  } else {
+    source.issue = String(target.number);
+  }
+  return source;
+}
+
+function emptyFrictionSummary(): FrictionCandidateReport['summary'] {
+  return {
+    totalEntries: 0,
+    userMessages: 0,
+    toolCalls: 0,
+    failedToolCalls: 0,
+    userCorrections: 0,
+    hookDenials: 0,
+    retries: 0,
+    repeatedRequests: 0,
+    contextGrowthEvents: 0,
+    missingSubagentPatterns: 0,
+  };
+}
+
+function mergeFrictionReports(
+  generatedAt: string,
+  reports: FrictionCandidateReport[],
+): FrictionCandidateReport {
+  const summary = reports.reduce<FrictionCandidateReport['summary']>(
+    (acc, report) => ({
+      totalEntries: acc.totalEntries + report.summary.totalEntries,
+      userMessages: acc.userMessages + report.summary.userMessages,
+      toolCalls: acc.toolCalls + report.summary.toolCalls,
+      failedToolCalls: acc.failedToolCalls + report.summary.failedToolCalls,
+      userCorrections: acc.userCorrections + report.summary.userCorrections,
+      hookDenials: acc.hookDenials + report.summary.hookDenials,
+      retries: acc.retries + report.summary.retries,
+      repeatedRequests: acc.repeatedRequests + report.summary.repeatedRequests,
+      contextGrowthEvents: acc.contextGrowthEvents + report.summary.contextGrowthEvents,
+      missingSubagentPatterns: acc.missingSubagentPatterns + report.summary.missingSubagentPatterns,
+    }),
+    emptyFrictionSummary(),
+  );
+
+  return {
+    generatedAt,
+    sources: reports.flatMap((report) => report.sources),
+    candidates: reports.flatMap((report) => report.candidates),
+    summary,
+  };
+}
+
+export function mineRunTranscriptCandidates(
+  targets: AttachmentTarget[],
+  generatedAt = new Date().toISOString(),
+): FrictionCandidateReport {
+  const reports: FrictionCandidateReport[] = [];
+
+  for (const target of targets) {
+    const attachment = readAttachment(target, RUN_TRANSCRIPT_ATTACHMENT);
+    if (!attachment) continue;
+    const jsonl = extractRunTranscriptJsonl(attachment.content);
+    if (!jsonl) continue;
+    reports.push(
+      mineFrictionCandidates(
+        parseTranscript(jsonl),
+        sourceForTarget(target, attachment.url),
+        generatedAt,
+      ),
+    );
+  }
+
+  return mergeFrictionReports(generatedAt, reports);
+}
+
+export function formatFrictionCandidateReport(report: FrictionCandidateReport): string {
+  const lines: string[] = [
+    `<!-- meta:${JSON.stringify({ generated_at: report.generatedAt, candidates: report.candidates.length, sources: report.sources.length })} -->`,
+    '## Transcript Friction Candidates',
+    '',
+    `Generated: ${report.generatedAt}`,
+    `Sources: ${report.sources.length}`,
+    `Candidates: ${report.candidates.length}`,
+    '',
+    '| Category | Severity | Count | Source | Evidence |',
+    '|----------|----------|-------|--------|----------|',
+  ];
+
+  for (const candidate of report.candidates) {
+    const source = candidate.source?.pr
+      ? `PR #${candidate.source.pr}`
+      : candidate.source?.issue
+        ? `Issue #${candidate.source.issue}`
+        : '-';
+    const firstMoment = candidate.moments[0];
+    const evidence = firstMoment
+      ? `entryIndex ${firstMoment.entryIndex}: ${firstMoment.excerpt.replace(/\|/g, '\\|')}`
+      : '-';
+    lines.push(`| ${candidate.category} | ${candidate.severity} | ${candidate.count} | ${source} | ${evidence} |`);
+  }
+
+  lines.push('', '```json', JSON.stringify(report, null, 2), '```');
+  return lines.join('\n');
+}
+
+export function storeFrictionCandidateReport(
+  target: AttachmentTarget,
+  report: FrictionCandidateReport,
+): string {
+  return writeAttachment(
+    target,
+    FRICTION_CANDIDATES_ATTACHMENT,
+    formatFrictionCandidateReport(report),
+  );
 }
 
 // ── PR Body Sections ────────────────────────────────────────────────

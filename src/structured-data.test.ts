@@ -22,12 +22,15 @@ import {
   storeMetadata,
   retrieveMetadata,
   queryConnectedIssues,
+  mineRunTranscriptCandidates,
+  storeFrictionCandidateReport,
   storeIterationState,
   retrieveIterationState,
   updatePrSection,
   normalizeReviewFindingData,
   type ReviewFindingData,
 } from './structured-data.js';
+import { buildTranscriptComment } from './transcript-attach.js';
 
 vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
@@ -440,6 +443,84 @@ describe('storePlan + retrieveTestPlan — round-trip via plan-section fallback 
     ghReturns(JSON.stringify({ url: 'u', body: `<!-- kaizen:testplan -->\n${dedicated}` }));
     const testPlan = retrieveTestPlan(issue);
     expect(testPlan).toContain('B-prime');
+  });
+});
+
+describe('transcript friction candidates (#1516)', () => {
+  it('mines candidates from the stable run-transcript attachment shape', () => {
+    const transcript = [
+      JSON.stringify({
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'git push --bad' } }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', content: 'error: unknown option --bad', is_error: true }] },
+      }),
+    ].join('\n');
+    const { body } = buildTranscriptComment(
+      { label: 'run-1', transcript, sourcePath: 'logs/run-1.log' },
+      '2026-06-29T00:00:00.000Z',
+    );
+    ghReturns(JSON.stringify({
+      url: 'https://github.com/Garsson-io/kaizen/pull/903#issuecomment-1',
+      body: `<!-- kaizen:run-transcript -->\n${body}`,
+    }));
+
+    const report = mineRunTranscriptCandidates([pr], '2026-06-29T00:00:00.000Z');
+
+    expect(report.sources).toEqual([
+      expect.objectContaining({
+        repo: 'Garsson-io/kaizen',
+        pr: '903',
+        attachment: 'run-transcript',
+      }),
+    ]);
+    expect(report.candidates).toContainEqual(
+      expect.objectContaining({
+        category: 'cli_fumble',
+        source: expect.objectContaining({ pr: '903' }),
+        moments: [expect.objectContaining({ entryIndex: 1, excerpt: expect.stringContaining('unknown option') })],
+      }),
+    );
+  });
+
+  it('stores mined candidates under the durable friction-candidates attachment', () => {
+    ghReturns(''); // writeAttachment: no existing friction-candidates attachment
+    ghReturns('https://github.com/Garsson-io/kaizen/issues/904#issuecomment-2');
+
+    storeFrictionCandidateReport(issue, {
+      generatedAt: '2026-06-29T00:00:00.000Z',
+      sources: [{ repo: 'Garsson-io/kaizen', pr: '903', attachment: 'run-transcript' }],
+      summary: {
+        totalEntries: 1,
+        userMessages: 0,
+        toolCalls: 1,
+        failedToolCalls: 1,
+        userCorrections: 0,
+        hookDenials: 0,
+        retries: 0,
+        repeatedRequests: 0,
+        contextGrowthEvents: 0,
+        missingSubagentPatterns: 0,
+      },
+      candidates: [{
+        category: 'cli_fumble',
+        title: 'Tool call failed',
+        summary: 'Tool call failed',
+        count: 1,
+        severity: 'medium',
+        source: { repo: 'Garsson-io/kaizen', pr: '903', attachment: 'run-transcript' },
+        moments: [{ entryIndex: 1, excerpt: 'error: unknown option --bad', role: 'tool', toolName: 'Bash' }],
+      }],
+    });
+
+    const args = mockGh.mock.calls[1][1] as string[];
+    const bodyIndex = args.indexOf('--body') + 1;
+    expect(args[bodyIndex]).toContain('<!-- kaizen:friction-candidates -->');
+    expect(args[bodyIndex]).toContain('## Transcript Friction Candidates');
+    expect(args[bodyIndex]).toContain('"category": "cli_fumble"');
+    expect(args[bodyIndex]).toContain('entryIndex 1');
   });
 });
 
