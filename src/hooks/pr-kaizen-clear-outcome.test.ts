@@ -19,6 +19,9 @@ import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import { processHookInput } from './pr-kaizen-clear.js';
 import type { RefStatus } from './lib/issue-ref-verifier.js';
+import type { HookInput } from './hook-io.js';
+
+type HookOptions = NonNullable<Parameters<typeof processHookInput>[1]>;
 
 function stateExists(stateDir: string): boolean {
   return fs
@@ -41,7 +44,26 @@ describe('processHookInput: outcome verification (kaizen #950)', () => {
     tool_name: 'Bash',
     tool_input: { command: `echo '${filed(ref)}'` },
     tool_response: { stdout: filed(ref), exit_code: 0 },
-  });
+  }) satisfies HookInput;
+
+  function processWithOutcomeOptions(
+    input: HookInput,
+    verifyRef: (ref: string) => RefStatus,
+  ): string | null {
+    const options: HookOptions = {
+      stateDir,
+      verifyRef,
+      postComment: () => {},
+      getPrFiles: () => [],
+      gh: (args: string[]) => {
+        if (args.join(' ') === 'pr view 42 --repo Garsson-io/kaizen --json state --jq .state') {
+          return 'OPEN';
+        }
+        throw new Error(`unexpected gh call: ${args.join(' ')}`);
+      },
+    };
+    return processHookInput(input, options);
+  }
 
   beforeEach(() => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kz-outcome-'));
@@ -64,11 +86,7 @@ describe('processHookInput: outcome verification (kaizen #950)', () => {
 
   it('CASE 1: ref that exists → gate clears', () => {
     const verifyRef = vi.fn<(ref: string) => RefStatus>(() => 'exists');
-    const result = processHookInput(inputFor('#950'), {
-      stateDir,
-      verifyRef,
-      postComment: () => {},
-    });
+    const result = processWithOutcomeOptions(inputFor('#950'), verifyRef);
     expect(verifyRef).toHaveBeenCalledWith('#950');
     expect(result).toContain('PR kaizen gate cleared');
     expect(stateExists(stateDir)).toBe(false);
@@ -76,11 +94,7 @@ describe('processHookInput: outcome verification (kaizen #950)', () => {
 
   it('CASE 2: fabricated ref (missing) → gate stays, explains why', () => {
     const verifyRef = vi.fn<(ref: string) => RefStatus>(() => 'missing');
-    const result = processHookInput(inputFor('#99999'), {
-      stateDir,
-      verifyRef,
-      postComment: () => {},
-    });
+    const result = processWithOutcomeOptions(inputFor('#99999'), verifyRef);
     expect(result).toContain('Outcome verification failed');
     expect(result).toContain('#99999');
     // Gate must NOT have cleared.
@@ -92,11 +106,7 @@ describe('processHookInput: outcome verification (kaizen #950)', () => {
 
   it('CASE 3: unverifiable (infra/network) → fail open, gate clears', () => {
     const verifyRef = vi.fn<(ref: string) => RefStatus>(() => 'unverifiable');
-    const result = processHookInput(inputFor('#950'), {
-      stateDir,
-      verifyRef,
-      postComment: () => {},
-    });
+    const result = processWithOutcomeOptions(inputFor('#950'), verifyRef);
     expect(result).toContain('PR kaizen gate cleared');
     expect(stateExists(stateDir)).toBe(false);
   });
@@ -109,7 +119,15 @@ describe('processHookInput: outcome verification (kaizen #950)', () => {
         tool_input: { command: `echo "hello world"` },
         tool_response: { stdout: 'hello world', exit_code: 0 },
       },
-      { stateDir, verifyRef, postComment: () => {} },
+      {
+        stateDir,
+        verifyRef,
+        postComment: () => {},
+        getPrFiles: () => [],
+        gh: () => {
+          throw new Error('unexpected gh call');
+        },
+      },
     );
     expect(result).toBeNull();
     expect(verifyRef).not.toHaveBeenCalled();
@@ -120,13 +138,13 @@ describe('processHookInput: outcome verification (kaizen #950)', () => {
     const verifyRef = vi.fn<(ref: string) => RefStatus>(() => 'missing');
     const cmd =
       'KAIZEN_IMPEDIMENTS: [{"type":"positive","impediment":"smooth run","disposition":"no-action","reason":"genuinely frictionless, well-scoped 30-line change"}]';
-    const result = processHookInput(
+    const result = processWithOutcomeOptions(
       {
         tool_name: 'Bash',
         tool_input: { command: `echo '${cmd}'` },
         tool_response: { stdout: cmd, exit_code: 0 },
       },
-      { stateDir, verifyRef, postComment: () => {} },
+      verifyRef,
     );
     expect(verifyRef).not.toHaveBeenCalled();
     expect(result).toContain('PR kaizen gate cleared');
