@@ -20,6 +20,7 @@ const HOOK_PATH = path.resolve(
   __dirname,
   'pr-kaizen-clear-fallback.ts',
 );
+const HOOK_SOURCE = fs.readFileSync(HOOK_PATH, 'utf-8');
 
 let testStateDir: string;
 let testAuditDir: string;
@@ -82,6 +83,16 @@ function bashInput(command: string, stdout: string): object {
     tool_response: { stdout, stderr: '', exit_code: '0' },
   };
 }
+
+describe('state IO source invariant', () => {
+  it('routes fallback state reads and writes through shared state helpers', () => {
+    expect(HOOK_SOURCE).toContain('readStateFile');
+    expect(HOOK_SOURCE).toContain('writeStateFile');
+    expect(HOOK_SOURCE).not.toContain('parseStateFile(readFileSync');
+    expect(HOOK_SOURCE).not.toContain('parseStateFile(content)');
+    expect(HOOK_SOURCE).not.toContain('writeFileSync(filepath, serializeStateFile');
+  });
+});
 
 describe('pr-kaizen-clear-fallback: clears gate', () => {
   it('INVARIANT: clears needs_pr_kaizen gate when KAIZEN_IMPEDIMENTS in stdout', () => {
