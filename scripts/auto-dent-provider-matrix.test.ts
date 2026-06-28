@@ -32,7 +32,7 @@ describe('provider comparison matrix (#1152)', () => {
 
     expect(scenarios.map((scenario) => scenario.id)).toEqual([
       'claude-only',
-      'codex-only',
+      'codex-mainline-claude-review',
       'claude-plan-review-codex-implement',
       'codex-plan-implement-provider-validation',
     ]);
@@ -52,7 +52,7 @@ describe('provider comparison matrix (#1152)', () => {
     const rendered = renderProviderMatrixDryRun(scenarios);
     expect(rendered).toContain('Provider comparison matrix dry run');
     expect(rendered).toContain('claude-only');
-    expect(rendered).toContain('codex-only');
+    expect(rendered).toContain('codex-mainline-claude-review');
     expect(rendered).toContain('Claude planning/review + Codex implementation');
     expect(rendered).toContain('planning=claude (subscription-cli)');
     expect(rendered).toContain('implementation=codex (subscription-cli)');
@@ -72,7 +72,11 @@ describe('provider comparison matrix (#1152)', () => {
     ];
 
     const scenario = {
-      ...providerComparisonScenarios().find((candidate) => candidate.id === 'codex-only')!,
+      ...providerComparisonScenarios().find((candidate) => candidate.id === 'codex-mainline-claude-review')!,
+      phaseProviders: {
+        ...providerComparisonScenarios().find((candidate) => candidate.id === 'codex-mainline-claude-review')!.phaseProviders,
+        review: { provider: 'codex' as const, billing: 'api-token' as const },
+      },
     };
     const validation = validateProviderComparisonScenario(scenario, apiTokenOnlyReview);
 
@@ -180,9 +184,7 @@ describe('provider comparison matrix (#1152)', () => {
     expect(report).toContain('## Provider Comparison Matrix: matrix-1152');
     expect(report).toContain('| Strategy | Planning | Implementation | Review | Validation | Verdict | Failure class |');
     expect(report).toContain('Claude only');
-    expect(report).toContain('Codex only');
-    expect(report).toContain('process-incomplete');
-    expect(report).toContain('missing-review-evidence');
+    expect(report).toContain('Codex mainline + Claude review');
     expect(report).toContain('process pass rate');
     expect(report).toContain('empty-success rate');
     expect(report).toContain('hook rejections');
@@ -232,7 +234,7 @@ describe('provider comparison matrix (#1152)', () => {
     );
     expect(dryRun.status).toBe(0);
     expect(dryRun.stdout).toContain('Provider comparison matrix dry run');
-    expect(dryRun.stdout).toContain('codex-only');
+    expect(dryRun.stdout).toContain('codex-mainline-claude-review');
     expect(dryRun.stdout).not.toContain('api-token');
     expect(dryRun.stderr).toBe('');
 

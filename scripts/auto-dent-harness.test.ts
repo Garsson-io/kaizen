@@ -15,6 +15,7 @@ import { join, resolve, dirname } from 'path';
 import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import {
+  buildLiveProbeCommand,
   replayLog,
   runLiveProbe,
   runStream,
@@ -33,6 +34,8 @@ import {
 } from './auto-dent-harness.js';
 import { summarizeEvents } from './batch-summary.js';
 import { scoreBatch } from './auto-dent-score.js';
+import { normalizeCodexEventToStreamMessages } from './auto-dent-codex.js';
+import { parseReviewOutput } from '../src/review-battery.js';
 
 // Resolve repo root (works from worktrees too)
 function getRepoRoot(): string {
@@ -162,6 +165,53 @@ describe('replay: edge cases', () => {
     expect(liveSection).toContain('parseJsonObject');
     expect(liveSection).not.toContain('JSON.parse(line)');
   });
+
+  it('builds provider-correct live probe commands without hardcoding Claude (#1580)', () => {
+    expect(buildLiveProbeCommand({
+      provider: 'claude',
+      prompt: 'emit a marker',
+      cwd: '/repo/kaizen',
+      maxBudget: 0.05,
+      extraArgs: ['--model', 'haiku'],
+    })).toEqual({
+      provider: 'claude',
+      command: 'claude',
+      args: [
+        '-p',
+        'emit a marker',
+        '--output-format',
+        'stream-json',
+        '--max-budget-usd',
+        '0.05',
+        '--verbose',
+        '--model',
+        'haiku',
+      ],
+    });
+
+    expect(buildLiveProbeCommand({
+      provider: 'codex',
+      prompt: 'emit a marker',
+      cwd: '/repo/kaizen',
+      maxBudget: 0.05,
+      extraArgs: [],
+    })).toEqual({
+      provider: 'codex',
+      command: 'codex',
+      args: [
+        'exec',
+        '--json',
+        '--cd',
+        '/repo/kaizen',
+        '--sandbox',
+        'danger-full-access',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--color',
+        'never',
+        '-',
+      ],
+    });
+  });
 });
 
 // Synthetic stream tests — verify phase marker extraction
@@ -197,6 +247,40 @@ describe('synthetic: DECOMPOSE phase marker', () => {
     expect(phaseCount(capture, 'PICK')).toBe(1);
     expect(phaseCount(capture, 'PR')).toBe(1);
     expect(capture.result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/999');
+  });
+});
+
+describe('synthetic: Codex lifecycle and review proof (#1580)', () => {
+  it('normalizes Codex JSONL into valid lifecycle and review evidence', () => {
+    const codexEvents = [
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: PICK | issue=#1580 | title=provider switching' } },
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: EVALUATE | verdict=proceed' } },
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: IMPLEMENT | case=260629-0105-k1580 | branch=case/k1580' } },
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: TEST | result=pass | count=7' } },
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/1580' } },
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: REFLECT | issues_filed=0' } },
+      { type: 'result', final_message: 'AUTO_DENT_PHASE: STOP | reason=synthetic codex proof complete' },
+    ];
+    const streamMessages = codexEvents.flatMap((event) => normalizeCodexEventToStreamMessages(event));
+    const capture = runStream(streamMessages);
+
+    expect(capture.phases.map((phase) => phase.phase)).toEqual([
+      'PICK',
+      'EVALUATE',
+      'IMPLEMENT',
+      'TEST',
+      'PR',
+      'REFLECT',
+      'STOP',
+    ]);
+    expect(validateLifecycle(capture).valid).toBe(true);
+
+    const review = parseReviewOutput(JSON.stringify({
+      dimension: 'requirements',
+      summary: 'codex review evidence parsed',
+      findings: [{ requirement: 'R1', status: 'DONE', detail: 'Codex provider path produced structured review evidence' }],
+    }), 'requirements');
+    expect(review?.verdict).toBe('pass');
   });
 });
 

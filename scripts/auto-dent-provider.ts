@@ -98,7 +98,7 @@ export type ProviderCapability = z.infer<typeof ProviderCapabilitySchema>;
  * future paths — they are NOT accepted for unattended batches, which is what
  * validateProviderPlan enforces.
  */
-export const CAPABILITY_INVENTORY: readonly ProviderCapability[] = [
+export const PROVIDER_CAPABILITIES: readonly ProviderCapability[] = [
   // --- Claude (subscription CLI) — the proven path today ---
   { provider: 'claude', phase: 'planning', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'Claude Code plans the kaizen lifecycle natively under subscription.' },
   { provider: 'claude', phase: 'implementation', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'Claude Code edits in a case worktree with hook enforcement.' },
@@ -110,7 +110,7 @@ export const CAPABILITY_INVENTORY: readonly ProviderCapability[] = [
   // --- Codex (subscription CLI) — the epic #1134 target ---
   { provider: 'codex', phase: 'planning', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'Codex can plan via `codex exec` under subscription; Claude usually richer.' },
   { provider: 'codex', phase: 'implementation', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'Codex is strong at focused code generation via the CLI.' },
-  { provider: 'codex', phase: 'review', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'Codex can review but lacks the structured kaizen review battery.' },
+  { provider: 'codex', phase: 'review', billingMode: 'subscription-cli', fit: 'avoid', acceptedForUnattended: false, rationale: 'Codex can review ad hoc, but unattended auto-dent review remains pinned to Claude until Codex emits structured kaizen review evidence.' },
   { provider: 'codex', phase: 'fix', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'Tight edit/fix iterations suit Codex exec well.' },
   { provider: 'codex', phase: 'reflection', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'Codex can reflect but kaizen reflection is Claude-tuned.' },
 
@@ -121,6 +121,9 @@ export const CAPABILITY_INVENTORY: readonly ProviderCapability[] = [
   { provider: 'claude', phase: 'review', billingMode: 'api-token', fit: 'avoid', acceptedForUnattended: false, rationale: 'API-token review works but violates the subscription-only constraint.' },
   { provider: 'codex', phase: 'implementation', billingMode: 'api-token', fit: 'avoid', acceptedForUnattended: false, rationale: 'API-token implementation is an optional future path, not required.' },
 ];
+
+/** @deprecated Use PROVIDER_CAPABILITIES. Kept as a compatibility alias. */
+export const CAPABILITY_INVENTORY = PROVIDER_CAPABILITIES;
 
 /** A single reason a provider plan was rejected. */
 export const PlanViolationSchema = z.object({
@@ -166,7 +169,7 @@ function hasSubscriptionCompatibleCapability(
  */
 export function validateProviderPlan(
   plan: ProviderPlan,
-  inventory: readonly ProviderCapability[] = CAPABILITY_INVENTORY,
+  inventory: readonly ProviderCapability[] = PROVIDER_CAPABILITIES,
 ): PlanValidation {
   const violations: PlanViolation[] = [];
 
@@ -212,6 +215,44 @@ export function phaseProvider(provider: Provider, billing: BillingMode): PhasePr
   return PhaseProviderSchema.parse({ provider, billing });
 }
 
+function subscriptionCompatibleCapabilities(
+  phase: Phase,
+  inventory: readonly ProviderCapability[],
+): ProviderCapability[] {
+  return inventory.filter((c) =>
+    c.phase === phase &&
+    c.acceptedForUnattended &&
+    SUBSCRIPTION_COMPATIBLE_BILLING.includes(c.billingMode)
+  );
+}
+
+const FIT_RANK: Record<Fit, number> = {
+  best: 0,
+  works: 1,
+  avoid: 2,
+};
+
+function selectPhaseCapability(
+  phase: Phase,
+  requestedProvider: AgentProvider,
+  inventory: readonly ProviderCapability[],
+): ProviderCapability {
+  const candidates = subscriptionCompatibleCapabilities(phase, inventory);
+  const preferredProvider = phase === 'validation' ? 'provider-independent' : requestedProvider;
+  const preferred = candidates.find((c) => c.provider === preferredProvider);
+  if (preferred) return preferred;
+
+  const claude = candidates.find((c) => c.provider === 'claude');
+  if (claude) return claude;
+
+  const providerIndependent = candidates.find((c) => c.provider === 'provider-independent');
+  if (providerIndependent) return providerIndependent;
+
+  const fallback = [...candidates].sort((a, b) => FIT_RANK[a.fit] - FIT_RANK[b.fit])[0];
+  if (fallback) return fallback;
+  throw new Error(`No accepted subscription-compatible provider capability for phase "${phase}"`);
+}
+
 /**
  * #1143 — The provider/billing reality of an auto-dent run today.
  *
@@ -219,29 +260,22 @@ export function phaseProvider(provider: Provider, billing: BillingMode): PhasePr
  * validation is provider-independent (git/GitHub facts). Recording this makes every
  * run auditable for provider usage and billing mode without changing behavior.
  */
-export function defaultPhaseProviders(): PhaseProviderRecord {
-  const claude = phaseProvider('claude', 'subscription-cli');
-  return parsePhaseProviderRecord({
-    planning: claude,
-    implementation: claude,
-    review: claude,
-    fix: claude,
-    reflection: claude,
-    validation: phaseProvider('provider-independent', 'local-only'),
-  });
+export function defaultPhaseProviders(
+  inventory: readonly ProviderCapability[] = PROVIDER_CAPABILITIES,
+): PhaseProviderRecord {
+  return phaseProvidersForAgentProvider('claude', inventory);
 }
 
-export function phaseProvidersForAgentProvider(provider: AgentProvider): PhaseProviderRecord {
-  if (provider !== 'codex') return defaultPhaseProviders();
-  const codex = phaseProvider('codex', 'subscription-cli');
-  return parsePhaseProviderRecord({
-    planning: codex,
-    implementation: codex,
-    review: phaseProvider('claude', 'subscription-cli'),
-    fix: codex,
-    reflection: codex,
-    validation: phaseProvider('provider-independent', 'local-only'),
-  });
+export function phaseProvidersForAgentProvider(
+  provider: AgentProvider,
+  inventory: readonly ProviderCapability[] = PROVIDER_CAPABILITIES,
+): PhaseProviderRecord {
+  const record: PhaseProviderRecord = {};
+  for (const phase of PHASES) {
+    const capability = selectPhaseCapability(phase, provider, inventory);
+    record[phase] = phaseProvider(capability.provider, capability.billingMode);
+  }
+  return parsePhaseProviderRecord(record);
 }
 
 /**
@@ -249,7 +283,7 @@ export function phaseProvidersForAgentProvider(provider: AgentProvider): PhasePr
  * named (one section per phase), so a snapshot/string test can assert coverage.
  */
 export function renderCapabilityMatrix(
-  inventory: readonly ProviderCapability[] = CAPABILITY_INVENTORY,
+  inventory: readonly ProviderCapability[] = PROVIDER_CAPABILITIES,
 ): string {
   const lines: string[] = [];
   lines.push('Auto-dent provider capability matrix');
@@ -282,7 +316,7 @@ if (
   const cmd = process.argv[2] ?? 'matrix';
   if (cmd === 'matrix') {
     if (process.argv.includes('--json')) {
-      console.log(JSON.stringify(CAPABILITY_INVENTORY, null, 2));
+      console.log(JSON.stringify(PROVIDER_CAPABILITIES, null, 2));
     } else {
       console.log(renderCapabilityMatrix());
     }

@@ -53,7 +53,7 @@ describe('parseCodexJsonl (#1144)', () => {
   });
 
   it('delegates JSONL row parsing and malformed-row accounting to the shared helper', () => {
-    const source = readFileSync('scripts/auto-dent-codex.ts', 'utf8');
+    const source = readFileSync('src/codex-agent.ts', 'utf8');
     const parserSource = source.slice(
       source.indexOf('export function parseCodexJsonl'),
       source.indexOf('export function extractCodexPhaseMarkers'),

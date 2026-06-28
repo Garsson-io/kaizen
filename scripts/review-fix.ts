@@ -42,7 +42,7 @@ import { readJsonValueFile, writeJsonObjectFile } from '../src/lib/json-file.js'
 import { ghExec } from './auto-dent-github.js';
 import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
 import {
-  CAPABILITY_INVENTORY,
+  PROVIDER_CAPABILITIES,
   validateProviderPlan,
   type ProviderCapability,
   type PlanValidation,
@@ -169,6 +169,7 @@ export interface RunFixLoopDeps {
   checkFix?: (logFile: string, pid: number, provider?: ReviewFixProvider) => { done: boolean; success: boolean; costUsd: number; output: string };
   runReview?: (params: { dimensions: string[]; prUrl: string; issueNum: string; repo: string; timeoutMs: number; reviewProvider?: ReviewProvider }) => Promise<BatteryResult>;
   getStateDir?: () => string;
+  providerInventory?: readonly ProviderCapability[];
 }
 
 // ── State persistence ───────────────────────────────────────────────
@@ -189,7 +190,7 @@ export function defaultReviewFixProviders(): {
 
 export function validateReviewFixProviderPlan(
   providers: { reviewProvider: ReviewFixProvider; fixProvider: ReviewFixProvider },
-  inventory: readonly ProviderCapability[] = CAPABILITY_INVENTORY,
+  inventory: readonly ProviderCapability[] = PROVIDER_CAPABILITIES,
 ): PlanValidation {
   return validateProviderPlan({
     review: providers.reviewProvider.provider,
@@ -650,7 +651,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
     reviewProvider: opts.reviewProvider ?? providerDefaults.reviewProvider,
     fixProvider: opts.fixProvider ?? providerDefaults.fixProvider,
   };
-  const providerValidation = validateReviewFixProviderPlan(requestedProviders);
+  const providerValidation = validateReviewFixProviderPlan(requestedProviders, deps.providerInventory);
   if (!providerValidation.ok) {
     throw new Error(`Provider plan rejected: ${providerValidation.violations.map((v) => v.reason).join('; ')}`);
   }

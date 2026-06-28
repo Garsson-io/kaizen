@@ -1,16 +1,17 @@
 /**
- * spawn-claude.ts — the ONE `claude -p` subprocess primitive for the repo.
+ * spawn-claude.ts — the ONE provider-aware agent subprocess primitive for the repo.
  *
- * A single fresh `claude -p` invocation: new process, new context, no conversation
+ * A single fresh provider invocation: new process, new context, no conversation
  * history. This is the substrate for every independent-judgment mechanism — the review
  * battery (`review-battery.ts`) and the independence-by-spawn judge (`independent-judge.ts`)
  * both call this rather than reimplementing the spawn loop (#1231 DRY mandate).
  *
- * Extracted verbatim from the original private `runClaude` in review-battery.ts so the
- * stream-json JSONL parsing + cost extraction + timeout live in exactly one place.
+ * The file keeps historical Claude-named exports for compatibility while new callers use
+ * the provider-neutral `spawnAgent`/`buildSpawnAgentCommand` surface (#1580).
  */
 
 import { spawn, spawnSync } from 'node:child_process';
+import { buildCodexExecArgs, parseCodexJsonl } from './codex-agent.js';
 import { parseJsonLines } from './lib/json-lines.js';
 
 interface StreamJsonContentBlock {
@@ -36,6 +37,11 @@ export interface SpawnClaudeResult {
   args: string[];
 }
 
+export interface SpawnAgentProvider {
+  provider: 'claude' | 'codex';
+  billing: 'subscription-cli';
+}
+
 export interface SpawnClaudeOptions {
   cwd?: string;
   timeoutMs?: number;
@@ -47,8 +53,10 @@ export interface SpawnClaudeOptions {
   maxTurns?: number;
   /** Optional cost guard for bounded live skill runs. */
   maxBudgetUsd?: number;
-  /** Extra env vars for the spawned Claude process. */
+  /** Extra env vars for the spawned provider process. */
   env?: NodeJS.ProcessEnv;
+  /** Agent provider. Defaults to Claude for backward compatibility. */
+  provider?: SpawnAgentProvider;
 }
 
 export interface SpawnClaudeArgsOptions extends SpawnClaudeOptions {
@@ -91,6 +99,12 @@ export type SpawnClaudeJsonFn = (
   opts: SpawnClaudeJsonOptions,
 ) => Promise<SpawnClaudeJsonResult>;
 
+export interface SpawnAgentCommand {
+  command: 'claude' | 'codex';
+  args: string[];
+  stdin: boolean;
+}
+
 export function buildSpawnClaudeArgs(opts: SpawnClaudeArgsOptions = {}): string[] {
   const model = opts.model ?? process.env.REVIEW_MODEL ?? 'sonnet';
   const outputFormat = opts.outputFormat ?? 'stream-json';
@@ -114,6 +128,22 @@ export function buildSpawnClaudeArgs(opts: SpawnClaudeArgsOptions = {}): string[
   if (opts.promptArg !== undefined) args.push(opts.promptArg);
 
   return args;
+}
+
+export function buildSpawnAgentCommand(opts: SpawnClaudeArgsOptions = {}): SpawnAgentCommand {
+  const provider = opts.provider?.provider ?? 'claude';
+  if (provider === 'codex') {
+    return {
+      command: 'codex',
+      args: buildCodexExecArgs(opts.cwd ?? process.cwd()),
+      stdin: true,
+    };
+  }
+  return {
+    command: 'claude',
+    args: buildSpawnClaudeArgs(opts),
+    stdin: true,
+  };
 }
 
 export const spawnClaudeJson: SpawnClaudeJsonFn = async (prompt, opts) => {
@@ -167,18 +197,47 @@ export const spawnClaudeJson: SpawnClaudeJsonFn = async (prompt, opts) => {
   };
 };
 
+function parseClaudeStreamResult(stdout: string): { text: string; costUsd: number } {
+  let costUsd = 0;
+  let text = '';
+  for (const msg of parseJsonLines<StreamJsonMessage>(stdout)) {
+    if (msg.type === 'result') {
+      costUsd = msg.total_cost_usd ?? 0;
+    } else if (msg.type === 'assistant') {
+      const content = Array.isArray(msg.message?.content)
+        ? msg.message.content as StreamJsonContentBlock[]
+        : [];
+      for (const block of content) {
+        if (block.type === 'text') {
+          text += block.text ?? '';
+        }
+      }
+    }
+  }
+  return { text, costUsd };
+}
+
+function parseAgentResult(provider: SpawnAgentProvider['provider'], stdout: string): { text: string; costUsd: number } {
+  if (provider === 'codex') {
+    const parsed = parseCodexJsonl(stdout);
+    return { text: parsed.finalText || parsed.text, costUsd: 0 };
+  }
+  return parseClaudeStreamResult(stdout);
+}
+
 /**
- * Run a single `claude -p` call with the given prompt.
+ * Run a single agent provider call with the given prompt.
  * Each call is a fresh process — no shared context with the caller, by construction.
  * Model defaults to the REVIEW_MODEL env var (then 'sonnet').
  * Returns parsed text, cost, duration, and exit code.
  */
-export const spawnClaude: SpawnClaudeFn = (prompt, opts) => {
-  const args = buildSpawnClaudeArgs(opts);
+export const spawnAgent: SpawnClaudeFn = (prompt, opts) => {
+  const provider = opts.provider?.provider ?? 'claude';
+  const { command, args } = buildSpawnAgentCommand(opts);
   const start = Date.now();
 
   return new Promise((resolve) => {
-    const child = spawn('claude', args, {
+    const child = spawn(command, args, {
       cwd: opts.cwd,
       env: opts.env ? { ...process.env, ...opts.env } : process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -197,28 +256,12 @@ export const spawnClaude: SpawnClaudeFn = (prompt, opts) => {
     child.on('close', (code) => {
       clearTimeout(timer);
       const durationMs = Date.now() - start;
-
-      // Parse text and cost from stream-json JSONL output.
-      // The `result` field in the final "result" message is now always empty;
-      // actual text lives in assistant message content blocks.
-      let costUsd = 0;
-      let text = '';
-      for (const msg of parseJsonLines<StreamJsonMessage>(stdout)) {
-        if (msg.type === 'result') {
-          costUsd = msg.total_cost_usd ?? 0;
-        } else if (msg.type === 'assistant') {
-          const content = Array.isArray(msg.message?.content)
-            ? msg.message.content as StreamJsonContentBlock[]
-            : [];
-          for (const block of content) {
-            if (block.type === 'text') {
-              text += block.text ?? '';
-            }
-          }
-        }
-      }
+      const { text, costUsd } = parseAgentResult(provider, stdout);
 
       resolve({ text, costUsd, durationMs, exitCode: code ?? -1, rawStdout: stdout, rawStderr: stderr, args });
     });
   });
 };
+
+export const spawnClaude: SpawnClaudeFn = (prompt, opts) =>
+  spawnAgent(prompt, { ...opts, provider: { provider: 'claude', billing: 'subscription-cli' } });

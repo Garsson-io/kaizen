@@ -58,6 +58,7 @@ import {
 } from './auto-dent-run.js';
 import { deriveRunTestHealth } from './auto-dent-test-health.js';
 import * as github from './auto-dent-github.js';
+import type { ProviderCapability } from './auto-dent-provider.js';
 import { makeBatchState, makeRunResult } from './auto-dent-test-utils.js';
 import { decideAutoMergeSafety } from './auto-dent-merge-policy.js';
 
@@ -1711,6 +1712,20 @@ describe('BatchState provider field (#1144)', () => {
     expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex', test_task: true }))).toBe(true);
     expect(shouldRunCodexProvider(makeBatchState({ provider: 'claude', test_task: false }))).toBe(false);
     expect(shouldRunCodexProvider(makeBatchState({ provider: undefined, test_task: false }))).toBe(false);
+  });
+
+  it('consults runtime provider capabilities before dispatching Codex implementation (#1580)', () => {
+    const inventory: ProviderCapability[] = [
+      { provider: 'claude', phase: 'planning', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'claude', phase: 'implementation', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'claude', phase: 'review', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'claude', phase: 'fix', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'claude', phase: 'reflection', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'provider-independent', phase: 'validation', billingMode: 'local-only', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'codex', phase: 'implementation', billingMode: 'subscription-cli', fit: 'avoid', acceptedForUnattended: false, rationale: 'disabled' },
+    ];
+
+    expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex' }), inventory)).toBe(false);
   });
 });
 

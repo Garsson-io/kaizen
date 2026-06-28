@@ -5,12 +5,12 @@
  *   1. Message builders  — construct stream-json messages declaratively
  *   2. runStream()       — feed messages through processStreamMessage, capture output
  *   3. replayLog()       — replay a real captured .log file through the pipeline
- *   4. runLiveProbe()    — spawn a real bounded claude session, capture everything
+ *   4. runLiveProbe()    — spawn a real bounded provider session, capture everything
  *
  * The harness is the foundation for:
  *   - Fast unit tests (synthetic messages)
  *   - Regression tests (replay captured logs from real runs)
- *   - Live smoke tests (bounded real claude sessions)
+ *   - Live smoke tests (bounded real provider sessions)
  *   - Experimentation (compare prompt/hook variants by scoring results)
  */
 
@@ -25,6 +25,10 @@ import {
   type RunMetrics,
   type StreamContext,
 } from './auto-dent-run.js';
+import {
+  buildCodexExecArgs,
+  normalizeCodexEventToStreamMessages,
+} from './auto-dent-codex.js';
 import { parsePhaseMarkers as parsePhaseMarkersLocal } from './auto-dent-stream.js';
 import {
   type EventEnvelope,
@@ -178,22 +182,52 @@ export function replayLog(logPath: string, opts: RunStreamOpts = {}): StreamCapt
 // Layer 4: Live probe
 
 export interface LiveProbeOpts {
-  /** The prompt to send to claude */
+  /** Provider to launch. Defaults to Claude. */
+  provider?: 'claude' | 'codex';
+  /** The prompt to send to the provider */
   prompt: string;
-  /** Working directory for the claude session */
+  /** Working directory for the provider session */
   cwd: string;
   /** Max budget in USD (default: 0.05 — very cheap) */
   maxBudget?: number;
   /** Timeout in ms (default: 60_000) */
   timeoutMs?: number;
-  /** Additional claude CLI args */
+  /** Additional Claude CLI args. Ignored by Codex, whose exec contract is fixed. */
   extraArgs?: string[];
   /** Print output in real-time */
   verbose?: boolean;
 }
 
+export interface LiveProbeCommand {
+  provider: 'claude' | 'codex';
+  command: 'claude' | 'codex';
+  args: string[];
+}
+
+export function buildLiveProbeCommand(opts: Required<Pick<LiveProbeOpts, 'provider' | 'prompt' | 'cwd' | 'maxBudget' | 'extraArgs'>>): LiveProbeCommand {
+  if (opts.provider === 'codex') {
+    return {
+      provider: 'codex',
+      command: 'codex',
+      args: buildCodexExecArgs(opts.cwd),
+    };
+  }
+  return {
+    provider: 'claude',
+    command: 'claude',
+    args: [
+      '-p', opts.prompt,
+      '--output-format', 'stream-json',
+      '--max-budget-usd', String(opts.maxBudget),
+      '--verbose',
+      ...opts.extraArgs,
+    ],
+  };
+}
+
 export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture & { exitCode: number }> {
   const {
+    provider = 'claude',
     prompt,
     cwd,
     maxBudget = 0.05,
@@ -205,30 +239,21 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
   const logLines: string[] = [];
   const rawMessages: Record<string, any>[] = [];
   const result = makeRunResult();
-  // Live probe spawns a real claude session, so hooks are expected — thread the
-  // provider so the #843 hook-activation check runs here too (this is exactly
-  // where a `plugins:[]` session should be caught).
-  const ctx: StreamContext = { provider: 'claude' };
+  const ctx: StreamContext = { provider };
   const start = Date.now();
-
-  const args = [
-    '-p', prompt,
-    '--output-format', 'stream-json',
-    '--max-budget-usd', String(maxBudget),
-    '--verbose',
-    ...extraArgs,
-  ];
+  const command = buildLiveProbeCommand({ provider, prompt, cwd, maxBudget, extraArgs });
 
   // Save the raw log for replay/debugging
   const tmpDir = mkdtempSync(join(tmpdir(), 'auto-dent-probe-'));
   const logFile = join(tmpDir, 'probe.log');
 
   return new Promise((resolve) => {
-    const child = spawn('claude', args, {
+    const child = spawn(command.command, command.args, {
       cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: provider === 'codex' ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
       timeout: timeoutMs,
     });
+    if (provider === 'codex') child.stdin?.end(prompt);
 
     // Intercept console.log once for the entire probe
     const realLog = console.log;
@@ -248,7 +273,13 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
       if (!parsed) return;
       rawMessages.push(parsed);
       try {
-        processStreamMessage(parsed, result, start, ctx);
+        if (provider === 'codex') {
+          for (const streamMessage of normalizeCodexEventToStreamMessages(parsed)) {
+            processStreamMessage(streamMessage, result, start, ctx);
+          }
+        } else {
+          processStreamMessage(parsed, result, start, ctx);
+        }
       } catch { /* skip malformed stream messages */ }
     });
 

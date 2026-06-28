@@ -22,11 +22,11 @@ import type { SpawnClaudeFn } from './spawn-claude.js';
 // A fake spawn that returns a canned YAML reply and records every call.
 function fakeSpawn(reply: string, opts: { exitCode?: number; costUsd?: number } = {}): {
   spawn: SpawnClaudeFn;
-  calls: string[];
+  calls: Array<{ prompt: string; opts: Parameters<SpawnClaudeFn>[1] }>;
 } {
-  const calls: string[] = [];
-  const spawn: SpawnClaudeFn = async (prompt) => {
-    calls.push(prompt);
+  const calls: Array<{ prompt: string; opts: Parameters<SpawnClaudeFn>[1] }> = [];
+  const spawn: SpawnClaudeFn = async (prompt, spawnOpts) => {
+    calls.push({ prompt, opts: spawnOpts });
     return { text: reply, costUsd: opts.costUsd ?? 0.01, durationMs: 1, exitCode: opts.exitCode ?? 0 };
   };
   return { spawn, calls };
@@ -175,6 +175,19 @@ describe('independentJudge — end to end with injected spawn', () => {
     expect(r.verdict).toBe('pass');
     expect(r.votes).toHaveLength(3);
     expect(r.totalCostUsd).toBeCloseTo(0.03);
+  });
+
+  it('passes the requested provider through the shared spawn seam', async () => {
+    const { spawn, calls } = fakeSpawn(PASS_YAML);
+    const r = await independentJudge({
+      artifact: 'a diff',
+      charter: 'red-team',
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      spawn,
+    });
+
+    expect(r.verdict).toBe('pass');
+    expect(calls[0].opts.provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
   });
 
   it('one FAIL among passes blocks the panel (any-blocks default)', async () => {

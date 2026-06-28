@@ -29,6 +29,7 @@ import {
   type ReviewFixState,
 } from './review-fix.js';
 import { DATA_GAP_PREFIX, type BatteryResult } from '../src/review-battery.js';
+import type { ProviderCapability } from './auto-dent-provider.js';
 
 // ── parseStreamJsonResult ────────────────────────────────────────────
 
@@ -824,6 +825,10 @@ describe('runFixLoop', () => {
   it('review-failed path: records the attempted review provider even when no dimensions return', async () => {
     const dir = setup();
     try {
+      const codexReviewInventory: ProviderCapability[] = [
+        { provider: 'codex', phase: 'review', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'test accepts experimental codex review' },
+        { provider: 'claude', phase: 'fix', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'test fix provider' },
+      ];
       const emptyBattery: BatteryResult = {
         verdict: 'fail',
         costUsd: 0,
@@ -845,6 +850,7 @@ describe('runFixLoop', () => {
         runReview: async () => emptyBattery,
         launchFix: vi.fn(),
         getStateDir: () => dir,
+        providerInventory: codexReviewInventory,
       });
 
       expect(state.rounds[0].verdict).toBe('review_failed');

@@ -20,7 +20,7 @@ import {
   type JudgeRequest,
 } from './independent-judge.js';
 import { CHARTERS, CHARTER_NAMES, isCharterName, type CharterName } from './judge-charters.js';
-import type { SpawnClaudeFn } from './spawn-claude.js';
+import type { SpawnAgentProvider, SpawnClaudeFn } from './spawn-claude.js';
 
 function getFlag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
@@ -49,6 +49,13 @@ function parseCharters(raw: string | undefined): CharterName | CharterName[] {
   return names.length === 1 ? (names[0] as CharterName) : (names as CharterName[]);
 }
 
+function parseProvider(raw: string | undefined): SpawnAgentProvider | undefined {
+  if (!raw) return undefined;
+  if (raw === 'claude' || raw === 'codex') return { provider: raw, billing: 'subscription-cli' };
+  console.error(`Unknown provider "${raw}". Valid: claude, codex`);
+  process.exit(2);
+}
+
 function cmdCharters(): void {
   for (const name of CHARTER_NAMES) {
     const c = CHARTERS[name];
@@ -70,6 +77,7 @@ export async function cmdJudge(argv: string[], spawn?: SpawnClaudeFn): Promise<n
     aggregate: aggregate ?? 'any-blocks',
     artifactKind: getFlag(argv, 'kind'),
     model: getFlag(argv, 'model'),
+    provider: parseProvider(getFlag(argv, 'provider')),
     spawn,
   };
 

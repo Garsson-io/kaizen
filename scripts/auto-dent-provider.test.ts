@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
-  CAPABILITY_INVENTORY,
   BillingModeSchema,
   PHASES,
   PhaseProviderRecordSchema,
   PhaseProviderSchema,
   PhaseSchema,
+  PROVIDER_CAPABILITIES,
   ProviderCapabilitySchema,
   SUBSCRIPTION_COMPATIBLE_BILLING,
   phaseProviderRecordToProviderPlan,
@@ -47,25 +47,25 @@ describe('capability inventory (#1141)', () => {
   });
 
   it('validates inventory shape — every entry is well-formed', () => {
-    for (const c of CAPABILITY_INVENTORY) {
+    for (const c of PROVIDER_CAPABILITIES) {
       expect(ProviderCapabilitySchema.parse(c)).toEqual(c);
     }
   });
 
   it('covers claude-best, codex-best, and provider-independent capabilities', () => {
     const has = (p: string, fit: string) =>
-      CAPABILITY_INVENTORY.some((c) => c.provider === p && c.fit === fit && c.acceptedForUnattended);
+      PROVIDER_CAPABILITIES.some((c) => c.provider === p && c.fit === fit && c.acceptedForUnattended);
     expect(has('claude', 'best')).toBe(true);
     expect(has('codex', 'best')).toBe(true);
     expect(
-      CAPABILITY_INVENTORY.some(
+      PROVIDER_CAPABILITIES.some(
         (c) => c.provider === 'provider-independent' && c.acceptedForUnattended,
       ),
     ).toBe(true);
   });
 
   it('records api-token paths as documented but NOT accepted (subscription constraint)', () => {
-    const apiToken = CAPABILITY_INVENTORY.filter((c) => c.billingMode === 'api-token');
+    const apiToken = PROVIDER_CAPABILITIES.filter((c) => c.billingMode === 'api-token');
     expect(apiToken.length).toBeGreaterThan(0);
     for (const c of apiToken) {
       expect(c.acceptedForUnattended).toBe(false);
@@ -159,5 +159,31 @@ describe('defaultPhaseProviders (#1143)', () => {
     expect(codex.review).toEqual({ provider: 'claude', billing: 'subscription-cli' });
     expect(codex.validation).toEqual({ provider: 'provider-independent', billing: 'local-only' });
     expect(validateProviderPlan(phaseProviderRecordToProviderPlan(codex)).ok).toBe(true);
+  });
+
+  it('derives Codex-run phase providers from accepted runtime capabilities instead of literals (#1580)', () => {
+    const custom: ProviderCapability[] = [
+      { provider: 'claude', phase: 'planning', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'runtime available' },
+      { provider: 'claude', phase: 'implementation', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'runtime available' },
+      { provider: 'claude', phase: 'review', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'runtime available' },
+      { provider: 'claude', phase: 'fix', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'runtime available' },
+      { provider: 'claude', phase: 'reflection', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'runtime available' },
+      { provider: 'provider-independent', phase: 'validation', billingMode: 'local-only', fit: 'best', acceptedForUnattended: true, rationale: 'runtime available' },
+      { provider: 'codex', phase: 'planning', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'runtime available' },
+      { provider: 'codex', phase: 'implementation', billingMode: 'subscription-cli', fit: 'avoid', acceptedForUnattended: false, rationale: 'temporarily disabled' },
+      { provider: 'codex', phase: 'review', billingMode: 'subscription-cli', fit: 'avoid', acceptedForUnattended: false, rationale: 'structured review unavailable' },
+      { provider: 'codex', phase: 'fix', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'runtime available' },
+      { provider: 'codex', phase: 'reflection', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'runtime available' },
+    ];
+
+    const codex = phaseProvidersForAgentProvider('codex', custom);
+
+    expect(codex.planning).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(codex.implementation).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(codex.review).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(codex.fix).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(codex.reflection).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(codex.validation).toEqual({ provider: 'provider-independent', billing: 'local-only' });
+    expect(validateProviderPlan(phaseProviderRecordToProviderPlan(codex), custom).ok).toBe(true);
   });
 });

@@ -5,8 +5,10 @@ import {
   PROVIDER_CAPABILITIES,
   buildProviderCapabilityMatrix,
   renderProviderCapabilityMatrix,
+  validateProviderCapabilityRuntimeAlignment,
   validateProviderCapabilityInventory,
 } from './auto-dent-provider-capabilities.js';
+import { PROVIDER_CAPABILITIES as RUNTIME_PROVIDER_CAPABILITIES } from './auto-dent-provider.js';
 
 describe('auto-dent provider capability inventory', () => {
   it('covers every #1141 phase', () => {
@@ -61,6 +63,22 @@ describe('auto-dent provider capability inventory', () => {
         expect(capability.acceptedForUnattended).toBe(false);
       }
     }
+  });
+
+  it('cannot drift from the runtime provider capability inventory (#1580)', () => {
+    expect(validateProviderCapabilityRuntimeAlignment(PROVIDER_CAPABILITIES, RUNTIME_PROVIDER_CAPABILITIES)).toEqual([]);
+
+    const drifted = PROVIDER_CAPABILITIES.map((cap) =>
+      cap.id === 'codex-structured-exec'
+        ? { ...cap, billingMode: 'api-token' as const, acceptedForUnattended: true }
+        : cap,
+    );
+
+    expect(validateProviderCapabilityRuntimeAlignment(drifted, RUNTIME_PROVIDER_CAPABILITIES)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('codex-structured-exec'),
+      ]),
+    );
   });
 
   it('renders a stable matrix naming every phase and provider class', () => {

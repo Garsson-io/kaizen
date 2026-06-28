@@ -7,7 +7,14 @@
  */
 
 import { escapeMarkdownTableCell } from './markdown-table.js';
-import { PHASES, type BillingMode, type Phase as AutoDentPhase, type Provider } from './auto-dent-provider.js';
+import {
+  PHASES,
+  SUBSCRIPTION_COMPATIBLE_BILLING,
+  type BillingMode,
+  type Phase as AutoDentPhase,
+  type Provider,
+  type ProviderCapability as RuntimeProviderCapability,
+} from './auto-dent-provider.js';
 
 // Descriptive capability inventory phases intentionally reuse the runtime
 // provider lifecycle order; this file may add fit metadata but not a phase list.
@@ -87,7 +94,7 @@ export const PROVIDER_CAPABILITIES: ProviderCapability[] = [
     phaseFit: fit({
       planning: 'partial',
       implementation: 'best',
-      review: 'partial',
+      review: 'avoid',
       fix: 'partial',
       reflection: 'partial',
     }),
@@ -98,9 +105,9 @@ export const PROVIDER_CAPABILITIES: ProviderCapability[] = [
     label: 'Codex review command',
     provider: 'codex',
     billingMode: 'subscription-cli',
-    acceptedForUnattended: true,
+    acceptedForUnattended: false,
     phaseFit: fit({
-      review: 'partial',
+      review: 'avoid',
     }),
     notes: 'Candidate review surface; must still produce structured kaizen review evidence before replacing existing dimensions.',
   },
@@ -122,9 +129,6 @@ export const PROVIDER_CAPABILITIES: ProviderCapability[] = [
     billingMode: 'local-only',
     acceptedForUnattended: true,
     phaseFit: fit({
-      implementation: 'supported',
-      review: 'supported',
-      fix: 'supported',
       validation: 'best',
     }),
     notes: 'Provider-neutral checks for branches, dirty worktrees, PR links, checks, and merge readiness.',
@@ -170,6 +174,31 @@ export function validateProviderCapabilityInventory(
     }
     for (const phase of AUTO_DENT_PHASES) {
       if (!cap.phaseFit[phase]) errors.push(`${cap.id}: missing phase fit for ${phase}`);
+    }
+  }
+  return errors;
+}
+
+export function validateProviderCapabilityRuntimeAlignment(
+  capabilities: ProviderCapability[] = PROVIDER_CAPABILITIES,
+  runtimeCapabilities: readonly RuntimeProviderCapability[],
+): string[] {
+  const errors: string[] = [];
+  for (const cap of capabilities) {
+    if (!cap.acceptedForUnattended) continue;
+    for (const phase of AUTO_DENT_PHASES) {
+      const phaseFit = cap.phaseFit[phase];
+      if (phaseFit === 'not-applicable' || phaseFit === 'avoid') continue;
+      const runtime = runtimeCapabilities.find((candidate) =>
+        candidate.provider === cap.provider &&
+        candidate.phase === phase &&
+        candidate.billingMode === cap.billingMode &&
+        candidate.acceptedForUnattended &&
+        SUBSCRIPTION_COMPATIBLE_BILLING.includes(candidate.billingMode)
+      );
+      if (!runtime) {
+        errors.push(`${cap.id}: ${cap.provider}/${phase}/${cap.billingMode} is not accepted by the runtime provider inventory`);
+      }
     }
   }
   return errors;
