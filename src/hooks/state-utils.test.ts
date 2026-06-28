@@ -26,6 +26,10 @@ import {
 } from './state-utils.js';
 
 const TEST_STATE_DIR = '/tmp/.test-state-utils-ts';
+const STATE_UTILS_SOURCE = readFileSync(
+  new URL('./state-utils.ts', import.meta.url),
+  'utf-8',
+);
 
 beforeEach(() => {
   if (existsSync(TEST_STATE_DIR)) {
@@ -114,6 +118,13 @@ describe('writeStateFile', () => {
       BRANCH: 'branch',
     });
     expect(existsSync(join(subDir, 'test'))).toBe(true);
+  });
+});
+
+describe('state file read helper source invariant', () => {
+  it('routes runtime state file reads through readStateFile', () => {
+    expect(STATE_UTILS_SOURCE).toContain('export function readStateFile');
+    expect(STATE_UTILS_SOURCE).not.toContain('parseStateFile(readFileSync');
   });
 });
 
