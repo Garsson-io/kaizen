@@ -30,6 +30,7 @@ import {
   DEFAULT_BANDIT_C,
   banditExplorationC,
   modeSuccess,
+  parseCandidateTaskManifest,
   deriveRunOutcome,
   buildRunMetrics,
   buildRunCompleteEvent,
@@ -266,11 +267,84 @@ describe('buildTemplateVars', () => {
     expect(vars.claimed_plan_issue).toBe('');
   });
 
+  it('exposes a per-run candidate task manifest path under the log directory', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-vars-'));
+    const state = makeBatchState();
+
+    const vars = buildTemplateVars(state, 4, tmpDir);
+
+    expect(vars.candidate_manifest_path).toBe(join(tmpDir, 'run-4-candidate-tasks-manifest.json'));
+    expect(vars.candidate_manifest_schema).toContain('candidates');
+    expect(vars.candidate_manifest_schema).toContain('suggested_mode');
+  });
+
+  it('renders explore prompt with required candidate manifest artifact path', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-prompt-'));
+    const state = makeBatchState({ guidance: 'find gaps mode:explore' });
+
+    const meta = buildPromptWithMetadata(state, 2, tmpDir);
+
+    expect(meta.template).toBe('explore-gaps.md');
+    expect(meta.prompt).toContain('Required artifact');
+    expect(meta.prompt).toContain(join(tmpDir, 'run-2-candidate-tasks-manifest.json'));
+    expect(meta.prompt).toContain('candidate-task manifest');
+  });
+
   it('exposes the shared goal forcing contract as a template variable', () => {
     const vars = buildTemplateVars(makeBatchState(), 1);
     expect(vars.goal_forcing_contract).toContain('Headless /goal Equivalent');
     expect(vars.goal_forcing_contract).toContain('plan/test-plan gate');
     expect(vars.goal_forcing_contract).toContain('review/requirements/impact gates');
+  });
+});
+
+describe('parseCandidateTaskManifest', () => {
+  it('counts candidates from a valid manifest', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-valid-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      runTag: 'batch/run-1',
+      generatedAt: '2026-06-29T00:00:00.000Z',
+      candidates: [
+        { id: 'a', title: 'First', rationale: 'why', refs: ['#1'], suggested_mode: 'exploit' },
+        { id: 'b', title: 'Second', rationale: 'why', refs: [], suggested_mode: 'subtract' },
+      ],
+    }));
+
+    const parsed = parseCandidateTaskManifest(path);
+
+    expect(parsed).toEqual({ path, count: 2, warnings: [] });
+  });
+
+  it('returns zero with warning for missing or malformed manifests', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-bad-'));
+    const missing = join(tmpDir, 'missing.json');
+    const malformed = join(tmpDir, 'bad.json');
+    writeFileSync(malformed, '{not-json');
+
+    expect(parseCandidateTaskManifest(missing)).toMatchObject({
+      path: missing,
+      count: 0,
+      warnings: [expect.stringContaining('missing')],
+    });
+    expect(parseCandidateTaskManifest(malformed)).toMatchObject({
+      path: malformed,
+      count: 0,
+      warnings: [expect.stringContaining('malformed')],
+    });
+  });
+
+  it('returns zero with warning when candidates is not an array', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-shape-'));
+    const path = join(tmpDir, 'shape.json');
+    writeFileSync(path, JSON.stringify({ version: 1, candidates: 'nope' }));
+
+    expect(parseCandidateTaskManifest(path)).toMatchObject({
+      path,
+      count: 0,
+      warnings: [expect.stringContaining('candidates')],
+    });
   });
 });
 
@@ -2557,8 +2631,10 @@ describe('modeSuccess', () => {
     expect(modeSuccess('exploit', makeRunMetrics({ prs: [] }))).toBe(0);
   });
 
-  it('explore uses issues_filed', () => {
+  it('explore uses candidate manifest count plus issues_filed', () => {
     expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1', '#2', '#3'] }))).toBe(3);
+    expect(modeSuccess('explore', makeRunMetrics({ issues_filed: [], candidate_manifest_count: 4 }))).toBe(4);
+    expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1'], candidate_manifest_count: 2 }))).toBe(3);
     expect(modeSuccess('explore', makeRunMetrics({ prs: ['pr1'], issues_filed: [] }))).toBe(0);
   });
 
@@ -2748,6 +2824,27 @@ describe('buildRunMetrics', () => {
       final_claim_status: 'valid',
       final_claim_path: '/tmp/final-claim.json',
       final_claim_warnings: ['warning'],
+    });
+  });
+
+  it('maps candidate task manifest metadata from RunResult', () => {
+    const metrics = buildRunMetrics({
+      runNum: 5,
+      runStartEpoch: 1742680900,
+      duration: 30,
+      exitCode: 0,
+      runMode: 'explore',
+      result: makeRunResult({
+        candidateManifestPath: '/tmp/run-5-candidate-tasks-manifest.json',
+        candidateManifestCount: 3,
+        candidateManifestWarnings: ['warning'],
+      }),
+    });
+
+    expect(metrics).toMatchObject({
+      candidate_manifest_path: '/tmp/run-5-candidate-tasks-manifest.json',
+      candidate_manifest_count: 3,
+      candidate_manifest_warnings: ['warning'],
     });
   });
 
