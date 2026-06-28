@@ -186,6 +186,11 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       rationale: 'Advisory reporting signal; it does not directly authorize an irreversible terminal action.',
     },
     {
+      signature: 'scripts/backlog-health.ts:type:EpicProgressVerdict',
+      label: 'Epic progress pressure verdict type',
+      rationale: 'Advisory reporting signal for backlog/epic hygiene; it requires human replan, decomposition, deferral, or closure decisions rather than authorizing an irreversible terminal action.',
+    },
+    {
       signature: 'scripts/auto-dent-final-claim.ts:type:FinalClaimProcessVerdict',
       label: 'Final claim process verdict parser',
       rationale: 'Input normalization for durable process evidence; terminal binding is represented by process-evidence-verdict.',
