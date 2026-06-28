@@ -24,6 +24,48 @@ function splitSegments(cmdLine: string): string[] {
   return splitCommandSegments(cmdLine);
 }
 
+function isNeutralSetupSegment(seg: string): boolean {
+  return /^cd(?:\s+(?:"[^"]+"|'[^']+'|\S+))?$/.test(seg)
+    || /^(?:[A-Za-z_][A-Za-z0-9_]*=\S+)(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S+)*$/.test(seg)
+    || /^export\s+[A-Za-z_][A-Za-z0-9_]*(?:=\S+)?(?:\s+[A-Za-z_][A-Za-z0-9_]*(?:=\S+)?)*$/.test(seg);
+}
+
+function isReadonlyMonitoringSegment(seg: string): boolean {
+  const firstWord = seg.split(/\s+/)[0];
+
+  // gh api
+  if (/^gh\s+api\s/.test(seg)) return true;
+
+  // gh run view/list/watch
+  if (/^gh\s+run\s+(view|list|watch)/.test(seg)) return true;
+
+  // git read-only
+  if (isGitCommand(seg, 'diff|log|show|status|branch|fetch')) return true;
+
+  // Read-only filesystem commands
+  if (['ls', 'cat', 'stat', 'find', 'head', 'tail', 'wc', 'file'].includes(firstWord)) return true;
+
+  // Diagnostic commands (kaizen #775 — expand allowlist)
+  if (['grep', 'rg', 'awk', 'sed'].includes(firstWord)) return true;
+
+  // npm test / npx (diagnostic — kaizen #775)
+  if (/^npm\s+test/.test(seg) || /^npx\s/.test(seg)) return true;
+
+  return false;
+}
+
+function isReadonlyOrSetupSegment(seg: string): boolean {
+  return isNeutralSetupSegment(seg) || isReadonlyMonitoringSegment(seg);
+}
+
+function allSegmentsAllowed(
+  cmdLine: string,
+  allowsSegment: (seg: string) => boolean,
+): boolean {
+  const segments = splitSegments(cmdLine);
+  return segments.length > 0 && segments.every(allowsSegment);
+}
+
 /**
  * Check if a command is a readonly monitoring command allowed through any gate.
  * These commands can't "do work" (build, deploy, edit) so they don't violate
@@ -37,29 +79,7 @@ function splitSegments(cmdLine: string): string[] {
  *   grep, rg, awk, sed (read-only search — kaizen #775)
  */
 export function isReadonlyMonitoringCommand(cmdLine: string): boolean {
-  const segments = splitSegments(cmdLine);
-  for (const seg of segments) {
-    const firstWord = seg.split(/\s+/)[0];
-
-    // gh api
-    if (/^gh\s+api\s/.test(seg)) return true;
-
-    // gh run view/list/watch
-    if (/^gh\s+run\s+(view|list|watch)/.test(seg)) return true;
-
-    // git read-only
-    if (isGitCommand(seg, 'diff|log|show|status|branch|fetch')) return true;
-
-    // Read-only filesystem commands
-    if (['ls', 'cat', 'stat', 'find', 'head', 'tail', 'wc', 'file'].includes(firstWord)) return true;
-
-    // Diagnostic commands (kaizen #775 — expand allowlist)
-    if (['grep', 'rg', 'awk', 'sed'].includes(firstWord)) return true;
-
-    // npm test / npx (diagnostic — kaizen #775)
-    if (/^npm\s+test/.test(seg) || /^npx\s/.test(seg)) return true;
-  }
-  return false;
+  return allSegmentsAllowed(cmdLine, isReadonlyOrSetupSegment);
 }
 
 /**
@@ -74,16 +94,22 @@ export function isReadonlyMonitoringCommand(cmdLine: string): boolean {
  * accepts the same escape — see the escape-hatch invariant in allowlist.test.ts.
  */
 export function isEscapeHatch(cmdLine: string): boolean {
-  const segments = splitSegments(cmdLine);
-  for (const seg of segments) {
+  return allSegmentsAllowed(cmdLine, (seg) => {
+    if (isNeutralSetupSegment(seg)) return true;
     // KAIZEN_UNFINISHED: <reason> — universal "stopping with unfinished work" escape
     if (/^echo.*KAIZEN_UNFINISHED:/.test(seg) || /^KAIZEN_UNFINISHED:/.test(seg)) return true;
     // KAIZEN_NO_ACTION — "nothing to do here" declaration
     if (/^echo.*KAIZEN_NO_ACTION/.test(seg) || /^KAIZEN_NO_ACTION/.test(seg)) return true;
     // KAIZEN_IMPEDIMENTS: — reflection escape (also used to satisfy I16)
     if (/^echo.*KAIZEN_IMPEDIMENTS:/.test(seg) || /^KAIZEN_IMPEDIMENTS:/.test(seg)) return true;
-  }
-  return false;
+    return false;
+  });
+}
+
+function isReviewSegment(seg: string): boolean {
+  return isGhPrCommand(seg, 'diff|view|comment|edit')
+    || isEscapeHatch(seg)
+    || isReadonlyOrSetupSegment(seg);
 }
 
 /**
@@ -92,16 +118,20 @@ export function isEscapeHatch(cmdLine: string): boolean {
  * monitoring.
  */
 export function isReviewCommand(cmdLine: string): boolean {
-  // gh pr diff/view/comment/edit
-  if (isGhPrCommand(cmdLine, 'diff|view|comment|edit')) return true;
+  return allSegmentsAllowed(cmdLine, isReviewSegment);
+}
 
-  // Universal stop-gate escape — must work from any gate-blocked state (#1068)
-  if (isEscapeHatch(cmdLine)) return true;
+function isKaizenSegment(seg: string): boolean {
+  // gh issue create/list/search/comment/view
+  if (/^gh\s+issue\s+(create|list|search|comment|view)/.test(seg)) return true;
 
-  // Shared readonly monitoring
-  if (isReadonlyMonitoringCommand(cmdLine)) return true;
+  // `cat` heredoc bodies for issue/reflection payloads
+  if (/^cat/.test(seg)) return true;
 
-  return false;
+  // gh pr diff/view/comment/edit/checks/merge
+  if (isGhPrCommand(seg, 'diff|view|comment|edit|checks|merge')) return true;
+
+  return isEscapeHatch(seg) || isReadonlyOrSetupSegment(seg);
 }
 
 /**
@@ -109,28 +139,7 @@ export function isReviewCommand(cmdLine: string): boolean {
  * Includes kaizen-related commands + shared readonly monitoring.
  */
 export function isKaizenCommand(cmdLine: string): boolean {
-  const segments = splitSegments(cmdLine);
-
-  for (const seg of segments) {
-    // gh issue create/list/search/comment/view
-    if (/^gh\s+issue\s+(create|list|search|comment|view)/.test(seg)) return true;
-
-    // `cat` heredoc bodies for issue/reflection payloads
-    if (/^cat/.test(seg)) return true;
-  }
-
-  // Universal stop-gate escape declarations (KAIZEN_UNFINISHED/NO_ACTION/IMPEDIMENTS).
-  // Single source of truth — shared with isReviewCommand so the documented escape
-  // works from every gate-blocked state (#1068, kaizen #775).
-  if (isEscapeHatch(cmdLine)) return true;
-
-  // gh pr diff/view/comment/edit/checks/merge
-  if (isGhPrCommand(cmdLine, 'diff|view|comment|edit|checks|merge')) return true;
-
-  // Shared readonly monitoring
-  if (isReadonlyMonitoringCommand(cmdLine)) return true;
-
-  return false;
+  return allSegmentsAllowed(cmdLine, isKaizenSegment);
 }
 
 /**

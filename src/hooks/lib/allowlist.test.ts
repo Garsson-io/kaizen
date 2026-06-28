@@ -64,6 +64,23 @@ describe('isReadonlyMonitoringCommand', () => {
     // And a pure write command on its own line stays blocked.
     expect(isReadonlyMonitoringCommand('export PATH=/x\ngit push')).toBe(false);
   });
+
+  it('blocks mixed readonly and write compounds (#1344)', () => {
+    expect(isReadonlyMonitoringCommand('gh pr merge 5 && git status')).toBe(false);
+    expect(isReadonlyMonitoringCommand('git status; gh pr merge 5')).toBe(false);
+    expect(isReadonlyMonitoringCommand('git status | gh pr merge 5')).toBe(false);
+    expect(isReadonlyMonitoringCommand('git log\ngh pr merge 5')).toBe(false);
+    expect(isReadonlyMonitoringCommand('git status && git push')).toBe(false);
+    expect(isReadonlyMonitoringCommand('FOO=1 git push')).toBe(false);
+    expect(isReadonlyMonitoringCommand('PATH=/x npm install')).toBe(false);
+  });
+
+  it('allows pure readonly compounds (#1344)', () => {
+    expect(isReadonlyMonitoringCommand('git status && git log --oneline')).toBe(true);
+    expect(isReadonlyMonitoringCommand('git status; gh run list --limit 5')).toBe(true);
+    expect(isReadonlyMonitoringCommand('git status | grep main')).toBe(true);
+    expect(isReadonlyMonitoringCommand('cd .\ngit status')).toBe(true);
+  });
 });
 
 describe('isReviewCommand', () => {
@@ -90,6 +107,12 @@ describe('isReviewCommand', () => {
   it('allows the universal KAIZEN_UNFINISHED escape (no deadlock — #1068)', () => {
     expect(isReviewCommand("echo 'KAIZEN_UNFINISHED: review blocked, deferring'")).toBe(true);
   });
+
+  it('blocks mixed review-allowed and write compounds (#1344)', () => {
+    expect(isReviewCommand('gh pr view 42 && git push')).toBe(false);
+    expect(isReviewCommand('git push && gh pr diff 42')).toBe(false);
+    expect(isReviewCommand('git status && gh pr view 42')).toBe(true);
+  });
 });
 
 describe('isEscapeHatch', () => {
@@ -110,6 +133,10 @@ describe('isEscapeHatch', () => {
     expect(isEscapeHatch('git push')).toBe(false);
     expect(isEscapeHatch('echo hello')).toBe(false);
     expect(isEscapeHatch('npm install')).toBe(false);
+  });
+
+  it('does not allow blocked work beside an escape declaration (#1344)', () => {
+    expect(isEscapeHatch("echo 'KAIZEN_UNFINISHED: later' && git push")).toBe(false);
   });
 });
 
@@ -169,9 +196,11 @@ describe('isKaizenCommand', () => {
     expect(isKaizenCommand('git push')).toBe(false);
   });
 
-  it('prevents bypass via pipe chains', () => {
-    // "npm build && echo KAIZEN_IMPEDIMENTS:" — the first segment is blocked
+  it('prevents bypass via compound commands (#1344)', () => {
     expect(isKaizenCommand('npm build')).toBe(false);
+    expect(isKaizenCommand('gh issue view 42 && git push')).toBe(false);
+    expect(isKaizenCommand('git push && gh pr merge 42')).toBe(false);
+    expect(isKaizenCommand('gh issue view 42 && git status')).toBe(true);
   });
 });
 

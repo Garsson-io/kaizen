@@ -13,7 +13,7 @@ echo "=== is_readonly_monitoring_command: gh api allowed ==="
 
 assert_ok "gh api repos check" is_readonly_monitoring_command "gh api repos/Garsson-io/kaizen/pulls/42"
 assert_ok "gh api with --jq" is_readonly_monitoring_command "gh api repos/foo/bar --jq '.state'"
-assert_ok "piped gh api" is_readonly_monitoring_command "something | gh api repos/foo/bar"
+assert_ok "cat pipe gh api" is_readonly_monitoring_command "cat payload.json | gh api repos/foo/bar"
 
 echo ""
 echo "=== is_readonly_monitoring_command: gh run allowed ==="
@@ -70,10 +70,31 @@ assert_fails "mkdir blocked" is_readonly_monitoring_command "mkdir -p newdir"
 echo ""
 echo "=== is_readonly_monitoring_command: pipe bypass prevention ==="
 
-# The first segment is what matters — gh api after a pipe is still a readonly segment
-assert_ok "pipe into gh api" is_readonly_monitoring_command "echo foo | gh api repos/bar"
-# But npm before a pipe should fail (npm is the first word)
+# Every segment must be readonly or neutral. A blocked segment cannot be
+# laundered through a readonly segment.
+assert_fails "echo into gh api blocked" is_readonly_monitoring_command "echo foo | gh api repos/bar"
 assert_fails "npm before pipe" is_readonly_monitoring_command "npm run build | grep error"
+
+echo ""
+echo "=== is_readonly_monitoring_command: mixed compound bypass prevention ==="
+
+assert_fails "merge then status blocked" is_readonly_monitoring_command "gh pr merge 5 && git status"
+assert_fails "status then merge blocked" is_readonly_monitoring_command "git status; gh pr merge 5"
+assert_fails "status pipe merge blocked" is_readonly_monitoring_command "git status | gh pr merge 5"
+assert_fails "newline merge blocked" is_readonly_monitoring_command "git log
+gh pr merge 5"
+assert_fails "status then push blocked" is_readonly_monitoring_command "git status && git push"
+assert_fails "inline assignment push blocked" is_readonly_monitoring_command "FOO=1 git push"
+assert_fails "inline assignment install blocked" is_readonly_monitoring_command "PATH=/x npm install"
+
+echo ""
+echo "=== is_readonly_monitoring_command: pure readonly compounds ==="
+
+assert_ok "status and log allowed" is_readonly_monitoring_command "git status && git log --oneline"
+assert_ok "status and run list allowed" is_readonly_monitoring_command "git status; gh run list --limit 5"
+assert_ok "status pipe cat allowed" is_readonly_monitoring_command "git status | cat"
+assert_ok "cd then status allowed" is_readonly_monitoring_command "cd .
+git status"
 
 echo ""
 echo "=== is_allowed_runtime_dir: allowed directories ==="
