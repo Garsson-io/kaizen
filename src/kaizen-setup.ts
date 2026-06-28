@@ -14,7 +14,7 @@
  *   2. .agents/kaizen/local/policies-local.md — host-specific policies
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { execSync } from "child_process";
 import { join } from "path";
 import { parseArgs } from "util";
@@ -209,25 +209,32 @@ const KAIZEN_GITIGNORE_ENTRIES = [
   "data/telemetry/",
 ];
 
+function readTextFileIfExists(path: string): string | null {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
 function ensureGitignoreEntries(cwd: string): void {
   const gitignorePath = join(cwd, ".gitignore");
-  const existing = existsSync(gitignorePath)
-    ? readFileSync(gitignorePath, "utf-8")
-    : "";
+  const existing = readTextFileIfExists(gitignorePath) ?? "";
   const missing = KAIZEN_GITIGNORE_ENTRIES.filter(e => !existing.includes(e));
   if (missing.length === 0) return;
 
   const addition = (existing.endsWith("\n") || existing === "" ? "" : "\n")
     + "# kaizen session-local state (not committed)\n"
     + missing.join("\n") + "\n";
-  writeFileSync(gitignorePath, existing + addition);
+  appendFileSync(gitignorePath, addition);
 }
 
 export function checkPreconditions(cwd: string): PreconditionResult {
   const warnings: string[] = [];
   const gitignorePath = join(cwd, ".gitignore");
-  if (existsSync(gitignorePath)) {
-    const body = readFileSync(gitignorePath, "utf-8");
+  const body = readTextFileIfExists(gitignorePath);
+  if (body !== null) {
     const broadClaudeIgnore = body.split(/\r?\n/).some(raw => {
       const line = raw.trim();
       if (!line || line.startsWith("#")) return false;
@@ -294,18 +301,19 @@ function appendWithBlankLine(existing: string, fragment: string): string {
 
 export function injectInstructions(opts: { cwd: string; pluginRoot: string; target?: string }): InjectInstructionsResult {
   const fragmentPath = join(opts.pluginRoot, ".agents", "kaizen", "instructions-fragment.md");
-  if (!existsSync(fragmentPath)) {
+  const fragmentTemplate = readTextFileIfExists(fragmentPath);
+  if (fragmentTemplate === null) {
     return { step: "inject-instructions", status: "error", error: `fragment not found: ${fragmentPath}` };
   }
 
   const path = chooseInstructionsTarget(opts.cwd, opts.target);
-  const fragment = readFileSync(fragmentPath, "utf-8").replace(/\{\{KAIZEN_ROOT\}\}/g, opts.pluginRoot);
-  const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
+  const fragment = fragmentTemplate.replace(/\{\{KAIZEN_ROOT\}\}/g, opts.pluginRoot);
+  const existing = readTextFileIfExists(path) ?? "";
   if (existing.includes("<!-- BEGIN KAIZEN PLUGIN")) {
     return { step: "inject-instructions", status: "skipped", path, reason: "kaizen section already present" };
   }
 
-  writeFileSync(path, appendWithBlankLine(existing, fragment));
+  appendFileSync(path, appendWithBlankLine(existing, fragment).slice(existing.length));
   return { step: "inject-instructions", status: "ok", path };
 }
 
