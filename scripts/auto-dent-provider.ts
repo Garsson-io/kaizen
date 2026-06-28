@@ -123,17 +123,19 @@ export const CAPABILITY_INVENTORY: readonly ProviderCapability[] = [
 ];
 
 /** A single reason a provider plan was rejected. */
-export interface PlanViolation {
-  phase: Phase;
-  provider: Provider;
-  reason: string;
-}
+export const PlanViolationSchema = z.object({
+  phase: PhaseSchema,
+  provider: ProviderSchema,
+  reason: z.string(),
+}).strict();
+export type PlanViolation = z.infer<typeof PlanViolationSchema>;
 
 /** Result of validating a provider plan against the capability inventory. */
-export interface PlanValidation {
-  ok: boolean;
-  violations: PlanViolation[];
-}
+export const PlanValidationSchema = z.object({
+  ok: z.boolean(),
+  violations: z.array(PlanViolationSchema),
+}).strict();
+export type PlanValidation = z.infer<typeof PlanValidationSchema>;
 
 /**
  * Is this (phase, provider) runnable under the subscription-only constraint?
@@ -204,13 +206,6 @@ export function phaseProviderRecordToProviderPlan(record: PhaseProviderRecord): 
     if (provider) plan[phase] = provider;
   }
   return plan;
-}
-
-export function orderedPhaseProviderEntries(record: PhaseProviderRecord): Array<[Phase, PhaseProvider]> {
-  return PHASES.flatMap((phase) => {
-    const provider = record[phase];
-    return provider ? [[phase, provider] as [Phase, PhaseProvider]] : [];
-  });
 }
 
 export function phaseProvider(provider: Provider, billing: BillingMode): PhaseProvider {

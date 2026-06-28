@@ -14,6 +14,7 @@ import {
   CAPABILITY_INVENTORY,
   PHASES,
   PhaseProviderRecordSchema,
+  PlanValidationSchema,
   type PhaseProvider,
   type PhaseProviderRecord,
   type PlanValidation,
@@ -26,24 +27,24 @@ import {
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 import { escapeMarkdownTableCell } from './markdown-table.js';
 
-export type ReviewQuality = 'strong' | 'adequate' | 'weak' | 'missing';
-export type CostSignal = 'available' | 'partial' | 'missing';
-export type OperatorInspectability = 'high' | 'medium' | 'low';
-
 const ReviewQualitySchema = z.enum(['strong', 'adequate', 'weak', 'missing']);
 const CostSignalSchema = z.enum(['available', 'partial', 'missing']);
 const OperatorInspectabilitySchema = z.enum(['high', 'medium', 'low']);
 const ProcessVerdictSchema = z.enum(['pass', 'process-incomplete', 'fail-open-warning']);
+export type ReviewQuality = z.infer<typeof ReviewQualitySchema>;
+export type CostSignal = z.infer<typeof CostSignalSchema>;
+export type OperatorInspectability = z.infer<typeof OperatorInspectabilitySchema>;
 
 const ProviderComparisonMetricsSchema = z.object({
-  processPassRate: z.number(),
-  emptySuccessRate: z.number(),
-  processIncompleteRate: z.number(),
+  processPassRate: z.number().min(0).max(1),
+  emptySuccessRate: z.number().min(0).max(1),
+  processIncompleteRate: z.number().min(0).max(1),
   reviewQuality: ReviewQualitySchema,
   costSignal: CostSignalSchema,
-  hookRejections: z.number(),
+  hookRejections: z.number().int().nonnegative(),
   operatorInspectability: OperatorInspectabilitySchema,
 }).strict();
+export type ProviderComparisonMetrics = z.infer<typeof ProviderComparisonMetricsSchema>;
 
 export const ProviderComparisonScenarioSchema = z.object({
   id: z.string().min(1),
@@ -51,6 +52,7 @@ export const ProviderComparisonScenarioSchema = z.object({
   description: z.string().min(1),
   phaseProviders: PhaseProviderRecordSchema,
 }).strict();
+export type ProviderComparisonScenario = z.infer<typeof ProviderComparisonScenarioSchema>;
 
 export const ProviderComparisonResultSchema = z.object({
   scenarioId: z.string().min(1),
@@ -60,16 +62,10 @@ export const ProviderComparisonResultSchema = z.object({
   processVerdict: ProcessVerdictSchema,
   failureClass: z.string().nullable(),
   metrics: ProviderComparisonMetricsSchema,
-  validation: z.object({
-    ok: z.boolean(),
-    violations: z.array(z.object({
-      phase: z.enum(PHASES),
-      provider: z.enum(['claude', 'codex', 'provider-independent']),
-      reason: z.string(),
-    }).strict()),
-  }).strict(),
+  validation: PlanValidationSchema,
   notes: z.array(z.string()),
 }).strict();
+export type ProviderComparisonResult = z.infer<typeof ProviderComparisonResultSchema>;
 
 const ProviderStrategyRecommendationSchema = z.object({
   scenarioId: z.string().min(1),
@@ -77,6 +73,7 @@ const ProviderStrategyRecommendationSchema = z.object({
   reason: z.string().min(1),
   score: z.number(),
 }).strict();
+export type ProviderStrategyRecommendation = z.infer<typeof ProviderStrategyRecommendationSchema>;
 
 export const ProviderComparisonArtifactSchema = z.object({
   version: z.literal(1),
@@ -86,51 +83,7 @@ export const ProviderComparisonArtifactSchema = z.object({
   recommendation: ProviderStrategyRecommendationSchema,
   results: z.array(ProviderComparisonResultSchema),
 }).strict();
-
-export interface ProviderComparisonScenario {
-  id: string;
-  label: string;
-  description: string;
-  phaseProviders: PhaseProviderRecord;
-}
-
-export interface ProviderComparisonMetrics {
-  processPassRate: number;
-  emptySuccessRate: number;
-  processIncompleteRate: number;
-  reviewQuality: ReviewQuality;
-  costSignal: CostSignal;
-  hookRejections: number;
-  operatorInspectability: OperatorInspectability;
-}
-
-export interface ProviderComparisonResult {
-  scenarioId: string;
-  label: string;
-  description: string;
-  phaseProviders: PhaseProviderRecord;
-  processVerdict: ProcessVerdict;
-  failureClass: string | null;
-  metrics: ProviderComparisonMetrics;
-  validation: PlanValidation;
-  notes: string[];
-}
-
-export interface ProviderComparisonArtifact {
-  version: 1;
-  batchId: string;
-  scenario: string;
-  generatedAt: string;
-  recommendation: ProviderStrategyRecommendation;
-  results: ProviderComparisonResult[];
-}
-
-export interface ProviderStrategyRecommendation {
-  scenarioId: string;
-  label: string;
-  reason: string;
-  score: number;
-}
+export type ProviderComparisonArtifact = z.infer<typeof ProviderComparisonArtifactSchema>;
 
 function pp(provider: Provider, billing: PhaseProvider['billing']): PhaseProvider {
   return phaseProvider(provider, billing);
