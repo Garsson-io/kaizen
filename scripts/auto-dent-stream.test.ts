@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   extractArtifacts,
+  extractBranchPushUrl,
+  ingestRunText,
+  processStreamMessage,
   postInFlightUpdate,
   buildInFlightComment,
   relativizeWorktreePath,
@@ -433,5 +436,181 @@ describe('collapseWhitespace (#1170)', () => {
 
   it('leaves a single-line string unchanged', () => {
     expect(collapseWhitespace('sed -n 1,40p scripts/x.ts')).toBe('sed -n 1,40p scripts/x.ts');
+  });
+});
+
+// #1492 — the live console must be decision-led, not tool-call-led: phase
+// markers and artifact deltas surface from every text source, not only assistant
+// prose, and a pushed branch is distinguished from a real PR.
+
+/** Capture every console.log line emitted during `fn`, joined for substring asserts. */
+function captureConsole(fn: () => void): string {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+    lines.push(args.join(' '));
+  });
+  try {
+    fn();
+  } finally {
+    spy.mockRestore();
+  }
+  return lines.join('\n');
+}
+
+function assistantText(text: string): Record<string, any> {
+  return { type: 'assistant', message: { content: [{ type: 'text', text }] } };
+}
+
+function toolResult(content: string): Record<string, any> {
+  return { type: 'user', message: { content: [{ type: 'tool_result', content }] } };
+}
+
+function resultMsg(text: string): Record<string, any> {
+  return { type: 'result', subtype: 'success', result: text };
+}
+
+describe('phase markers surface from all text sources (#1492)', () => {
+  it('surfaces a PICK marker echoed into a tool result to the console', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const out = captureConsole(() =>
+      processStreamMessage(
+        toolResult('AUTO_DENT_PHASE: PICK | issue=#1365 | title=wire stale-pr-triage'),
+        result,
+        Date.now(),
+        ctx,
+      ),
+    );
+    expect(out).toContain('[PICK]');
+    expect(out).toContain('#1365');
+    // Ledger still updated (pre-existing behaviour) — console now mirrors it.
+    expect(result.pickedIssue).toBe('#1365');
+  });
+
+  it('surfaces a STOP marker from the final result to the console', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const out = captureConsole(() =>
+      processStreamMessage(resultMsg('AUTO_DENT_PHASE: STOP | reason=backlog drained'), result, Date.now(), ctx),
+    );
+    expect(out).toContain('[STOP]');
+    expect(result.stopRequested).toBe(true); // final result is agent-authoritative
+  });
+
+  it('preserves the stop boundary: a STOP marker in a tool result does NOT halt the batch', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const out = captureConsole(() =>
+      // Simulates the agent `cat`ing a source/prompt file that contains a literal marker.
+      processStreamMessage(toolResult('AUTO_DENT_PHASE: STOP | reason=example in a doc'), result, Date.now(), ctx),
+    );
+    expect(out).toContain('[STOP]'); // visible for transparency
+    expect(result.stopRequested).toBe(false); // but never authoritative from tool output
+  });
+
+  it('dedups the same marker echoed across multiple stream messages', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const marker = 'AUTO_DENT_PHASE: PICK | issue=#1365 | title=wire stale-pr-triage';
+    const out = captureConsole(() => {
+      processStreamMessage(assistantText(`Selecting now.\n${marker}`), result, Date.now(), ctx);
+      processStreamMessage(toolResult(marker), result, Date.now(), ctx);
+    });
+    expect(out.match(/\[PICK\]/g)?.length).toBe(1);
+  });
+
+  it('still prints distinct markers (different fields)', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const out = captureConsole(() => {
+      processStreamMessage(assistantText('AUTO_DENT_PHASE: PICK | issue=#1 | title=a'), result, Date.now(), ctx);
+      processStreamMessage(assistantText('AUTO_DENT_PHASE: PICK | issue=#2 | title=b'), result, Date.now(), ctx);
+    });
+    expect(out.match(/\[PICK\]/g)?.length).toBe(2);
+  });
+
+  it('prints an assistant-text marker exactly once (regression)', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const out = captureConsole(() =>
+      processStreamMessage(assistantText('AUTO_DENT_PHASE: IMPLEMENT | case:260628-0001-x'), result, Date.now(), ctx),
+    );
+    expect(out.match(/\[IMPLEMENT\]/g)?.length).toBe(1);
+  });
+
+  it('captures contemplation recs from authoritative text but not from tool output', () => {
+    const fromText = makeRunResult();
+    ingestRunText('CONTEMPLATION_REC: pivot to observability', fromText, '0m00s', {}, { control: true });
+    expect(fromText.contemplationRecs).toEqual(['pivot to observability']);
+
+    const fromTool = makeRunResult();
+    ingestRunText('CONTEMPLATION_REC: pivot to observability', fromTool, '0m00s', {});
+    expect(fromTool.contemplationRecs).toBeUndefined();
+  });
+});
+
+describe('branch-push helper URLs vs real PRs (#1492)', () => {
+  it('extractBranchPushUrl matches pull/new and compare URLs, not a real PR', () => {
+    expect(extractBranchPushUrl('visit https://github.com/o/r/pull/new/my-branch to open')).toBe(
+      'https://github.com/o/r/pull/new/my-branch',
+    );
+    expect(extractBranchPushUrl('https://github.com/o/r/compare/feat?expand=1')).toBe(
+      'https://github.com/o/r/compare/feat?expand=1',
+    );
+    expect(extractBranchPushUrl('https://github.com/o/r/pull/123')).toBeNull();
+  });
+
+  it('classifies a pushed branch as "branch-pushed" without adding it to prs', () => {
+    const result = makeRunResult();
+    extractArtifacts('remote: https://github.com/Garsson-io/kaizen/pull/new/case-x', result);
+    expect(result.prs).toEqual([]);
+    const prStep = result.progressSteps?.find((s) => s.phase === 'PR');
+    expect(prStep?.state).toBe('branch-pushed');
+    expect(prStep?.url).toBe('https://github.com/Garsson-io/kaizen/pull/new/case-x');
+  });
+
+  it('classifies a compare URL end-to-end through extractArtifacts (ledger)', () => {
+    const result = makeRunResult();
+    extractArtifacts('open it: https://github.com/o/r/compare/case-x?expand=1', result);
+    expect(result.prs).toEqual([]);
+    expect(result.progressSteps?.find((s) => s.phase === 'PR')?.state).toBe('branch-pushed');
+  });
+
+  it('emits a [PUSH] line to the live console', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const out = captureConsole(() =>
+      processStreamMessage(
+        toolResult('remote: Create a pull request:\nremote: https://github.com/o/r/pull/new/case-x'),
+        result,
+        Date.now(),
+        ctx,
+      ),
+    );
+    expect(out).toContain('[PUSH]');
+    expect(out).toContain('PR pending');
+  });
+
+  it('dedups the [PUSH] line across messages (shared ctx)', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const url = 'https://github.com/o/r/pull/new/case-x';
+    const out = captureConsole(() => {
+      processStreamMessage(assistantText(`pushed: ${url}`), result, Date.now(), ctx);
+      processStreamMessage(toolResult(`remote: ${url}`), result, Date.now(), ctx);
+    });
+    expect(out.match(/\[PUSH\]/g)?.length).toBe(1);
+  });
+
+  it('a real PR supersedes the branch-pushed step and is recorded in prs', () => {
+    const result = makeRunResult();
+    extractArtifacts('https://github.com/o/r/pull/new/case-x', result);
+    expect(result.progressSteps?.find((s) => s.phase === 'PR')?.state).toBe('branch-pushed');
+
+    extractArtifacts('PRs created: https://github.com/o/r/pull/123', result);
+    expect(result.prs).toContain('https://github.com/o/r/pull/123');
+    const prStep = result.progressSteps?.find((s) => s.phase === 'PR');
+    expect(prStep?.state).toBe('created');
+    expect(prStep?.url).toBe('https://github.com/o/r/pull/123');
   });
 });
