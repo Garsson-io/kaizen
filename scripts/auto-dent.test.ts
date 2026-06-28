@@ -5,8 +5,13 @@ import { tmpdir } from 'os';
 import {
   parseAutoDentArgs,
   createInitialState,
+  buildAutoDentResumeCommand,
+  buildTsxScriptArgs,
   readStateKey,
   updateStateKey,
+  loadResumeBatch,
+  isOuterHarnessReloadPath,
+  shouldHotReloadOuterHarness,
   checkHaltFile,
   checkBudget,
   stopDecision,
@@ -31,6 +36,7 @@ const baseOpts: AutoDentOptions = {
   experiment: false,
   noPlan: false,
   provider: 'claude',
+  resumeStateFile: '',
   guidance: 'focus on hooks',
 };
 
@@ -121,6 +127,16 @@ describe('parseAutoDentArgs', () => {
     expect(opts.testTask).toBe(true);
   });
 
+  it('accepts resume mode without guidance', () => {
+    const opts = parseAutoDentArgs(['--resume', '/tmp/state.json']);
+    expect(opts.resumeStateFile).toBe('/tmp/state.json');
+    expect(opts.guidance).toBe('');
+  });
+
+  it('requires a state file for resume mode', () => {
+    expect(() => parseAutoDentArgs(['--resume'])).toThrow('Missing value for --resume');
+  });
+
   it('rejects unknown options', () => {
     expect(() => parseAutoDentArgs(['--wat'])).toThrow('Unknown option: --wat');
   });
@@ -200,6 +216,95 @@ describe('state helpers', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('loads resume batches from the existing durable state file', () => {
+    const { dir, stateFile } = tempState(makeState({
+      batch_id: 'existing-batch',
+      run: 7,
+      progress_issue: '1495',
+    }));
+    try {
+      const resumed = loadResumeBatch(stateFile);
+
+      expect(resumed.stateFile).toBe(stateFile);
+      expect(resumed.logDir).toBe(dir);
+      expect(resumed.haltFile).toBe(join(dir, 'HALT'));
+      expect(resumed.state.batch_id).toBe('existing-batch');
+      expect(resumed.state.run).toBe(7);
+      expect(readState(stateFile).batch_id).toBe('existing-batch');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not rerun planning when bootstrapping from resume state', () => {
+    expect(AUTO_DENT_SOURCE).toContain('if (!opts.resumeStateFile && !opts.testTask && !opts.noPlan)');
+  });
+});
+
+describe('outer harness hot reload', () => {
+  it('centralizes npx tsx script command construction', () => {
+    expect(buildTsxScriptArgs('/repo/scripts', 'auto-dent-run.ts', '/tmp/state.json')).toEqual([
+      'tsx',
+      '/repo/scripts/auto-dent-run.ts',
+      '/tmp/state.json',
+    ]);
+  });
+
+  it('builds the auto-dent resume handoff command', () => {
+    expect(buildAutoDentResumeCommand('/repo/scripts', '/tmp/state.json')).toEqual({
+      command: 'npx',
+      args: ['tsx', '/repo/scripts/auto-dent.ts', '--resume', '/tmp/state.json'],
+    });
+  });
+
+  it('matches outer-harness contract paths without matching unrelated files', () => {
+    expect(isOuterHarnessReloadPath('scripts/auto-dent.ts')).toBe(true);
+    expect(isOuterHarnessReloadPath('scripts/auto-dent-run.ts')).toBe(true);
+    expect(isOuterHarnessReloadPath('src/lib/json-file.ts')).toBe(true);
+    expect(isOuterHarnessReloadPath('docs/auto-dent-operations.md')).toBe(false);
+    expect(isOuterHarnessReloadPath('src/hooks/pre-push.ts')).toBe(false);
+  });
+
+  it('restarts only after a successful pull changes an outer harness contract path', () => {
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: ['scripts/auto-dent.ts'],
+    })).toBe(true);
+
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: ['docs/auto-dent-operations.md'],
+    })).toBe(false);
+
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 1,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: ['scripts/auto-dent.ts'],
+    })).toBe(false);
+
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'aaa',
+      changedFiles: ['scripts/auto-dent.ts'],
+    })).toBe(false);
+  });
+
+  it('returns from the old process immediately after hot reload handoff succeeds', () => {
+    const handoff = AUTO_DENT_SOURCE.indexOf('if (startAutoDentResume(scriptDir, stateFile)) return;');
+    const nextRun = AUTO_DENT_SOURCE.indexOf("runCommand('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-run.ts', stateFile))");
+    const finalization = AUTO_DENT_SOURCE.indexOf('const summaryPath = writeBatchSummary(stateFile)');
+
+    expect(handoff).toBeGreaterThan(-1);
+    expect(nextRun).toBeGreaterThan(handoff);
+    expect(finalization).toBeGreaterThan(handoff);
   });
 });
 

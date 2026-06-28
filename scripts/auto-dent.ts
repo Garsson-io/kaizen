@@ -7,7 +7,7 @@
  * testable and does not drift between Bash and TypeScript implementations.
  */
 
-import { execFileSync, spawnSync } from 'child_process';
+import { execFileSync, spawn, spawnSync } from 'child_process';
 import {
   existsSync,
   mkdirSync,
@@ -31,6 +31,7 @@ export interface AutoDentOptions {
   experiment: boolean;
   noPlan: boolean;
   provider: 'claude' | 'codex';
+  resumeStateFile: string;
   guidance: string;
 }
 
@@ -48,6 +49,26 @@ export interface BudgetStatus {
 export interface StopDecision {
   stop: boolean;
   reason: string;
+}
+
+export interface ResumeBatch {
+  stateFile: string;
+  logDir: string;
+  haltFile: string;
+  state: BatchState;
+}
+
+export interface TsxCommand {
+  command: 'npx';
+  args: string[];
+}
+
+export interface OuterHarnessUpdate {
+  pullStatus: number;
+  beforeHead: string;
+  afterHead: string;
+  changedFiles: string[];
+  stdout: string;
 }
 
 export interface PostStructuredSummaryDeps {
@@ -68,8 +89,23 @@ const DEFAULT_OPTIONS: AutoDentOptions = {
   experiment: false,
   noPlan: false,
   provider: 'claude',
+  resumeStateFile: '',
   guidance: '',
 };
+
+const OUTER_HARNESS_RELOAD_PATHS = new Set([
+  'scripts/auto-dent.ts',
+  'scripts/auto-dent-run.ts',
+  'scripts/auto-dent-ctl.ts',
+  'scripts/auto-dent-plan.ts',
+  'scripts/auto-dent-github.ts',
+  'scripts/auto-dent-events.ts',
+  'scripts/auto-dent-artifacts.ts',
+  'scripts/batch-summary.ts',
+  'scripts/batch-outcome.ts',
+  'scripts/batch-artifacts-upload.ts',
+  'src/lib/json-file.ts',
+]);
 
 function usage(): string {
   return `auto-dent — Autonomous batch kaizen runner
@@ -92,6 +128,7 @@ Options:
   --dry-run            Show what would run without executing
   --test-task          Use synthetic fast task instead of /kaizen-deep-dive
   --experiment         Enable extra pipeline diagnostics
+  --resume FILE        Resume an existing batch from state.json (used by self-update)
   --status             Show status of all batches (active and stopped)
   --halt [batch-id]    Halt a specific batch, or all active batches
   --score [batch-id]   Score batch(es) — efficiency, success rate, cost-per-PR
@@ -104,8 +141,9 @@ Options:
   --watchdog [--threshold N]  Check heartbeats, halt stale batches (default: 600s)
   --help               Show this help
 
-Self-update: between runs, auto-dent pulls main so merged improvements to the
-single-run TypeScript runner take effect on the next iteration.
+Self-update: between runs, auto-dent pulls main. Single-run runner changes take
+effect on the next iteration; outer-harness changes hot-reload by starting
+\`auto-dent.ts --resume <state.json>\` and exiting the old process.
 
 Halt: Ctrl+C halts from the same terminal. From another terminal:
   ./scripts/auto-dent.sh --halt              # halt all active
@@ -159,6 +197,10 @@ export function parseAutoDentArgs(argv: string[]): AutoDentOptions {
       case '--no-plan':
         opts.noPlan = true;
         i += 1;
+        break;
+      case '--resume':
+        opts.resumeStateFile = requiredValue(argv, i);
+        i += 2;
         break;
       case '--provider': {
         const provider = requiredValue(argv, i);
@@ -216,6 +258,42 @@ export function loadRepoConfig(repoRoot: string): RepoConfig {
     kaizenRepo: config.kaizen?.repo || '',
     hostRepo: config.host?.repo || '',
   };
+}
+
+export function buildTsxScriptArgs(scriptDir: string, scriptName: string, ...args: string[]): string[] {
+  return ['tsx', join(scriptDir, scriptName), ...args];
+}
+
+export function buildAutoDentResumeCommand(scriptDir: string, stateFile: string): TsxCommand {
+  return {
+    command: 'npx',
+    args: buildTsxScriptArgs(scriptDir, 'auto-dent.ts', '--resume', stateFile),
+  };
+}
+
+export function loadResumeBatch(stateFileInput: string): ResumeBatch {
+  const stateFile = resolve(stateFileInput);
+  const logDir = dirname(stateFile);
+  return {
+    stateFile,
+    logDir,
+    haltFile: join(logDir, 'HALT'),
+    state: readState(stateFile),
+  };
+}
+
+export function isOuterHarnessReloadPath(file: string): boolean {
+  return OUTER_HARNESS_RELOAD_PATHS.has(file.replace(/\\/g, '/'));
+}
+
+export function shouldHotReloadOuterHarness(update: Pick<OuterHarnessUpdate, 'pullStatus' | 'beforeHead' | 'afterHead' | 'changedFiles'>): boolean {
+  return update.pullStatus === 0
+    && update.beforeHead !== ''
+    && update.afterHead !== ''
+    && update.beforeHead !== 'unknown'
+    && update.afterHead !== 'unknown'
+    && update.beforeHead !== update.afterHead
+    && update.changedFiles.some(isOuterHarnessReloadPath);
 }
 
 export function createInitialState(
@@ -424,13 +502,13 @@ function printBanner(state: BatchState, logDir: string, haltFile: string): void 
   console.log(`║ Logs:      ${logDir}`);
   console.log(`║ State:     ${join(logDir, 'state.json')}`);
   console.log(`║ Halt:      touch ${haltFile}  (or --halt from another terminal)`);
-  console.log('║ Self-update: enabled (pulls main between runs)');
+  console.log('║ Self-update: enabled (pulls main; hot-reloads outer harness)');
   console.log('╚══════════════════════════════════════════════════════════╝');
   console.log('');
 }
 
 function runCtl(scriptDir: string, args: string[]): never {
-  const result = spawnSync('npx', ['tsx', join(scriptDir, 'auto-dent-ctl.ts'), ...args], {
+  const result = spawnSync('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-ctl.ts', ...args), {
     stdio: 'inherit',
   });
   process.exit(result.status ?? 1);
@@ -449,17 +527,63 @@ function captureCommand(command: string, args: string[], cwd?: string): string {
   }
 }
 
+function changedFilesBetween(repoRoot: string, beforeHead: string, afterHead: string): string[] {
+  if (!beforeHead || !afterHead || beforeHead === afterHead || beforeHead === 'unknown' || afterHead === 'unknown') {
+    return [];
+  }
+  try {
+    return execFileSync('git', ['-C', repoRoot, 'diff', '--name-only', `${beforeHead}..${afterHead}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function pullMainForSelfUpdate(repoRoot: string): OuterHarnessUpdate {
+  const beforeHead = captureCommand('git', ['-C', repoRoot, 'rev-parse', 'HEAD']);
+  const pull = spawnSync('git', ['-C', repoRoot, 'pull', '--ff-only', 'origin', 'main'], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    encoding: 'utf8',
+  });
+  const afterHead = captureCommand('git', ['-C', repoRoot, 'rev-parse', 'HEAD']);
+  const pullStatus = pull.status ?? 1;
+  return {
+    pullStatus,
+    beforeHead,
+    afterHead,
+    stdout: pull.stdout || '',
+    changedFiles: pullStatus === 0 ? changedFilesBetween(repoRoot, beforeHead, afterHead) : [],
+  };
+}
+
+function startAutoDentResume(scriptDir: string, stateFile: string): boolean {
+  const { command, args } = buildAutoDentResumeCommand(scriptDir, stateFile);
+  try {
+    const child = spawn(command, args, { stdio: 'inherit' });
+    child.unref();
+    return true;
+  } catch (err) {
+    console.log(`>>> Hot reload handoff failed: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+}
+
 function runPlanningPrepass(scriptDir: string, stateFile: string, logDir: string): void {
   const planScript = join(scriptDir, 'auto-dent-plan.ts');
   if (!existsSync(planScript)) return;
   console.log('>>> Running planning pre-pass...');
-  const status = runCommand('npx', ['tsx', planScript, stateFile]);
+  const status = runCommand('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-plan.ts', stateFile));
   if (status === 0) {
     const planPath = join(logDir, 'plan.json');
     if (existsSync(planPath)) {
       const plan = JSON.parse(readFileSync(planPath, 'utf8'));
       console.log(`>>> Plan ready: ${(plan.items || []).length} items queued.`);
-      const postStatus = spawnSync('npx', ['tsx', join(scriptDir, 'auto-dent-run.ts'), '--post-plan', stateFile], {
+      const postStatus = spawnSync('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-run.ts', '--post-plan', stateFile), {
         stdio: 'ignore',
       });
       if ((postStatus.status ?? 1) !== 0) console.log('>>> Plan posting skipped (non-fatal).');
@@ -486,7 +610,7 @@ export function postStructuredSummary(
   let summary = '';
   try {
     summary = (deps.generateSummary ?? ((s, l) =>
-      execFileSync('npx', ['tsx', join(s, 'batch-summary.ts'), l], {
+      execFileSync('npx', buildTsxScriptArgs(s, 'batch-summary.ts', l), {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
       })))(scriptDir, logDir).trim();
@@ -524,7 +648,6 @@ async function cooldown(seconds: number, haltFile: string, stateFile: string, is
 
 async function main(): Promise<void> {
   const scriptDir = dirname(new URL(import.meta.url).pathname);
-  const ctlScript = join(scriptDir, 'auto-dent-ctl.ts');
   const first = process.argv[2];
 
   if (first === '--status') runCtl(scriptDir, ['status']);
@@ -537,7 +660,7 @@ async function main(): Promise<void> {
   if (first === '--aggregate') runCtl(scriptDir, ['aggregate', ...process.argv.slice(3)]);
   if (first === '--trends') {
     const repoRoot = getRepoRoot(scriptDir);
-    const status = runCommand('npx', ['tsx', join(scriptDir, 'batch-trends.ts'), join(repoRoot, 'logs', 'auto-dent'), ...process.argv.slice(3)]);
+    const status = runCommand('npx', buildTsxScriptArgs(scriptDir, 'batch-trends.ts', join(repoRoot, 'logs', 'auto-dent'), ...process.argv.slice(3)));
     process.exit(status);
   }
 
@@ -554,25 +677,38 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  if (!opts.guidance && !opts.testTask) {
+  if (!opts.guidance && !opts.testTask && !opts.resumeStateFile) {
     console.error('Error: guidance prompt is required (or use --test-task)');
     console.error('Usage: auto-dent.sh [options] <guidance>');
     process.exit(1);
   }
 
   const repoRoot = getRepoRoot(scriptDir);
-  const repos = loadRepoConfig(repoRoot);
-  const batchId = uniqueNamesGenerator({
-    dictionaries: [adjectives, animals],
-    separator: '-',
-  });
-  const batchStart = Math.floor(Date.now() / 1000);
-  const logDir = join(repoRoot, 'logs', 'auto-dent', batchId);
-  mkdirSync(logDir, { recursive: true });
-  const haltFile = join(logDir, 'HALT');
-  const stateFile = join(logDir, 'state.json');
-  const state = createInitialState(batchId, opts.guidance, batchStart, opts, repos);
-  writeState(stateFile, state);
+  let batchStart: number;
+  let logDir: string;
+  let haltFile: string;
+  let stateFile: string;
+  let state: BatchState;
+
+  if (opts.resumeStateFile) {
+    const resumed = loadResumeBatch(opts.resumeStateFile);
+    ({ stateFile, logDir, haltFile, state } = resumed);
+    batchStart = state.batch_start;
+    console.log(`>>> Resuming auto-dent batch ${state.batch_id} from ${stateFile}`);
+  } else {
+    const repos = loadRepoConfig(repoRoot);
+    const batchId = uniqueNamesGenerator({
+      dictionaries: [adjectives, animals],
+      separator: '-',
+    });
+    batchStart = Math.floor(Date.now() / 1000);
+    logDir = join(repoRoot, 'logs', 'auto-dent', batchId);
+    mkdirSync(logDir, { recursive: true });
+    haltFile = join(logDir, 'HALT');
+    stateFile = join(logDir, 'state.json');
+    state = createInitialState(batchId, opts.guidance, batchStart, opts, repos);
+    writeState(stateFile, state);
+  }
 
   let shuttingDown = false;
   const handleShutdown = () => {
@@ -594,7 +730,7 @@ async function main(): Promise<void> {
 
   if (opts.dryRun) {
     console.log('[dry-run] Would execute per run:');
-    console.log(`  npx tsx ${join(repoRoot, 'scripts', 'auto-dent-run.ts')} ${stateFile}`);
+    console.log(`  npx ${buildTsxScriptArgs(scriptDir, 'auto-dent-run.ts', stateFile).join(' ')}`);
     console.log(`[dry-run] Provider: ${opts.provider}`);
     console.log('');
     console.log('[dry-run] State file:');
@@ -602,7 +738,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!opts.testTask && !opts.noPlan) {
+  if (!opts.resumeStateFile && !opts.testTask && !opts.noPlan) {
     runPlanningPrepass(scriptDir, stateFile, logDir);
   }
 
@@ -626,41 +762,46 @@ async function main(): Promise<void> {
       );
     }
 
-    if (current.experiment) {
-      const before = captureCommand('git', ['-C', repoRoot, 'rev-parse', 'HEAD']);
-      console.log(`>>> [experiment] main HEAD before pull: ${before.slice(0, 8)}`);
-    }
     console.log('>>> Pulling main for self-update...');
-    const pullStatus = spawnSync('git', ['-C', repoRoot, 'pull', '--ff-only', 'origin', 'main'], {
-      stdio: ['ignore', 'pipe', 'ignore'],
-      encoding: 'utf8',
-    });
-    if ((pullStatus.status ?? 1) === 0) {
-      process.stdout.write(pullStatus.stdout || '');
+    const update = pullMainForSelfUpdate(repoRoot);
+    if (current.experiment) {
+      console.log(`>>> [experiment] main HEAD before pull: ${update.beforeHead.slice(0, 8)}`);
+    }
+    if (update.pullStatus === 0) {
+      process.stdout.write(update.stdout);
       console.log('>>> Main updated.');
     } else {
       console.log('>>> Main already up-to-date (or pull failed, continuing with current).');
     }
     if (current.experiment) {
-      const after = captureCommand('git', ['-C', repoRoot, 'rev-parse', 'HEAD']);
-      console.log(`>>> [experiment] main HEAD after pull: ${after.slice(0, 8)}`);
+      console.log(`>>> [experiment] main HEAD after pull: ${update.afterHead.slice(0, 8)}`);
+      if (update.changedFiles.length > 0) {
+        console.log(`>>> [experiment] changed files: ${update.changedFiles.join(', ')}`);
+      }
+    }
+    if (shouldHotReloadOuterHarness(update)) {
+      const changedHarnessFiles = update.changedFiles.filter(isOuterHarnessReloadPath);
+      console.log(`>>> Outer harness changed: ${changedHarnessFiles.join(', ')}`);
+      console.log(`>>> Restarting auto-dent from ${stateFile}...`);
+      if (startAutoDentResume(scriptDir, stateFile)) return;
+      console.log('>>> Hot reload handoff skipped; continuing current process.');
     }
 
     if (nextRun > 1) {
       console.log('>>> Cleaning up superseded PRs...');
-      const cleanup = spawnSync('npx', ['tsx', ctlScript, 'cleanup', current.batch_id], { stdio: 'ignore' });
+      const cleanup = spawnSync('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-ctl.ts', 'cleanup', current.batch_id), { stdio: 'ignore' });
       if ((cleanup.status ?? 1) !== 0) console.log('>>> Cleanup skipped (non-fatal).');
     }
 
     if (nextRun > 1 && (nextRun - 1) % 5 === 0) {
       console.log('>>> Running cross-run reflection (every 5 runs)...');
-      const reflect = spawnSync('npx', ['tsx', ctlScript, 'reflect', '--post', current.batch_id], { stdio: 'ignore' });
+      const reflect = spawnSync('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-ctl.ts', 'reflect', '--post', current.batch_id), { stdio: 'ignore' });
       console.log((reflect.status ?? 1) === 0
         ? '>>> Reflection complete (posted to progress issue).'
         : '>>> Reflection skipped (non-fatal).');
     }
 
-    const runner = join(repoRoot, 'scripts', 'auto-dent-run.ts');
+    const runner = join(scriptDir, 'auto-dent-run.ts');
     if (!existsSync(runner)) {
       console.log(`>>> ERROR: Runner not found: ${runner}`);
       updateStateKey(stateFile, 'stop_reason', 'runner not found');
@@ -668,7 +809,7 @@ async function main(): Promise<void> {
     }
 
     console.log(`━━━ Run #${nextRun} starting at ${new Date().toString()} ━━━`);
-    runCommand('npx', ['tsx', runner, stateFile]);
+    runCommand('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-run.ts', stateFile));
 
     const afterRun = readState(stateFile);
     if (afterRun.stop_reason) {
@@ -699,7 +840,7 @@ async function main(): Promise<void> {
   const summaryPath = writeBatchSummary(stateFile);
   const finalStateBeforeClose = readState(stateFile);
   postStructuredSummary(scriptDir, logDir, finalStateBeforeClose.progress_issue || '', finalStateBeforeClose.kaizen_repo || '');
-  spawnSync('npx', ['tsx', join(scriptDir, 'auto-dent-run.ts'), '--close-batch', stateFile], {
+  spawnSync('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-run.ts', '--close-batch', stateFile), {
     stdio: 'ignore',
   });
 
@@ -709,11 +850,11 @@ async function main(): Promise<void> {
   console.log(`Summary: ${summaryPath}`);
 
   console.log('>>> Appending batch to aggregate...');
-  const aggregate = spawnSync('npx', ['tsx', ctlScript, 'aggregate', finalState.batch_id], {
+  const aggregate = spawnSync('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-ctl.ts', 'aggregate', finalState.batch_id), {
     stdio: 'ignore',
   });
   if ((aggregate.status ?? 1) !== 0) console.log('>>> Aggregate append skipped (non-fatal).');
-  spawnSync('npx', ['tsx', ctlScript, 'halt-state', stateFile], { stdio: 'inherit' });
+  spawnSync('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-ctl.ts', 'halt-state', stateFile), { stdio: 'inherit' });
 }
 
 const isDirectRun =
