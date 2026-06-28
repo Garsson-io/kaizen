@@ -21,6 +21,7 @@ import type { HookTimeline, ParsedHookEvent, Scenario } from './hook-gym-schema.
 import { parseHookGymFixtureContent } from './hook-gym-schema.js';
 import { validateAgainstScenario, type ValidationReport } from './hook-gym-validate.js';
 import { parseHookDecision } from './hook-gym-stream.js';
+import { parseJsonLines } from '../src/lib/json-lines.js';
 
 const __replay_dirname = dirname(fileURLToPath(import.meta.url));
 const KAIZEN_ROOT = resolve(__replay_dirname, '..');
@@ -81,14 +82,7 @@ export function extractToolActions(streamLines: string[]): ToolAction[] {
   const pending = new Map<string, ToolAction>();
   let index = 0;
 
-  for (const line of streamLines) {
-    let msg: Record<string, unknown>;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
+  for (const msg of parseJsonLines<Record<string, unknown>>(streamLines.join('\n'))) {
     // Assistant message → tool_use blocks
     if (msg.type === 'assistant') {
       const content = (msg as any).message?.content;
