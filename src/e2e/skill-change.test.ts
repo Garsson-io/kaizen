@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const KAIZEN_ROOT = resolve(__dirname, "../..");
@@ -69,6 +69,19 @@ function runSkill(prompt: string, opts: { maxBudget?: number; timeout?: number }
   if (parsed.is_error) throw new Error(`claude returned error: ${(proc.stdout ?? "").slice(0, 500)}`);
   if (!parsed.result) throw new Error(`claude returned empty result: ${(proc.stdout ?? "").slice(0, 300)}`);
   return parsed.result;
+}
+
+type SimplificationFinding = {
+  status: string;
+  detail?: string;
+};
+
+function hasSimplificationImpactGap(findings: SimplificationFinding[]): boolean {
+  return findings.some(
+    (f) =>
+      (f.status === "MISSING" || f.status === "PARTIAL") &&
+      /surface area|parallel|related-area|consolidat|DRY/i.test(f.detail ?? ""),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +419,22 @@ Review this diff for DRY violations. Output JSON only.`;
 // ---------------------------------------------------------------------------
 
 describe("Behavioral: simplification-impact dimension detects additive-only workflow changes", () => {
+  it("Tier 0: gap predicate recognizes additive-only simplification findings", () => {
+    expect(
+      hasSimplificationImpactGap([
+        { status: "DONE", detail: "Prompt schema is valid." },
+        { status: "PARTIAL", detail: "Plan adds a parallel PR workflow path without related-area consolidation evidence." },
+      ]),
+    ).toBe(true);
+
+    expect(
+      hasSimplificationImpactGap([
+        { status: "MISSING", detail: "Security issue unrelated to simplification." },
+        { status: "DONE", detail: "Related-area DRY sweep completed." },
+      ]),
+    ).toBe(false);
+  });
+
   it.skipIf(!isLive)(
     "INVARIANT: simplification-impact returns MISSING/PARTIAL when a plan adds a parallel PR workflow with no related-area sweep",
     () => {
@@ -460,19 +489,19 @@ ${fixtureDiff}
 Review this plan and diff for simplification impact. Output JSON only.`;
 
       const output = runSkill(prompt, { maxBudget: 0.15, timeout: 90_000 });
+      const rawDir = resolve(KAIZEN_ROOT, "artifacts", "skill-smoke");
+      mkdirSync(rawDir, { recursive: true });
+      const rawPath = resolve(rawDir, "simplification-impact-additive-only-output.txt");
+      writeFileSync(rawPath, output, "utf-8");
+
       const jsonMatch = output.match(/```json\s*([\s\S]+?)\s*```/);
-      expect(jsonMatch, "output should contain a JSON findings block").toBeTruthy();
+      expect(jsonMatch, `output should contain a JSON findings block; raw output: ${rawPath}`).toBeTruthy();
       const findings = JSON.parse(jsonMatch![1]);
 
       expect(findings.dimension).toBe("simplification-impact");
-      const hasGap = findings.findings.some(
-        (f: { status: string; detail?: string }) =>
-          (f.status === "MISSING" || f.status === "PARTIAL") &&
-          /surface area|parallel|related-area|consolidat|DRY/i.test(f.detail ?? ""),
-      );
       expect(
-        hasGap,
-        "simplification-impact must flag additive-only workflow changes without related-area simplification evidence",
+        hasSimplificationImpactGap(findings.findings),
+        `simplification-impact must flag additive-only workflow changes without related-area simplification evidence; raw output: ${rawPath}`,
       ).toBe(true);
     },
   );
