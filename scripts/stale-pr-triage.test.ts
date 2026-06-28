@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   classifyStalePr,
   extractClosesIssues,
+  isRescuePr,
   ageInDays,
   triageOpenPrs,
   applyTriage,
+  formatReport,
   parseCliArgs,
   runStalePrTriageMaintenance,
   type StalePrInput,
@@ -128,6 +130,49 @@ describe('classifyStalePr — #1252/#1254 verdict-binding-draft protection', () 
     const r = classifyStalePr({ ...base, linkedIssueStates: ['OPEN'], isDraft: true, mergeable: 'UNKNOWN' });
     expect(r.action).toBe('review');
     expect(r.action).not.toBe('close-superseded');
+  });
+});
+
+describe('classifyStalePr — rescue PR terminal disposition (#1483)', () => {
+  it('detects rescue PRs from title and body markers', () => {
+    expect(isRescuePr({ title: '[rescue] double-barracuda run 1', body: '' })).toBe(true);
+    expect(isRescuePr({ title: 'preserve work', body: 'FAILED-RUN RESCUE - NOT VALIDATED WORK' })).toBe(true);
+    expect(isRescuePr({ title: 'normal stale PR', body: 'Refs #123' })).toBe(false);
+  });
+
+  it('routes stale draft rescue PRs to rescue-disposition instead of generic review', () => {
+    const r = classifyStalePr({ ...base, isRescue: true, isDraft: true, mergeable: 'UNKNOWN', linkedIssueStates: ['OPEN'] });
+    expect(r.action).toBe('rescue-disposition');
+    expect(r.reason).toContain('validate/resume');
+    expect(r.reason).toContain('tracked follow-up');
+  });
+
+  it('routes conflicting stale rescue PRs to rescue-disposition instead of generic resume', () => {
+    const r = classifyStalePr({ ...base, isRescue: true, mergeable: 'CONFLICTING', linkedIssueStates: ['OPEN'] });
+    expect(r.action).toBe('rescue-disposition');
+  });
+
+  it('keeps close-superseded precedence for rescue PRs whose closing issues are all closed', () => {
+    const r = classifyStalePr({ ...base, isRescue: true, isDraft: true, linkedIssueStates: ['CLOSED'] });
+    expect(r.action).toBe('close-superseded');
+  });
+
+  it('formats rescue-disposition as its own terminal path group', () => {
+    const report = formatReport([row(44, 'rescue-disposition', [1220])]);
+    expect(report).toContain('## rescue-disposition (1)');
+    expect(report).toContain('validate/resume');
+    expect(report).toContain('tracked follow-up');
+  });
+
+  it('does not auto-close rescue-disposition rows during apply', () => {
+    let calls = 0;
+    const gh = (): string => {
+      calls++;
+      return '';
+    };
+    const result = applyTriage([row(44, 'rescue-disposition', [1220])], { gh, repo: 'o/r' });
+    expect(calls).toBe(0);
+    expect(result).toEqual({ closed: [], failed: [] });
   });
 });
 
