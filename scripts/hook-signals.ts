@@ -38,6 +38,7 @@
 
 import { z } from 'zod';
 import { parseHookOutputs } from '../src/hooks/lib/gate-signal.js';
+import { parseJsonObject } from '../src/lib/json-value.js';
 
 export type HookSignalSource = 'permission-decision' | 'stop-decision' | 'canonical-yaml';
 
@@ -72,15 +73,11 @@ const StopDecisionSchema = z.object({
  */
 function jsonSignalFromText(text: string): HookSignal | null {
   const trimmed = text.trim();
-  // Cheap pre-filter: only attempt JSON.parse on text that looks like an object.
+  // Cheap pre-filter: only attempt JSON object parsing on object-like text.
   if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return null;
-  }
+  const parsed = parseJsonObject(trimmed);
+  if (!parsed) return null;
 
   const perm = PermissionDecisionSchema.safeParse(parsed);
   if (perm.success && perm.data.hookSpecificOutput.permissionDecision === 'deny') {
@@ -165,13 +162,8 @@ export function detectHookSignals(log: string): HookSignal[] {
     // (b) stream-json envelope — re-scan de-escaped string leaves for the same
     //     JSON and canonical-YAML shapes nested inside output/stdout/etc.
     if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-      let env: unknown;
-      try {
-        env = JSON.parse(trimmed);
-      } catch {
-        env = null;
-      }
-      if (env && typeof env === 'object') {
+      const env = parseJsonObject(trimmed);
+      if (env) {
         const leaves: string[] = [];
         collectStringLeaves(env, leaves);
         for (const leaf of leaves) {
