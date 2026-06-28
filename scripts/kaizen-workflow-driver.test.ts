@@ -108,6 +108,19 @@ describe('kaizen workflow forcing driver', () => {
     expect(markdown).toContain('pending');
   });
 
+  it('encodes workflow status evidence before rendering markdown table cells', () => {
+    const status = buildWorkflowStatus({
+      mode: 'manual',
+      evidence: {
+        meetReality: 'done: a | b\n<script>alert(1)</script> & more',
+      },
+    });
+
+    const markdown = renderWorkflowStatusMarkdown(status);
+    expect(markdown).toContain('a \\| b<br>&lt;script&gt;alert(1)&lt;/script&gt; &amp; more');
+    expect(markdown).not.toContain('<script>');
+  });
+
   it('merges explicit stage evidence over collected evidence for reusable status calls', () => {
     const evidence = mergeWorkflowEvidence(
       { implementation: 'branch has commits ahead of origin/main', meetReality: 'pending dogfood run' },

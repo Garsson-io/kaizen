@@ -189,6 +189,15 @@ export function mergeWorkflowEvidence(
   return { ...collected, ...overrides };
 }
 
+function escapeMarkdownTableCell(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\r?\n/g, '<br>')
+    .replace(/\|/g, '\\|');
+}
+
 export function renderWorkflowStatusMarkdown(status: WorkflowStatus): string {
   const lines = ['## Kaizen Workflow Status', ''];
   if (status.issue) {
@@ -201,7 +210,7 @@ export function renderWorkflowStatusMarkdown(status: WorkflowStatus): string {
   lines.push('| Stage | State | Evidence |');
   lines.push('|---|---|---|');
   for (const stage of status.stages) {
-    lines.push(`| ${stage.label} | ${stage.state} | ${stage.evidence.replace(/\|/g, '\\|')} |`);
+    lines.push(`| ${escapeMarkdownTableCell(stage.label)} | ${stage.state} | ${escapeMarkdownTableCell(stage.evidence)} |`);
   }
   return lines.join('\n');
 }
