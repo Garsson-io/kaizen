@@ -7,6 +7,7 @@
 
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
+import { readYamlFrontmatter } from "./lib/frontmatter.js";
 
 export interface SkillMetadata {
   name: string;
@@ -23,38 +24,8 @@ export interface SkillMetadata {
  * Returns null if no valid frontmatter is found.
  */
 export function parseSkillFrontmatter(content: string): SkillMetadata | null {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!match) return null;
-
-  const yaml = match[1];
-  const meta: Record<string, unknown> = {};
-
-  for (const line of yaml.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    const colonIdx = trimmed.indexOf(":");
-    if (colonIdx === -1) continue;
-
-    const key = trimmed.slice(0, colonIdx).trim();
-    const rawValue = trimmed.slice(colonIdx + 1).trim();
-
-    if (rawValue.startsWith("[") && rawValue.endsWith("]")) {
-      // Inline YAML array: [a, b, c] or ["a", "b", "c"]
-      const inner = rawValue.slice(1, -1);
-      meta[key] = inner
-        .split(",")
-        .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-        .filter((s) => s.length > 0);
-    } else if (rawValue === "true") {
-      meta[key] = true;
-    } else if (rawValue === "false") {
-      meta[key] = false;
-    } else {
-      meta[key] = rawValue.replace(/^["']|["']$/g, "");
-    }
-  }
-
+  const meta = readYamlFrontmatter(content);
+  if (!meta) return null;
   if (!meta.name || typeof meta.name !== "string") return null;
 
   return {
