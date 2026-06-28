@@ -26,7 +26,11 @@
  */
 
 import { z } from 'zod';
-import YAML from 'yaml';
+import {
+  formatDelimitedYamlBlock,
+  parseDelimitedYamlBlocks,
+  parseFirstDelimitedYamlBlock,
+} from '../../lib/yaml-block.js';
 
 export const GateNameSchema = z.enum(['needs_review', 'needs_pr_kaizen', 'needs_post_merge']);
 export type GateName = z.infer<typeof GateNameSchema>;
@@ -61,7 +65,7 @@ export function formatHookOutput(output: HookOutput): string {
   if (validated.pr) obj.pr = validated.pr;
   if (validated.round != null) obj.round = validated.round;
   obj.reason = validated.reason;
-  return `---\n${YAML.stringify(obj).trimEnd()}\n---\n`;
+  return formatDelimitedYamlBlock(obj);
 }
 
 // Convenience alias for gate signals
@@ -72,15 +76,10 @@ export const formatGateSignal = formatHookOutput;
  * Returns the parsed output if found, null otherwise.
  */
 export function parseHookOutput(text: string): HookOutput | null {
-  const match = text.match(/^---\n([\s\S]*?\n)---/m);
-  if (!match) return null;
-  try {
-    const parsed = YAML.parse(match[1]);
-    const result = HookOutputSchema.safeParse(parsed);
-    return result.success ? result.data : null;
-  } catch {
-    return null;
-  }
+  const parsed = parseFirstDelimitedYamlBlock(text);
+  if (!parsed) return null;
+  const result = HookOutputSchema.safeParse(parsed.data);
+  return result.success ? result.data : null;
 }
 
 /**
@@ -88,9 +87,9 @@ export function parseHookOutput(text: string): HookOutput | null {
  */
 export function parseHookOutputs(text: string): HookOutput[] {
   const outputs: HookOutput[] = [];
-  for (const match of text.matchAll(/^---\n[\s\S]*?\n---/gm)) {
-    const parsed = parseHookOutput(match[0]);
-    if (parsed) outputs.push(parsed);
+  for (const block of parseDelimitedYamlBlocks(text)) {
+    const result = HookOutputSchema.safeParse(block.data);
+    if (result.success) outputs.push(result.data);
   }
   return outputs;
 }
