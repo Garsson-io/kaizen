@@ -168,7 +168,10 @@ function transcriptInstruction(transcriptPath?: string): string {
     return `  - Session transcript: ${transcriptPath}
   - IMPORTANT: Read the transcript file to find signals the main agent may not report.
     Scan for: user corrections/pushback, failed tool calls, hook denials, retries,
-    multiple attempts at the same thing, things the user had to ask for twice.`;
+    multiple attempts at the same thing, things the user had to ask for twice.
+  - If any transcript signal exists, at least one KAIZEN_IMPEDIMENTS item must cite
+    a specific transcript moment with entryIndex and a short excerpt. Do not rely
+    only on memory when transcript evidence is available.`;
   }
   return '  - (no transcript path available — rely on impediments reported by main agent)';
 }
