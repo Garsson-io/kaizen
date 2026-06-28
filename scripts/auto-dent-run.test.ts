@@ -3225,6 +3225,93 @@ describe('selectMode bandit integration', () => {
   });
 });
 
+describe('selectMode manifest-forced target binding', () => {
+  function writePlanAndManifestTarget(tmpDir: string, issue = '#1213', status = 'pending') {
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify({
+      created_at: '2026-06-29T00:00:00.000Z',
+      guidance: 'bind manifests',
+      items: [
+        { issue: '#999', title: 'Other', score: 9, approach: 'normal pick', status: 'pending', item_type: 'leaf' },
+        { issue, title: 'Manifest target', score: 1, approach: 'forced pick', status, item_type: 'leaf' },
+      ],
+      wip_excluded: [],
+      epics_scanned: [],
+    }));
+    for (const run of [4, 5, 6]) {
+      writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
+        version: 1,
+        runTag: `batch/run-${run}`,
+        generatedAt: '2026-06-29T00:00:00.000Z',
+        candidates: [
+          { id: 'top', title: 'Top bundle', rationale: 'repeated', refs: [issue], suggested_mode: 'exploit' },
+        ],
+      }));
+    }
+  }
+
+  it('forces exploit when repeated latest manifests name a pending plan issue', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-mode-'));
+    writePlanAndManifestTarget(tmpDir);
+    const state = makeBatchState({
+      run_history: Array.from({ length: 12 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr'] })),
+    });
+
+    const result = selectMode(state, 12, { logDir: tmpDir, manifestRepeatThreshold: 2 });
+
+    expect(result).toMatchObject({
+      mode: 'exploit',
+      reason: 'manifest-forced',
+      target_issue: '#1213',
+    });
+  });
+
+  it('does not force when the repeated target is no longer pending', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-assigned-'));
+    writePlanAndManifestTarget(tmpDir, '#1213', 'assigned');
+    const state = makeBatchState({ run_history: [] });
+
+    const result = selectMode(state, 1, { logDir: tmpDir, manifestRepeatThreshold: 2 });
+
+    expect(result.reason).not.toBe('manifest-forced');
+  });
+
+  it('does not force exploit for repeated non-exploit manifest candidates', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-non-exploit-'));
+    writePlanAndManifestTarget(tmpDir);
+    for (const run of [4, 5, 6]) {
+      writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
+        version: 1,
+        runTag: `batch/run-${run}`,
+        generatedAt: '2026-06-29T00:00:00.000Z',
+        candidates: [
+          { id: 'top', title: 'Top bundle', rationale: 'repeated', refs: ['#1213'], suggested_mode: 'reflect' },
+        ],
+      }));
+    }
+    const state = makeBatchState({ run_history: [] });
+
+    const result = selectMode(state, 1, { logDir: tmpDir, manifestRepeatThreshold: 2 });
+
+    expect(result.reason).not.toBe('manifest-forced');
+  });
+
+  it('renders the forced manifest target as the claimed plan issue', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-prompt-'));
+    writePlanAndManifestTarget(tmpDir);
+    const state = makeBatchState({ guidance: 'work from manifest' });
+
+    const meta = buildPromptWithMetadata(state, 6, tmpDir);
+
+    expect(meta.template).toBe('deep-dive-default.md');
+    expect(meta.claimedPlanIssue).toBe('#1213');
+    expect(meta.prompt).toContain('Manifest target');
+    expect(meta.prompt).toContain('#1213');
+    const plan = JSON.parse(readFileSync(join(tmpDir, 'plan.json'), 'utf8'));
+    expect(plan.items.find((i: any) => i.issue === '#1213').status).toBe('assigned');
+    expect(plan.items.find((i: any) => i.issue === '#999').status).toBe('pending');
+  });
+});
+
 describe('computeModeDistribution', () => {
   it('counts modes from run history', () => {
     const history = [
@@ -3434,6 +3521,8 @@ describe('buildPromptWithMetadata', () => {
     expect(source.match(/selectMode\(state, runNum, \{ logDir \}\)/g)).toHaveLength(1);
     expect(source).toContain('buildTemplateVars(state, runNum, logDir, {');
     expect(source).toContain('targetIssue: modeSelection.target_issue');
+    expect(source).toContain('claimPlanItem: shouldClaimPlanItem');
+    expect(source).toContain('modeSelection');
     expect(source).toContain("modeSelection.mode === 'exploit' && !state.test_task");
   });
 

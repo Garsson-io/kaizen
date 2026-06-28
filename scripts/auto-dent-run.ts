@@ -548,6 +548,9 @@ function extractManifestTarget(parsed: Record<string, unknown>): string | null {
     const first = candidates[0];
     if (first && typeof first === 'object' && !Array.isArray(first)) {
       const candidate = first as Record<string, unknown>;
+      if (typeof candidate.suggested_mode === 'string' && candidate.suggested_mode !== 'exploit') {
+        return null;
+      }
       return firstIssueRef(candidate.refs) || normalizeIssueRef(candidate.issue);
     }
   }
@@ -586,6 +589,13 @@ function closedInBatch(state: BatchState, issue: string): boolean {
   return state.issues_closed.some((ref) => normalizeIssueRef(ref) === issue);
 }
 
+function manifestTargetClaimable(logDir: string, issue: string): boolean {
+  const plan = readPlan(logDir);
+  if (!plan) return true;
+  const item = plan.items.find((candidate) => normalizeIssueRef(candidate.issue) === issue);
+  return !item || item.status === 'pending';
+}
+
 export function findManifestForcedTarget(
   state: BatchState,
   logDir?: string,
@@ -601,7 +611,12 @@ export function findManifestForcedTarget(
     const parsed = parseJsonObject(readFileSync(path, 'utf8'));
     if (!parsed) continue;
     const target = extractManifestTarget(parsed as Record<string, unknown>);
-    if (!target || consumedManifestTarget(state, target) || closedInBatch(state, target)) continue;
+    if (
+      !target
+      || consumedManifestTarget(state, target)
+      || closedInBatch(state, target)
+      || !manifestTargetClaimable(logDir, target)
+    ) continue;
 
     const aggregateCount = aggregateManifestObservationCount(parsed as Record<string, unknown>);
     if (aggregateCount && aggregateCount >= repeatThreshold) {
@@ -740,7 +755,7 @@ export function buildTemplateVars(
   state: BatchState,
   runNum: number,
   logDir?: string,
-  options: { claimPlanItem?: boolean; targetIssue?: string } = {},
+  options: { claimPlanItem?: boolean; targetIssue?: string; modeSelection?: ModeSelection } = {},
 ): Record<string, string> {
   const runTag = `${state.batch_id}/run-${runNum}`;
   const hostRepo = state.host_repo || state.kaizen_repo || 'unknown';
@@ -853,7 +868,7 @@ export function buildTemplateVars(
   const crossBatchSteeringText = crossBatchSteering.length > 0
     ? crossBatchSteering.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
-  const modeSelection = selectMode(state, runNum, { logDir });
+  const modeSelection = options.modeSelection ?? selectMode(state, runNum, { logDir });
   const manifestPath = logDir
     ? candidateTaskManifestPath(logDir, runNum)
     : `run-${runNum}-candidate-tasks-manifest.json`;
@@ -1433,10 +1448,11 @@ export function weightedModeSelect(
  * Priority (highest first):
  *   1. Guidance override: "mode:<name>" in guidance forces that mode
  *   2. Test task: always exploit with test template
- *   3. Signal-driven: reactive to batch state (failures, stalls, streaks)
- *   4. Contemplate overlay: every 15th run for strategic assessment
- *   5. Bandit selection: UCB1 explore/exploit weighting from run history
- *   6. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
+ *   3. Manifest-forced: repeated explore manifests bind a pending plan target
+ *   4. Signal-driven: reactive to batch state (failures, stalls, streaks)
+ *   5. Contemplate overlay: every 15th run for strategic assessment
+ *   6. Bandit selection: UCB1 explore/exploit weighting from run history
+ *   7. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
  */
 export interface SelectModeOptions {
   logDir?: string;
@@ -1594,6 +1610,7 @@ export function buildPromptWithMetadata(
   const vars = buildTemplateVars(state, runNum, logDir, {
     claimPlanItem: shouldClaimPlanItem,
     targetIssue: modeSelection.target_issue,
+    modeSelection,
   });
   const claimedPlanIssue = vars.claimed_plan_issue || undefined;
 
@@ -2138,7 +2155,7 @@ async function runClaude(
   const ctx: StreamContext = { provider: 'claude' };
 
   const logDir = dirname(stateFile);
-  const modeSelection = selectMode(state, runNum);
+  const modeSelection = selectMode(state, runNum, { logDir });
   if (modeSelection.mode !== 'exploit' || modeSelection.reason !== 'schedule') {
     console.log(`  [mode] run #${runNum}: ${modeSelection.mode} (${modeSelection.reason}, template: ${modeSelection.template})`);
   }
