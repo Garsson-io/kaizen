@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   findOpenPrUrlForBranch,
   parseBranchPrQueryResult,
@@ -189,6 +190,14 @@ describe('parseIssueState', () => {
     expect(parseIssueState('{not json')).toBeNull();
     expect(parseIssueState(JSON.stringify({ state: 'MERGED' }))).toBeNull();
     expect(parseIssueState(JSON.stringify({}))).toBeNull();
+  });
+});
+
+describe('github-pr JSON parsing internals', () => {
+  it('keeps gh JSON decoding on shared helpers', () => {
+    const source = readFileSync(new URL('./github-pr.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toMatch(/JSON\.parse\(output\s*\|\|/);
   });
 });
 
