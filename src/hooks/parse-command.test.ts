@@ -173,7 +173,8 @@ describe('isGitCommand', () => {
       expect(isGitCommand('git push origin show', READONLY)).toBe(false);
       expect(isGitCommand('docker rm show', READONLY)).toBe(false);
       expect(isGitCommand('make deploy-log', READONLY)).toBe(false);
-      expect(isGitCommand('kubectl delete statefulset', READONLY)).toBe(false);
+      // contains the literal substring "status" — flips OLD true -> NEW false
+      expect(isGitCommand('echo status', READONLY)).toBe(false);
     });
 
     it('still matches every real git read-only subcommand', () => {
