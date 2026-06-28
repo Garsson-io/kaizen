@@ -26,6 +26,7 @@ import { createHookStreamProcessor } from './hook-gym-stream.js';
 import { renderPrompt } from './hook-gym-scenarios.js';
 import { validateAgainstScenario, validateFixtureFile, formatValidationReport, type ValidationReport } from './hook-gym-validate.js';
 import { formatTimeline } from './hook-gym-format.js';
+import { parseJsonLines } from '../src/lib/json-lines.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -248,6 +249,7 @@ export class RunResult {
   readonly outDir: string;
   readonly streamLines: string[];
   readonly events: ParsedHookEvent[];
+  private parsedStreamMessagesCache?: Record<string, any>[];
 
   constructor(data: {
     scenario: string;
@@ -268,6 +270,13 @@ export class RunResult {
     this.outDir = data.outDir;
     this.streamLines = data.streamLines;
     this.events = data.timeline.events;
+  }
+
+  private get parsedStreamMessages(): Record<string, any>[] {
+    this.parsedStreamMessagesCache ??= parseJsonLines<Record<string, any>>(
+      this.streamLines.join('\n'),
+    );
+    return this.parsedStreamMessagesCache;
   }
 
   get passed(): boolean {
@@ -323,91 +332,53 @@ export class RunResult {
   // ── Agent action queries (from stream) ──
 
   get agent() {
-    const lines = this.streamLines;
+    const messages = this.parsedStreamMessages;
+    const toolUses = (): Array<{ tool: string; input: Record<string, unknown> }> => {
+      const uses: Array<{ tool: string; input: Record<string, unknown> }> = [];
+      for (const d of messages) {
+        if (d.type === 'assistant') {
+          for (const block of d.message?.content ?? []) {
+            if (block.type === 'tool_use') {
+              uses.push({ tool: block.name, input: block.input ?? {} });
+            }
+          }
+        }
+      }
+      return uses;
+    };
     return {
       /** Extract all tool_use actions from the stream. */
-      toolUses: () => {
-        const uses: Array<{ tool: string; input: Record<string, unknown> }> = [];
-        for (const line of lines) {
-          try {
-            const d = JSON.parse(line);
-            if (d.type === 'assistant') {
-              for (const block of d.message?.content ?? []) {
-                if (block.type === 'tool_use') {
-                  uses.push({ tool: block.name, input: block.input ?? {} });
-                }
-              }
-            }
-          } catch { /* skip */ }
-        }
-        return uses;
-      },
+      toolUses,
       /** Check if the agent used a specific tool. */
-      usedTool: (name: string) => {
-        for (const line of lines) {
-          try {
-            const d = JSON.parse(line);
-            if (d.type === 'assistant') {
-              for (const block of d.message?.content ?? []) {
-                if (block.type === 'tool_use' && block.name === name) return true;
-              }
-            }
-          } catch { /* skip */ }
-        }
-        return false;
-      },
+      usedTool: (name: string) => toolUses().some((use) => use.tool === name),
       /** Check if the agent used a skill. */
       usedSkill: (skillName?: string) => {
-        for (const line of lines) {
-          try {
-            const d = JSON.parse(line);
-            if (d.type === 'assistant') {
-              for (const block of d.message?.content ?? []) {
-                if (block.type === 'tool_use' && block.name === 'Skill') {
-                  if (!skillName) return true;
-                  const skill = block.input?.skill ?? '';
-                  if (skill.includes(skillName)) return true;
-                }
-              }
-            }
-          } catch { /* skip */ }
-        }
-        return false;
+        return toolUses().some((use) => {
+          if (use.tool !== 'Skill') return false;
+          if (!skillName) return true;
+          const skill = use.input.skill ?? '';
+          return String(skill).includes(skillName);
+        });
       },
       /** Find the PR URL if the agent created one. */
       createdPR: (): string | null => {
-        for (const line of lines) {
-          try {
-            const d = JSON.parse(line);
-            // Look in tool_result content for PR URL
-            if (d.type === 'user') {
-              const content = d.message?.content;
-              if (Array.isArray(content)) {
-                for (const c of content) {
-                  const text = c.content ?? c.text ?? '';
-                  const match = text.match(/https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/);
-                  if (match) return match[0];
-                }
+        for (const d of messages) {
+          // Look in tool_result content for PR URL
+          if (d.type === 'user') {
+            const content = d.message?.content;
+            if (Array.isArray(content)) {
+              for (const c of content) {
+                const text = c.content ?? c.text ?? '';
+                const match = text.match(/https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/);
+                if (match) return match[0];
               }
             }
-          } catch { /* skip */ }
+          }
         }
         return null;
       },
       /** Check if the agent entered a worktree. */
-      enteredWorktree: () => {
-        for (const line of lines) {
-          try {
-            const d = JSON.parse(line);
-            if (d.type === 'assistant') {
-              for (const block of d.message?.content ?? []) {
-                if (block.type === 'tool_use' && block.name === 'EnterWorktree') return true;
-              }
-            }
-          } catch { /* skip */ }
-        }
-        return false;
-      },
+      enteredWorktree: () => toolUses().some((use) => use.tool === 'EnterWorktree'),
     };
   }
 
