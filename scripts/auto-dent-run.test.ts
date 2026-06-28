@@ -52,6 +52,7 @@ import {
   ensureBatchProgressIssue,
   updateBatchProgressIssue,
   extractPlanText,
+  normalizeCodexRunExitCode,
   populateCrossBatchSteering,
   shouldRunCodexProvider,
   attachRunTranscripts,
@@ -1726,6 +1727,12 @@ describe('BatchState provider field (#1144)', () => {
     ];
 
     expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex' }), inventory)).toBe(false);
+  });
+
+  it('fails Codex runs that emit malformed JSONL despite a zero provider exit (#1580)', () => {
+    expect(normalizeCodexRunExitCode(0, 1)).toBe(1);
+    expect(normalizeCodexRunExitCode(0, 0)).toBe(0);
+    expect(normalizeCodexRunExitCode(2, 1)).toBe(2);
   });
 });
 

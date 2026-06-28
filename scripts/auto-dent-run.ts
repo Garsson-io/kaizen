@@ -1691,6 +1691,11 @@ interface ProviderRunResult {
   promptMeta: PromptMetadata;
 }
 
+export function normalizeCodexRunExitCode(exitCode: number, malformedLineCount: number): number {
+  if (malformedLineCount > 0 && exitCode === 0) return 1;
+  return exitCode;
+}
+
 async function runCodex(
   input: {
     state: BatchState;
@@ -1787,7 +1792,7 @@ async function runCodex(
 
       const duration = Math.floor((Date.now() - runStart) / 1000);
       resolvePromise({
-        exitCode,
+        exitCode: normalizeCodexRunExitCode(exitCode, parsed.malformedLines.length),
         duration,
         result: input.result,
         mode: input.mode,
