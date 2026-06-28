@@ -11,13 +11,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import {
   CAPABILITY_INVENTORY,
-  type Phase,
+  PHASES,
   type PhaseProvider,
   type PhaseProviderRecord,
   type PlanValidation,
   type Provider,
   type ProviderCapability,
-  type ProviderPlan,
+  phaseProvider,
+  phaseProviderRecordToProviderPlan,
   validateProviderPlan,
 } from './auto-dent-provider.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
@@ -72,17 +73,8 @@ export interface ProviderStrategyRecommendation {
   score: number;
 }
 
-const PHASE_ORDER: Phase[] = [
-  'planning',
-  'implementation',
-  'review',
-  'fix',
-  'reflection',
-  'validation',
-];
-
 function pp(provider: Provider, billing: PhaseProvider['billing']): PhaseProvider {
-  return { provider, billing };
+  return phaseProvider(provider, billing);
 }
 
 const CLAUDE = pp('claude', 'subscription-cli');
@@ -146,32 +138,23 @@ export function providerComparisonScenarios(): ProviderComparisonScenario[] {
   ];
 }
 
-function providerPlanFromRecord(record: PhaseProviderRecord): ProviderPlan {
-  const plan: ProviderPlan = {};
-  for (const phase of PHASE_ORDER) {
-    const provider = record[phase]?.provider;
-    if (provider) plan[phase] = provider;
-  }
-  return plan;
-}
-
 export function validateProviderComparisonScenario(
   scenario: ProviderComparisonScenario,
   inventory: readonly ProviderCapability[] = CAPABILITY_INVENTORY,
 ): PlanValidation {
-  const validation = validateProviderPlan(providerPlanFromRecord(scenario.phaseProviders), inventory);
+  const validation = validateProviderPlan(phaseProviderRecordToProviderPlan(scenario.phaseProviders), inventory);
   return {
     ...validation,
     violations: [...validation.violations].sort((a, b) => {
       const aApi = a.reason.includes('api-token') ? 0 : 1;
       const bApi = b.reason.includes('api-token') ? 0 : 1;
-      return aApi - bApi || PHASE_ORDER.indexOf(a.phase) - PHASE_ORDER.indexOf(b.phase);
+      return aApi - bApi || PHASES.indexOf(a.phase) - PHASES.indexOf(b.phase);
     }),
   };
 }
 
 function phaseSummary(record: PhaseProviderRecord): string {
-  return PHASE_ORDER
+  return PHASES
     .map((phase) => {
       const provider = record[phase];
       return provider ? `${phase}=${provider.provider} (${provider.billing})` : `${phase}=unassigned`;
