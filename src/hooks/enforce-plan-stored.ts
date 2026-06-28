@@ -15,7 +15,16 @@
  * Part of kaizen #1055.
  */
 
-import { appendFileSync, realpathSync, readFileSync, statSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  openSync,
+  realpathSync,
+  readFileSync,
+  readSync,
+} from 'node:fs';
 import { isAbsolute, resolve, relative } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { currentHookBranch } from './lib/current-branch.js';
@@ -243,6 +252,24 @@ function isWithinDirectory(path: string, directory: string): boolean {
   return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
 }
 
+function readSmallRegularFile(path: string): string | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const stats = fstatSync(fd);
+    if (!stats.isFile() || stats.size > MAX_PR_BODY_FILE_BYTES) return null;
+    const buffer = Buffer.alloc(stats.size);
+    const bytesRead = readSync(fd, buffer, 0, stats.size, 0);
+    return buffer.toString('utf-8', 0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { closeSync(fd); } catch { /* ignore close failures */ }
+    }
+  }
+}
+
 function readPrBodyText(fullCommand: string, cmdLine: string): string {
   const bodyFile = extractBodyFilePath(cmdLine);
   if (!bodyFile || bodyFile === '-') return fullCommand;
@@ -254,9 +281,7 @@ function readPrBodyText(fullCommand: string, cmdLine: string): string {
     const realPath = realpathSync(requestedPath);
     if (!isWithinDirectory(realPath, effectiveCwd)) return fullCommand;
 
-    const stats = statSync(realPath);
-    if (!stats.isFile() || stats.size > MAX_PR_BODY_FILE_BYTES) return fullCommand;
-    return readFileSync(realPath, 'utf-8');
+    return readSmallRegularFile(realPath) ?? fullCommand;
   } catch {
     // Fall back to the raw command so the caller fails closed with the normal
     // missing-impact guidance instead of making file IO errors a new hook mode.
