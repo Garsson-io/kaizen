@@ -103,6 +103,17 @@ export interface DriveOptions {
   sleepMs?: number;
   /** Injectable sleep — default is a real synchronous sleep; tests pass a no-op. */
   sleep?: (ms: number) => void;
+  /**
+   * PR URLs that must be POLLED and reported but never ADVANCED toward merge
+   * (#1220). Used for an unsafe PR (review/process/lifecycle/hook block) whose
+   * auto-merge `--disable-auto` cancel *failed*: it still has `--auto` queued, so
+   * leaving it in the drive set keeps it visible — but the `update-branch` step
+   * that unblocks a BEHIND queued merge must be skipped, or the babysitter would
+   * actively merge the very PR the merge-readiness gate refused. Held PRs are
+   * observed (so a cancel-failed unsafe PR is not silently dropped) but their
+   * branch is never re-updated.
+   */
+  holdPrs?: Set<string>;
 }
 
 /**
@@ -166,6 +177,7 @@ export function driveBatchToMerge(
   const maxAttempts = opts.maxAttempts ?? 20;
   const sleepMs = opts.sleepMs ?? 15000;
   const sleep = opts.sleep ?? defaultSleep;
+  const holdPrs = opts.holdPrs ?? new Set<string>();
 
   const states: PrPollState[] = [];
   for (const pr of prUrls) {
@@ -213,7 +225,10 @@ export function driveBatchToMerge(
 
       // Non-terminal. If BEHIND with auto-merge queued, re-update the branch —
       // the part the one-shot sweep could only do once (#368). Then keep polling.
-      if (data.mergeStateStatus === 'BEHIND' && data.autoMergeRequest) {
+      // EXCEPT for a held PR (#1220): an unsafe PR we failed to disable still has
+      // `--auto` queued; advancing its branch here would merge the exact PR the
+      // merge-readiness gate refused. Skip the advance — keep polling/reporting only.
+      if (data.mergeStateStatus === 'BEHIND' && data.autoMergeRequest && !holdPrs.has(s.pr)) {
         ghExec(
           `gh api repos/${s.repo}/pulls/${s.num}/update-branch -X PUT -f expected_head_sha=""`,
         );

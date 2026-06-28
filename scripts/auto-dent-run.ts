@@ -2682,6 +2682,12 @@ async function main(): Promise<void> {
     const driveResults = driveBatchToMerge(allBatchPRs, {
       maxAttempts: 6,
       sleepMs: 10_000,
+      // An unsafe PR whose auto-merge cancel FAILED stays in the batch so it
+      // remains visible/babysat, but must never be advanced toward merge — else
+      // the babysitter would merge the very PR the merge-readiness gate refused
+      // (#1220). `cancelFailed` is non-empty only when a block fired, so this is
+      // a no-op for healthy runs.
+      holdPrs: cancelFailed,
     });
     const stuck = driveResults.filter((r) => r.status === 'stuck');
     for (const r of driveResults) {

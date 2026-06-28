@@ -3518,6 +3518,17 @@ describe('auto-merge verdict binding wiring (#1220)', () => {
     expect(driveIndex).toBeGreaterThan(filterIndex);
   });
 
+  it('holds cancel-failed unsafe PRs out of the merge-advance step (#1220 fail-open guard)', () => {
+    // An unsafe PR we failed to --disable-auto must stay visible in babysitting
+    // but never be update-branched toward merge. Assert the drive call passes
+    // `holdPrs: cancelFailed`.
+    const driveCall = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('driveBatchToMerge(allBatchPRs'),
+      AUTO_DENT_RUN_SOURCE.indexOf('driveBatchToMerge(allBatchPRs') + 800,
+    );
+    expect(driveCall).toContain('holdPrs: cancelFailed');
+  });
+
   it('feeds the hook-activation verdict + provider into the merge decision (#1220 completion)', () => {
     // Source-invariant guard: the fields are OPTIONAL on AutoMergeSafetySignals,
     // so typecheck cannot catch the call site dropping them. Assert the wiring at

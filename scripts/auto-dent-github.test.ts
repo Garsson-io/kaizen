@@ -355,6 +355,54 @@ describe('driveBatchToMerge', () => {
     expect(cmds.some((c) => c.includes('update-branch'))).toBe(true);
   });
 
+  // #1220 fail-open guard: a held (unsafe, cancel-failed) PR must be polled and
+  // reported but NEVER advanced — the update-branch step that unblocks a queued
+  // merge must be skipped, or the babysitter would merge the very PR the
+  // merge-readiness gate refused.
+  it('does NOT update-branch a held PR even when BEHIND with auto queued (#1220)', () => {
+    mockPrViewSequence([
+      { state: 'OPEN', mergeStateStatus: 'BEHIND', autoMergeRequest: { enabledAt: '2024' } },
+    ]);
+    const results = driveBatchToMerge([PR], {
+      sleep: noopSleep,
+      maxAttempts: 2,
+      holdPrs: new Set([PR]),
+    });
+    const cmds = mockSpawnSync.mock.calls.map((c) => joinArgs(c as any));
+    // It is still polled (visible) ...
+    expect(cmds.some((c) => c.includes('pr view'))).toBe(true);
+    // ... but never advanced toward merge.
+    expect(cmds.some((c) => c.includes('update-branch'))).toBe(false);
+    // And it ends as stuck:timed_out (held open, not merged).
+    expect(results).toEqual([{ pr: PR, status: 'stuck', reason: 'timed_out', attempts: 2 }]);
+  });
+
+  it('still update-branches a NON-held PR (holdPrs is scoped, not global) (#1220)', () => {
+    const HELD = 'https://github.com/o/r/pull/7';
+    const FREE = 'https://github.com/o/r/pull/8';
+    // Both BEHIND+auto on the first poll, then MERGED.
+    let i = 0;
+    mockSpawnSync.mockImplementation(((_bin: string, args: string[]) => {
+      const cmd = args.join(' ');
+      if (cmd.includes('pr view')) {
+        const merged = i++ >= 2; // first round both BEHIND, later rounds MERGED
+        return ok(JSON.stringify(
+          merged
+            ? { state: 'MERGED', mergeStateStatus: null, autoMergeRequest: null }
+            : { state: 'OPEN', mergeStateStatus: 'BEHIND', autoMergeRequest: { enabledAt: '2024' } },
+        ));
+      }
+      return ok('ok');
+    }) as any);
+    driveBatchToMerge([HELD, FREE], { sleep: noopSleep, maxAttempts: 3, holdPrs: new Set([HELD]) });
+    const updateCmds = mockSpawnSync.mock.calls
+      .map((c) => joinArgs(c as any))
+      .filter((s) => s.includes('update-branch'));
+    // The free PR (pull/8) is advanced; the held PR (pull/7) is not.
+    expect(updateCmds.some((c) => c.includes('/pulls/8/'))).toBe(true);
+    expect(updateCmds.some((c) => c.includes('/pulls/7/'))).toBe(false);
+  });
+
   it('classifies a BLOCKED PR as stuck:blocked and stops polling', () => {
     mockPrViewSequence([
       { state: 'OPEN', mergeStateStatus: 'BLOCKED', autoMergeRequest: { enabledAt: '2024' } },
