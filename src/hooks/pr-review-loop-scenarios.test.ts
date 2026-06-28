@@ -43,6 +43,7 @@ function opts(diffFn?: (sha: string) => number): ProcessOptions {
     computeDiffLines: diffFn ?? (() => 10),
     checkShaExists: () => true,
     checkReviewSentinel: () => true, // Scenario tests assume sentinel exists
+    isMergeFromMainPush: () => false,
   };
 }
 
@@ -221,5 +222,18 @@ describe('Scenario: HookDecision context is complete for debugging', () => {
     );
     expect(d.action).toBe('ignore');
     expect(d.reason).toBe('non_zero_exit');
+  });
+
+  it('merge-from-main pushes are ignored before diff threshold checks', () => {
+    processHookInput(input('gh pr create --title "test"', PR_URL), opts());
+
+    const options = opts(() => {
+      throw new Error('merge-from-main push should not compute diff lines');
+    });
+    options.isMergeFromMainPush = () => true;
+
+    const d = processHookInput(input('git push'), options);
+    expect(d.action).toBe('ignore');
+    expect(d.reason).toBe('merge_from_main');
   });
 });

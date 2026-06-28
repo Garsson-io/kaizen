@@ -14,6 +14,7 @@ import { execSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { resolveTsxBin } from './test-runtime.js';
 
 let tmpDir: string;
 let remoteDir: string;
@@ -25,41 +26,7 @@ const KAIZEN_REPO_ROOT = path.resolve(__dirname, '../..');
 const GITHOOKS_PRE_PUSH = path.join(KAIZEN_REPO_ROOT, '.githooks/pre-push');
 const HOOK_TS = path.join(KAIZEN_REPO_ROOT, 'src/hooks/pre-push.ts');
 
-/**
- * Find `tsx` in the worktree's own node_modules, or fall back to the shared
- * main repo's node_modules (symlinked by kaizen-worktree-setup.sh, sometimes
- * absent). If neither exists we skip the test rather than fail opaquely.
- */
-function findTsx(): string | null {
-  const local = path.join(KAIZEN_REPO_ROOT, 'node_modules/.bin/tsx');
-  if (fs.existsSync(local)) return local;
-
-  // Walk up from KAIZEN_REPO_ROOT looking for node_modules/.bin/tsx in case
-  // we're in a worktree whose node_modules symlink is missing.
-  let dir = path.dirname(KAIZEN_REPO_ROOT);
-  for (let i = 0; i < 5; i++) {
-    const candidate = path.join(dir, 'node_modules/.bin/tsx');
-    if (fs.existsSync(candidate)) return candidate;
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-
-  // Fallback: common-dir-based resolution for git worktrees
-  try {
-    const common = execSync('git rev-parse --git-common-dir', {
-      cwd: KAIZEN_REPO_ROOT,
-      encoding: 'utf-8',
-    }).trim();
-    const mainRoot = path.dirname(common);
-    const mainTsx = path.join(mainRoot, 'node_modules/.bin/tsx');
-    if (fs.existsSync(mainTsx)) return mainTsx;
-  } catch { /* ignore */ }
-
-  return null;
-}
-
-const TSX_BIN = findTsx();
+const TSX_BIN = resolveTsxBin(KAIZEN_REPO_ROOT);
 
 function writeMockGh(response: unknown): void {
   const content = `#!/usr/bin/env bash

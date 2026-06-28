@@ -122,6 +122,10 @@ describe("Setup E2E", () => {
       project.fullSetup(CONFIG);
 
       const session = project.createSession();
+      session.hooks.SessionStart = ["kaizen-check-wip.sh"];
+      session.hooks.PreToolUseBash = ["kaizen-search-before-file.sh"];
+      session.hooks.Stop = ["kaizen-check-cleanup-on-stop.sh"];
+
       session.fireSessionStart();
       session.fireBashPre("echo hello");
       session.fireStop();

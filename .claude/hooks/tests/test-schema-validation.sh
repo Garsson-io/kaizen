@@ -19,6 +19,8 @@ STATE_DIR="$HARNESS_TEMP/pr-review-state"
 mkdir -p "$STATE_DIR"
 export STATE_DIR
 export DEBUG_LOG="$HARNESS_TEMP/debug.log"
+source "$HOOKS_DIR/lib/resolve-tsx-bin.sh"
+TSX_BIN="$(resolve_tsx_bin "$REPO_ROOT" || true)"
 
 setup_mock_dir
 trap 'rm -rf "$MOCK_DIR"' EXIT
@@ -79,10 +81,15 @@ fi
 MOCK
 chmod +x "$MOCK_DIR/git"
 
+HOOK_ENV=$(printf 'STATE_DIR=%s\nPATH=%s\nHOOK_TIMING_SENTINEL_DISABLED=true\nSEND_TELEGRAM_IPC_DISABLED=true' "$STATE_DIR" "$MOCK_DIR:$PATH")
+if [ -x "$TSX_BIN" ]; then
+  HOOK_ENV=$(printf '%s\nKAIZEN_TSX_BIN=%s' "$HOOK_ENV" "$TSX_BIN")
+fi
+
 for test_spec in "${DENY_TESTS[@]}"; do
   IFS=':' read -r hook cmd desc <<< "$test_spec"
   INPUT=$(build_pre_tool_use_input "Bash" "$(jq -n --arg c "$cmd" '{command: $c}')")
-  run_single_hook "$hook" "$INPUT" 10 "$(printf 'STATE_DIR=%s\nPATH=%s' "$STATE_DIR" "$MOCK_DIR:$PATH")"
+  run_single_hook "$hook" "$INPUT" 10 "$HOOK_ENV"
 
   if [ -z "$HOOK_STDOUT" ]; then
     echo "  FAIL: $desc — no output (expected deny JSON)"
@@ -107,7 +114,7 @@ for test_spec in "${DENY_TESTS[@]}"; do
   fi
 
   # 3. Must have permissionDecision = "deny"
-  local decision
+  decision=""
   decision=$(echo "$HOOK_STDOUT" | jq -r '.hookSpecificOutput.permissionDecision')
   if [ "$decision" != "deny" ]; then
     echo "  FAIL: $desc — permissionDecision='$decision' (expected 'deny')"
@@ -116,7 +123,7 @@ for test_spec in "${DENY_TESTS[@]}"; do
   fi
 
   # 4. Must have non-empty permissionDecisionReason
-  local reason
+  reason=""
   reason=$(echo "$HOOK_STDOUT" | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
   if [ -z "$reason" ]; then
     echo "  FAIL: $desc — empty permissionDecisionReason"
@@ -179,7 +186,7 @@ ALLOW_TESTS=(
 for test_spec in "${ALLOW_TESTS[@]}"; do
   IFS=':' read -r hook cmd desc <<< "$test_spec"
   INPUT=$(build_pre_tool_use_input "Bash" "$(jq -n --arg c "$cmd" '{command: $c}')")
-  run_single_hook "$hook" "$INPUT" 10 "$(printf 'STATE_DIR=%s\nPATH=%s' "$STATE_DIR" "$MOCK_DIR:$PATH")"
+  run_single_hook "$hook" "$INPUT" 10 "$HOOK_ENV"
 
   # Allow: exit 0 and either no stdout or stdout without deny
   if [ "$HOOK_EXIT" -ne 0 ]; then
@@ -216,7 +223,7 @@ POST_HOOKS=(
 )
 
 for hook in "${POST_HOOKS[@]}"; do
-  run_single_hook "$hook" "$POST_INPUT" 10 "$(printf 'STATE_DIR=%s\nPATH=%s' "$STATE_DIR" "$MOCK_DIR:$PATH")"
+  run_single_hook "$hook" "$POST_INPUT" 10 "$HOOK_ENV"
 
   # Should not produce deny JSON
   if echo "$HOOK_STDOUT" | jq -e '.hookSpecificOutput.permissionDecision' >/dev/null 2>&1; then

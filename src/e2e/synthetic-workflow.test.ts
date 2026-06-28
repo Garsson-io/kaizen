@@ -13,7 +13,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { SessionSimulator } from "./session-simulator.js";
+import { buildHookRegistryFromManifest, SessionSimulator, type PluginManifest } from "./session-simulator.js";
+import { resolveTsxBin } from "./test-runtime.js";
 
 type HookRegistry = SessionSimulator["hooks"];
 type HookProfile = "full" | "scope-guard" | "representative";
@@ -57,6 +58,15 @@ function withSession<T>(profile: HookProfile, fn: (session: SessionSimulator) =>
   } finally {
     session.cleanup();
   }
+}
+
+function expectStateFilesContaining(session: SessionSimulator, content: string, count: number): void {
+  const files = session.stateFilesContaining(content);
+  expect(files, `Expected ${count} state file(s) containing ${content}\n${session.stateSummary()}`).toHaveLength(count);
+}
+
+function expectTsxAvailable(): void {
+  expect(resolveTsxBin(), "tsx is required for PR workflow outcome E2E tests").toBeTruthy();
 }
 
 describe("Synthetic Workflow E2E", () => {
@@ -150,7 +160,88 @@ describe("Synthetic Workflow E2E", () => {
   });
 
   describe("session lifecycle composition", () => {
+    it("fires the manifest PR workflow hooks in PostToolUse Bash sessions", () => withSession("full", (session) => {
+      expect(session.hooks.PostToolUseBash).toEqual(
+        expect.arrayContaining([
+          "pr-review-loop-ts.sh",
+          "kaizen-reflect-ts.sh",
+          "pr-kaizen-clear-ts.sh",
+        ]),
+      );
+    }));
+
+    it("reports state files and contents for assertion diagnostics", () => withSession("representative", (session) => {
+      session.injectState("gate-a", "STATUS=needs_review\nPR_URL=https://example.test/pr/1\n");
+
+      expect(session.stateFiles()).toEqual(["gate-a"]);
+      expect(session.stateFilesContaining("STATUS=needs_review")).toEqual(["gate-a"]);
+      expect(session.stateSummary()).toContain("--- gate-a ---");
+      expect(session.stateSummary()).toContain("PR_URL=https://example.test/pr/1");
+    }));
+
+    it("classifies hook registry groups from a synthetic manifest fixture", () => {
+      const manifest: PluginManifest = {
+        hooks: {
+          SessionStart: [
+            { hooks: [{ command: ".claude/hooks/session-start.sh" }] },
+          ],
+          PreToolUse: [
+            { matcher: "Bash", hooks: [{ command: ".claude/hooks/bash-only.sh" }] },
+            { matcher: "Bash|Edit", hooks: [{ command: ".claude/hooks/bash-and-edit.sh" }] },
+            { matcher: "NotebookEdit|Write", hooks: [{ command: ".claude/hooks/write-family.sh" }] },
+            { matcher: "Read", hooks: [{ command: ".claude/hooks/read-only.sh" }] },
+          ],
+          PostToolUse: [
+            { matcher: "Edit", hooks: [{ command: ".claude/hooks/post-edit.sh" }] },
+            { matcher: "Bash|Write", hooks: [{ command: ".claude/hooks/post-bash.sh" }] },
+          ],
+          Stop: [
+            { hooks: [{ command: "bash .claude/hooks/stop.sh" }] },
+          ],
+        },
+      };
+
+      expect(buildHookRegistryFromManifest(manifest)).toEqual({
+        SessionStart: ["session-start.sh"],
+        PreToolUseBash: ["bash-only.sh", "bash-and-edit.sh"],
+        PreToolUseWrite: ["bash-and-edit.sh", "write-family.sh"],
+        PostToolUseBash: ["post-bash.sh"],
+        Stop: ["stop.sh"],
+      });
+    });
+
+    it("does not set PR workflow gates for failed PR creation outcomes", () => withSession("full", (session) => {
+      expectTsxAvailable();
+      session.setHome("clean");
+
+      session.fireBashPost("gh pr create --title test", "", {
+        exitCode: "1",
+      });
+
+      expectStateFilesContaining(session, "STATUS=needs_review", 0);
+      expectStateFilesContaining(session, "STATUS=needs_pr_kaizen", 0);
+    }));
+
+    it("sets persisted PR workflow gates for successful PR creation outcomes", () => withSession("full", (session) => {
+      expectTsxAvailable();
+      session.setHome("clean");
+
+      session.fireBashPost(
+        "gh pr create --title test",
+        "https://github.com/Garsson-io/kaizen/pull/943",
+      );
+
+      expectStateFilesContaining(session, "STATUS=needs_review", 1);
+      expectStateFilesContaining(session, "STATUS=needs_pr_kaizen", 1);
+
+      const stopResult = session.fireStop();
+      expect(stopResult.results.some((result) => result.stdout.includes('"decision":"block"'))).toBe(true);
+      expect(stopResult.results.some((result) => result.stdout.includes("PR REVIEW"))).toBe(true);
+      expect(stopResult.results.some((result) => result.stdout.includes("KAIZEN REFLECTION"))).toBe(true);
+    }));
+
     it("full session completes with no timeouts", () => {
+      expectTsxAvailable();
       withSession("full", (session) => {
         session.setHome("clean");
 
@@ -165,7 +256,7 @@ describe("Synthetic Workflow E2E", () => {
         expect(session.totalHooksRun).toBeGreaterThan(0);
         expect(hookCount(session.hooks)).toBeGreaterThan(15);
       });
-    });
+    }, 30_000);
 
     it.concurrent("different event types fire representative hook sets", () => withSession("representative", (session) => {
       session.setHome("clean");

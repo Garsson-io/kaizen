@@ -33,6 +33,21 @@ SETTINGS_PATH = HOOKS_DIR.parent / "settings.json"
 REPO_ROOT = HOOKS_DIR.parent.parent
 
 
+def resolve_tsx_bin() -> Optional[str]:
+    helper = HOOKS_DIR / "lib" / "resolve-tsx-bin.sh"
+    try:
+        proc = subprocess.run(
+            ["bash", str(helper), str(REPO_ROOT)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    tsx = proc.stdout.strip()
+    return tsx if proc.returncode == 0 and tsx else None
+
+
 # Input builders — construct schema-compliant event JSON
 
 @dataclass
@@ -205,7 +220,12 @@ class HookHarness:
             "AUDIT_DIR": str(audit_dir),
             "AUDIT_LOG": str(audit_dir / "no-action.log"),
             "DEBUG_LOG": "/dev/null",
+            "HOOK_TIMING_SENTINEL_DISABLED": "true",
+            "SEND_TELEGRAM_IPC_DISABLED": "true",
         }
+        tsx_bin = resolve_tsx_bin()
+        if tsx_bin:
+            self.env_overrides["KAIZEN_TSX_BIN"] = tsx_bin
 
     def cleanup(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
@@ -454,6 +474,10 @@ if echo "$@" | grep -q "diff --name-only"; then
 fi
 if echo "$@" | grep -q "remote get-url"; then
   echo "{remote_url}"
+  exit 0
+fi
+if echo "$@" | grep -q "log -1 --format=%P HEAD"; then
+  echo "mock-parent-sha"
   exit 0
 fi
 if echo "$@" | grep -q "rev-parse --git-common-dir"; then

@@ -21,15 +21,16 @@ import {
   mkdirSync,
   writeFileSync,
   readFileSync,
+  readdirSync,
   existsSync,
   rmSync,
   chmodSync,
   unlinkSync,
 } from "node:fs";
-import { join, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { KAIZEN_PLUGIN_SOURCE } from "../kaizen-plugin-identity.js";
+import { KAIZEN_ROOT, resolveTsxBin } from "./test-runtime.js";
 
 import {
   runHook,
@@ -47,42 +48,68 @@ import {
 
 // ── Constants ──
 
-const __filename_esm = fileURLToPath(import.meta.url);
-const __dirname_esm = dirname(__filename_esm);
-const KAIZEN_ROOT = resolve(typeof __dirname !== "undefined" ? __dirname : __dirname_esm, "../..");
 const HOOKS_DIR = join(KAIZEN_ROOT, ".claude", "hooks");
-// ── Hook Registry (matches plugin.json) ──
 
-const DEFAULT_HOOKS = {
-  SessionStart: [
-    "kaizen-check-wip.sh",
-    "kaizen-session-cleanup-ts.sh",
-  ],
-  PreToolUseBash: [
-    "kaizen-enforce-pr-review-ts.sh",
-    "kaizen-enforce-case-worktree.sh",
-    "kaizen-pr-quality-checks-ts.sh",
-    "kaizen-check-dirty-files-ts.sh",
-    "kaizen-enforce-pr-reflect-ts.sh",
-    "kaizen-block-git-rebase.sh",
-    "kaizen-search-before-file.sh",
-  ],
-  PreToolUseWrite: [
-    "kaizen-enforce-worktree-writes.sh",
-    "kaizen-enforce-case-exists.sh",
-    "kaizen-enforce-pr-review-ts.sh",
-  ],
-  PostToolUseBash: [
-    "kaizen-post-merge-clear-ts.sh",
-    "kaizen-pr-kaizen-clear-fallback.sh",
-    "kaizen-capture-worktree-context.sh",
-  ],
-  Stop: [
-    "kaizen-stop-gate.sh",
-    "kaizen-verify-before-stop.sh",
-    "kaizen-check-cleanup-on-stop.sh",
-  ],
-};
+// ── Hook Registry (derived from plugin.json) ──
+
+export interface SessionHookRegistry {
+  SessionStart: string[];
+  PreToolUseBash: string[];
+  PreToolUseWrite: string[];
+  PostToolUseBash: string[];
+  Stop: string[];
+}
+
+export interface PluginHookCommand {
+  command?: string;
+}
+
+export interface PluginHookGroup {
+  matcher?: string;
+  hooks?: PluginHookCommand[];
+}
+
+export interface PluginManifest {
+  hooks?: Record<string, PluginHookGroup[]>;
+}
+
+const PLUGIN_JSON_PATH = join(KAIZEN_ROOT, ".claude-plugin", "plugin.json");
+
+function hookFilename(command: string): string | null {
+  const match = command.match(/\.claude\/hooks\/([^"\s]+)$/);
+  if (match?.[1]) return match[1];
+  const name = basename(command);
+  return name.endsWith(".sh") ? name : null;
+}
+
+function hookNames(groups: PluginHookGroup[] | undefined, matcher?: RegExp): string[] {
+  const names: string[] = [];
+  for (const group of groups ?? []) {
+    if (matcher && !matcher.test(group.matcher ?? "")) continue;
+    for (const hook of group.hooks ?? []) {
+      if (!hook.command) continue;
+      const name = hookFilename(hook.command);
+      if (name) names.push(name);
+    }
+  }
+  return names;
+}
+
+export function buildHookRegistryFromManifest(manifest: PluginManifest): SessionHookRegistry {
+  const hooks = manifest.hooks ?? {};
+  return {
+    SessionStart: hookNames(hooks.SessionStart),
+    PreToolUseBash: hookNames(hooks.PreToolUse, /(^|\|)Bash(\||$)/),
+    PreToolUseWrite: hookNames(hooks.PreToolUse, /(^|\|)(Edit|Write|NotebookEdit)(\||$)/),
+    PostToolUseBash: hookNames(hooks.PostToolUse, /(^|\|)Bash(\||$)/),
+    Stop: hookNames(hooks.Stop),
+  };
+}
+
+export function loadDefaultHookRegistry(): SessionHookRegistry {
+  const manifest = JSON.parse(readFileSync(PLUGIN_JSON_PATH, "utf-8")) as PluginManifest;
+  return buildHookRegistryFromManifest(manifest);
+}
 
 // ── Types ──
 
@@ -103,7 +130,7 @@ export interface MockCommandOpts {
 
 export class SessionSimulator {
   /** Hook registry — modify to include/exclude hooks per test. */
-  hooks = structuredClone(DEFAULT_HOOKS);
+  hooks = loadDefaultHookRegistry();
 
   private fakeHome: string;
   private stateDir: string;
@@ -112,9 +139,11 @@ export class SessionSimulator {
   private mockDir: MockDir;
   private steps: StepResult[] = [];
   private hookTimeout: number;
+  private tsxBin: string | undefined;
 
   constructor(opts?: { hookTimeout?: number }) {
     this.hookTimeout = opts?.hookTimeout ?? 5000;
+    this.tsxBin = resolveTsxBin();
     this.fakeHome = mkdtempSync(join(tmpdir(), "ses-home-"));
     this.stateDir = mkdtempSync(join(tmpdir(), "ses-state-"));
     this.auditDir = mkdtempSync(join(tmpdir(), "ses-audit-"));
@@ -242,6 +271,32 @@ export class SessionSimulator {
     return this.steps.flatMap(s => s.results);
   }
 
+  stateFiles(): string[] {
+    try {
+      return readdirSync(this.stateDir).sort();
+    } catch {
+      return [];
+    }
+  }
+
+  stateFileContents(filename: string): string {
+    return readFileSync(join(this.stateDir, filename), "utf-8");
+  }
+
+  stateFilesContaining(content: string): string[] {
+    return this.stateFiles().filter(filename =>
+      this.stateFileContents(filename).includes(content),
+    );
+  }
+
+  stateSummary(): string {
+    const files = this.stateFiles();
+    if (files.length === 0) return "(no state files)";
+    return files
+      .map(filename => `--- ${filename} ---\n${this.stateFileContents(filename)}`)
+      .join("\n");
+  }
+
   stepStderr(index: number): string {
     const step = this.steps[index];
     if (!step) return "";
@@ -297,6 +352,9 @@ export class SessionSimulator {
           AUDIT_DIR: this.auditDir,
           STATE_DIR: this.stateDir,
           DEBUG_LOG: "/dev/null",
+          HOOK_TIMING_SENTINEL_DISABLED: "true",
+          SEND_TELEGRAM_IPC_DISABLED: "true",
+          ...(this.tsxBin ? { KAIZEN_TSX_BIN: this.tsxBin } : {}),
           PATH: this.mockDir.pathWithMocks,
         },
       });

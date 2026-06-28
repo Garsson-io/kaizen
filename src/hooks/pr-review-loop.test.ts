@@ -36,7 +36,7 @@ import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { processHookInput, writeReviewSentinel } from './pr-review-loop.js';
+import { processHookInput, toolExitCode, writeReviewSentinel } from './pr-review-loop.js';
 import { expectedPrReviewDimensions } from '../review-sentinel.js';
 
 /** Run hook with raw string as stdin (for testing malformed input). */
@@ -687,6 +687,11 @@ describe('pr-review-loop: escalation', () => {
 });
 
 describe('pr-review-loop: failed commands ignored', () => {
+  it('parses tool response exit code before trigger handling', () => {
+    expect(toolExitCode({ tool_response: { stdout: '', stderr: '', exit_code: '1' } })).toBe('1');
+    expect(toolExitCode({ tool_response: { stdout: '', stderr: '' } })).toBe('0');
+  });
+
   it('exits silently on non-zero exit code', () => {
     const output = runHook({
       tool_input: { command: 'gh pr create' },
