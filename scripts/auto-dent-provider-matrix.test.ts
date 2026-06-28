@@ -19,6 +19,14 @@ import {
 } from './auto-dent-provider-matrix.js';
 
 describe('provider comparison matrix (#1152)', () => {
+  it('uses the shared Markdown table cell escaping helper for provider tables (#1356)', () => {
+    const capabilitySource = readFileSync('scripts/auto-dent-provider-capabilities.ts', 'utf8');
+    const matrixSource = readFileSync('scripts/auto-dent-provider-matrix.ts', 'utf8');
+
+    expect(capabilitySource).not.toMatch(/function\s+escapeCell\s*\(/);
+    expect(matrixSource).not.toMatch(/function\s+escapeMarkdownCell\s*\(/);
+  });
+
   it('dry-run renders all required provider strategies with phase-level provider records', () => {
     const scenarios = providerComparisonScenarios();
 
