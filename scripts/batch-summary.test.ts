@@ -466,6 +466,25 @@ describe('provider-per-phase distribution (#1143)', () => {
     expect(text).toContain('**planning:** claude (subscription-cli): 1');
   });
 
+  it('skips malformed provider metadata without dropping valid run aggregation (#1490)', () => {
+    const summary = summarizeEvents([
+      makeCompleteEvent({
+        run_num: 1,
+        phase_providers: {
+          planning: { provider: 'not-a-provider', billing: 'subscription-cli' },
+        } as any,
+      }),
+      makeCompleteEvent({ run_num: 2, phase_providers: claudePhases }),
+    ]);
+
+    expect(summary.total_runs).toBe(2);
+    expect(summary.phase_provider_distribution).toEqual({
+      planning: { 'claude (subscription-cli)': 1 },
+      implementation: { 'claude (subscription-cli)': 1 },
+      validation: { 'provider-independent (local-only)': 1 },
+    });
+  });
+
   it('aggregates a hybrid Claude/Codex/provider-independent batch', () => {
     const summary = summarizeEvents([
       makeCompleteEvent({ run_num: 1, phase_providers: {

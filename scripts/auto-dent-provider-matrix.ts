@@ -9,9 +9,11 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
+import { z } from 'zod';
 import {
   CAPABILITY_INVENTORY,
   PHASES,
+  PhaseProviderRecordSchema,
   type PhaseProvider,
   type PhaseProviderRecord,
   type PlanValidation,
@@ -27,6 +29,63 @@ import { escapeMarkdownTableCell } from './markdown-table.js';
 export type ReviewQuality = 'strong' | 'adequate' | 'weak' | 'missing';
 export type CostSignal = 'available' | 'partial' | 'missing';
 export type OperatorInspectability = 'high' | 'medium' | 'low';
+
+const ReviewQualitySchema = z.enum(['strong', 'adequate', 'weak', 'missing']);
+const CostSignalSchema = z.enum(['available', 'partial', 'missing']);
+const OperatorInspectabilitySchema = z.enum(['high', 'medium', 'low']);
+const ProcessVerdictSchema = z.enum(['pass', 'process-incomplete', 'fail-open-warning']);
+
+const ProviderComparisonMetricsSchema = z.object({
+  processPassRate: z.number(),
+  emptySuccessRate: z.number(),
+  processIncompleteRate: z.number(),
+  reviewQuality: ReviewQualitySchema,
+  costSignal: CostSignalSchema,
+  hookRejections: z.number(),
+  operatorInspectability: OperatorInspectabilitySchema,
+}).strict();
+
+export const ProviderComparisonScenarioSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().min(1),
+  phaseProviders: PhaseProviderRecordSchema,
+}).strict();
+
+export const ProviderComparisonResultSchema = z.object({
+  scenarioId: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().min(1),
+  phaseProviders: PhaseProviderRecordSchema,
+  processVerdict: ProcessVerdictSchema,
+  failureClass: z.string().nullable(),
+  metrics: ProviderComparisonMetricsSchema,
+  validation: z.object({
+    ok: z.boolean(),
+    violations: z.array(z.object({
+      phase: z.enum(PHASES),
+      provider: z.enum(['claude', 'codex', 'provider-independent']),
+      reason: z.string(),
+    }).strict()),
+  }).strict(),
+  notes: z.array(z.string()),
+}).strict();
+
+const ProviderStrategyRecommendationSchema = z.object({
+  scenarioId: z.string().min(1),
+  label: z.string().min(1),
+  reason: z.string().min(1),
+  score: z.number(),
+}).strict();
+
+export const ProviderComparisonArtifactSchema = z.object({
+  version: z.literal(1),
+  batchId: z.string().min(1),
+  scenario: z.string().min(1),
+  generatedAt: z.string().min(1),
+  recommendation: ProviderStrategyRecommendationSchema,
+  results: z.array(ProviderComparisonResultSchema),
+}).strict();
 
 export interface ProviderComparisonScenario {
   id: string;
@@ -356,34 +415,13 @@ export function buildProviderComparisonArtifact(input: {
   };
 }
 
-function assertArtifactShape(value: unknown): asserts value is ProviderComparisonArtifact {
-  if (!value || typeof value !== 'object') throw new Error('comparison artifact must be an object');
-  const artifact = value as Partial<ProviderComparisonArtifact>;
-  if (artifact.version !== 1) throw new Error('comparison artifact version must be 1');
-  if (typeof artifact.batchId !== 'string') throw new Error('comparison artifact batchId must be a string');
-  if (typeof artifact.scenario !== 'string') throw new Error('comparison artifact scenario must be a string');
-  if (!Array.isArray(artifact.results)) throw new Error('comparison artifact results must be an array');
-  for (const result of artifact.results as Partial<ProviderComparisonResult>[]) {
-    if (typeof result.scenarioId !== 'string') throw new Error('comparison result scenarioId must be a string');
-    if (!result.phaseProviders || typeof result.phaseProviders !== 'object') {
-      throw new Error(`${result.scenarioId}: phaseProviders must be an object`);
-    }
-    if (!result.metrics || typeof result.metrics !== 'object') {
-      throw new Error(`${result.scenarioId}: metrics must be an object`);
-    }
-    if (typeof result.processVerdict !== 'string') {
-      throw new Error(`${result.scenarioId}: processVerdict must be a string`);
-    }
-    if (!('failureClass' in result)) {
-      throw new Error(`${result.scenarioId}: failureClass must be present`);
-    }
-  }
-}
-
 export function parseProviderComparisonArtifact(raw: string): ProviderComparisonArtifact {
   const parsed = JSON.parse(raw);
-  assertArtifactShape(parsed);
-  return parsed;
+  const result = ProviderComparisonArtifactSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(`invalid provider comparison artifact: ${result.error.message}`);
+  }
+  return result.data;
 }
 
 export function writeProviderComparisonArtifact(
