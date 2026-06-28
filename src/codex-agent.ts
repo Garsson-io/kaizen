@@ -58,8 +58,18 @@ export function isCodexTerminalEvent(event: unknown): boolean {
   );
 }
 
+export function isCodexFailedTerminalEvent(event: unknown): boolean {
+  if (!event || typeof event !== 'object') return false;
+  const type = String((event as Record<string, unknown>).type ?? '').toLowerCase();
+  return type === 'turn.failed';
+}
+
 export function hasCodexTerminalEvent(parsed: ParsedCodexJsonl): boolean {
   return parsed.events.some(isCodexTerminalEvent);
+}
+
+export function hasCodexFailedTerminalEvent(parsed: ParsedCodexJsonl): boolean {
+  return parsed.events.some(isCodexFailedTerminalEvent);
 }
 
 function textFrom(value: unknown): string {

@@ -1739,6 +1739,11 @@ describe('BatchState provider field (#1144)', () => {
     expect(normalizeCodexRunExitCode(0, 0, false)).toBe(1);
     expect(normalizeCodexRunExitCode(3, 0, false)).toBe(3);
   });
+
+  it('fails Codex runs that end with a failed terminal turn (#1580)', () => {
+    expect(normalizeCodexRunExitCode(0, 0, true, true)).toBe(1);
+    expect(normalizeCodexRunExitCode(3, 0, true, true)).toBe(3);
+  });
 });
 
 describe('cleanGuidanceForTitle', () => {

@@ -453,6 +453,22 @@ describe('checkFixResult (integration: real temp files)', () => {
       expect(r.success).toBe(false);
     } finally { teardown(); }
   });
+
+  it('marks completed Codex fix logs with failed turns as unsuccessful', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      const lines = [
+        JSON.stringify({ item: { type: 'agent_message', text: 'looks fixed' } }),
+        JSON.stringify({ type: 'turn.failed', error: { message: 'usage limit' } }),
+      ];
+      writeFileSync(logFile, lines.join('\n') + '\n');
+      const r = checkFixResult(logFile, DEAD_PID, { provider: 'codex', billing: 'subscription-cli' });
+      expect(r.done).toBe(true);
+      expect(r.success).toBe(false);
+      expect(r.output).toContain('looks fixed');
+    } finally { teardown(); }
+  });
 });
 
 // ── stateKey ─────────────────────────────────────────────────────────

@@ -27,6 +27,7 @@ import {
 } from './auto-dent-run.js';
 import {
   buildCodexExecArgs,
+  isCodexFailedTerminalEvent,
   isCodexTerminalEvent,
   normalizeCodexEventToStreamMessages,
 } from './auto-dent-codex.js';
@@ -231,8 +232,9 @@ export function normalizeLiveProbeExitCode(
   exitCode: number,
   malformedJsonlLines: number,
   hasTerminalEvent = true,
+  hasFailedTerminalEvent = false,
 ): number {
-  if (provider === 'codex' && (malformedJsonlLines > 0 || !hasTerminalEvent) && exitCode === 0) return 1;
+  if (provider === 'codex' && (malformedJsonlLines > 0 || !hasTerminalEvent || hasFailedTerminalEvent) && exitCode === 0) return 1;
   return exitCode;
 }
 
@@ -255,6 +257,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
   const command = buildLiveProbeCommand({ provider, prompt, cwd, maxBudget, extraArgs });
   let malformedJsonlLines = 0;
   let hasTerminalEvent = provider !== 'codex';
+  let hasFailedTerminalEvent = false;
 
   // Save the raw log for replay/debugging
   const tmpDir = mkdtempSync(join(tmpdir(), 'auto-dent-probe-'));
@@ -291,6 +294,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
       try {
         if (provider === 'codex') {
           if (isCodexTerminalEvent(parsed)) hasTerminalEvent = true;
+          if (isCodexFailedTerminalEvent(parsed)) hasFailedTerminalEvent = true;
           for (const streamMessage of normalizeCodexEventToStreamMessages(parsed)) {
             processStreamMessage(streamMessage, result, start, ctx);
           }
@@ -324,7 +328,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
         phases: extractPhasesFromLog(logLines),
         rawMessages,
         durationMs,
-        exitCode: normalizeLiveProbeExitCode(provider, providerExitCode, malformedJsonlLines, hasTerminalEvent),
+        exitCode: normalizeLiveProbeExitCode(provider, providerExitCode, malformedJsonlLines, hasTerminalEvent, hasFailedTerminalEvent),
       });
     });
 

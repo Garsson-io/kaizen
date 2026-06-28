@@ -28,6 +28,10 @@ function codexResultPayload(text: string): string {
   return JSON.stringify({ type: 'result', final_message: text }) + '\n';
 }
 
+function codexFailedTurnPayload(message = 'usage limit'): string {
+  return JSON.stringify({ type: 'turn.failed', error: { message } }) + '\n';
+}
+
 function mockClaude(stdout: string, stderr = '', exitCode = 0): void {
   vi.mocked(spawn).mockImplementation(() => {
     const proc = new EventEmitter() as any;
@@ -235,6 +239,25 @@ describe('spawnAgent provider adapter', () => {
     expect(result.text).toBe(reviewJson);
     expect(result.exitCode).toBe(-1);
     expect(result.rawStderr).toContain('missing codex terminal event');
+  });
+
+  it('fails Codex JSONL when the terminal turn failed after parseable agent text', async () => {
+    const reviewJson = JSON.stringify({
+      dimension: 'requirements',
+      summary: 'ok',
+      findings: [],
+    });
+    const raw = codexJsonlPayload(reviewJson) + codexFailedTurnPayload();
+    mockClaude(raw);
+
+    const result = await spawnAgent('review this', {
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      cwd: '/repo/kaizen',
+    });
+
+    expect(result.text).toBe(reviewJson);
+    expect(result.exitCode).toBe(-1);
+    expect(result.rawStderr).toContain('codex turn failed');
   });
 
   it('resolves spawn errors as failed agent results instead of hanging', async () => {

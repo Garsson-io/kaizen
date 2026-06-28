@@ -165,6 +165,7 @@ import { degradedRunLogBanner, unknownHookActivationVerdict, type HookActivation
 import {
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
+  hasCodexFailedTerminalEvent,
   hasCodexTerminalEvent,
   normalizeCodexEventToStreamMessages,
   normalizeCodexFinalTextToStreamMessages,
@@ -1692,8 +1693,13 @@ interface ProviderRunResult {
   promptMeta: PromptMetadata;
 }
 
-export function normalizeCodexRunExitCode(exitCode: number, malformedLineCount: number, hasTerminalEvent = true): number {
-  if ((malformedLineCount > 0 || !hasTerminalEvent) && exitCode === 0) return 1;
+export function normalizeCodexRunExitCode(
+  exitCode: number,
+  malformedLineCount: number,
+  hasTerminalEvent = true,
+  hasFailedTerminalEvent = false,
+): number {
+  if ((malformedLineCount > 0 || !hasTerminalEvent || hasFailedTerminalEvent) && exitCode === 0) return 1;
   return exitCode;
 }
 
@@ -1793,7 +1799,12 @@ async function runCodex(
 
       const duration = Math.floor((Date.now() - runStart) / 1000);
       resolvePromise({
-        exitCode: normalizeCodexRunExitCode(exitCode, parsed.malformedLines.length, hasCodexTerminalEvent(parsed)),
+        exitCode: normalizeCodexRunExitCode(
+          exitCode,
+          parsed.malformedLines.length,
+          hasCodexTerminalEvent(parsed),
+          hasCodexFailedTerminalEvent(parsed),
+        ),
         duration,
         result: input.result,
         mode: input.mode,

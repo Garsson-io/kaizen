@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   buildCodexExecArgs,
+  hasCodexFailedTerminalEvent,
   hasCodexTerminalEvent,
+  isCodexFailedTerminalEvent,
   isCodexTerminalEvent,
   parseCodexJsonl,
   extractCodexPhaseMarkers,
@@ -113,6 +115,9 @@ describe('parseCodexJsonl (#1144)', () => {
     expect(isCodexTerminalEvent({ type: 'turn.completed' })).toBe(true);
     expect(isCodexTerminalEvent({ type: 'turn.failed', error: { message: 'usage limit' } })).toBe(true);
     expect(isCodexTerminalEvent({ type: 'item.completed', item: { type: 'agent_message', text: 'working' } })).toBe(false);
+    expect(isCodexFailedTerminalEvent({ type: 'turn.failed', error: { message: 'usage limit' } })).toBe(true);
+    expect(isCodexFailedTerminalEvent({ type: 'turn.completed' })).toBe(false);
+    expect(hasCodexFailedTerminalEvent(parseCodexJsonl(JSON.stringify({ type: 'turn.failed' })))).toBe(true);
   });
 
   it('recovers AUTO_DENT_PHASE markers from parsed Codex text', () => {

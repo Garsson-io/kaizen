@@ -5,7 +5,9 @@
 export {
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
+  hasCodexFailedTerminalEvent,
   hasCodexTerminalEvent,
+  isCodexFailedTerminalEvent,
   isCodexTerminalEvent,
   normalizeCodexEventToStreamMessages,
   normalizeCodexFinalTextToStreamMessages,

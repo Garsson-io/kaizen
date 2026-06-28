@@ -40,7 +40,7 @@ import { addSection, writeAttachment } from '../src/section-editor.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 import { readJsonValueFile, writeJsonObjectFile } from '../src/lib/json-file.js';
 import { ghExec } from './auto-dent-github.js';
-import { buildCodexExecArgs, hasCodexTerminalEvent, parseCodexJsonl } from './auto-dent-codex.js';
+import { buildCodexExecArgs, hasCodexFailedTerminalEvent, hasCodexTerminalEvent, parseCodexJsonl } from './auto-dent-codex.js';
 import {
   PROVIDER_CAPABILITIES,
   validateProviderPlan,
@@ -607,6 +607,7 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
   if (provider.provider === 'codex') {
     const parsedCodex = parseCodexJsonl(stdout);
     const hasTerminalEvent = hasCodexTerminalEvent(parsedCodex);
+    const hasFailedTerminalEvent = hasCodexFailedTerminalEvent(parsedCodex);
     const output = parsedCodex.finalText || parsedCodex.text;
     if (running && !hasTerminalEvent) {
       return { done: false, success: false, costUsd: 0, output: '' };
@@ -614,7 +615,7 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
     if (hasTerminalEvent) {
       return {
         done: true,
-        success: parsedCodex.malformedLines.length === 0,
+        success: parsedCodex.malformedLines.length === 0 && !hasFailedTerminalEvent,
         costUsd: 0,
         output,
       };

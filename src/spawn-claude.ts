@@ -11,7 +11,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { buildCodexExecArgs, hasCodexTerminalEvent, parseCodexJsonl } from './codex-agent.js';
+import { buildCodexExecArgs, hasCodexFailedTerminalEvent, hasCodexTerminalEvent, parseCodexJsonl } from './codex-agent.js';
 import { parseJsonLines } from './lib/json-lines.js';
 
 interface StreamJsonContentBlock {
@@ -217,7 +217,7 @@ function parseClaudeStreamResult(stdout: string): { text: string; costUsd: numbe
   return { text, costUsd };
 }
 
-function parseAgentResult(provider: SpawnAgentProvider['provider'], stdout: string): { text: string; costUsd: number; malformedLines: string[]; hasTerminalEvent: boolean } {
+function parseAgentResult(provider: SpawnAgentProvider['provider'], stdout: string): { text: string; costUsd: number; malformedLines: string[]; hasTerminalEvent: boolean; hasFailedTerminalEvent: boolean } {
   if (provider === 'codex') {
     const parsed = parseCodexJsonl(stdout);
     return {
@@ -225,9 +225,10 @@ function parseAgentResult(provider: SpawnAgentProvider['provider'], stdout: stri
       costUsd: 0,
       malformedLines: parsed.malformedLines,
       hasTerminalEvent: hasCodexTerminalEvent(parsed),
+      hasFailedTerminalEvent: hasCodexFailedTerminalEvent(parsed),
     };
   }
-  return { ...parseClaudeStreamResult(stdout), malformedLines: [], hasTerminalEvent: true };
+  return { ...parseClaudeStreamResult(stdout), malformedLines: [], hasTerminalEvent: true, hasFailedTerminalEvent: false };
 }
 
 /**
@@ -280,10 +281,11 @@ export const spawnAgent: SpawnClaudeFn = (prompt, opts) => {
       settled = true;
       clearTimeout(timer);
       const durationMs = Date.now() - start;
-      const { text, costUsd, malformedLines, hasTerminalEvent } = parseAgentResult(provider, stdout);
+      const { text, costUsd, malformedLines, hasTerminalEvent, hasFailedTerminalEvent } = parseAgentResult(provider, stdout);
       const codexFailureNotes = [
         ...(malformedLines.length > 0 ? [`malformed codex jsonl lines: ${malformedLines.length}`] : []),
         ...(provider === 'codex' && !hasTerminalEvent ? ['missing codex terminal event'] : []),
+        ...(provider === 'codex' && hasFailedTerminalEvent ? ['codex turn failed'] : []),
       ];
       const normalizedStderr = codexFailureNotes.length > 0
         ? `${stderr}${stderr ? '\n' : ''}${codexFailureNotes.join('\n')}`

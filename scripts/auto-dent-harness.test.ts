@@ -226,6 +226,12 @@ describe('replay: edge cases', () => {
     expect(normalizeLiveProbeExitCode('codex', 2, 0, false)).toBe(2);
     expect(normalizeLiveProbeExitCode('claude', 0, 0, false)).toBe(0);
   });
+
+  it('fails Codex live probes that end with a failed terminal turn (#1580)', () => {
+    expect(normalizeLiveProbeExitCode('codex', 0, 0, true, true)).toBe(1);
+    expect(normalizeLiveProbeExitCode('codex', 2, 0, true, true)).toBe(2);
+    expect(normalizeLiveProbeExitCode('claude', 0, 0, true, true)).toBe(0);
+  });
 });
 
 // Synthetic stream tests — verify phase marker extraction
