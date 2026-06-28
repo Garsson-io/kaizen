@@ -76,6 +76,7 @@ export type PrQueryResult = BranchPrQueryResult;
 export interface PrePushOptions extends HookTraceOptions {
   stateDir?: string;
   queryPrState?: (repo: string, branch: string) => PrQueryResult;
+  currentBranch?: string;
   now?: () => number;
 }
 
@@ -84,6 +85,7 @@ export interface PrePushOptions extends HookTraceOptions {
 export const AGENT_ENV_VARS = [
   'CLAUDECODE',
   'CLAUDE_PROJECT_DIR',
+  'CODEX_CI',
   'CODEX_SESSION',
   'KAIZEN_SESSION',
 ] as const;
@@ -343,7 +345,7 @@ export function processPrePush(
   }
 
   const refs = parseStdin(rawStdin);
-  const branch = getCurrentBranch();
+  const branch = options.currentBranch ?? getCurrentBranch();
   const repo = detectRepo();
   const pushOptions = readPushOptions(env);
   const stateDir = options.stateDir ?? DEFAULT_STATE_DIR;

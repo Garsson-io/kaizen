@@ -66,6 +66,20 @@ fi
 rm -f "$TRACE_FILE"
 
 echo ""
+echo "=== With CODEX_CI=1 → also dispatches (Codex tool-call env, #1536) ==="
+TRACE_FILE="/tmp/.kaizen-pre-push-wrapper-test-$$.jsonl"
+rm -f "$TRACE_FILE"
+CODEX_CI=1 KAIZEN_HOOK_TRACE="$TRACE_FILE" bash "$WRAPPER" < /dev/null > /dev/null 2>&1
+if [ -f "$TRACE_FILE" ] && grep -q '"hook":"pre-push"' "$TRACE_FILE"; then
+  echo "  PASS: CODEX_CI triggers TS dispatch"
+  ((PASS++))
+else
+  echo "  FAIL: CODEX_CI did not trigger dispatch"
+  ((FAIL++))
+fi
+rm -f "$TRACE_FILE"
+
+echo ""
 echo "=== With CODEX_SESSION=1 → also dispatches (agent env var allowlist) ==="
 TRACE_FILE="/tmp/.kaizen-pre-push-wrapper-test-$$.jsonl"
 rm -f "$TRACE_FILE"

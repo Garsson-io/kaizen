@@ -15,6 +15,7 @@ set -eu
 # Exit silently for human-driven git operations. Only AI-agent sessions
 # invoke kaizen's review gate. See epic #1059 "agent-only gating".
 if [ -z "${CLAUDECODE:-}" ] && [ -z "${CLAUDE_PROJECT_DIR:-}" ] \
+   && [ -z "${CODEX_CI:-}" ] \
    && [ -z "${CODEX_SESSION:-}" ] && [ -z "${KAIZEN_SESSION:-}" ]; then
   exit 0
 fi

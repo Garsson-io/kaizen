@@ -67,7 +67,8 @@ The hook runs **only for AI-agent sessions**. Gate at the top of the shell wrapp
 
 ```bash
 if [ -z "$CLAUDECODE" ] && [ -z "$CLAUDE_PROJECT_DIR" ] \
-   && [ -z "$CODEX_SESSION" ] && [ -z "$KAIZEN_SESSION" ]; then
+   && [ -z "$CODEX_CI" ] && [ -z "$CODEX_SESSION" ] \
+   && [ -z "$KAIZEN_SESSION" ]; then
   exit 0
 fi
 ```
@@ -78,7 +79,7 @@ fi
 - **Defuses host-project framework conflicts** — if a chained host hook fails for a human, kaizen isn't in the stack to confuse the error.
 - **Simplifies debugging** — one audience (agents) means one set of failure modes.
 
-**Verified**: Claude Code sets `CLAUDECODE=1`, `CLAUDE_CODE_ENTRYPOINT=cli`, `CLAUDE_CODE_EXECPATH=...` in the environment of every Bash tool call. These propagate into git hooks invoked from tool-call subshells, with no additional setup.
+**Verified**: Claude Code sets `CLAUDECODE=1`, `CLAUDE_CODE_ENTRYPOINT=cli`, `CLAUDE_CODE_EXECPATH=...` in the environment of every Bash tool call. Codex tool-call environments set `CODEX_CI=1`; some Codex/kaizen harnesses may set `CODEX_SESSION` or `KAIZEN_SESSION`. These propagate into git hooks invoked from tool-call subshells, with no additional setup.
 
 **Bypass paths** (deliberate, not accidental):
 - `git push --no-verify` — skips all hooks. Flagged as a policy violation at the Claude Code `PreToolUse` layer (see `.claude/hooks/kaizen-prehook-no-verify.sh`).
