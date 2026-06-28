@@ -19,6 +19,7 @@ import path from 'path';
 import YAML from 'yaml';
 
 import { parseExperimentSpec } from './experiment-spec-parser.js';
+import { parseYamlFrontmatter } from './lib/frontmatter.js';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
 
 // --- Types ---
@@ -76,20 +77,19 @@ export function parseFrontmatter(content: string): {
   frontmatter: ExperimentFrontmatter;
   body: string;
 } {
-  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) {
+  // Route through the shared body-preserving, CRLF-aware frontmatter helper
+  // (src/lib/frontmatter.ts, #1367) instead of a local split regex (#1368).
+  const parsed = parseYamlFrontmatter<Partial<ExperimentFrontmatter>>(content);
+  if (!parsed) {
     throw new Error('Invalid experiment file: no YAML frontmatter found');
   }
 
-  const parsed = YAML.parse(match[1]);
-  const body = match[2];
-
   return {
     frontmatter: {
-      ...parsed,
-      measurements: parsed.measurements ?? [],
+      ...parsed.data,
+      measurements: parsed.data.measurements ?? [],
     } as ExperimentFrontmatter,
-    body,
+    body: parsed.body,
   };
 }
 
