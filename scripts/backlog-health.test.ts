@@ -6,8 +6,10 @@ import {
   computeEpicProgress,
   buildBacklogHealthReport,
   classifyBacklogHealth,
+  formatBacklogHealthSection,
   formatReport,
   parseArgs,
+  runBacklogHealthMaintenance,
   type OpenIssue,
   type ClosedIssue,
   type CreatedIssue,
@@ -316,6 +318,105 @@ describe('formatReport', () => {
     expect(text).toContain('epic progress');
     expect(text).toContain('#20 needs-replan');
     expect(text).toContain('Partially landed epic');
+  });
+});
+
+describe('formatBacklogHealthSection', () => {
+  function reportForSection(): ReturnType<typeof buildBacklogHealthReport> {
+    return buildBacklogHealthReport(
+      [
+        open({ number: 1, updatedAt: daysAgo(5), labels: ['horizon/a'] }),
+        open({ number: 2, updatedAt: daysAgo(100), labels: [] }),
+      ],
+      [
+        { number: 1, createdAt: daysAgo(5) },
+        { number: 2, createdAt: daysAgo(6) },
+      ],
+      [{ number: 3, closedAt: daysAgo(7) }],
+      NOW,
+      30,
+      'owner/repo',
+    );
+  }
+
+  it.each(['healthy', 'warning', 'pathological'] as const)(
+    'renders a compact markdown section for %s verdicts',
+    (verdict) => {
+      const text = formatBacklogHealthSection(reportForSection(), verdict);
+
+      expect(text).toContain('### Backlog Health');
+      expect(text).toContain(verdict.toUpperCase());
+      expect(text).toContain('2 created / 1 closed = 2.00:1');
+      expect(text).toContain('>30d 1');
+      expect(text).toContain('1 distinct');
+      expect(text).toContain('1 unlabeled');
+    },
+  );
+});
+
+describe('runBacklogHealthMaintenance', () => {
+  it('fetches, classifies, formats, and posts the backlog-health section', () => {
+    const calls: string[][] = [];
+    const res = runBacklogHealthMaintenance({
+      repo: 'owner/repo',
+      progressIssue: '999',
+      windowDays: 30,
+      now: NOW,
+      fetchOpenIssues: () => [
+        open({ number: 1, updatedAt: daysAgo(5), labels: ['horizon/a'] }),
+      ],
+      fetchCreatedInWindow: () => [{ number: 1, createdAt: daysAgo(5) }],
+      fetchClosedInWindow: () => [{ number: 2, closedAt: daysAgo(5) }],
+      gh: (args) => {
+        calls.push(args);
+        return '';
+      },
+    });
+
+    expect(res.commentPosted).toBe(true);
+    expect(res.verdict).toBe('healthy');
+    expect(res.section).toContain('### Backlog Health');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(expect.arrayContaining(['issue', 'comment', '999', '--repo', 'owner/repo', '--body']));
+    expect(calls[0].join('\n')).toContain('Backlog Health');
+  });
+
+  it('never throws when the fetch path fails', () => {
+    const errors: string[] = [];
+
+    const res = runBacklogHealthMaintenance({
+      repo: 'owner/repo',
+      progressIssue: '999',
+      fetchOpenIssues: () => {
+        throw new Error('fetch failed');
+      },
+      err: (message) => errors.push(message),
+    });
+
+    expect(res).toEqual({ report: null, verdict: null, section: '', commentPosted: false });
+    expect(errors.join('\n')).toContain('backlog-health scan failed');
+  });
+
+  it('never throws when posting the comment fails', () => {
+    const errors: string[] = [];
+
+    const res = runBacklogHealthMaintenance({
+      repo: 'owner/repo',
+      progressIssue: '999',
+      windowDays: 30,
+      now: NOW,
+      fetchOpenIssues: () => [open({ number: 1, updatedAt: daysAgo(5), labels: ['horizon/a'] })],
+      fetchCreatedInWindow: () => [{ number: 1, createdAt: daysAgo(5) }],
+      fetchClosedInWindow: () => [{ number: 2, closedAt: daysAgo(5) }],
+      gh: () => {
+        throw new Error('comment failed');
+      },
+      err: (message) => errors.push(message),
+    });
+
+    expect(res.commentPosted).toBe(false);
+    expect(res.section).toContain('### Backlog Health');
+    expect(errors.join('\n')).toContain('failed to post backlog-health report');
   });
 });
 
