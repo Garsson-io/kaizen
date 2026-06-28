@@ -11,12 +11,16 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  computeHookActivationCounts,
   degradedRunLogBanner,
   evaluateHookActivation,
   extractInitPlugins,
   formatHookActivationBanner,
+  formatHookActivationDistribution,
+  hookActivationStatus,
   pluginsIncludeKaizen,
   providerClaimsHookSupport,
+  unknownHookActivationVerdict,
 } from './auto-dent-hook-activation.js';
 import { KAIZEN_PLUGIN_NAME, KAIZEN_PLUGIN_SOURCE } from '../src/kaizen-plugin-identity.js';
 
@@ -139,6 +143,13 @@ describe('formatHookActivationBanner', () => {
     expect(banner).toMatch(/#843/);
   });
 
+  it('unknown verdict produces a loud banner referencing #1501', () => {
+    const v = unknownHookActivationVerdict('claude', 'no system.init observed');
+    const banner = formatHookActivationBanner(v);
+    expect(banner).toMatch(/HOOK ENFORCEMENT UNKNOWN/);
+    expect(banner).toMatch(/#1501/);
+  });
+
   it('active verdict produces a quiet confirmation, no alarm', () => {
     const v = evaluateHookActivation({
       provider: 'claude',
@@ -147,6 +158,68 @@ describe('formatHookActivationBanner', () => {
     const banner = formatHookActivationBanner(v);
     expect(banner).not.toMatch(/DEGRADED/);
     expect(banner).toMatch(/active/i);
+  });
+});
+
+describe('hook activation status helpers (#1501)', () => {
+  it('classifies absent init evidence as unknown for Claude and not_expected for Codex', () => {
+    expect(unknownHookActivationVerdict('claude', 'no system.init observed')).toMatchObject({
+      provider: 'claude',
+      status: 'unknown',
+      expected: true,
+      active: false,
+      degraded: true,
+    });
+    expect(unknownHookActivationVerdict('codex', 'no system.init observed')).toMatchObject({
+      provider: 'codex',
+      status: 'not_expected',
+      expected: false,
+      active: false,
+      degraded: false,
+    });
+  });
+
+  it('derives status for legacy verdicts without a status field', () => {
+    expect(hookActivationStatus({
+      provider: 'claude',
+      expected: true,
+      active: true,
+      degraded: false,
+      observedPlugins: ['kaizen'],
+      message: 'legacy active',
+    } as any)).toBe('active');
+    expect(hookActivationStatus({
+      provider: 'claude',
+      expected: true,
+      active: false,
+      degraded: true,
+      observedPlugins: [],
+      message: 'legacy degraded',
+    } as any)).toBe('degraded');
+    expect(hookActivationStatus({
+      provider: 'codex',
+      expected: false,
+      active: false,
+      degraded: false,
+      observedPlugins: [],
+      message: 'legacy not expected',
+    } as any)).toBe('not_expected');
+  });
+
+  it('computes and formats distribution counts once for all batch consumers', () => {
+    const counts = computeHookActivationCounts(['active', 'degraded', 'unknown', 'not_expected', undefined]);
+
+    expect(counts).toEqual({
+      distribution: {
+        active: 1,
+        degraded: 1,
+        unknown: 1,
+        not_expected: 1,
+      },
+      degradedCount: 2,
+    });
+    expect(formatHookActivationDistribution(counts.distribution!)).toBe('active:1, degraded:1, unknown:1, not_expected:1');
+    expect(computeHookActivationCounts([undefined])).toEqual({});
   });
 });
 

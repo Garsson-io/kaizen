@@ -220,5 +220,6 @@ export function formatHookActivationBanner(verdict: HookActivationVerdict): stri
  * unit-testable rather than buried in `main()` (#843).
  */
 export function degradedRunLogBanner(verdict: HookActivationVerdict | undefined): string | null {
-  return verdict?.degraded ? formatHookActivationBanner(verdict) : null;
+  const status = hookActivationStatus(verdict);
+  return verdict && (status === 'degraded' || status === 'unknown') ? formatHookActivationBanner(verdict) : null;
 }

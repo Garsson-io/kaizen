@@ -3646,6 +3646,15 @@ describe('auto-merge verdict binding wiring (#1220)', () => {
     expect(derivationIndex).toBeLessThan(decisionIndex);
   });
 
+  it('emits hook_activation on run.complete from the normalized run metrics (#1501)', () => {
+    const runCompleteBlock = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf("type: 'run.complete'"),
+      AUTO_DENT_RUN_SOURCE.indexOf("type: 'run.complete'") + 1400,
+    );
+
+    expect(runCompleteBlock).toContain('hook_activation: runMetricsForOutcome.hook_activation');
+  });
+
   it('stream → verdict → gate: a degraded claude run is blocked from auto-merge end-to-end', () => {
     // Build a REAL degraded verdict by replaying a captured plugins:[] system.init
     // through the production stream processor (the same path main() uses), then feed
