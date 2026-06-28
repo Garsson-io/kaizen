@@ -116,6 +116,40 @@ describe('autoCloseKaizenIssues — gh-exec argv migration', () => {
     }
   });
 
+  it('host mode closes issues in the configured issues repo (#1309)', () => {
+    const hostPrUrl = 'https://github.com/acme/widgets/pull/9';
+    const ghRun = vi.fn((args: string[]) => {
+      if (args[0] === 'pr' && args.includes('state')) return 'MERGED';
+      if (args[0] === 'pr' && args.includes('body'))
+        return 'Closes acme/widgets#42';
+      if (args[0] === 'issue' && args[1] === 'view') return 'OPEN';
+      return '';
+    });
+
+    autoCloseKaizenIssues(hostPrUrl, ghRun, { issueRepo: 'acme/widgets' });
+
+    expect(ghRun).toHaveBeenCalledWith([
+      'issue',
+      'view',
+      '42',
+      '--repo',
+      'acme/widgets',
+      '--json',
+      'state',
+      '--jq',
+      '.state',
+    ]);
+    expect(ghRun).toHaveBeenCalledWith([
+      'issue',
+      'close',
+      '42',
+      '--repo',
+      'acme/widgets',
+      '--comment',
+      `Auto-closed: PR merged (${hostPrUrl})`,
+    ]);
+  });
+
   it('does not close an issue that is already CLOSED', () => {
     const ghRun = makeGhRun('CLOSED');
     autoCloseKaizenIssues(PR_URL, ghRun);
