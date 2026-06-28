@@ -92,6 +92,25 @@ describe('review sentinel contract', () => {
     expect(result.reason).toBe('invalid_findingCount');
   });
 
+  it('rejects a sentinel whose stored findings still include MISSING items', () => {
+    const record = buildReviewSentinelRecord({
+      prUrl: PR_URL,
+      round: 1,
+      dimensionsReviewed: expectedPrReviewDimensions(),
+      findingCount: 12,
+      totalDone: 11,
+      totalMissing: 1,
+    });
+
+    const result = validateReviewSentinel(serializeReviewSentinel(record), {
+      prUrl: PR_URL,
+      round: 1,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('review_findings_missing:1');
+  });
+
   it('throws for malformed PR URLs before building a sentinel', () => {
     expect(() =>
       buildReviewSentinelRecord({
