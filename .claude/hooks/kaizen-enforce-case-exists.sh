@@ -19,9 +19,10 @@
 
 source "$(dirname "$0")/lib/allowlist.sh" 2>/dev/null || { exit 0; }
 source "$(dirname "$0")/lib/read-config.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || { exit 0; }
 
-INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+read_hook_input
+get_file_path
 
 # If no file path, allow
 if [ -z "$FILE_PATH" ]; then

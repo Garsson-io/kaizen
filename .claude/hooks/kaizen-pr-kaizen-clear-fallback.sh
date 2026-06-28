@@ -14,6 +14,7 @@
 # from state-utils.ts. See kaizen #790 gap fix.
 
 source "$(dirname "$0")/lib/resolve-kaizen-dir.sh" 2>/dev/null || exit 0
+source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || exit 0
 
 # Use pre-compiled TS version if available (no tsx overhead)
 JS_PATH="$KAIZEN_DIR/dist/hooks/pr-kaizen-clear-fallback.js"
@@ -22,15 +23,12 @@ if [ -f "$JS_PATH" ]; then
 fi
 
 # Bash fallback when dist isn't built (CI, fresh checkout, pre-build)
-INPUT=$(cat)
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
-[ "$TOOL_NAME" = "Bash" ] || exit 0
-
-EXIT_CODE=$(echo "$INPUT" | jq -r '.tool_response.exit_code // "0"' 2>/dev/null)
-[ "$EXIT_CODE" = "0" ] || exit 0
-
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
-STDOUT=$(echo "$INPUT" | jq -r '.tool_response.stdout // empty' 2>/dev/null)
+read_hook_input
+require_tool_bash
+get_exit_code
+require_success
+get_command
+get_stdout
 
 if ! echo "$COMMAND$STDOUT" | grep -qE 'KAIZEN_IMPEDIMENTS:|KAIZEN_NO_ACTION'; then
   exit 0

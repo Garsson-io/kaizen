@@ -21,9 +21,10 @@
 # Runs as PreToolUse hook on Edit and Write tool calls.
 
 source "$(dirname "$0")/lib/allowlist.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || { exit 0; }
 
-INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+read_hook_input
+get_file_path
 
 # If no file path, allow (shouldn't happen for Edit/Write)
 if [ -z "$FILE_PATH" ]; then

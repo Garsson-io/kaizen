@@ -15,9 +15,10 @@
 # Advisory gives the agent information to make a good decision.
 
 source "$(dirname "$0")/lib/parse-command.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || { exit 0; }
 
-INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+read_hook_input
+get_command
 
 if [ -z "$COMMAND" ]; then
   exit 0

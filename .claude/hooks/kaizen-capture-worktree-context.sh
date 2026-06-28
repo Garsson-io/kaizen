@@ -11,17 +11,16 @@
 # Always exits 0 — advisory, not blocking.
 
 source "$(dirname "$0")/lib/parse-command.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || { exit 0; }
 
-INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-STDOUT=$(echo "$INPUT" | jq -r '.tool_response.stdout // empty')
-STDERR=$(echo "$INPUT" | jq -r '.tool_response.stderr // empty')
-EXIT_CODE=$(echo "$INPUT" | jq -r '.tool_response.exit_code // "0"')
+read_hook_input
+get_command
+get_stdout
+get_stderr
+get_exit_code
 
 # Only trigger on successful commands
-if [ "$EXIT_CODE" != "0" ]; then
-  exit 0
-fi
+require_success
 
 source "$(dirname "$0")/lib/scope-guard.sh"
 source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true

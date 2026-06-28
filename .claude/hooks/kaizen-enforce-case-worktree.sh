@@ -7,8 +7,10 @@
 # Runs as PreToolUse hook on Bash tool calls.
 # Always exits 0 (advisory only — never blocks).
 
-INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || { exit 0; }
+
+read_hook_input
+get_command
 
 # Only check git commit and git push commands
 if ! echo "$COMMAND" | grep -qE '^\s*git\s+(commit|push)'; then
