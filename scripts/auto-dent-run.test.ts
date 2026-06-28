@@ -38,6 +38,7 @@ import {
   weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
+  checkpointRunState,
   readState,
   writeState,
   color,
@@ -3525,6 +3526,81 @@ describe('formatBatchFooter', () => {
     const state = makeBatchState({ run: 0, prs: [], run_history: [] });
     const output = formatBatchFooter(state);
     expect(output).not.toContain('Modes:');
+  });
+});
+
+describe('run state checkpointing', () => {
+  it('checkpoints run identity and heartbeat before provider work finishes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-checkpoint-start-'));
+    const stateFile = join(dir, 'state.json');
+    writeState(stateFile, makeBatchState({ run: 0, last_heartbeat: 0 }));
+
+    checkpointRunState(stateFile, { runNum: 1, heartbeatEpoch: 1742680900 });
+
+    const updated = readState(stateFile);
+    expect(updated.run).toBe(1);
+    expect(updated.last_heartbeat).toBe(1742680900);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('checkpoints assigned issue and observed artifacts idempotently for recovery', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-checkpoint-artifacts-'));
+    const stateFile = join(dir, 'state.json');
+    writeState(stateFile, makeBatchState({
+      run: 0,
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1'],
+      issues_filed: ['#10'],
+      issues_closed: [],
+      cases: [],
+    }));
+    const result = makeRunResult({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1', 'https://github.com/Garsson-io/kaizen/pull/2'],
+      issuesFiled: ['#10', '#11'],
+      issuesClosed: ['https://github.com/Garsson-io/kaizen/issues/12'],
+      cases: ['260629-k1591-run-state-heartbeat'],
+    });
+
+    checkpointRunState(stateFile, {
+      runNum: 1,
+      heartbeatEpoch: 1742680910,
+      pickedIssue: '#1591',
+      result,
+    });
+    checkpointRunState(stateFile, {
+      runNum: 1,
+      heartbeatEpoch: 1742680920,
+      pickedIssue: '#1591',
+      result,
+    });
+
+    const updated = readState(stateFile);
+    expect(updated.run).toBe(1);
+    expect(updated.last_heartbeat).toBe(1742680920);
+    expect(updated.prs).toEqual([
+      'https://github.com/Garsson-io/kaizen/pull/1',
+      'https://github.com/Garsson-io/kaizen/pull/2',
+    ]);
+    expect(updated.issues_filed).toEqual(['#10', '#11']);
+    expect(updated.issues_closed).toEqual(['https://github.com/Garsson-io/kaizen/issues/12']);
+    expect(updated.cases).toEqual(['260629-k1591-run-state-heartbeat']);
+    expect(updated.last_issue).toBe('https://github.com/Garsson-io/kaizen/issues/12');
+    expect(updated.last_pr).toBe('https://github.com/Garsson-io/kaizen/pull/2');
+    expect(updated.last_case).toBe('260629-k1591-run-state-heartbeat');
+    expect(updated.last_branch).toBe('case/260629-k1591-run-state-heartbeat');
+    expect(updated.last_worktree).toBe('.claude/worktrees/260629-k1591-run-state-heartbeat');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('starts live state heartbeat around runClaude instead of inside a provider-only branch', () => {
+    const mainStart = AUTO_DENT_RUN_SOURCE.indexOf('async function main()');
+    const runClaudeStart = AUTO_DENT_RUN_SOURCE.indexOf('async function runClaude(');
+    const runClaudeEnd = AUTO_DENT_RUN_SOURCE.indexOf('// Main', runClaudeStart);
+    const mainSection = AUTO_DENT_RUN_SOURCE.slice(mainStart);
+    const runClaudeSection = AUTO_DENT_RUN_SOURCE.slice(runClaudeStart, runClaudeEnd);
+
+    expect(mainSection).toContain('startRunStateHeartbeat(stateFile, runNum');
+    expect(mainSection).toContain('runHeartbeat.stop()');
+    expect(runClaudeSection).not.toContain('s.last_heartbeat = Math.floor(Date.now() / 1000)');
   });
 });
 

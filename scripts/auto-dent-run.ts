@@ -699,6 +699,106 @@ export function writeState(stateFile: string, state: BatchState): void {
   writeDurableJsonValueFile(stateFile, state, { backup: true });
 }
 
+export interface RunStateCheckpointInput {
+  runNum: number;
+  heartbeatEpoch?: number;
+  pickedIssue?: string;
+  result?: Pick<RunResult, 'prs' | 'issuesFiled' | 'issuesClosed' | 'cases'>;
+}
+
+function appendUnique(items: string[], additions: string[]): void {
+  for (const item of additions) {
+    if (!items.includes(item)) items.push(item);
+  }
+}
+
+function mergeRunArtifactsIntoState(
+  state: BatchState,
+  result?: Pick<RunResult, 'prs' | 'issuesFiled' | 'issuesClosed' | 'cases'>,
+): void {
+  if (!result) return;
+
+  appendUnique(state.prs, result.prs);
+  appendUnique(state.issues_filed, result.issuesFiled);
+  appendUnique(state.issues_closed, result.issuesClosed);
+  appendUnique(state.cases, result.cases);
+
+  if (result.prs.length > 0) {
+    state.last_pr = result.prs[result.prs.length - 1];
+  }
+  if (result.issuesFiled.length > 0) {
+    state.last_issue = result.issuesFiled[result.issuesFiled.length - 1];
+  }
+  if (result.issuesClosed.length > 0) {
+    state.last_issue = result.issuesClosed[result.issuesClosed.length - 1];
+  }
+  if (result.cases.length > 0) {
+    const lastCase = result.cases[result.cases.length - 1];
+    state.last_case = lastCase;
+    state.last_branch = `case/${lastCase}`;
+    state.last_worktree = `.claude/worktrees/${lastCase}`;
+  }
+}
+
+function runProgressCheckpointSignature(result: RunResult): string {
+  return JSON.stringify([
+    result.pickedIssue || '',
+    result.prs,
+    result.issuesFiled,
+    result.issuesClosed,
+    result.cases,
+  ]);
+}
+
+function checkpointRunProgressIfChanged(
+  stateFile: string,
+  runNum: number,
+  result: RunResult,
+  checkpoint: { signature: string },
+): void {
+  const signature = runProgressCheckpointSignature(result);
+  if (signature === checkpoint.signature) return;
+  checkpoint.signature = signature;
+  checkpointRunState(stateFile, {
+    runNum,
+    pickedIssue: result.pickedIssue,
+    result,
+  });
+}
+
+export function checkpointRunState(
+  stateFile: string,
+  input: RunStateCheckpointInput,
+): BatchState {
+  const state = readState(stateFile);
+  state.run = Math.max(state.run || 0, input.runNum);
+  state.last_heartbeat = input.heartbeatEpoch ?? Math.floor(Date.now() / 1000);
+  if (input.pickedIssue) {
+    state.last_issue = input.pickedIssue;
+  }
+  mergeRunArtifactsIntoState(state, input.result);
+  writeState(stateFile, state);
+  return state;
+}
+
+export function startRunStateHeartbeat(
+  stateFile: string,
+  runNum: number,
+  intervalMs = 30_000,
+): { stop(): void } {
+  checkpointRunState(stateFile, { runNum });
+  const interval = setInterval(() => {
+    try {
+      checkpointRunState(stateFile, { runNum });
+    } catch {
+      // A transient state write failure must not kill provider work.
+    }
+  }, intervalMs);
+  return {
+    stop: () => clearInterval(interval),
+  };
+}
+
 // Resolve repo root
 
 function getRepoRoot(): string {
@@ -2096,6 +2196,7 @@ async function runCodex(
   return new Promise((resolvePromise) => {
     let processExited = false;
     let raw = '';
+    const progressCheckpoint = { signature: runProgressCheckpointSignature(input.result) };
     const ctx: StreamContext = { provider: 'codex' };
     const child = spawn('codex', buildCodexExecArgs(input.repoRoot), {
       cwd: input.repoRoot,
@@ -2127,6 +2228,7 @@ async function runCodex(
         for (const streamMessage of normalizeCodexEventToStreamMessages(event)) {
           processStreamMessage(streamMessage, input.result, runStart, ctx);
         }
+        checkpointRunProgressIfChanged(input.stateFile, input.runNum, input.result, progressCheckpoint);
       } catch {
         // Raw JSONL remains durable; a malformed display row should not hide run completion.
       }
@@ -2145,6 +2247,7 @@ async function runCodex(
         for (const streamMessage of normalizeCodexFinalTextToStreamMessages(parsed.finalText)) {
           processStreamMessage(streamMessage, input.result, runStart, ctx);
         }
+        checkpointRunProgressIfChanged(input.stateFile, input.runNum, input.result, progressCheckpoint);
       }
 
       appendFileSync(input.logFile, `\n--- codex final text ---\n${parsed.finalText || parsed.text}\n`);
@@ -2222,6 +2325,7 @@ async function runClaude(
   if (state.test_task && !result.pickedIssue) {
     result.pickedIssue = 'not applicable';
     result.pickedIssueTitle = 'synthetic test task';
+    checkpointRunState(stateFile, { runNum, pickedIssue: result.pickedIssue });
   }
   if (promptMeta.claimedPlanIssue && !result.pickedIssue) {
     result.pickedIssue = promptMeta.claimedPlanIssue;
@@ -2240,6 +2344,7 @@ async function runClaude(
       detail: `batch plan item ${promptMeta.claimedPlanIssue}`,
       url: formatIssueUrl(promptMeta.claimedPlanIssue, state.kaizen_repo || state.host_repo || ''),
     });
+    checkpointRunState(stateFile, { runNum, pickedIssue: promptMeta.claimedPlanIssue });
   }
 
   // Save rendered prompt for observability (#602)
@@ -2302,6 +2407,7 @@ async function runClaude(
 
   return new Promise((resolvePromise) => {
     let processExited = false;
+    const progressCheckpoint = { signature: runProgressCheckpointSignature(result) };
 
     const child = spawn('claude', args, {
       cwd: repoRoot,
@@ -2321,17 +2427,6 @@ async function runClaude(
       const silence = Math.floor((Date.now() - lastOutputTime) / 1000);
       if (silence >= 55) {
         console.log(formatHeartbeat(runStart, result.toolCalls, ctx));
-      }
-    }, 60_000);
-
-    // Liveness marker: update state.json periodically (#357)
-    const livenessInterval = setInterval(() => {
-      try {
-        const s = readState(stateFile);
-        s.last_heartbeat = Math.floor(Date.now() / 1000);
-        writeState(stateFile, s);
-      } catch {
-        // State file write failure is non-fatal
       }
     }, 60_000);
 
@@ -2386,6 +2481,7 @@ async function runClaude(
 
       try {
         processStreamMessage(msg, result, runStart, ctx);
+        checkpointRunProgressIfChanged(stateFile, runNum, result, progressCheckpoint);
 
         // Start post-result kill timer when result is received
         if (msg.type === 'result' && !postResultTimer) {
@@ -2419,7 +2515,7 @@ async function runClaude(
 
     child.on('close', (code) => {
       processExited = true;
-      cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
+      cleanup(heartbeatInterval, inFlightInterval, wallTimer, postResultTimer);
       const duration = Math.floor((Date.now() - runStart) / 1000);
       if (candidateManifestPath) {
         attachCandidateTaskManifest(result, candidateManifestPath);
@@ -2429,7 +2525,7 @@ async function runClaude(
 
     child.on('error', (err) => {
       processExited = true;
-      cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
+      cleanup(heartbeatInterval, inFlightInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
       if (candidateManifestPath) {
@@ -2816,13 +2912,20 @@ async function main(): Promise<void> {
 
   const runStartEpoch = Math.floor(Date.now() / 1000);
   const runStartDate = new Date();
-  const { exitCode, duration, result, mode: runMode, modeReason: runModeReason, bandit: runBandit, promptMeta } = await runClaude(
-    state,
-    runNum,
-    logFile,
-    repoRoot,
-    stateFile,
-  );
+  const runHeartbeat = startRunStateHeartbeat(stateFile, runNum);
+  let runOutput: Awaited<ReturnType<typeof runClaude>>;
+  try {
+    runOutput = await runClaude(
+      state,
+      runNum,
+      logFile,
+      repoRoot,
+      stateFile,
+    );
+  } finally {
+    runHeartbeat.stop();
+  }
+  const { exitCode, duration, result, mode: runMode, modeReason: runModeReason, bandit: runBandit, promptMeta } = runOutput;
   const runId = makeRunId(state.batch_id, runNum);
   if (!result.hookActivation) {
     result.hookActivation = unknownHookActivationVerdict(
@@ -3452,24 +3555,10 @@ async function main(): Promise<void> {
   }
   if (!freshState.run_history) freshState.run_history = [];
   freshState.run_history.push(runMetrics);
-
-  for (const pr of result.prs) {
-    if (!freshState.prs.includes(pr)) freshState.prs.push(pr);
-  }
-  for (const issue of result.issuesFiled) {
-    if (!freshState.issues_filed.includes(issue))
-      freshState.issues_filed.push(issue);
-  }
-  for (const closed of result.issuesClosed) {
-    if (!freshState.issues_closed.includes(closed))
-      freshState.issues_closed.push(closed);
-  }
-  for (const closed of verifiedClosedThisBatch) {
-    if (!freshState.issues_closed.includes(closed))
-      freshState.issues_closed.push(closed);
-  }
-  for (const caseName of result.cases) {
-    if (!freshState.cases.includes(caseName)) freshState.cases.push(caseName);
+  mergeRunArtifactsIntoState(freshState, result);
+  appendUnique(freshState.issues_closed, verifiedClosedThisBatch);
+  if (verifiedClosedThisBatch.length > 0 && result.issuesClosed.length === 0) {
+    freshState.last_issue = verifiedClosedThisBatch[verifiedClosedThisBatch.length - 1];
   }
 
   // Store contemplation recommendations in batch state (#631)
@@ -3513,21 +3602,6 @@ async function main(): Promise<void> {
       freshState.reflection_insights.push(workflowRepairPrompt);
       console.log(`  ${color.yellow('[workflow-repair]')} targeted evidence repair queued for next run`);
     }
-  }
-
-  if (result.prs.length > 0) {
-    freshState.last_pr = result.prs[result.prs.length - 1];
-  }
-  if (result.issuesFiled.length > 0) {
-    freshState.last_issue = result.issuesFiled[result.issuesFiled.length - 1];
-  } else if (result.issuesClosed.length > 0) {
-    freshState.last_issue = result.issuesClosed[result.issuesClosed.length - 1];
-  }
-  if (result.cases.length > 0) {
-    const lastCase = result.cases[result.cases.length - 1];
-    freshState.last_case = lastCase;
-    freshState.last_branch = `case/${lastCase}`;
-    freshState.last_worktree = `.claude/worktrees/${lastCase}`;
   }
 
   const hasPrs = result.prs.length > 0;
