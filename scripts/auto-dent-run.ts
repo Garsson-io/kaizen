@@ -192,6 +192,8 @@ import {
   defaultRescueDeps,
 } from './auto-dent-rescue.js';
 import { createDefaultGitExec } from '../src/hooks/lib/git-state.js';
+import { runStalePrTriageMaintenance } from './stale-pr-triage.js';
+import { gh as ghArgs } from '../src/lib/gh-exec.js';
 
 // Types
 
@@ -1504,6 +1506,36 @@ export function closeBatchProgressIssue(
     } catch (err) {
       console.log(`  [intelligence] batch-artifacts upload skipped: ${(err as Error).message}`);
     }
+  }
+
+  // Pre-existing-PR graveyard maintenance (#1365, follow-up to #1159/PR #1363):
+  // run the stale-PR triage once per batch, sibling to the rescue finalizer's
+  // current-run-strand pass. Posts the grouped report to the progress issue and,
+  // unless opted out, closes the deliberately-safe `close-superseded` set (every
+  // `Closes #N` already CLOSED, fail-open). Best-effort and self-guarding — a
+  // failure here must never block the batch close below.
+  try {
+    const apply = process.env.KAIZEN_NO_STALE_PR_APPLY !== '1';
+    const staleDaysRaw = parseInt(process.env.KAIZEN_STALE_PR_DAYS ?? '', 10);
+    const staleDays = Number.isFinite(staleDaysRaw) && staleDaysRaw >= 0 ? staleDaysRaw : 21;
+    const result = runStalePrTriageMaintenance({
+      gh: ghArgs,
+      nowMs: Date.now(),
+      repo: kaizenRepo,
+      staleDays,
+      limit: 100,
+      apply,
+      progressIssue: m[1],
+      log: (msg) => console.log(`  [stale-pr] ${msg}`),
+      err: (msg) => console.log(`  [stale-pr] ${msg}`),
+    });
+    const closed = result.applied?.closed.length ?? 0;
+    console.log(
+      `  [stale-pr] triaged ${result.rows.length} open PR(s)` +
+        (apply ? `, closed ${closed} superseded` : ' (report-only)'),
+    );
+  } catch (err) {
+    console.log(`  [stale-pr] triage maintenance skipped: ${(err as Error).message}`);
   }
 
   ghExec(`gh issue close ${m[1]} --repo ${kaizenRepo} --reason completed`);
