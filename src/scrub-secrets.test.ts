@@ -85,6 +85,22 @@ describe('scrubSecrets', () => {
     expect(twice).toBe(once);
   });
 
+  it('scrubs a large blob in linear time (no catastrophic backtracking / ReDoS)', () => {
+    // A 200KB run of word chars with no secret used to make the KV pattern
+    // backtrack catastrophically (a 60KB blob alone could exceed a 10s test
+    // timeout under coverage). Bounded quantifiers keep it linear.
+    const huge = JSON.stringify({ batch_id: 'x', blob: 'x'.repeat(200_000) });
+    const start = Date.now();
+    const { text } = scrubSecrets(huge);
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(text).toBe(huge); // nothing secret-shaped → unchanged
+  });
+
+  it('still redacts a key longer than the bound is not required, but typical keys redact', () => {
+    // Keys up to the bound still match; the bound only caps pathological lengths.
+    expect(scrubSecrets('MY_SERVICE_CLIENT_SECRET=abc123').text).toContain(REDACTED);
+  });
+
   it('fails closed on non-string input (never passes raw through)', () => {
     for (const bad of [undefined, null, 42, {}, []]) {
       const r = scrubSecrets(bad as unknown);

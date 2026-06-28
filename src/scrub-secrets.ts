@@ -50,7 +50,9 @@ const KV_PATTERNS: RegExp[] = [
   // URL userinfo password: scheme://user:<password>@host  (DSNs, git remotes).
   // Keep scheme+user; redact the password. `@host` is a lookahead so the generic
   // single-group replacer (keeps group 1, redacts the rest) preserves the host.
-  /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)[^\s@/]+(?=@)/gi,
+  // The scheme/user quantifiers are BOUNDED — an unbounded `[a-z0-9+.-]*` over a
+  // long word-char run backtracks catastrophically (ReDoS) hunting for `://`.
+  /([a-z][a-z0-9+.-]{0,30}:\/\/[^\s:@/]{1,256}:)[^\s@/]+(?=@)/gi,
   // Authorization: <scheme token>  /  "authorization": "<token>"
   // Consume the WHOLE header value (e.g. `Bearer <token>`), not just the scheme word.
   /(["']?[Aa]uthorization["']?\s*[:=]\s*)["']?[^\n"',}]{6,}/g,
@@ -58,7 +60,10 @@ const KV_PATTERNS: RegExp[] = [
   /(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/g,
   // FOO_API_KEY=...  /  "client_secret": "..."  /  PASSWORD=...
   // Value runs to end-of-line / JSON delimiter so spaces in the value don't leak.
-  /(["']?[\w.-]*(?:API_?KEY|APIKEY|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE_KEY|ACCESS_KEY|CLIENT_SECRET|CREDENTIALS?)[\w.-]*["']?\s*[:=]\s*)["']?[^\n"',}]+/gi,
+  // The key-prefix/suffix quantifiers are BOUNDED ({0,64}) — an unbounded `[\w.-]*`
+  // around the keyword backtracks catastrophically on a long word-char run (e.g. a
+  // 60KB blob), a ReDoS on untrusted transcript content. Real secret keys are short.
+  /(["']?[\w.-]{0,64}(?:API_?KEY|APIKEY|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE_KEY|ACCESS_KEY|CLIENT_SECRET|CREDENTIALS?)[\w.-]{0,64}["']?\s*[:=]\s*)["']?[^\n"',}]+/gi,
 ];
 
 /**
