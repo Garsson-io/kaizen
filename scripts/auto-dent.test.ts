@@ -2,11 +2,23 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { EventEmitter } from 'events';
 import {
   parseAutoDentArgs,
   createInitialState,
+  buildAutoDentResumeCommand,
+  buildTsxScriptArgs,
   readStateKey,
   updateStateKey,
+  loadResumeBatch,
+  isOuterHarnessReloadPath,
+  listChangedFilesBetween,
+  maybeHotReloadOuterHarness,
+  pullMainForSelfUpdate,
+  runPreRunSelfUpdate,
+  shouldHotReloadOuterHarness,
+  shouldRunPlanningPrepass,
+  startAutoDentResume,
   checkHaltFile,
   checkBudget,
   stopDecision,
@@ -31,6 +43,7 @@ const baseOpts: AutoDentOptions = {
   experiment: false,
   noPlan: false,
   provider: 'claude',
+  resumeStateFile: '',
   guidance: 'focus on hooks',
 };
 
@@ -73,6 +86,12 @@ function tempState(state: BatchState = makeState()): { dir: string; stateFile: s
   const stateFile = join(dir, 'state.json');
   writeState(stateFile, state);
   return { dir, stateFile };
+}
+
+function fakeChild(): EventEmitter & { unref: ReturnType<typeof vi.fn> } {
+  const child = new EventEmitter() as EventEmitter & { unref: ReturnType<typeof vi.fn> };
+  child.unref = vi.fn();
+  return child;
 }
 
 describe('parseAutoDentArgs', () => {
@@ -119,6 +138,16 @@ describe('parseAutoDentArgs', () => {
     const opts = parseAutoDentArgs(['--provider', 'codex', '--test-task']);
     expect(opts.provider).toBe('codex');
     expect(opts.testTask).toBe(true);
+  });
+
+  it('accepts resume mode without guidance', () => {
+    const opts = parseAutoDentArgs(['--resume', '/tmp/state.json']);
+    expect(opts.resumeStateFile).toBe('/tmp/state.json');
+    expect(opts.guidance).toBe('');
+  });
+
+  it('requires a state file for resume mode', () => {
+    expect(() => parseAutoDentArgs(['--resume'])).toThrow('Missing value for --resume');
   });
 
   it('rejects unknown options', () => {
@@ -200,6 +229,243 @@ describe('state helpers', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('loads resume batches from the existing durable state file', () => {
+    const { dir, stateFile } = tempState(makeState({
+      batch_id: 'existing-batch',
+      run: 7,
+      progress_issue: '1495',
+    }));
+    try {
+      const resumed = loadResumeBatch(stateFile);
+
+      expect(resumed.stateFile).toBe(stateFile);
+      expect(resumed.logDir).toBe(dir);
+      expect(resumed.haltFile).toBe(join(dir, 'HALT'));
+      expect(resumed.state.batch_id).toBe('existing-batch');
+      expect(resumed.state.run).toBe(7);
+      expect(readState(stateFile).batch_id).toBe('existing-batch');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not rerun planning when bootstrapping from resume state', () => {
+    expect(shouldRunPlanningPrepass({ resumeStateFile: '/tmp/state.json', testTask: false, noPlan: false })).toBe(false);
+    expect(shouldRunPlanningPrepass({ resumeStateFile: '', testTask: true, noPlan: false })).toBe(false);
+    expect(shouldRunPlanningPrepass({ resumeStateFile: '', testTask: false, noPlan: true })).toBe(false);
+    expect(shouldRunPlanningPrepass({ resumeStateFile: '', testTask: false, noPlan: false })).toBe(true);
+  });
+});
+
+describe('outer harness hot reload', () => {
+  it('centralizes npx tsx script command construction', () => {
+    expect(buildTsxScriptArgs('/repo/scripts', 'auto-dent-run.ts', '/tmp/state.json')).toEqual([
+      'tsx',
+      '/repo/scripts/auto-dent-run.ts',
+      '/tmp/state.json',
+    ]);
+  });
+
+  it('builds the auto-dent resume handoff command', () => {
+    expect(buildAutoDentResumeCommand('/repo/scripts', '/tmp/state.json')).toEqual({
+      command: 'npx',
+      args: ['tsx', '/repo/scripts/auto-dent.ts', '--resume', '/tmp/state.json'],
+    });
+  });
+
+  it('matches outer-harness contract paths without matching unrelated files', () => {
+    expect(isOuterHarnessReloadPath('scripts/auto-dent.ts')).toBe(true);
+    expect(isOuterHarnessReloadPath('scripts/auto-dent-run.ts')).toBe(true);
+    expect(isOuterHarnessReloadPath('src/lib/json-file.ts')).toBe(true);
+    expect(isOuterHarnessReloadPath('scripts\\auto-dent.ts')).toBe(true);
+    expect(isOuterHarnessReloadPath('docs/auto-dent-operations.md')).toBe(false);
+    expect(isOuterHarnessReloadPath('src/hooks/pre-push.ts')).toBe(false);
+  });
+
+  it('restarts only after a successful pull changes an outer harness contract path', () => {
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: ['scripts/auto-dent.ts'],
+    })).toBe(true);
+
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: ['docs/auto-dent-operations.md'],
+    })).toBe(false);
+
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 1,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: ['scripts/auto-dent.ts'],
+    })).toBe(false);
+
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'aaa',
+      changedFiles: ['scripts/auto-dent.ts'],
+    })).toBe(false);
+
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'unknown',
+      afterHead: 'bbb',
+      changedFiles: ['scripts/auto-dent.ts'],
+    })).toBe(false);
+
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: [],
+      changedFilesKnown: false,
+    })).toBe(true);
+  });
+
+  it('propagates changed-file detection failures instead of hiding them as no-op pulls', () => {
+    let headReads = 0;
+    const update = pullMainForSelfUpdate('/repo', {
+      captureCommand: () => (++headReads === 1 ? 'aaa' : 'bbb'),
+      pullMain: () => ({ status: 0, stdout: 'updated' }),
+      listChangedFiles: () => ({ ok: false, files: [], error: 'diff failed' }),
+    });
+
+    expect(update).toMatchObject({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: [],
+      changedFilesKnown: false,
+      changeDetectionError: 'diff failed',
+    });
+  });
+
+  it('returns an explicit changed-file failure when git diff cannot list files', () => {
+    const result = listChangedFilesBetween('/not/a/repo', 'aaa', 'bbb');
+    expect(result.ok).toBe(false);
+    expect(result.files).toEqual([]);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('waits for a spawned replacement before reporting handoff success', async () => {
+    const child = fakeChild();
+    const result = startAutoDentResume('/repo/scripts', '/tmp/state.json', {
+      scriptExists: () => true,
+      spawnProcess: () => {
+        process.nextTick(() => child.emit('spawn'));
+        return child as never;
+      },
+      log: () => {},
+    });
+
+    await expect(result).resolves.toBe(true);
+    expect(child.unref).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the old process alive when replacement spawn fails asynchronously', async () => {
+    const child = fakeChild();
+    const lines: string[] = [];
+    const result = startAutoDentResume('/repo/scripts', '/tmp/state.json', {
+      scriptExists: () => true,
+      spawnProcess: () => {
+        process.nextTick(() => child.emit('error', new Error('ENOENT')));
+        return child as never;
+      },
+      log: (line) => lines.push(line),
+    });
+
+    await expect(result).resolves.toBe(false);
+    expect(child.unref).not.toHaveBeenCalled();
+    expect(lines.join('\n')).toContain('ENOENT');
+  });
+
+  it('hot-reloads conservatively when changed-file detection fails after a moved HEAD', async () => {
+    const child = fakeChild();
+    const lines: string[] = [];
+
+    const result = await maybeHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: [],
+      changedFilesKnown: false,
+      changeDetectionError: 'diff failed',
+      stdout: '',
+    }, '/repo/scripts', '/tmp/state.json', {
+      scriptExists: () => true,
+      spawnProcess: () => {
+        process.nextTick(() => child.emit('spawn'));
+        return child as never;
+      },
+      log: (line) => lines.push(line),
+    });
+
+    expect(result).toBe(true);
+    expect(lines.join('\n')).toContain('hot-reloading conservatively');
+    expect(lines.join('\n')).toContain('unknown files');
+  });
+
+  it('tells the outer loop to return before next-run work after a successful hot reload handoff', async () => {
+    const child = fakeChild();
+    const events: string[] = [];
+
+    const handedOff = await runPreRunSelfUpdate('/repo', '/repo/scripts', '/tmp/state.json', true, {
+      pullSelfUpdate: () => ({
+        pullStatus: 0,
+        beforeHead: 'aaa111',
+        afterHead: 'bbb222',
+        changedFiles: ['scripts/auto-dent.ts'],
+        changedFilesKnown: true,
+        stdout: 'updated\n',
+      }),
+      scriptExists: () => true,
+      spawnProcess: () => {
+        process.nextTick(() => child.emit('spawn'));
+        return child as never;
+      },
+      writeStdout: (text) => events.push(`stdout:${text.trim()}`),
+      log: (line) => events.push(line),
+    });
+    if (handedOff) {
+      events.push('old-loop-returned');
+    } else {
+      events.push('next-run-work');
+    }
+
+    expect(handedOff).toBe(true);
+    expect(events).toContain('old-loop-returned');
+    expect(events).not.toContain('next-run-work');
+    expect(events.join('\n')).toContain('Outer harness changed: scripts/auto-dent.ts');
+  });
+
+  it('continues old-loop work when hot reload handoff fails', async () => {
+    const child = fakeChild();
+    const handedOff = await runPreRunSelfUpdate('/repo', '/repo/scripts', '/tmp/state.json', false, {
+      pullSelfUpdate: () => ({
+        pullStatus: 0,
+        beforeHead: 'aaa',
+        afterHead: 'bbb',
+        changedFiles: ['scripts/auto-dent.ts'],
+        changedFilesKnown: true,
+        stdout: '',
+      }),
+      scriptExists: () => true,
+      spawnProcess: () => {
+        process.nextTick(() => child.emit('error', new Error('ENOENT')));
+        return child as never;
+      },
+      writeStdout: () => {},
+      log: () => {},
+    });
+
+    expect(handedOff).toBe(false);
   });
 });
 

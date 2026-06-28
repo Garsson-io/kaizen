@@ -8,7 +8,7 @@ The auto-dent system is kaizen's autonomous batch runner. It picks issues from t
 auto-dent.sh (compatibility wrapper)
   │
   └── auto-dent.ts (TypeScript batch runner)
-        ├── pulls main between runs (self-update)
+        ├── pulls main between runs (self-update + outer-loop hot reload)
         ├── manages state.json (cross-run persistence)
         ├── enforces stop conditions (max runs, consecutive failures, halt file)
         └── auto-dent-run.ts (single-run TypeScript runner)
@@ -27,9 +27,19 @@ auto-dent-score.ts (scoring)
   └── per-run and per-batch quality scoring
 ```
 
-### Self-Update Mechanism
+### Self-Update And Hot Reload
 
-The batch runner (`auto-dent.ts`) runs `git pull --ff-only origin main` before each run. It invokes `auto-dent-run.ts` from the main checkout on every iteration, so merged PRs that improve the single-run runner take effect on the next run. `auto-dent.sh` remains only as the stable operator entrypoint.
+The batch runner (`auto-dent.ts`) runs `git pull --ff-only origin main` before each run. It invokes `auto-dent-run.ts` from the main checkout on every iteration, so merged PRs that improve the single-run runner take effect on the next run.
+
+When the successful pull changes an outer-harness contract file, the current outer process starts a replacement process:
+
+```bash
+npx tsx scripts/auto-dent.ts --resume logs/auto-dent/<batch-id>/state.json
+```
+
+The old process exits before cleanup, reflection, the next run, or final batch summary. The resumed process reads the same durable `state.json`, keeps the same halt file and progress issue, and continues with the current run count, budget, failure, and cooldown state. `auto-dent.sh` remains only as the stable operator entrypoint.
+
+The source of truth for reload-critical files is `OUTER_HARNESS_RELOAD_PATHS` in `scripts/auto-dent.ts`. When batch control, state persistence, command routing, progress/finalization, summary, or artifact logic moves into a new support file, add that file to the registry and cover it in `scripts/auto-dent.test.ts`.
 
 ### Cross-Run State
 
@@ -100,6 +110,7 @@ Key variables: `{{guidance}}`, `{{run_tag}}`, `{{run_context}}`, `{{issues_close
 | `--dry-run` | off | Show what would run |
 | `--test-task` | off | Use synthetic fast task |
 | `--experiment` | off | Enable extra pipeline diagnostics |
+| `--resume FILE` | off | Resume an existing batch from `state.json`; normally used by the self-update handoff |
 
 ## Monitoring a Running Batch
 
