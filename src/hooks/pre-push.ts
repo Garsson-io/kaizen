@@ -28,6 +28,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_STATE_DIR, ensureStateDir, prUrlToStateKey, readStateFile, writeStateFile } from './state-utils.js';
+import { currentHookBranch } from './lib/current-branch.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
 import { queryBranchPrState, type BranchPrQueryResult } from '../lib/github-pr.js';
@@ -231,7 +232,7 @@ export function detectRepo(): string {
 }
 
 export function getCurrentBranch(): string {
-  return gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], '');
+  return currentHookBranch({ fallback: '' });
 }
 
 /**
