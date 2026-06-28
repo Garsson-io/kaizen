@@ -122,6 +122,13 @@ describe('isGhPrCommand', () => {
     expect(isGhPrCommand(cmd, 'create')).toBe(true);
   });
 
+  it('word-bounds the subcommand so a longer one is not a prefix match (#1350)', () => {
+    // `gh pr difftool` must not match the `diff` subcommand.
+    expect(isGhPrCommand('gh pr difftool 42', 'diff')).toBe(false);
+    expect(isGhPrCommand('gh pr diff 42', 'diff')).toBe(true);
+    expect(isGhPrCommand('gh pr view 42', 'diff|view|comment|edit')).toBe(true);
+  });
+
   it('detects gh pr create when backslash-continued across lines (#1013)', () => {
     const cmd = `export PATH="/x"\ngh pr create \\\n  --repo R \\\n  --title x`;
     expect(isGhPrCommand(cmd, 'create')).toBe(true);
@@ -152,6 +159,38 @@ describe('isGitCommand', () => {
     expect(
       isGitCommand('export PATH=/x\ngit push -u origin main', 'push'),
     ).toBe(true);
+  });
+
+  // #1350: the alternation was unanchored, so every alternative after the first
+  // matched as a bare substring anywhere in the segment. Any command merely
+  // CONTAINING `log`/`show`/`status`/`branch`/`fetch` was treated as a readonly
+  // git command — a gate bypass.
+  describe('grouped + word-bounded alternation (#1350)', () => {
+    const READONLY = 'diff|log|show|status|branch|fetch';
+
+    it('does not match a non-git command that contains a subcommand substring', () => {
+      expect(isGitCommand('rm -rf branch-backups', READONLY)).toBe(false);
+      expect(isGitCommand('git push origin show', READONLY)).toBe(false);
+      expect(isGitCommand('docker rm show', READONLY)).toBe(false);
+      expect(isGitCommand('make deploy-log', READONLY)).toBe(false);
+      expect(isGitCommand('kubectl delete statefulset', READONLY)).toBe(false);
+    });
+
+    it('still matches every real git read-only subcommand', () => {
+      expect(isGitCommand('git diff', READONLY)).toBe(true);
+      expect(isGitCommand('git log --oneline', READONLY)).toBe(true);
+      expect(isGitCommand('git show HEAD', READONLY)).toBe(true);
+      expect(isGitCommand('git status', READONLY)).toBe(true);
+      expect(isGitCommand('git branch -a', READONLY)).toBe(true);
+      expect(isGitCommand('git fetch origin', READONLY)).toBe(true);
+      expect(isGitCommand('git -C /some/path show HEAD', READONLY)).toBe(true);
+    });
+
+    it('word-bounds so a longer subcommand is not matched as a prefix', () => {
+      // `git difftool` is interactive, not the readonly `diff`.
+      expect(isGitCommand('git difftool', 'diff')).toBe(false);
+      expect(isGitCommand('git diff', 'diff')).toBe(true);
+    });
   });
 });
 

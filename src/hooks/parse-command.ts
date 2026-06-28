@@ -63,7 +63,11 @@ export function splitCommandSegments(cmdLine: string): string[] {
  */
 export function isGhPrCommand(cmdLine: string, subcommand: string): boolean {
   const segments = splitCommandSegments(cmdLine);
-  const pattern = new RegExp(`^gh\\s+pr\\s+(${subcommand})`);
+  // The alternation MUST be grouped and word-bounded: a bare `${subcommand}`
+  // would (a) bind the `^gh\s+pr\s+` anchor only to the first alternative and
+  // (b) match a longer subcommand by prefix (e.g. `gh pr difftool` as `diff`).
+  // See isGitCommand for the full failure mode (#1350).
+  const pattern = new RegExp(`^gh\\s+pr\\s+(${subcommand})\\b`);
   return segments.some((seg) => pattern.test(seg));
 }
 
@@ -73,7 +77,15 @@ export function isGhPrCommand(cmdLine: string, subcommand: string): boolean {
  */
 export function isGitCommand(cmdLine: string, subcommand: string): boolean {
   const segments = splitCommandSegments(cmdLine);
-  const pattern = new RegExp(`^git\\s+(-C\\s+\\S+\\s+)?${subcommand}`);
+  // The alternation MUST be wrapped in a group, or `|` (lowest precedence)
+  // makes the `^git\s+(-C…)?` anchor bind only to the FIRST alternative and
+  // every later alternative becomes a bare, unanchored substring match. With
+  // subcommand='diff|log|show|status|branch|fetch' that classified
+  // `rm -rf branch-backups`, `git push origin show`, `docker rm show`, and
+  // `make deploy-log` as a readonly git command — a gate bypass (#1350). The
+  // trailing `\b` also stops a longer command (`git difftool`) from matching a
+  // bare subcommand (`diff`).
+  const pattern = new RegExp(`^git\\s+(-C\\s+\\S+\\s+)?(${subcommand})\\b`);
   return segments.some((seg) => pattern.test(seg));
 }
 

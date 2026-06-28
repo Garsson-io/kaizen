@@ -81,6 +81,19 @@ describe('isReadonlyMonitoringCommand', () => {
     expect(isReadonlyMonitoringCommand('git status | grep main')).toBe(true);
     expect(isReadonlyMonitoringCommand('cd .\ngit status')).toBe(true);
   });
+
+  // #1350: isGitCommand's alternation was unanchored, so a blocking command that
+  // merely CONTAINS a readonly subcommand substring (branch/log/show/status/...)
+  // was classified as a readonly git command and sailed through every gate.
+  it('does not allow a blocking command that merely contains a git subcommand substring (#1350)', () => {
+    expect(isReadonlyMonitoringCommand('rm -rf branch-backups')).toBe(false);
+    expect(isReadonlyMonitoringCommand('git push origin show')).toBe(false);
+    expect(isReadonlyMonitoringCommand('docker rm show')).toBe(false);
+    expect(isReadonlyMonitoringCommand('make deploy-log')).toBe(false);
+    // ...and the same blocking commands are rejected by the review/kaizen gates.
+    expect(isReviewCommand('rm -rf branch-backups')).toBe(false);
+    expect(isKaizenCommand('git push origin show')).toBe(false);
+  });
 });
 
 describe('isReviewCommand', () => {
