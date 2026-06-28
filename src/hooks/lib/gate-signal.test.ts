@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { formatHookOutput, parseHookOutput, parseHookOutputs, formatGateSignal, parseGateSignal, type HookOutput } from './gate-signal.js';
 
 describe('formatHookOutput', () => {
@@ -59,6 +61,14 @@ describe('formatHookOutput', () => {
 });
 
 describe('parseHookOutput', () => {
+  it('uses shared delimited YAML block parsing', () => {
+    const source = readFileSync(join(__dirname, 'gate-signal.ts'), 'utf8');
+
+    expect(source).not.toContain("text.match(/^---\\n");
+    expect(source).not.toContain('text.matchAll(/^---\\n');
+    expect(source).not.toContain('YAML.parse(match[1])');
+  });
+
   it('extracts from a YAML block at the start of text', () => {
     const text = `---\nhook: pr-review-loop\ntype: gate-set\ngate: needs_review\nreason: PR created\n---\n`;
     const parsed = parseHookOutput(text);
@@ -67,6 +77,13 @@ describe('parseHookOutput', () => {
 
   it('extracts from the middle of text (trailing content after ---)', () => {
     const text = `Some preamble\n---\nhook: pr-kaizen-clear\ntype: gate-clear\nreason: impediments filed\n---\nDone.\n`;
+    const parsed = parseHookOutput(text);
+    expect(parsed?.type).toBe('gate-clear');
+    expect(parsed?.reason).toBe('impediments filed');
+  });
+
+  it('extracts CRLF-delimited YAML blocks from mixed text', () => {
+    const text = `Some preamble\r\n---\r\nhook: pr-kaizen-clear\r\ntype: gate-clear\r\nreason: impediments filed\r\n---\r\nDone.\r\n`;
     const parsed = parseHookOutput(text);
     expect(parsed?.type).toBe('gate-clear');
     expect(parsed?.reason).toBe('impediments filed');

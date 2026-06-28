@@ -77,8 +77,6 @@ export function parseFrontmatter(content: string): {
   frontmatter: ExperimentFrontmatter;
   body: string;
 } {
-  // Route through the shared body-preserving, CRLF-aware frontmatter helper
-  // (src/lib/frontmatter.ts, #1367) instead of a local split regex (#1368).
   const parsed = parseYamlFrontmatter<Partial<ExperimentFrontmatter>>(content);
   if (!parsed) {
     throw new Error('Invalid experiment file: no YAML frontmatter found');

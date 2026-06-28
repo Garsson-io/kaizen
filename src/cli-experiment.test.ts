@@ -63,6 +63,11 @@ describe('cli-experiment argument parsing', () => {
 });
 
 describe('parseFrontmatter', () => {
+  // NOTE: the source-text invariant that #1369 inlined here (a two-substring
+  // `not.toContain` check) is superseded by the dedicated, categorical ratchet
+  // in cli-experiment-frontmatter-invariant.test.ts (#1368), which also catches
+  // non-anchored and `.split('---')` reintroductions. Kept DRY — one owner.
+
   test('parses experiment file with measurements', () => {
     const content = `---
 id: EXP-001
@@ -101,32 +106,29 @@ Some body text.
     expect(body).toContain('## Context');
   });
 
-  test('parses CRLF (\\r\\n) frontmatter delimiters through the shared helper', () => {
-    // The old local regex was `\n`-only and could not parse Windows-authored
-    // experiment files. Routing through the shared frontmatter helper (#1368)
-    // makes CRLF delimiters first-class.
-    const content =
-      '---\r\n' +
-      'id: EXP-009\r\n' +
-      'title: "crlf title"\r\n' +
-      'hypothesis: "crlf hypothesis"\r\n' +
-      'falsification: "crlf falsification"\r\n' +
-      'pattern: probe-and-observe\r\n' +
-      'status: pending\r\n' +
-      'issue: 1368\r\n' +
-      'created: 2026-06-28\r\n' +
-      'completed: null\r\n' +
-      'result: null\r\n' +
-      '---\r\n' +
-      '\r\n' +
-      '## Context\r\n';
+  test('parses CRLF experiment frontmatter and preserves body', () => {
+    const content = [
+      '---',
+      'id: EXP-002',
+      'title: crlf test',
+      'hypothesis: handles CRLF',
+      'falsification: CRLF parse fails',
+      'pattern: probe-and-observe',
+      'status: pending',
+      'issue: 388',
+      'created: 2026-03-21',
+      'completed: null',
+      'result: null',
+      '---',
+      '## Body',
+      '',
+    ].join('\r\n');
+
     const { frontmatter, body } = parseFrontmatter(content);
-    expect(frontmatter.id).toBe('EXP-009');
-    expect(frontmatter.title).toBe('crlf title');
-    expect(frontmatter.issue).toBe(1368);
-    // measurements omitted from the YAML → defaults to []
+
+    expect(frontmatter.id).toBe('EXP-002');
     expect(frontmatter.measurements).toEqual([]);
-    expect(body).toContain('## Context');
+    expect(body).toBe('## Body\r\n');
   });
 
   test('throws the missing-frontmatter error when no frontmatter is present', () => {
@@ -136,10 +138,11 @@ Some body text.
   });
 
   test('throws the missing-frontmatter error when delimiters wrap invalid YAML', () => {
-    // Behavior pinned after #1368: the shared helper catches a YAML parse
-    // failure (or a non-object scalar/array body) and returns null, so
+    // Behavior pinned after #1368/#1369: the shared helper catches a YAML
+    // parse failure (or a non-object scalar/array body) and returns null, so
     // parseFrontmatter surfaces the same missing-frontmatter error rather
-    // than leaking a raw YAMLParseError or spreading a junk scalar.
+    // than leaking a raw YAMLParseError or spreading a junk scalar. #1369
+    // introduced this behavior change but shipped no test for it.
     const malformed = '---\nfoo: [unclosed\n---\n\n## Body\n';
     expect(() => parseFrontmatter(malformed)).toThrow(
       'Invalid experiment file: no YAML frontmatter found',
