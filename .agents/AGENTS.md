@@ -85,6 +85,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 |-------|-------------|
 | `/kaizen-reflect` | Post-work reflection — classify impediments, file issues |
 | `/kaizen-do` | Goal-driven workflow driver — sets `/goal`, then drives one issue/task through the full kaizen gates |
+| `/kaizen-autodent` | inside-harness auto-dent — drives one eligible sub-issue at a time through `/kaizen-do` when hooks are unavailable or provider-specific |
 | `/kaizen-pick` | Select next issue from backlog |
 | `/kaizen-gaps` | Strategic analysis — tooling gaps, horizon concentration |
 | `/kaizen-evaluate` | Scope gate — evaluate issue before implementation |
@@ -111,6 +112,8 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 **PR bodies**: Always use `/kaizen-write-pr` when creating or editing PR descriptions. Never write a bare `gh pr create --body` with a few bullet points. The Story Spine narrative makes PRs reviewable without reading the diff.
 
 **Goal-driven workflow driver**: Use `/kaizen-do <issue|task>` when asked to work a ticket or task to completion. It starts by setting a literal `/goal` containing the ticket number/title/URL and then drives the existing kaizen gates: plan/test-plan, worktree/case, implementation/tests, related-area DRY/refactor, meet-reality proof, review/requirements/impact, reflection, PR/CI/merge/cleanup. Use `npx tsx scripts/kaizen-workflow-driver.ts status --issue <N> --repo "$ISSUES_REPO" --mode manual` for status calls instead of hand-rolling a checklist.
+
+**Inside-harness auto-dent**: Use `/kaizen-autodent <parent|sub-issue-list>` when hooks are absent, stale, provider-specific, or unavailable but a parent/umbrella issue still needs an auto-dent-style loop. It selects one eligible sub-issue at a time, delegates each selected issue to `/kaizen-do`, requires one scope-matched PR per sub-issue, and uses [`docs/workflow-gate-ledger.md`](../docs/workflow-gate-ledger.md) plus the workflow status CLI as the durable evidence contract. Do not close the parent epic from a child PR; use parent/refs linkage instead.
 
 **Structured data**: Use `npx tsx src/cli-structured-data.ts` as the primary interface for storing and retrieving structured data on PRs and issues. Key commands:
 - Reviews: `store-review-finding`, `store-review-summary`, `list-review-rounds`, `read-review-finding`

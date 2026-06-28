@@ -88,6 +88,26 @@ describe('kaizen-do workflow driver docs', () => {
   });
 });
 
+describe('kaizen-autodent inside-harness workflow docs', () => {
+  const agents = read('.agents/AGENTS.md');
+  const fragment = read('.agents/kaizen/instructions-fragment.md');
+  const readme = read('README.md');
+
+  it('lists /kaizen-autodent as the hook-independent inside-harness auto-dent skill', () => {
+    expect(agents).toContain('/kaizen-autodent');
+    expect(fragment).toContain('/kaizen-autodent');
+    expect(readme).toContain('/kaizen-autodent');
+    expect(agents).toContain('inside-harness auto-dent');
+  });
+
+  it('routes parent/sub-issue execution through /kaizen-do and the workflow ledger', () => {
+    expect(agents).toContain('one eligible sub-issue');
+    expect(agents).toContain('/kaizen-do');
+    expect(agents).toContain('docs/workflow-gate-ledger.md');
+    expect(readme).toContain('one eligible sub-issue at a time through /kaizen-do');
+  });
+});
+
 // ── kaizen-write-pr SKILL — Issue linkage (B17) ────────────────────
 
 describe('kaizen-write-pr SKILL — B17: Issue linkage section', () => {
