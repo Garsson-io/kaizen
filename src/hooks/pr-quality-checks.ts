@@ -18,10 +18,10 @@
  * Part of kAIzen Agent Control Flow — consolidation from #800
  */
 
-import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
+import { gitStdout } from './lib/git-state.js';
 import {
   isGhPrCommand,
   isGitCommand,
@@ -30,6 +30,7 @@ import {
 import { gh as runGh } from '../lib/gh-exec.js';
 
 type CommandType = 'pr_create' | 'pr_merge' | 'git_commit' | 'none';
+type GitRunner = (args: string[]) => string;
 
 export function detectCommandType(cmdLine: string): CommandType {
   if (isGhPrCommand(cmdLine, 'create')) return 'pr_create';
@@ -39,20 +40,14 @@ export function detectCommandType(cmdLine: string): CommandType {
 }
 
 interface RunnerOptions {
-  exec?: (cmd: string) => string;
+  git?: GitRunner;
   gh?: (args: string[]) => string;
   fileExists?: (path: string) => boolean;
   readFile?: (path: string) => string;
   hookDir?: string;
 }
 
-const defaultExec = (cmd: string): string => {
-  try {
-    return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-  } catch {
-    return '';
-  }
-};
+const defaultGit: GitRunner = (args) => gitStdout(args);
 
 const defaultGh = (args: string[]): string => {
   try {
@@ -66,7 +61,7 @@ const defaultGh = (args: string[]): string => {
 export function getChangedFiles(
   cmdLine: string,
   isMerge: boolean,
-  exec: (cmd: string) => string,
+  git: GitRunner = defaultGit,
   gh: (args: string[]) => string = defaultGh,
 ): string[] {
   let raw: string;
@@ -80,10 +75,10 @@ export function getChangedFiles(
     if (repoMatch) args.push('--repo', repoMatch[1]);
     raw = gh(args);
     if (!raw) {
-      raw = exec('git diff --name-only main...HEAD');
+      raw = git(['diff', '--name-only', 'main...HEAD']);
     }
   } else {
-    raw = exec('git diff --name-only main...HEAD');
+    raw = git(['diff', '--name-only', 'main...HEAD']);
   }
   return raw.split('\n').map((l) => l.trim()).filter(Boolean);
 }
@@ -200,7 +195,6 @@ Replace <reason> with a specific justification (e.g., "constant change", "covere
 export function checkVerification(
   command: string,
   cmdType: CommandType,
-  exec: (cmd: string) => string,
   gh: (args: string[]) => string = defaultGh,
 ): string {
   if (cmdType === 'pr_create') {
@@ -338,8 +332,8 @@ export function checkCodeQuality(
     const LINE_THRESHOLD = 500;
 
     // Get staged files
-    const exec = opts.exec ?? defaultExec;
-    const stagedRaw = exec('git diff --cached --name-only');
+    const git = opts.git ?? defaultGit;
+    const stagedRaw = git(['diff', '--cached', '--name-only']);
     const stagedFiles = stagedRaw.split('\n').filter(Boolean);
 
     // Check 1: Mock count in test files
@@ -393,7 +387,7 @@ export function runQualityChecks(
   command: string,
   opts: RunnerOptions = {},
 ): QualityCheckOutput {
-  const exec = opts.exec ?? defaultExec;
+  const git = opts.git ?? defaultGit;
   const gh = opts.gh ?? defaultGh;
   const cmdLine = stripHeredocBody(command);
   const cmdType = detectCommandType(cmdLine);
@@ -406,7 +400,7 @@ export function runQualityChecks(
   const isPrCommand = cmdType === 'pr_create' || cmdType === 'pr_merge';
 
   if (isPrCommand) {
-    const changedFiles = getChangedFiles(cmdLine, isMerge, exec, gh);
+    const changedFiles = getChangedFiles(cmdLine, isMerge, git, gh);
 
     // Test coverage check (pr_create and pr_merge)
     const coverageResult = checkTestCoverage(changedFiles, opts);
@@ -414,7 +408,7 @@ export function runQualityChecks(
     if (coverageMsg) messages.push(coverageMsg);
 
     // Verification check
-    const verificationMsg = checkVerification(command, cmdType, exec, gh);
+    const verificationMsg = checkVerification(command, cmdType, gh);
     if (verificationMsg) messages.push(verificationMsg);
 
     // Practices checklist (pr_create only)
