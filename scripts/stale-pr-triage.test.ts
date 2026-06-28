@@ -4,8 +4,22 @@ import {
   extractClosesIssues,
   ageInDays,
   triageOpenPrs,
+  applyTriage,
+  parseCliArgs,
   type StalePrInput,
+  type TriageRow,
 } from './stale-pr-triage.js';
+
+function row(number: number, action: TriageRow['triage']['action'], closesIssues: number[] = []): TriageRow {
+  return {
+    number,
+    title: `pr ${number}`,
+    url: `u${number}`,
+    ageDays: 30,
+    closesIssues,
+    triage: { action, reason: 'test' },
+  };
+}
 
 const base: StalePrInput = {
   ageDays: 30,
@@ -212,5 +226,116 @@ describe('triageOpenPrs — integration over a canned gh runner', () => {
   it('returns [] on malformed gh output', () => {
     const gh = () => 'not json';
     expect(triageOpenPrs({ gh, nowMs: 0, repo: 'o/r', staleDays: 21, limit: 100 })).toEqual([]);
+  });
+
+  it('never close-supersedes when the issue-state lookup throws (fail-open end-to-end)', () => {
+    // The lookup-failure → null → never-close wiring, exercised through the
+    // integration seam (not just the pure classifier).
+    const gh = (args: string[]): string => {
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return JSON.stringify([
+          { number: 5, title: 'stale', updatedAt: '2026-01-01T00:00:00Z', isDraft: false, mergeable: 'MERGEABLE', body: 'Closes #500', url: 'u5' },
+        ]);
+      }
+      if (args[0] === 'issue' && args[1] === 'view') throw new Error('gh boom');
+      throw new Error('unexpected gh call: ' + args.join(' '));
+    };
+    const rows = triageOpenPrs({ gh, nowMs: Date.parse('2026-06-28T00:00:00Z'), repo: 'o/r', staleDays: 21, limit: 100 });
+    expect(rows[0].triage.action).not.toBe('close-superseded');
+    expect(rows[0].triage.action).toBe('merge-ready');
+  });
+
+  it('coerces an unrecognized mergeable value to UNKNOWN -> review', () => {
+    const gh = (args: string[]): string => {
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return JSON.stringify([
+          { number: 6, title: 'weird', updatedAt: '2026-01-01T00:00:00Z', isDraft: false, mergeable: 'GARBAGE', body: 'no ref', url: 'u6' },
+        ]);
+      }
+      throw new Error('unexpected gh call: ' + args.join(' '));
+    };
+    const rows = triageOpenPrs({ gh, nowMs: Date.parse('2026-06-28T00:00:00Z'), repo: 'o/r', staleDays: 21, limit: 100 });
+    expect(rows[0].triage.action).toBe('review');
+  });
+});
+
+describe('applyTriage — only close-superseded is auto-actioned', () => {
+  it('closes close-superseded PRs and skips every other action', () => {
+    const closed: string[] = [];
+    const gh = (args: string[]): string => {
+      if (args[0] === 'pr' && args[1] === 'close') {
+        closed.push(args[2]);
+        return '';
+      }
+      throw new Error('unexpected gh call: ' + args.join(' '));
+    };
+    const rows = [
+      row(1, 'close-superseded', [10]),
+      row(2, 'resume'),
+      row(3, 'merge-ready'),
+      row(4, 'review'),
+      row(5, 'close-superseded', [20, 21]),
+    ];
+    const result = applyTriage(rows, { gh, repo: 'o/r' });
+    expect(closed).toEqual(['1', '5']); // only the two close-superseded PRs
+    expect(result.closed).toEqual([1, 5]);
+    expect(result.failed).toEqual([]);
+  });
+
+  it('passes a discrete argv (no shell string) with the resolved issue list in the comment', () => {
+    let captured: string[] = [];
+    const gh = (args: string[]): string => {
+      captured = args;
+      return '';
+    };
+    applyTriage([row(7, 'close-superseded', [70, 71])], { gh, repo: 'o/r' });
+    expect(captured.slice(0, 5)).toEqual(['pr', 'close', '7', '--repo', 'o/r']);
+    expect(captured[5]).toBe('--comment');
+    expect(captured[6]).toContain('#70, #71');
+  });
+
+  it('records a per-PR failure and continues with the rest', () => {
+    const gh = (args: string[]): string => {
+      if (args[2] === '1') throw new Error('close failed');
+      return '';
+    };
+    const result = applyTriage(
+      [row(1, 'close-superseded', [10]), row(2, 'close-superseded', [20])],
+      { gh, repo: 'o/r' },
+    );
+    expect(result.failed).toEqual([1]);
+    expect(result.closed).toEqual([2]);
+  });
+
+  it('does nothing when there are no close-superseded rows', () => {
+    let calls = 0;
+    const gh = (): string => {
+      calls++;
+      return '';
+    };
+    const result = applyTriage([row(1, 'review'), row(2, 'resume')], { gh, repo: 'o/r' });
+    expect(calls).toBe(0);
+    expect(result).toEqual({ closed: [], failed: [] });
+  });
+});
+
+describe('parseCliArgs', () => {
+  it('parses repo, stale-days, limit, and the apply flag', () => {
+    const o = parseCliArgs(['--repo', 'o/r', '--stale-days', '30', '--limit', '5', '--apply']);
+    expect(o).toEqual({ repo: 'o/r', staleDays: 30, limit: 5, apply: true });
+  });
+
+  it('defaults stale-days=21, limit=100, apply=false', () => {
+    expect(parseCliArgs(['--repo', 'o/r'])).toEqual({ repo: 'o/r', staleDays: 21, limit: 100, apply: false });
+  });
+
+  it('throws when --repo is missing', () => {
+    expect(() => parseCliArgs([])).toThrow(/--repo/);
+  });
+
+  it('clamps a negative/garbage stale-days and non-positive limit to defaults', () => {
+    expect(parseCliArgs(['--repo', 'o/r', '--stale-days', '-3']).staleDays).toBe(21);
+    expect(parseCliArgs(['--repo', 'o/r', '--stale-days', 'nope']).staleDays).toBe(21);
+    expect(parseCliArgs(['--repo', 'o/r', '--limit', '0']).limit).toBe(100);
   });
 });

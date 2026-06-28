@@ -227,14 +227,14 @@ export function triageOpenPrs(deps: TriageDeps): TriageRow[] {
   return rows;
 }
 
-interface CliOptions {
+export interface CliOptions {
   repo: string;
   staleDays: number;
   limit: number;
   apply: boolean;
 }
 
-function parseCliArgs(argv: string[]): CliOptions {
+export function parseCliArgs(argv: string[]): CliOptions {
   const opts: CliOptions = { repo: '', staleDays: 21, limit: 100, apply: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -257,7 +257,7 @@ const ACTION_ORDER: StalePrAction[] = [
   'skip-fresh',
 ];
 
-function formatReport(rows: TriageRow[]): string {
+export function formatReport(rows: TriageRow[]): string {
   const lines: string[] = [];
   for (const action of ACTION_ORDER) {
     const group = rows.filter((r) => r.triage.action === action);
@@ -273,10 +273,49 @@ function formatReport(rows: TriageRow[]): string {
   return lines.join('\n');
 }
 
+export interface ApplyDeps {
+  gh: GhRunner;
+  repo: string;
+  log?: (msg: string) => void;
+  err?: (msg: string) => void;
+}
+
+export interface ApplyResult {
+  closed: number[];
+  failed: number[];
+}
+
+/**
+ * Apply the ONLY terminal action this tool performs automatically: close the
+ * `close-superseded` PRs (whose every `Closes #N` issue is already CLOSED).
+ * `resume`/`merge-ready`/`review` are deliberately NOT auto-actioned — they are
+ * not safely automatable. Each close is guarded; a per-PR failure is recorded
+ * and logged but never aborts the rest. Returns the outcome for the caller/test.
+ */
+export function applyTriage(rows: TriageRow[], deps: ApplyDeps): ApplyResult {
+  const log = deps.log ?? (() => {});
+  const err = deps.err ?? (() => {});
+  const result: ApplyResult = { closed: [], failed: [] };
+  for (const r of rows.filter((x) => x.triage.action === 'close-superseded')) {
+    const issueList = r.closesIssues.map((n) => `#${n}`).join(', ');
+    const comment = `Closing as superseded: the linked issue(s) ${issueList} this PR closes are already resolved. (stale-pr-triage #1159)`;
+    try {
+      deps.gh(['pr', 'close', String(r.number), '--repo', deps.repo, '--comment', comment]);
+      result.closed.push(r.number);
+      log(`closed #${r.number} (superseded by resolved ${issueList})`);
+    } catch (e) {
+      result.failed.push(r.number);
+      err(`failed to close #${r.number}: ${(e as Error).message}`);
+    }
+  }
+  return result;
+}
+
 function main(argv: string[]): void {
   const opts = parseCliArgs(argv);
+  const gh: GhRunner = (args) => defaultGh(args);
   const rows = triageOpenPrs({
-    gh: (args) => defaultGh(args),
+    gh,
     nowMs: Date.now(),
     repo: opts.repo,
     staleDays: opts.staleDays,
@@ -294,17 +333,12 @@ function main(argv: string[]): void {
     return;
   }
 
-  // --apply closes ONLY the high-confidence close-superseded PRs.
-  for (const r of rows.filter((x) => x.triage.action === 'close-superseded')) {
-    const issueList = r.closesIssues.map((n) => `#${n}`).join(', ');
-    const comment = `Closing as superseded: the linked issue(s) ${issueList} this PR closes are already resolved. (stale-pr-triage #1159)`;
-    try {
-      defaultGh(['pr', 'close', String(r.number), '--repo', opts.repo, '--comment', comment]);
-      console.log(`closed #${r.number} (superseded by resolved ${issueList})`);
-    } catch (err) {
-      console.error(`failed to close #${r.number}: ${(err as Error).message}`);
-    }
-  }
+  applyTriage(rows, {
+    gh,
+    repo: opts.repo,
+    log: (m) => console.log(m),
+    err: (m) => console.error(m),
+  });
 }
 
 function isMain(): boolean {
