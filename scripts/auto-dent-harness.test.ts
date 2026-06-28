@@ -167,6 +167,17 @@ describe('replay: edge cases', () => {
     expect(liveSection).not.toContain('JSON.parse(line)');
   });
 
+  it('keeps live probe spawn error messages visible to callers', () => {
+    const source = readFileSync(new URL('./auto-dent-harness.ts', import.meta.url), 'utf8');
+    const liveSection = source.slice(
+      source.indexOf('export async function runLiveProbe'),
+      source.indexOf('// Assertion helpers'),
+    );
+
+    expect(liveSection).toContain("child.on('error', (err)");
+    expect(liveSection).toContain('logLines.push(`[provider-error] ${err.message}`)');
+  });
+
   it('builds provider-correct live probe commands without hardcoding Claude (#1580)', () => {
     expect(buildLiveProbeCommand({
       provider: 'claude',

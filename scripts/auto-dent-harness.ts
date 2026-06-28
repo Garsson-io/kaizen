@@ -332,8 +332,9 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
       });
     });
 
-    child.on('error', () => {
+    child.on('error', (err) => {
       clearTimeout(timer);
+      logLines.push(`[provider-error] ${err.message}`);
       console.log = realLog;
       resolve({
         logLines,

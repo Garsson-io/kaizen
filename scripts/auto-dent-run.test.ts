@@ -1729,6 +1729,15 @@ describe('BatchState provider field (#1144)', () => {
     expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex' }), inventory)).toBe(false);
   });
 
+  it('does not require unrelated lifecycle phases when checking Codex implementation dispatch (#1580)', () => {
+    const inventory: ProviderCapability[] = [
+      { provider: 'codex', phase: 'implementation', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+    ];
+
+    expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex' }), inventory)).toBe(true);
+    expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex' }), [])).toBe(false);
+  });
+
   it('fails Codex runs that emit malformed JSONL despite a zero provider exit (#1580)', () => {
     expect(normalizeCodexRunExitCode(0, 1, true)).toBe(1);
     expect(normalizeCodexRunExitCode(0, 0, true)).toBe(0);

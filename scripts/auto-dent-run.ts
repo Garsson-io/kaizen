@@ -47,7 +47,13 @@ import {
   readBatchOutcomesFromGithub,
   computeSteeringRecommendations,
 } from './batch-outcome.js';
-import { phaseProvidersForAgentProvider, type PhaseProviderRecord, type Provider, type ProviderCapability } from './auto-dent-provider.js';
+import {
+  phaseProvidersForAgentProvider,
+  SUBSCRIPTION_COMPATIBLE_BILLING,
+  type PhaseProviderRecord,
+  type Provider,
+  type ProviderCapability,
+} from './auto-dent-provider.js';
 import {
   buildKaizenCycleSteps,
   formatIssueForDisplay,
@@ -2216,7 +2222,14 @@ export function shouldRunCodexProvider(
 ): boolean {
   const provider = state.provider ?? 'claude';
   if (provider !== 'codex') return false;
-  return phaseProvidersForAgentProvider(provider, inventory).implementation?.provider === 'codex';
+  const capabilities = inventory ?? undefined;
+  if (!capabilities) return phaseProvidersForAgentProvider(provider).implementation?.provider === 'codex';
+  return capabilities.some((cap) =>
+    cap.provider === 'codex' &&
+    cap.phase === 'implementation' &&
+    cap.acceptedForUnattended &&
+    SUBSCRIPTION_COMPATIBLE_BILLING.includes(cap.billingMode)
+  );
 }
 
 // Lifecycle validation — implementation lives in ./auto-dent-lifecycle.ts.
