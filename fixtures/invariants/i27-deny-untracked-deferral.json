@@ -1,0 +1,25 @@
+[
+  {
+    "type": "system",
+    "subtype": "hook_started",
+    "hook_id": "I27-post-01",
+    "hook_name": "PostToolUse:Bash",
+    "hook_event": "PostToolUse",
+    "uuid": "uuid-start",
+    "session_id": "fixture-session"
+  },
+  {
+    "type": "system",
+    "subtype": "hook_response",
+    "hook_id": "I27-post-01",
+    "hook_name": "PostToolUse:Bash",
+    "hook_event": "PostToolUse",
+    "output": "---\nhook: pr-review-loop\ntype: gate-set\ngate: needs_review\npr: https://github.com/Garsson-io/kaizen/pull/1038\nround: 1\nreason: review_findings_missing\n---\n\n📋 REVIEW ROUND 1/4\n⚠️ review findings still include 1 MISSING item(s). Fix the findings or escalate; the review gate cannot clear on a failing review round.\n",
+    "stdout": "",
+    "stderr": "",
+    "exit_code": 0,
+    "outcome": "success",
+    "uuid": "uuid-resp",
+    "session_id": "fixture-session"
+  }
+]

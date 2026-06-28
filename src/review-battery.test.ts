@@ -701,7 +701,7 @@ describe('spawnReview', () => {
   });
 
   it('delegates stream-json row parsing to the shared JSONL helper', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/review-battery.ts'), 'utf8');
+    const source = readFileSync(resolve(process.cwd(), 'src/spawn-claude.ts'), 'utf8');
     const parsingBlock = source.slice(
       source.indexOf('// Parse text and cost from stream-json JSONL output.'),
       source.indexOf('resolve({ text, costUsd, durationMs, exitCode: code ?? -1 });'),
