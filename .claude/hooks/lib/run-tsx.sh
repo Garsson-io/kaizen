@@ -16,6 +16,13 @@ run_tsx() {
   local kaizen_dir="$1"
   local ts_file="$2"
 
+  # Test harnesses may execute hooks from a worktree whose source is current but
+  # whose node_modules is absent or incomplete. Let them provide a known-good
+  # tsx binary while still running the source file from this kaizen_dir.
+  if [ -n "${KAIZEN_TSX_BIN:-}" ] && [ -x "$KAIZEN_TSX_BIN" ]; then
+    exec "$KAIZEN_TSX_BIN" "$ts_file"
+  fi
+
   # 1. Direct path — fastest, no npx overhead
   local local_tsx="$kaizen_dir/node_modules/.bin/tsx"
   if [ -x "$local_tsx" ]; then

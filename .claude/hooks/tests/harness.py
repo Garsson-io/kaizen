@@ -33,6 +33,22 @@ SETTINGS_PATH = HOOKS_DIR.parent / "settings.json"
 REPO_ROOT = HOOKS_DIR.parent.parent
 
 
+def resolve_tsx_bin() -> Optional[str]:
+    local = REPO_ROOT / "node_modules" / ".bin" / "tsx"
+    if local.exists():
+        return str(local)
+    try:
+        git_common = subprocess.check_output(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "--git-common-dir"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except subprocess.CalledProcessError:
+        return None
+    main_tsx = Path(git_common).parent / "node_modules" / ".bin" / "tsx"
+    return str(main_tsx) if main_tsx.exists() else None
+
+
 # Input builders — construct schema-compliant event JSON
 
 @dataclass
@@ -205,7 +221,12 @@ class HookHarness:
             "AUDIT_DIR": str(audit_dir),
             "AUDIT_LOG": str(audit_dir / "no-action.log"),
             "DEBUG_LOG": "/dev/null",
+            "HOOK_TIMING_SENTINEL_DISABLED": "true",
+            "SEND_TELEGRAM_IPC_DISABLED": "true",
         }
+        tsx_bin = resolve_tsx_bin()
+        if tsx_bin:
+            self.env_overrides["KAIZEN_TSX_BIN"] = tsx_bin
 
     def cleanup(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)

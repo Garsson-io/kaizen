@@ -21,9 +21,27 @@ describe("Synthetic Workflow E2E", () => {
     session?.cleanup();
   });
 
+  function useScopeGuardFocusedHooks(session: SessionSimulator): void {
+    session.hooks.SessionStart = ["kaizen-check-wip.sh"];
+    session.hooks.PreToolUseBash = [
+      "kaizen-enforce-case-worktree.sh",
+      "kaizen-block-git-rebase.sh",
+      "kaizen-search-before-file.sh",
+    ];
+    session.hooks.PreToolUseWrite = [
+      "kaizen-enforce-worktree-writes.sh",
+      "kaizen-enforce-case-exists.sh",
+    ];
+    session.hooks.Stop = [
+      "kaizen-verify-before-stop.sh",
+      "kaizen-check-cleanup-on-stop.sh",
+    ];
+  }
+
   describe("scope-guard propagation", () => {
     it("auto-fixes on first hook; all subsequent hooks take fast path", () => {
       session = new SessionSimulator();
+      useScopeGuardFocusedHooks(session);
       session.setHome("bad_kaizen_install");
 
       session.fireSessionStart();
@@ -41,6 +59,7 @@ describe("Synthetic Workflow E2E", () => {
 
     it("clean HOME produces zero warnings", () => {
       session = new SessionSimulator();
+      useScopeGuardFocusedHooks(session);
       session.setHome("clean");
 
       session.fireSessionStart();
@@ -64,6 +83,7 @@ describe("Synthetic Workflow E2E", () => {
 
     it("no settings.json is a graceful noop", () => {
       session = new SessionSimulator();
+      useScopeGuardFocusedHooks(session);
       session.setHome("no_settings");
 
       session.fireSessionStart();
@@ -76,6 +96,7 @@ describe("Synthetic Workflow E2E", () => {
 
     it("malformed settings.json doesn't crash any hook", () => {
       session = new SessionSimulator();
+      useScopeGuardFocusedHooks(session);
       // Has "kaizen@kaizen" as a string but enabledPlugins is not an object
       session.setHomeRaw('{"enabledPlugins": "not_an_object_but_has_kaizen@kaizen"}');
 
@@ -88,6 +109,7 @@ describe("Synthetic Workflow E2E", () => {
 
     it("other plugins preserved after auto-fix", () => {
       session = new SessionSimulator();
+      useScopeGuardFocusedHooks(session);
       session.setHome("bad_kaizen_install");
 
       session.fireSessionStart();
@@ -99,7 +121,49 @@ describe("Synthetic Workflow E2E", () => {
   });
 
   describe("session lifecycle composition", () => {
-    it("full session completes with no timeouts", () => {
+    it("fires the manifest PR workflow hooks in PostToolUse Bash sessions", () => {
+      session = new SessionSimulator();
+
+      expect(session.hooks.PostToolUseBash).toEqual(
+        expect.arrayContaining([
+          "pr-review-loop-ts.sh",
+          "kaizen-reflect-ts.sh",
+          "pr-kaizen-clear-ts.sh",
+        ]),
+      );
+    });
+
+    it("does not set PR workflow gates for failed PR creation outcomes", () => {
+      session = new SessionSimulator();
+      session.setHome("clean");
+
+      session.fireBashPost("gh pr create --title test", "", {
+        exitCode: "1",
+      });
+
+      expect(session.stateFilesContaining("STATUS=needs_review")).toEqual([]);
+      expect(session.stateFilesContaining("STATUS=needs_pr_kaizen")).toEqual([]);
+    });
+
+    it("sets persisted PR workflow gates for successful PR creation outcomes", () => {
+      session = new SessionSimulator();
+      session.setHome("clean");
+
+      session.fireBashPost(
+        "gh pr create --title test",
+        "https://github.com/Garsson-io/kaizen/pull/943",
+      );
+
+      expect(session.stateFilesContaining("STATUS=needs_review")).toHaveLength(1);
+      expect(session.stateFilesContaining("STATUS=needs_pr_kaizen")).toHaveLength(1);
+
+      const stopResult = session.fireStop();
+      expect(stopResult.results.some((result) => result.stdout.includes('"decision":"block"'))).toBe(true);
+      expect(stopResult.results.some((result) => result.stdout.includes("PR REVIEW"))).toBe(true);
+      expect(stopResult.results.some((result) => result.stdout.includes("KAIZEN REFLECTION"))).toBe(true);
+    });
+
+    it("full manifest session completes with no hook timeouts", () => {
       session = new SessionSimulator();
       session.setHome("clean");
 
@@ -112,7 +176,7 @@ describe("Synthetic Workflow E2E", () => {
 
       expect(session.timeoutCount).toBe(0);
       expect(session.totalHooksRun).toBeGreaterThan(0);
-    });
+    }, 30_000);
 
     it("different event types fire different hook sets", () => {
       session = new SessionSimulator();

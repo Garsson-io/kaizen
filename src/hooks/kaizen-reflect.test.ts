@@ -9,8 +9,11 @@ import {
 } from './kaizen-reflect.js';
 
 const TEST_STATE_DIR = '/tmp/.test-kaizen-reflect-ts';
+let previousHookTimingSentinelDisabled: string | undefined;
 
 beforeEach(() => {
+  previousHookTimingSentinelDisabled = process.env.HOOK_TIMING_SENTINEL_DISABLED;
+  process.env.HOOK_TIMING_SENTINEL_DISABLED = 'true';
   if (existsSync(TEST_STATE_DIR)) {
     rmSync(TEST_STATE_DIR, { recursive: true });
   }
@@ -20,6 +23,11 @@ beforeEach(() => {
 afterEach(() => {
   if (existsSync(TEST_STATE_DIR)) {
     rmSync(TEST_STATE_DIR, { recursive: true });
+  }
+  if (previousHookTimingSentinelDisabled === undefined) {
+    delete process.env.HOOK_TIMING_SENTINEL_DISABLED;
+  } else {
+    process.env.HOOK_TIMING_SENTINEL_DISABLED = previousHookTimingSentinelDisabled;
   }
 });
 
