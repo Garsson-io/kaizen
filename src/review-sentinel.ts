@@ -1,11 +1,30 @@
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { readYamlFrontmatter } from './lib/frontmatter.js';
 import { parseGithubPrUrl } from './lib/github-pr.js';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
 
 export const REVIEW_SENTINEL_SCHEMA_VERSION = 1;
+
+/**
+ * The single source of truth for where a review sentinel lives on disk.
+ * Both the writer (`cli-structured-data.ts` / `pr-review-loop.writeReviewSentinel`)
+ * and the reader (`pr-review-loop.defaultCheckReviewSentinel`) derive the path
+ * here, so the path format can never drift between them — drift between a writer
+ * and a reader is exactly the failure class behind #1481.
+ */
+export function reviewSentinelStateKey(prUrl: string): string {
+  const parsed = parseGithubPrUrl(prUrl);
+  if (!parsed) {
+    throw new Error(`invalid PR URL for review sentinel: ${prUrl}`);
+  }
+  return `${parsed.repo.replace('/', '_')}_${parsed.number}`;
+}
+
+export function reviewSentinelPath(stateDir: string, prUrl: string, round: string | number): string {
+  return join(stateDir, `${reviewSentinelStateKey(prUrl)}.reviewed-r${round}`);
+}
 
 export const DEFAULT_PR_REVIEW_DIMENSIONS = [
   'correctness',

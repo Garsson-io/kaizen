@@ -63,6 +63,8 @@ import {
 import {
   buildReviewSentinelRecord,
   serializeReviewSentinel,
+  expectedPrReviewDimensions,
+  reviewSentinelPath,
 } from './review-sentinel.js';
 import {
   normalizeReviewFindingData,
@@ -133,14 +135,47 @@ export function resolveRound(a: CliArgs): number {
   return 1;
 }
 
+interface SentinelTotals {
+  findingCount: number;
+  totalDone: number;
+  totalPartial: number;
+  totalMissing: number;
+}
+
+/**
+ * Single low-level sentinel writer — the SSOT shared by the production
+ * `store-review-*` path and the test-only emitter. Builds the signed record
+ * via `buildReviewSentinelRecord` and writes it to the state dir. Returns the
+ * path. Throws on failure (callers that want best-effort wrap it in try/catch).
+ */
+function writeSentinelRecord(
+  repo: string,
+  pr: string,
+  round: number,
+  dimensionsReviewed: string[],
+  totals: SentinelTotals,
+): string {
+  const stateDir = process.env.STATE_DIR ?? '/tmp/.pr-review-state';
+  const prUrl = `https://github.com/${repo}/pull/${pr}`;
+  const record = buildReviewSentinelRecord({
+    prUrl,
+    round,
+    dimensionsReviewed,
+    ...totals,
+  });
+  mkdirSync(stateDir, { recursive: true });
+  // Shared path SSOT so the writer can never drift from the hook reader (#1481).
+  const path = reviewSentinelPath(stateDir, prUrl, round);
+  writeFileSync(path, serializeReviewSentinel(record));
+  return path;
+}
+
 function writeReviewSentinel(repo: string, pr: string | undefined, round: number): void {
   if (!pr) return;
   try {
-    const stateDir = process.env.STATE_DIR ?? '/tmp/.pr-review-state';
-    const stateKey = `${repo.replace('/', '_')}_${pr}`;
     const target = prTarget(pr, repo);
     const dimensionsReviewed = listReviewDimensions(target, round);
-    const totals = dimensionsReviewed.reduce(
+    const totals = dimensionsReviewed.reduce<SentinelTotals>(
       (acc, dim) => {
         const content = readReviewFinding(target, round, dim);
         const meta = content ? extractReviewFindingMeta(content) : null;
@@ -153,14 +188,7 @@ function writeReviewSentinel(repo: string, pr: string | undefined, round: number
       },
       { findingCount: 0, totalDone: 0, totalPartial: 0, totalMissing: 0 },
     );
-    const record = buildReviewSentinelRecord({
-      prUrl: `https://github.com/${repo}/pull/${pr}`,
-      round,
-      dimensionsReviewed,
-      ...totals,
-    });
-    mkdirSync(stateDir, { recursive: true });
-    writeFileSync(`${stateDir}/${stateKey}.reviewed-r${round}`, serializeReviewSentinel(record));
+    writeSentinelRecord(repo, pr, round, dimensionsReviewed, totals);
   } catch {
     // best effort — sentinel is advisory
   }
@@ -362,6 +390,36 @@ async function handleStoreIteration(a: CliArgs): Promise<void> {
   console.log(`Iteration state stored: ${url}`);
 }
 
+/**
+ * Test-only: emit a VALID signed review sentinel for the hook lifecycle suite.
+ *
+ * Refuses unless `KAIZEN_TEST_RUNNER=1`, so this can never be a production
+ * fabrication bypass of the review gate (#1019/#1212 class). It reuses the same
+ * `writeSentinelRecord` SSOT and `expectedPrReviewDimensions()` the validator
+ * uses, so the Python harness carries zero knowledge of the sentinel format —
+ * the drift that caused #1481 cannot recur.
+ */
+async function handleEmitTestReviewSentinel(a: CliArgs): Promise<void> {
+  if (process.env.KAIZEN_TEST_RUNNER !== '1') {
+    console.error(
+      'emit-test-review-sentinel: refused — test-only command, requires KAIZEN_TEST_RUNNER=1.',
+    );
+    process.exit(1);
+  }
+  if (!a.pr) {
+    console.error('emit-test-review-sentinel: --pr required');
+    process.exit(1);
+  }
+  const round = resolveRound(a);
+  const path = writeSentinelRecord(a.repo, a.pr, round, expectedPrReviewDimensions(), {
+    findingCount: 1,
+    totalDone: 1,
+    totalPartial: 0,
+    totalMissing: 0,
+  });
+  console.log(`Test review sentinel written (round ${round}): ${path}`);
+}
+
 async function handleRetrieveIteration(a: CliArgs): Promise<void> {
   const state = retrieveIterationState(
     a.pr ? prTarget(a.pr, a.repo) : issueTarget(a.issue, a.repo),
@@ -393,6 +451,7 @@ export const handlers: Record<string, Handler> = {
   'update-pr-section': handleUpdatePrSection,
   'store-iteration': handleStoreIteration,
   'retrieve-iteration': handleRetrieveIteration,
+  'emit-test-review-sentinel': handleEmitTestReviewSentinel,
 };
 
 async function main(): Promise<void> {
