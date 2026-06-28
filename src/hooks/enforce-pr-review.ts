@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   if (!input) { traceNullInput("enforce-pr-review"); process.exit(0); }
 
   const command = input.tool_input?.command ?? '';
-  const branch = getCurrentBranch();
+  const branch = getCurrentBranch(command);
 
   const result = processPreToolUse(command, branch, undefined, {
     toolName: input.tool_name,

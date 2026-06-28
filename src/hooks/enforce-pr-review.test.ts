@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeStateFile } from './state-utils.js';
 import { processPreToolUse } from './enforce-pr-review.js';
@@ -6,6 +6,7 @@ import type { ToolContext } from './enforce-pr-review.js';
 
 const TEST_STATE_DIR = '/tmp/.test-enforce-pr-review';
 const TEST_BRANCH = 'worktree-review-test';
+const REVIEW_SOURCE = readFileSync(new URL('./enforce-pr-review.ts', import.meta.url), 'utf-8');
 
 function createReviewGate(prUrl: string, round: string = '1') {
   writeStateFile(TEST_STATE_DIR, `review-${Date.now()}`, {
@@ -23,6 +24,13 @@ beforeEach(() => {
 
 afterEach(() => {
   if (existsSync(TEST_STATE_DIR)) rmSync(TEST_STATE_DIR, { recursive: true });
+});
+
+describe('branch helper source invariant', () => {
+  it('passes the Bash command into command-target branch resolution', () => {
+    expect(REVIEW_SOURCE).toContain('const branch = getCurrentBranch(command);');
+    expect(REVIEW_SOURCE).not.toContain('const branch = getCurrentBranch();');
+  });
 });
 
 describe('enforce-pr-review PreToolUse — Bash commands', () => {
