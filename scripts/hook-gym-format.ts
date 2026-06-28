@@ -9,6 +9,7 @@
  * Pure function — no I/O, no clock. Deterministic output for a given input.
  */
 
+import { escapeMarkdownTableCell } from './markdown-table.js';
 import type { HookTimeline, ParsedHookEvent } from './hook-gym-schema.js';
 
 /**
@@ -69,7 +70,9 @@ function renderEventRow(e: ParsedHookEvent): string {
   const decision = e.decision ?? 'none';
   const reason = e.reason ? truncate(e.reason, 60) : '—';
   const hook = e.hookName || e.eventType;
-  return `| ${e.timestamp} | ${e.eventType} | ${escape(hook)} | ${decision} | ${e.durationMs} | ${escape(reason)} |`;
+  const escapedHook = escapeMarkdownTableCell(hook, { carriageReturn: 'drop' });
+  const escapedReason = escapeMarkdownTableCell(reason, { carriageReturn: 'drop' });
+  return `| ${e.timestamp} | ${e.eventType} | ${escapedHook} | ${decision} | ${e.durationMs} | ${escapedReason} |`;
 }
 
 function formatGateLine(name: string, t: HookTimeline): string {
@@ -87,21 +90,6 @@ function formatGateLine(name: string, t: HookTimeline): string {
     return `**${name}**: cleared @${cleared}ms (no activation observed this run)`;
   }
   return `**${name}**: (unknown)`;
-}
-
-function escape(s: string): string {
-  // Replace all characters that could break a Markdown table row in one pass.
-  // CodeQL js/regex/incomplete-sanitization flags chained .replace() calls
-  // that don't cover all members of a meta-character group.
-  return s.replace(/[\|\n\r\\]/g, (ch) => {
-    switch (ch) {
-      case '|': return '\\|';
-      case '\\': return '\\\\';
-      case '\n': return ' ';
-      case '\r': return '';
-      default: return ch;
-    }
-  });
 }
 
 function truncate(s: string, max: number): string {

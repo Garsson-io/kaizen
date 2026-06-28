@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
 import type { HookTimeline } from './hook-gym-schema.js';
 import { formatTimeline, summarizeTimeline } from './hook-gym-format.js';
 import { evt } from './hook-gym-test-utils.js';
@@ -63,22 +64,27 @@ describe('formatTimeline', () => {
     expect(formatTimeline(timeline)).toContain('| 0 | SessionStart | SessionStart:s | none | 3 | — |');
   });
 
-  it('escapes pipe characters in hook names and reasons so the table does not break', () => {
+  it('escapes table-breaking characters in hook names and reasons so the table does not break', () => {
     const timeline: HookTimeline = {
       events: [
         evt({
           timestamp: 1,
-          hookName: 'weird|hook',
+          hookName: 'weird|hook\\name',
           decision: 'deny',
-          reason: 'contains | pipes | everywhere',
+          reason: 'contains | pipes\nand carriage\rreturns \\ everywhere',
         }),
       ],
       gatesActivated: {},
       gatesCleared: {},
     };
     const out = formatTimeline(timeline);
-    expect(out).toContain('weird\\|hook');
-    expect(out).toContain('contains \\| pipes \\| everywhere');
+    expect(out).toContain('weird\\|hook\\\\name');
+    expect(out).toContain('contains \\| pipes and carriagereturns \\\\ everywhere');
+  });
+
+  it('uses the shared Markdown table helper instead of a private escape helper (#1360)', () => {
+    const source = readFileSync('scripts/hook-gym-format.ts', 'utf8');
+    expect(source).not.toMatch(/function\s+escape\s*\(/);
   });
 
   it('truncates very long reasons', () => {
