@@ -36,7 +36,7 @@ import {
   resolvePromptsDir,
   renderTemplate,
 } from '../src/review-battery.js';
-import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
+import { EventEmitter, makeRunId, type AutoDentEvent, type RunCompleteEvent } from './auto-dent-events.js';
 import { defaultReviewFixProviders, runFixLoop } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
@@ -47,7 +47,7 @@ import {
   readBatchOutcomesFromGithub,
   computeSteeringRecommendations,
 } from './batch-outcome.js';
-import { phaseProvidersForAgentProvider, type PhaseProviderRecord } from './auto-dent-provider.js';
+import { phaseProvidersForAgentProvider, type PhaseProviderRecord, type Provider } from './auto-dent-provider.js';
 import {
   buildKaizenCycleSteps,
   formatIssueForDisplay,
@@ -161,7 +161,7 @@ import {
   IN_FLIGHT_UPDATE_INTERVAL_MS,
   type StreamContext,
 } from './auto-dent-stream.js';
-import { degradedRunLogBanner, type HookActivationVerdict } from './auto-dent-hook-activation.js';
+import { degradedRunLogBanner, unknownHookActivationVerdict, type HookActivationVerdict } from './auto-dent-hook-activation.js';
 import {
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
@@ -395,11 +395,14 @@ export interface BuildRunMetricsInput {
   exitCode: number;
   runMode: string;
   result: RunResult;
+  provider?: Provider;
   metadata?: RunMetricsMetadata;
 }
 
 export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
-  const { runNum, runStartEpoch, duration, exitCode, runMode, result, metadata = {} } = input;
+  const { runNum, runStartEpoch, duration, exitCode, runMode, result, provider, metadata = {} } = input;
+  const hookActivation = result.hookActivation
+    ?? (provider ? unknownHookActivationVerdict(provider, 'no system.init observed') : undefined);
   return {
     run: runNum,
     start_epoch: runStartEpoch,
@@ -419,7 +422,7 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     final_claim: result.finalClaim,
     final_claim_path: result.finalClaimPath,
     final_claim_warnings: result.finalClaimWarnings,
-    hook_activation: result.hookActivation,
+    hook_activation: hookActivation,
     ...metadata,
   };
 }
@@ -832,6 +835,89 @@ export function deriveRunOutcome(signals: RunOutcomeSignals): RunOutcome {
   if (signals.exitCode !== 0) return 'failure';
   if (hasHardQualityFailure(signals)) return 'failure';
   return signals.artifactCount > 0 ? 'success' : 'empty_success';
+}
+
+export interface BuildRunCompleteEventInput {
+  runId: string;
+  batchId: string;
+  runNum: number;
+  duration: number;
+  exitCode: number;
+  result: RunResult;
+  runMode?: string;
+  outcome: RunOutcome;
+  runMetricsForOutcome: RunMetrics;
+  lifecycleViolationCount: number;
+  lifecycleHealth?: LifecycleHealth;
+  lifecycleCriticalCount?: number;
+  processVerdict?: ProcessVerdict;
+  processIssueCount?: number;
+  processSummary?: string;
+  workflowGateStates?: Partial<Record<WorkflowGateId, WorkflowGateState>>;
+  workflowRepairGates?: WorkflowGateId[];
+  workflowRepairState?: RunCompleteEvent['workflow_repair_state'];
+  workflowRepairPrompt?: string;
+  reviewVerdict?: RunCompleteEvent['review_verdict'];
+  reviewCostUsd?: number;
+  phaseProviders?: PhaseProviderRecord;
+}
+
+export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCompleteEvent {
+  const {
+    runId,
+    batchId,
+    runNum,
+    duration,
+    exitCode,
+    result,
+    runMode,
+    outcome,
+    runMetricsForOutcome,
+    lifecycleViolationCount,
+    lifecycleHealth,
+    lifecycleCriticalCount,
+    processVerdict,
+    processIssueCount,
+    processSummary,
+    workflowGateStates,
+    workflowRepairGates,
+    workflowRepairState,
+    workflowRepairPrompt,
+    reviewVerdict,
+    reviewCostUsd,
+    phaseProviders,
+  } = input;
+  return {
+    type: 'run.complete',
+    run_id: runId,
+    batch_id: batchId,
+    run_num: runNum,
+    duration_ms: duration * 1000,
+    exit_code: exitCode,
+    cost_usd: result.cost,
+    tool_calls: result.toolCalls,
+    prs_created: result.prs.length,
+    issues_filed: result.issuesFiled.length,
+    issues_closed: result.issuesClosed.length,
+    stop_requested: result.stopRequested,
+    failure_class: result.failureClass,
+    lifecycle_violations: lifecycleViolationCount,
+    lifecycle_health: lifecycleHealth,
+    lifecycle_critical: lifecycleCriticalCount,
+    process_verdict: processVerdict,
+    process_issue_count: processIssueCount,
+    process_summary: processSummary,
+    workflow_gate_states: workflowGateStates,
+    workflow_repair_gates: workflowRepairGates,
+    workflow_repair_state: workflowRepairState,
+    workflow_repair_prompt: workflowRepairPrompt,
+    review_verdict: reviewVerdict,
+    review_cost_usd: reviewCostUsd,
+    phase_providers: phaseProviders,
+    hook_activation: runMetricsForOutcome.hook_activation,
+    outcome,
+    mode: runMode,
+  };
 }
 
 function processCheckState(status: ProcessValidation['checks'][number]['status']): WorkflowGateState {
@@ -2050,11 +2136,13 @@ function printRunSummary(
   console.log(`  \u2502 Review:   ${formatReviewForDisplay(result)}`);
   if (result.hookActivation) {
     const h = result.hookActivation;
-    const hookLine = h.degraded
-      ? color.red('DEGRADED \u2014 kaizen hooks did NOT load; run unverified (#843)')
-      : h.active
-        ? color.green('active')
-        : color.dim('n/a (provider has no hook runtime)');
+    const hookLine = h.status === 'unknown'
+      ? color.red('UNKNOWN \u2014 system.init evidence invalid; run unverified (#1501)')
+      : h.degraded
+        ? color.red('DEGRADED \u2014 kaizen hooks did NOT load; run unverified (#843)')
+        : h.active
+          ? color.green('active')
+          : color.dim('n/a (provider has no hook runtime)');
     console.log(`  \u2502 ${h.degraded ? color.red('Hooks:') : 'Hooks:'}    ${hookLine}`);
   }
   for (const issue of result.issuesFiled)
@@ -2314,6 +2402,12 @@ async function main(): Promise<void> {
     stateFile,
   );
   const runId = makeRunId(state.batch_id, runNum);
+  if (!result.hookActivation) {
+    result.hookActivation = unknownHookActivationVerdict(
+      state.provider ?? 'claude',
+      'no system.init observed',
+    );
+  }
 
   // Emit run.start telemetry with correct pre-run timestamp (#656)
   // Uses emitAt() to backdate the envelope timestamp to when the run actually started,
@@ -2670,6 +2764,7 @@ async function main(): Promise<void> {
       exitCode,
       runMode,
       result,
+      provider: state.provider ?? 'claude',
     });
     // Bind the run-success stamp to the verdicts this run already recorded
     // (#1224, meta #1227): a review FAIL / process-incomplete / critical
@@ -2683,36 +2778,30 @@ async function main(): Promise<void> {
       processVerdict,
       lifecycleHealth,
     });
-    events.emit({
-      type: 'run.complete',
-      run_id: runId,
-      batch_id: state.batch_id,
-      run_num: runNum,
-      duration_ms: duration * 1000,
-      exit_code: exitCode,
-      cost_usd: result.cost,
-      tool_calls: result.toolCalls,
-      prs_created: result.prs.length,
-      issues_filed: result.issuesFiled.length,
-      issues_closed: result.issuesClosed.length,
-      stop_requested: result.stopRequested,
-      failure_class: result.failureClass,
-      lifecycle_violations: lifecycleViolationCount,
-      lifecycle_health: lifecycleHealth,
-      lifecycle_critical: lifecycleCriticalCount,
-      process_verdict: processVerdict,
-      process_issue_count: processIssueCount,
-      process_summary: processSummary,
-      workflow_gate_states: workflowGateStates,
-      workflow_repair_gates: workflowRepairGates,
-      workflow_repair_state: workflowRepairState,
-      workflow_repair_prompt: workflowRepairPrompt,
-      review_verdict: reviewVerdict,
-      review_cost_usd: reviewCostUsd,
-      phase_providers: phaseProvidersForState(state),
+    events.emit(buildRunCompleteEvent({
+      runId,
+      batchId: state.batch_id,
+      runNum,
+      duration,
+      exitCode,
+      result,
+      runMode,
       outcome,
-      mode: runMode,
-    });
+      runMetricsForOutcome,
+      lifecycleViolationCount,
+      lifecycleHealth,
+      lifecycleCriticalCount,
+      processVerdict,
+      processIssueCount,
+      processSummary,
+      workflowGateStates,
+      workflowRepairGates,
+      workflowRepairState,
+      workflowRepairPrompt,
+      reviewVerdict,
+      reviewCostUsd,
+      phaseProviders: phaseProvidersForState(state),
+    }));
   }
 
   // Write run artifact manifest and bundle (#916)
@@ -2908,6 +2997,7 @@ async function main(): Promise<void> {
     exitCode,
     runMode,
     result,
+    provider: state.provider ?? 'claude',
     metadata: {
       prompt_template: promptMeta.template,
       prompt_hash: promptMeta.hash,

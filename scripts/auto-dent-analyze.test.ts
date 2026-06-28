@@ -22,6 +22,7 @@ import {
   formatRunAnalysis,
   formatBatchAnalysis,
 } from './auto-dent-analyze.js';
+import { buildRunMetrics } from './auto-dent-run.js';
 import type { PhaseEvent, ToolEvent, RunAnalysis, RunCompleteness } from './auto-dent-analyze.js';
 
 // Synthetic log builders
@@ -933,6 +934,101 @@ describe('integration: regression detection in batch analysis', () => {
     expect(result.runs[0].promptHash).toBe('abc123def456');
     expect(result.runs[1].promptTemplate).toBe('explore-gaps.md');
     expect(result.runs[1].promptHash).toBe('789abc012def');
+  });
+
+  it('aggregates hook activation health from state.json run_history', () => {
+    const batchDir = createTmpBatch([
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantToolUse('Edit', { file_path: '/a.ts' }),
+        userMsg('2026-03-22T22:00:30.000Z'),
+      ],
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantToolUse('Edit', { file_path: '/b.ts' }),
+        userMsg('2026-03-22T22:00:30.000Z'),
+      ],
+    ]);
+    writeFileSync(join(batchDir, 'state.json'), JSON.stringify({
+      batch_id: 'test-batch',
+      run_history: [
+        {
+          run: 1,
+          hook_activation: {
+            provider: 'claude',
+            expected: true,
+            active: true,
+            degraded: false,
+            status: 'active',
+            observedPlugins: ['kaizen'],
+            message: 'active',
+          },
+        },
+        {
+          run: 2,
+          hook_activation: {
+            provider: 'claude',
+            expected: true,
+            active: false,
+            degraded: true,
+            status: 'unknown',
+            observedPlugins: [],
+            message: 'no system.init observed',
+          },
+        },
+      ],
+    }));
+
+    const result = analyzeBatch(batchDir);
+    expect(result.hookActivationDistribution).toEqual({ active: 1, unknown: 1 });
+    expect(result.hookActivationDegradedCount).toBe(1);
+
+    const output = formatBatchAnalysis(result);
+    expect(output).toContain('### Hook Activation');
+    expect(output).toContain('active:1, unknown:1');
+    expect(output).toContain('Degraded/unknown runs:** 1');
+  });
+
+  it('reads hook activation written by buildRunMetrics from state.json run_history', () => {
+    const batchDir = createTmpBatch([
+      [
+        initMsg(),
+        userMsg('2026-03-22T22:00:00.000Z'),
+        assistantToolUse('Edit', { file_path: '/a.ts' }),
+        userMsg('2026-03-22T22:00:30.000Z'),
+      ],
+    ]);
+    const metrics = buildRunMetrics({
+      runNum: 1,
+      runStartEpoch: 1742681100,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      provider: 'claude',
+      result: {
+        prs: [],
+        issuesFiled: [],
+        issuesClosed: [],
+        cases: [],
+        cost: 0,
+        toolCalls: 0,
+        stopRequested: false,
+        linesDeleted: 0,
+        issuesPruned: 0,
+      },
+    } as any);
+    writeFileSync(join(batchDir, 'state.json'), JSON.stringify({
+      batch_id: 'test-batch',
+      run_history: [metrics],
+    }));
+
+    const result = analyzeBatch(batchDir);
+
+    expect(metrics.hook_activation).toMatchObject({ status: 'unknown', degraded: true });
+    expect(result.hookActivationDistribution).toEqual({ unknown: 1 });
+    expect(result.hookActivationDegradedCount).toBe(1);
   });
 
   it('enriches prompt metadata from backup state when primary state is corrupt', () => {

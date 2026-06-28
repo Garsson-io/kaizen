@@ -483,6 +483,42 @@ describe('processStreamMessage — hook-activation proof (#843)', () => {
     expect(result.hookActivation?.degraded).toBe(false);
   });
 
+  it('marks duplicate system.init events as unknown/degraded instead of accepting the last verdict', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = makeRunResult();
+    const ctx: StreamContext = { provider: 'claude' };
+
+    processStreamMessage(initKaizen, result, Date.now(), ctx);
+    processStreamMessage(initKaizen, result, Date.now(), ctx);
+
+    expect(ctx.initEventsSeen).toBe(2);
+    expect(result.hookActivation).toMatchObject({
+      expected: true,
+      active: false,
+      degraded: true,
+      status: 'unknown',
+    });
+    expect(result.hookActivation?.message).toMatch(/expected exactly one system\.init/i);
+  });
+
+  it('records an explicit degraded verdict when init is present but plugins is missing', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = makeRunResult();
+    const ctx: StreamContext = { provider: 'claude' };
+
+    processStreamMessage({ type: 'system', subtype: 'init', session_id: 'abc' }, result, Date.now(), ctx);
+
+    expect(ctx.initEventsSeen).toBe(1);
+    expect(result.hookActivation).toMatchObject({
+      expected: true,
+      active: false,
+      degraded: true,
+      status: 'degraded',
+    });
+  });
+
   it('does not degrade a codex run with no plugins (no hook runtime expected)', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});

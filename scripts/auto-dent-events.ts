@@ -19,6 +19,7 @@ import { resolve } from 'path';
 import { appendJsonLine } from '../src/lib/json-lines.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 import type { PhaseProviderRecord } from './auto-dent-provider.js';
+import type { HookActivationVerdict } from './auto-dent-hook-activation.js';
 import type { WorkflowGateId, WorkflowGateState } from './workflow-gate-ledger.js';
 
 // Event type definitions
@@ -89,6 +90,8 @@ export interface RunCompleteEvent extends BaseEvent {
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Review battery cost (USD) */
   review_cost_usd?: number;
+  /** Hook-activation verdict from the session init event or explicit unknown fallback (#1501). */
+  hook_activation?: HookActivationVerdict;
   /**
    * Provider + billing mode per lifecycle phase (#1143, epic #1134).
    * Absent on older events. Keyed by phase → { provider, billing }.

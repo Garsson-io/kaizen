@@ -32,6 +32,7 @@ import {
   modeSuccess,
   deriveRunOutcome,
   buildRunMetrics,
+  buildRunCompleteEvent,
   weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
@@ -2762,7 +2763,7 @@ describe('buildRunMetrics', () => {
     expect(metrics.hook_activation).toMatchObject({ degraded: true, expected: true, active: false });
   });
 
-  it('leaves hook_activation undefined when the run produced no verdict', () => {
+  it('normalizes a claude run with no init verdict to explicit unknown hook activation', () => {
     const metrics = buildRunMetrics({
       runNum: 6,
       runStartEpoch: 1742681100,
@@ -2770,8 +2771,74 @@ describe('buildRunMetrics', () => {
       exitCode: 0,
       runMode: 'exploit',
       result: makeRunResult(),
+      provider: 'claude',
+    } as any);
+    expect(metrics.hook_activation).toMatchObject({
+      provider: 'claude',
+      expected: true,
+      active: false,
+      degraded: true,
+      status: 'unknown',
     });
-    expect(metrics.hook_activation).toBeUndefined();
+    expect(metrics.hook_activation?.message).toMatch(/no system\.init observed/i);
+  });
+
+  it('does not degrade a codex run when no init verdict exists', () => {
+    const metrics = buildRunMetrics({
+      runNum: 7,
+      runStartEpoch: 1742681200,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result: makeRunResult(),
+      provider: 'codex',
+    } as any);
+    expect(metrics.hook_activation).toMatchObject({
+      provider: 'codex',
+      expected: false,
+      active: false,
+      degraded: false,
+      status: 'not_expected',
+    });
+  });
+
+  it('builds run.complete telemetry from normalized run metrics (#1501)', () => {
+    const result = makeRunResult();
+    const metrics = buildRunMetrics({
+      runNum: 8,
+      runStartEpoch: 1742681300,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result,
+      provider: 'claude',
+    });
+
+    const event = buildRunCompleteEvent({
+      runId: 'batch/run-8',
+      batchId: 'batch',
+      runNum: 8,
+      duration: 8,
+      exitCode: 0,
+      result,
+      runMode: 'exploit',
+      outcome: 'empty_success',
+      runMetricsForOutcome: metrics,
+      lifecycleViolationCount: 0,
+    });
+
+    expect(event).toMatchObject({
+      type: 'run.complete',
+      run_id: 'batch/run-8',
+      mode: 'exploit',
+      outcome: 'empty_success',
+    });
+    expect(event.hook_activation).toBe(metrics.hook_activation);
+    expect(event.hook_activation).toMatchObject({
+      provider: 'claude',
+      status: 'unknown',
+      degraded: true,
+    });
   });
 });
 
@@ -3617,6 +3684,19 @@ describe('auto-merge verdict binding wiring (#1220)', () => {
     const decisionIndex = AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeDecision = decideAutoMergeSafety({');
     expect(derivationIndex).toBeGreaterThan(-1);
     expect(derivationIndex).toBeLessThan(decisionIndex);
+  });
+
+  it('emits hook_activation on run.complete from the normalized run metrics (#1501)', () => {
+    const runCompleteBlock = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('const runMetricsForOutcome = buildRunMetrics({'),
+      AUTO_DENT_RUN_SOURCE.indexOf('events.emit(buildRunCompleteEvent({') + 900,
+    );
+
+    expect(runCompleteBlock).toContain("provider: state.provider ?? 'claude'");
+    expect(runCompleteBlock).toContain('const outcome = deriveRunOutcome({');
+    expect(runCompleteBlock).toContain('events.emit(buildRunCompleteEvent({');
+    expect(runCompleteBlock).toContain('runMetricsForOutcome,');
+    expect(AUTO_DENT_RUN_SOURCE).toContain('hook_activation: runMetricsForOutcome.hook_activation');
   });
 
   it('stream → verdict → gate: a degraded claude run is blocked from auto-merge end-to-end', () => {
