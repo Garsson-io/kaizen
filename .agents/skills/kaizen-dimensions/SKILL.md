@@ -89,5 +89,3 @@ Consumers call `listDimensions()` or `loadDimensionMetas()` from `src/review-bat
 ## Current Dimensions
 
 Run `npx tsx src/cli-dimensions.ts list` for the authoritative live list. The CLI is the source of truth because dimensions are data-driven from `prompts/review-*.md`; do not maintain a hand-copied snapshot here.
-
-Current PR checks include `impact-proof`, `requirements`, `scope-fidelity`, `plan-fidelity`, `test-plan`, `test-quality`, `correctness`, `dry`, `security`, `skill-changes`, `tooling-fitness`, `simplification-impact`, `improvement-lifecycle`, and `pr-description`. Plan and reflection dimensions appear in the CLI output with their own `applies_to` values.

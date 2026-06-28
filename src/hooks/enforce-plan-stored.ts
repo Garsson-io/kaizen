@@ -29,7 +29,7 @@ import { isAbsolute, resolve, relative } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { currentHookBranch } from './lib/current-branch.js';
 import { gitStdout } from './lib/git-state.js';
-import { isGhPrCommand, stripHeredocBody, extractRepoFlag, extractCdTarget } from './parse-command.js';
+import { isGhPrCommand, stripHeredocBody, extractRepoFlag, extractCdTarget, splitCommandSegments } from './parse-command.js';
 import { CaseSystem } from '../case-system.js';
 import { extractCaseIssueFromBranch } from './lib/case-branch.js';
 import { queryIssueState, type IssueState } from '../lib/github-pr.js';
@@ -247,6 +247,21 @@ function extractBodyFilePath(cmdLine: string): string | null {
   return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
 }
 
+function extractGhPrCreateSegment(cmdLine: string): string | null {
+  return splitCommandSegments(cmdLine).find(seg => /^gh\s+pr\s+create\b/.test(seg)) ?? null;
+}
+
+function countGhPrCreateSegments(cmdLine: string): number {
+  return splitCommandSegments(cmdLine).filter(seg => /^gh\s+pr\s+create\b/.test(seg)).length;
+}
+
+function commandOnlyChangesDirectoryBeforeCreate(cmdLine: string): boolean {
+  const segments = splitCommandSegments(cmdLine);
+  const createIndex = segments.findIndex(seg => /^gh\s+pr\s+create\b/.test(seg));
+  if (createIndex < 0) return false;
+  return segments.slice(0, createIndex).every(seg => /^cd\s+/.test(seg));
+}
+
 function isWithinDirectory(path: string, directory: string): boolean {
   const rel = relative(directory, path);
   return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
@@ -271,8 +286,15 @@ function readSmallRegularFile(path: string): string | null {
 }
 
 function readPrBodyText(fullCommand: string, cmdLine: string): string {
-  const bodyFile = extractBodyFilePath(cmdLine);
-  if (!bodyFile || bodyFile === '-') return fullCommand;
+  const prCreateSegment = extractGhPrCreateSegment(cmdLine);
+  if (!prCreateSegment) return fullCommand;
+
+  const bodyFile = extractBodyFilePath(prCreateSegment);
+  if (!bodyFile || bodyFile === '-') {
+    return countGhPrCreateSegments(cmdLine) === 1 && commandOnlyChangesDirectoryBeforeCreate(cmdLine)
+      ? fullCommand
+      : prCreateSegment;
+  }
 
   try {
     const cdTarget = extractCdTarget(cmdLine);
