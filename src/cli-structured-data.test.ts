@@ -85,8 +85,12 @@ describe('handler registry', () => {
     }
   });
 
-  it('has exactly 20 handlers (no stale entries)', () => {
-    expect(Object.keys(handlers).length).toBe(20);
+  it('has exactly 21 handlers (no stale entries)', () => {
+    expect(Object.keys(handlers).length).toBe(21);
+  });
+
+  it('registers the attach-transcript handler (#1508)', () => {
+    expect(handlers['attach-transcript']).toBeTypeOf('function');
   });
 });
 

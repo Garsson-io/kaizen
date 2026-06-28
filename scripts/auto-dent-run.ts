@@ -40,6 +40,7 @@ import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.
 import { defaultReviewFixProviders, runFixLoop } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
+import { attachTranscript } from '../src/transcript-attach.js';
 import {
   buildBatchOutcome,
   writeBatchOutcomeAttachment,
@@ -2343,6 +2344,25 @@ async function main(): Promise<void> {
         run_num: runNum,
         pr_url: prUrl,
       });
+    }
+    // #1508: attach this run's scrubbed, size-capped JSONL transcript to each PR
+    // as durable, minable friction material. Best-effort and fail-open: a GitHub
+    // failure or a missing log must never block the run.
+    const transcriptRepo = state.kaizen_repo || state.host_repo || '';
+    for (const prUrl of result.prs) {
+      const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1];
+      if (!prNum || !transcriptRepo) continue;
+      try {
+        const transcript = readFileSync(logFile, 'utf8');
+        const url = attachTranscript(
+          { kind: 'pr', number: prNum, repo: transcriptRepo },
+          { label: `${state.batch_id}/run-${runNum}`, transcript, sourcePath: logFile },
+          new Date().toISOString(),
+        );
+        console.log(`  [intelligence] attached run transcript to PR #${prNum}: ${url}`);
+      } catch (err) {
+        console.log(`  [intelligence] run-transcript attach skipped: ${(err as Error).message}`);
+      }
     }
   }
 

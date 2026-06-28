@@ -15,6 +15,9 @@ import {
 } from './auto-dent-stream.js';
 import * as github from './auto-dent-github.js';
 import { makeRunResult } from './auto-dent-test-helpers.js';
+import { buildKaizenCycleSteps } from './auto-dent-progress.js';
+import { parsePhaseMarkers } from './auto-dent-stream.js';
+import { formatPhaseMarkerLine } from '../src/phase-marker.js';
 
 describe('postInFlightUpdate', () => {
   beforeEach(() => {
@@ -694,5 +697,45 @@ describe('branch-push helper URLs vs real PRs (#1492)', () => {
     const prStep = result.progressSteps?.find((s) => s.phase === 'PR');
     expect(prStep?.state).toBe('created');
     expect(prStep?.url).toBe('https://github.com/o/r/pull/123');
+  });
+});
+
+describe('PLAN phase marker (#1502)', () => {
+  it('round-trips the store-path marker through the parser', () => {
+    const line = formatPhaseMarkerLine('PLAN', {
+      kind: 'plan',
+      url: 'https://github.com/o/r/issues/1508#issuecomment-1',
+    });
+    expect(line).toBe(
+      'AUTO_DENT_PHASE: PLAN | kind=plan | url=https://github.com/o/r/issues/1508#issuecomment-1',
+    );
+    const [marker] = parsePhaseMarkers(line);
+    expect(marker.phase).toBe('PLAN');
+    expect(marker.fields.kind).toBe('plan');
+    expect(marker.fields.url).toBe('https://github.com/o/r/issues/1508#issuecomment-1');
+  });
+
+  it('upgrades the ledger PLAN row from "not observed" to "stored" via extractArtifacts', () => {
+    const result = makeRunResult({ pickedIssue: '#1508' });
+    // Before: a real issue was picked, but no plan signal observed yet.
+    expect(buildKaizenCycleSteps(result).find((s) => s.phase === 'PLAN')?.state).toBe('not observed');
+
+    // A store-plan CLI line lands in a tool result and is ingested.
+    extractArtifacts(
+      formatPhaseMarkerLine('PLAN', { kind: 'plan', url: 'https://x/issues/1508#c1' }),
+      result,
+    );
+    const planStep = buildKaizenCycleSteps(result).find((s) => s.phase === 'PLAN');
+    expect(planStep?.state).toBe('stored');
+    expect(planStep?.url).toBe('https://x/issues/1508#c1');
+    expect(planStep?.detail).toContain('plan');
+  });
+
+  it('a store-testplan marker also marks the PLAN row stored', () => {
+    const result = makeRunResult({ pickedIssue: '#1508' });
+    extractArtifacts(formatPhaseMarkerLine('PLAN', { kind: 'testplan', url: 'https://x/c2' }), result);
+    const planStep = buildKaizenCycleSteps(result).find((s) => s.phase === 'PLAN');
+    expect(planStep?.state).toBe('stored');
+    expect(planStep?.detail).toContain('testplan');
   });
 });
