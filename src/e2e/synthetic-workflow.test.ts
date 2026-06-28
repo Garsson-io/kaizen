@@ -13,9 +13,11 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { buildHookRegistryFromManifest, SessionSimulator, type PluginManifest } from "./session-simulator.js";
+import { resolveTsxBin } from "./test-runtime.js";
 
 describe("Synthetic Workflow E2E", () => {
   let session: SessionSimulator;
+  const itWithTsx = resolveTsxBin() ? it : it.skip;
 
   afterEach(() => {
     session?.cleanup();
@@ -138,6 +140,16 @@ describe("Synthetic Workflow E2E", () => {
       );
     });
 
+    it("reports state files and contents for assertion diagnostics", () => {
+      session = new SessionSimulator();
+      session.injectState("gate-a", "STATUS=needs_review\nPR_URL=https://example.test/pr/1\n");
+
+      expect(session.stateFiles()).toEqual(["gate-a"]);
+      expect(session.stateFilesContaining("STATUS=needs_review")).toEqual(["gate-a"]);
+      expect(session.stateSummary()).toContain("--- gate-a ---");
+      expect(session.stateSummary()).toContain("PR_URL=https://example.test/pr/1");
+    });
+
     it("classifies hook registry groups from a synthetic manifest fixture", () => {
       const manifest: PluginManifest = {
         hooks: {
@@ -169,7 +181,7 @@ describe("Synthetic Workflow E2E", () => {
       });
     });
 
-    it("does not set PR workflow gates for failed PR creation outcomes", () => {
+    itWithTsx("does not set PR workflow gates for failed PR creation outcomes", () => {
       session = new SessionSimulator();
       session.setHome("clean");
 
@@ -181,7 +193,7 @@ describe("Synthetic Workflow E2E", () => {
       expectStateFilesContaining(session, "STATUS=needs_pr_kaizen", 0);
     });
 
-    it("sets persisted PR workflow gates for successful PR creation outcomes", () => {
+    itWithTsx("sets persisted PR workflow gates for successful PR creation outcomes", () => {
       session = new SessionSimulator();
       session.setHome("clean");
 
@@ -199,7 +211,7 @@ describe("Synthetic Workflow E2E", () => {
       expect(stopResult.results.some((result) => result.stdout.includes("KAIZEN REFLECTION"))).toBe(true);
     });
 
-    it("full manifest session completes with no hook timeouts", () => {
+    itWithTsx("full manifest session completes with no hook timeouts", () => {
       session = new SessionSimulator();
       session.setHome("clean");
 

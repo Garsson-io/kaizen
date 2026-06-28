@@ -19,13 +19,8 @@ STATE_DIR="$HARNESS_TEMP/pr-review-state"
 mkdir -p "$STATE_DIR"
 export STATE_DIR
 export DEBUG_LOG="$HARNESS_TEMP/debug.log"
-TSX_BIN="$REPO_ROOT/node_modules/.bin/tsx"
-if [ ! -x "$TSX_BIN" ]; then
-  GIT_COMMON=$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || true)
-  if [ -n "$GIT_COMMON" ]; then
-    TSX_BIN="$(dirname "$GIT_COMMON")/node_modules/.bin/tsx"
-  fi
-fi
+source "$HOOKS_DIR/lib/resolve-tsx-bin.sh"
+TSX_BIN="$(resolve_tsx_bin "$REPO_ROOT" || true)"
 
 setup_mock_dir
 trap 'rm -rf "$MOCK_DIR"' EXIT

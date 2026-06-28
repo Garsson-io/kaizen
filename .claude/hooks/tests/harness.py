@@ -34,19 +34,18 @@ REPO_ROOT = HOOKS_DIR.parent.parent
 
 
 def resolve_tsx_bin() -> Optional[str]:
-    local = REPO_ROOT / "node_modules" / ".bin" / "tsx"
-    if local.exists():
-        return str(local)
+    helper = HOOKS_DIR / "lib" / "resolve-tsx-bin.sh"
     try:
-        git_common = subprocess.check_output(
-            ["git", "-C", str(REPO_ROOT), "rev-parse", "--git-common-dir"],
+        proc = subprocess.run(
+            ["bash", str(helper), str(REPO_ROOT)],
+            capture_output=True,
             text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except subprocess.CalledProcessError:
+            check=False,
+        )
+    except OSError:
         return None
-    main_tsx = Path(git_common).parent / "node_modules" / ".bin" / "tsx"
-    return str(main_tsx) if main_tsx.exists() else None
+    tsx = proc.stdout.strip()
+    return tsx if proc.returncode == 0 and tsx else None
 
 
 # Input builders — construct schema-compliant event JSON
