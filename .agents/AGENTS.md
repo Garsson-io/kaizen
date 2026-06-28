@@ -136,6 +136,7 @@ Memory-only retention means the next session on a different machine repeats the 
 
 ### Branch & PR hygiene
 
+- **When editing with patch-style tools from a case worktree, use absolute file paths.** Relative patch targets can resolve against the agent process checkout instead of the intended case worktree, especially in multi-worktree sessions. Anchor patch edits to the worktree path you are actually modifying (for example `.claude/worktrees/<case>/src/...`) and verify `pwd`/`git status --short --branch` in that worktree before the first source edit.
 - **Never push new commits to a branch whose most recent PR was already merged with no subsequent open PR.** Commits pushed to such a branch can get orphaned and the review-loop state file points at the merged PR, not the new work. Always create a new branch (via `EnterWorktree` or `git checkout -b`) for follow-up work.
 - **Detect merged-branch state before pushing.** Check the branch you are actually pushing. For ordinary `git push` this is usually the current branch; for explicit refspecs it is the remote target branch from `refs/heads/<branch>`. Run:
   ```bash
