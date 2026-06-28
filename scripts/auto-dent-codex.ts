@@ -6,6 +6,8 @@
  * that the existing auto-dent lifecycle validator can consume.
  */
 
+import { parseJsonLinesWithMalformedRows } from '../src/lib/json-lines.js';
+
 export interface ParsedCodexJsonl {
   events: unknown[];
   text: string;
@@ -51,39 +53,31 @@ function isFinalEvent(event: unknown): boolean {
 }
 
 export function parseCodexJsonl(jsonl: string): ParsedCodexJsonl {
-  const events: unknown[] = [];
   const textChunks: string[] = [];
   const finalChunks: string[] = [];
   const agentMessages: string[] = [];
-  const malformedLines: string[] = [];
+  const parsed = parseJsonLinesWithMalformedRows<unknown>(jsonl);
 
-  for (const raw of jsonl.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    try {
-      const event = JSON.parse(line) as unknown;
-      events.push(event);
-      const chunks: string[] = [];
-      collectText(event, chunks);
-      textChunks.push(...chunks);
-      if (isFinalEvent(event)) finalChunks.push(...chunks);
-      const item = (event as Record<string, unknown>).item;
-      if (item && typeof item === 'object') {
-        const itemObj = item as Record<string, unknown>;
-        if (itemObj.type === 'agent_message' && typeof itemObj.text === 'string') {
-          agentMessages.push(itemObj.text);
-        }
+  for (const event of parsed.rows) {
+    const chunks: string[] = [];
+    collectText(event, chunks);
+    textChunks.push(...chunks);
+    if (isFinalEvent(event)) finalChunks.push(...chunks);
+    if (!event || typeof event !== 'object') continue;
+    const item = (event as Record<string, unknown>).item;
+    if (item && typeof item === 'object') {
+      const itemObj = item as Record<string, unknown>;
+      if (itemObj.type === 'agent_message' && typeof itemObj.text === 'string') {
+        agentMessages.push(itemObj.text);
       }
-    } catch {
-      malformedLines.push(raw);
     }
   }
 
   return {
-    events,
+    events: parsed.rows,
     text: textChunks.join('\n'),
     finalText: finalChunks.length > 0 ? finalChunks.join('\n') : (agentMessages.at(-1) ?? ''),
-    malformedLines,
+    malformedLines: parsed.malformedRows,
   };
 }
 
