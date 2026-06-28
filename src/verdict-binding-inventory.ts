@@ -159,6 +159,20 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       ],
       terminalCritical: true,
     },
+    {
+      id: 'test-health-verdict',
+      label: 'Test-health verdict',
+      producer: 'src/known-failures.ts: unownedFailures() over the known-failures registry, surfaced as the testHealth signal (#1481/#1518)',
+      producerSignatures: [
+        'src/known-failures.ts:function:unownedFailures',
+        'scripts/known-failures-status.ts:function:runClassify',
+      ],
+      sourceEvidence: [
+        { file: 'src/known-failures.ts', tokens: ['unownedFailures', 'findOwnershipProblems'] },
+        { file: 'scripts/known-failures-status.ts', tokens: ['runClassify', 'known-failures'] },
+      ],
+      terminalCritical: true,
+    },
   ],
   nonTerminalVerdictProducers: [
     {
@@ -286,6 +300,11 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       label: 'Shared review verdict policy alias',
       rationale: 'Shared policy type for consuming the review verdict, not an independent producer.',
     },
+    {
+      signature: 'src/verdict-binding-policy.ts:type:TestHealthVerdict',
+      label: 'Shared test-health verdict policy alias',
+      rationale: 'Shared policy type for consuming the test-health verdict; terminal binding is represented by test-health-verdict (produced by src/known-failures.ts).',
+    },
   ],
   terminalActions: [
     {
@@ -341,12 +360,13 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       id: 'merge',
       label: 'Merge',
       terminalAction: 'Direct gh pr merge and auto-dent auto-merge queueing',
-      consumedVerdicts: ['review-round-verdict', 'review-battery-verdict', 'process-evidence-verdict', 'lifecycle-health-verdict', 'hook-activation-verdict'],
-      enforcingConsumer: 'enforce-merge-verdict blocks direct FAIL merges; decideAutoMergeSafety blocks unsafe auto-merge queueing, including degraded/unknown hook-activation (#1220)',
-      failureModeBlocked: 'A PR with FAIL review/process/lifecycle verdicts — or a degraded run where kaizen hooks did not load (or no system.init was seen on a hook-expecting provider) — cannot be merged or queued by the normal paths.',
+      consumedVerdicts: ['review-round-verdict', 'review-battery-verdict', 'process-evidence-verdict', 'lifecycle-health-verdict', 'hook-activation-verdict', 'test-health-verdict'],
+      enforcingConsumer: 'enforce-merge-verdict blocks direct FAIL merges; decideAutoMergeSafety blocks unsafe auto-merge queueing, including degraded/unknown hook-activation (#1220) and unowned test failures (#1518)',
+      failureModeBlocked: 'A PR with FAIL review/process/lifecycle verdicts — a degraded run where kaizen hooks did not load (or no system.init was seen on a hook-expecting provider) — or a run that observed a failing test owned by no open issue — cannot be merged or queued by the normal paths.',
       sourceEvidence: [
         { file: 'src/hooks/enforce-merge-verdict.ts', tokens: ['deriveStoredRoundVerdict', "verdict === 'FAIL'", 'MERGE BLOCKED'] },
-        { file: 'scripts/auto-dent-merge-policy.ts', tokens: ['qualityVerdictBlockReasons', 'decideAutoMergeSafety', 'hookActivationBlockReasons'] },
+        { file: 'scripts/auto-dent-merge-policy.ts', tokens: ['qualityVerdictBlockReasons', 'decideAutoMergeSafety', 'hookActivationBlockReasons', 'testHealth'] },
+        { file: 'src/verdict-binding-policy.ts', tokens: ['testHealth', 'unowned-failures'] },
         { file: '.claude-plugin/plugin.json', tokens: ['kaizen-enforce-merge-verdict-ts.sh'] },
       ],
     },

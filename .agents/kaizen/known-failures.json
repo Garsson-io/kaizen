@@ -1,0 +1,4 @@
+{
+  "_doc": "Registry of known-failing tests that are allowed to NOT block merge/CI because each failure has an OWNED, OPEN tracking issue (#1518). A failing test is either fixed before merge, or it is a tracked incident with a single owner — never invisible background noise. Each entry: { test: a substring matched against the failing test id (pytest nodeid, vitest name, or shell test file), issue: the owning OPEN GitHub issue number, reason: why it is tolerated for now }. The `known-failures` CI gate FAILS if any entry's owning issue is closed or missing, forcing a fix or a re-filed owner. An empty list means the tree must be fully green.",
+  "knownFailures": []
+}

@@ -29,6 +29,8 @@ from typing import Optional
 
 HOOKS_DIR = Path(__file__).parent.parent
 SETTINGS_PATH = HOOKS_DIR.parent / "settings.json"
+# Repo root: .claude/hooks -> .claude -> <root>
+REPO_ROOT = HOOKS_DIR.parent.parent
 
 
 # Input builders — construct schema-compliant event JSON
@@ -353,13 +355,38 @@ class PRReviewState:
         return len(list(self.state_dir.iterdir()))
 
     def create_review_sentinel(self, pr_url: str, round_num: int | str):
-        """Create the review sentinel written by store-review-summary/store-review-batch.
+        """Create a VALID signed review sentinel via the product SSOT (#1481).
 
-        Format: <STATE_DIR>/<owner_repo_pr>.reviewed-r<round>
+        Shells out to the `KAIZEN_TEST_RUNNER`-gated `emit-test-review-sentinel`
+        command, which builds the sentinel with the same `buildReviewSentinelRecord`
+        + `expectedPrReviewDimensions()` the gate validates against. The harness
+        therefore carries zero knowledge of the signed sentinel format, so the
+        format drift that caused #1481 (stale `reviewed_at=test` fixture) cannot
+        recur. Writes to <STATE_DIR>/<owner_repo_pr>.reviewed-r<round>.
         """
-        state_key = pr_url.replace("https://github.com/", "").replace("/pull/", "_").replace("/", "_")
-        sentinel = self.state_dir / f"{state_key}.reviewed-r{round_num}"
-        sentinel.write_text("reviewed_at=test\n")
+        m = re.match(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)", pr_url)
+        if not m:
+            raise ValueError(f"create_review_sentinel: cannot parse PR URL: {pr_url}")
+        repo, pr = m.group(1), m.group(2)
+
+        cli = REPO_ROOT / "src" / "cli-structured-data.ts"
+        local_tsx = REPO_ROOT / "node_modules" / ".bin" / "tsx"
+        cmd = [str(local_tsx)] if local_tsx.exists() else ["npx", "tsx"]
+        cmd += [
+            str(cli), "emit-test-review-sentinel",
+            "--repo", repo, "--pr", pr, "--round", str(round_num),
+        ]
+
+        env = os.environ.copy()
+        env["STATE_DIR"] = str(self.state_dir)
+        env["KAIZEN_TEST_RUNNER"] = "1"
+
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env,
+                              cwd=str(REPO_ROOT), timeout=30)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                "emit-test-review-sentinel failed "
+                f"({proc.returncode}): {proc.stdout}{proc.stderr}")
 
 
 # Mock git/gh helpers

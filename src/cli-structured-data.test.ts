@@ -73,6 +73,7 @@ describe('handler registry', () => {
       'store-metadata', 'retrieve-metadata', 'query-connected', 'query-pr',
       'update-pr-section',
       'store-iteration', 'retrieve-iteration',
+      'emit-test-review-sentinel',
     ];
     for (const cmd of expectedCommands) {
       expect(handlers[cmd], `missing handler for '${cmd}'`).toBeDefined();
@@ -85,8 +86,8 @@ describe('handler registry', () => {
     }
   });
 
-  it('has exactly 20 handlers (no stale entries)', () => {
-    expect(Object.keys(handlers).length).toBe(20);
+  it('has exactly 21 handlers (no stale entries)', () => {
+    expect(Object.keys(handlers).length).toBe(21);
   });
 });
 

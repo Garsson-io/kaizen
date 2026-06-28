@@ -213,8 +213,23 @@ HOST_REPO=$(jq -r '.host.repo' kaizen.config.json)
 npm install          # Install deps
 npm run build        # Compile TypeScript
 npm test             # Run TS tests
-npm run test:hooks   # Run shell hook tests
+npm run test:hooks   # Run shell + Python hook lifecycle tests (test_hooks.py)
 ```
+
+> **`npm run test:hooks` is part of the real health path, not optional.** It runs
+> the Python hook lifecycle suite (`test_hooks.py`); CI installs pytest and runs
+> it (a missing runner is now a hard failure, not a silent skip — #1481), so green
+> CI can no longer hide a red local hook suite.
+
+**Known-failure ownership (#1481 / #1518).** Never merge as if the tree is healthy
+while a relevant test is red. A failing test is either *part of your change* (fix
+it before merge) or a *separate, pre-existing incident* — and the latter must have
+an **owning OPEN issue** in `.agents/kaizen/known-failures.json` (`{ test, issue,
+reason }`). Unowned failures fail `run-all-tests.sh`, the `known-failures` CI job
+fails on a closed/missing owner, and `qualityVerdictBlockReasons` (the merge SSOT)
+blocks merge on `testHealth: unowned-failures`. Under parallelism, exactly one
+agent owns driving a known failure to resolution. See
+`.agents/kaizen/policies-local.md`.
 
 ## Testing — Behavioral vs Structural
 

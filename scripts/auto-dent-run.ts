@@ -2598,6 +2598,13 @@ async function main(): Promise<void> {
     // Default provider to 'claude' (hook-expecting) for legacy state → fail-closed.
     hookActivation: result.hookActivation,
     provider: state.provider ?? 'claude',
+    // testHealth (#1481/#1518) is consumed by the shared SSOT and is enforced
+    // provider-agnostically at the test runner (run-all-tests.sh owned/unowned
+    // classification) and the `known-failures` CI gate. The harness does not run
+    // the suite itself, so it has no truthful run-level test signal to pass here
+    // yet — left `unknown` (non-blocking) rather than fabricated. Capturing a
+    // run-level test-failure signal for the harness is tracked as #1527,
+    // mirroring how #1220 deferred run-success consumption to #1501.
   });
   const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);
   if (!autoMergeDecision.allow) {
