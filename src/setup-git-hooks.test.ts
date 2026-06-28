@@ -584,6 +584,29 @@ describe('installGitHooks — end-to-end', () => {
     expect(installed).not.toContain('pre-push.ts');
   });
 
+  it('husky wrapper picks up plugin entry changes without rerunning setup (#1090)', () => {
+    fs.mkdirSync(path.join(tmpDir, '.husky'));
+    const pluginRoot = path.join(tmpDir, 'plugin-root');
+    fs.mkdirSync(path.join(pluginRoot, 'src/hooks'), { recursive: true });
+    fs.writeFileSync(path.join(pluginRoot, '.claude-plugin-placeholder'), '');
+    fs.writeFileSync(
+      path.join(pluginRoot, 'src/hooks/kaizen-host-entry.sh'),
+      '#!/usr/bin/env bash\necho initial > propagation.txt\n',
+      { mode: 0o755 },
+    );
+
+    installGitHooks({ cwd: tmpDir, entryScriptContent: buildThinWrapper(pluginRoot) });
+
+    fs.writeFileSync(
+      path.join(pluginRoot, 'src/hooks/kaizen-host-entry.sh'),
+      '#!/usr/bin/env bash\necho propagated > propagation.txt\n',
+      { mode: 0o755 },
+    );
+
+    execSync('bash .husky/pre-push', { cwd: tmpDir });
+    expect(read('propagation.txt')).toBe('propagated\n');
+  });
+
   it('migration: re-install overwrites a stale 66-line copy with the thin wrapper (#1086)', () => {
     fs.mkdirSync(path.join(tmpDir, '.husky'));
     // Simulate a host that previously installed the old full COPY of the entry.
