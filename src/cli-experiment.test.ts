@@ -28,6 +28,17 @@ const CLI_SOURCE = path.resolve(__dirname, 'cli-experiment.ts');
 // SUT: cli-experiment.ts
 // VERIFICATION: DI for file operations, subprocess for argument parsing.
 
+describe('cli-experiment source invariants', () => {
+  test('uses the shared project-root resolver instead of direct git execSync', () => {
+    const source = fs.readFileSync(CLI_SOURCE, 'utf-8');
+
+    expect(source).not.toContain('execSync');
+    expect(source).not.toContain('git rev-parse --show-toplevel');
+    expect(source).toContain("import { resolveProjectRoot } from './lib/resolve-project-root.js';");
+    expect(source).toContain('resolveProjectRoot(process.cwd())');
+  });
+});
+
 function makeTmpDeps(): { deps: ExperimentDeps; dir: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-test-'));
   return {
