@@ -16,6 +16,7 @@ import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import {
   buildLiveProbeCommand,
+  normalizeLiveProbeExitCode,
   replayLog,
   runLiveProbe,
   runStream,
@@ -211,6 +212,13 @@ describe('replay: edge cases', () => {
         '-',
       ],
     });
+  });
+
+  it('fails Codex live probes that emit malformed JSONL despite a zero provider exit (#1580)', () => {
+    expect(normalizeLiveProbeExitCode('codex', 0, 1)).toBe(1);
+    expect(normalizeLiveProbeExitCode('codex', 0, 0)).toBe(0);
+    expect(normalizeLiveProbeExitCode('codex', 2, 1)).toBe(2);
+    expect(normalizeLiveProbeExitCode('claude', 0, 1)).toBe(0);
   });
 });
 

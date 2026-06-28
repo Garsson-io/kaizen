@@ -53,6 +53,10 @@ function isFinalEvent(event: unknown): boolean {
   return type.includes('final') || type === 'result';
 }
 
+export function hasCodexTerminalEvent(parsed: ParsedCodexJsonl): boolean {
+  return parsed.events.some(isFinalEvent);
+}
+
 function textFrom(value: unknown): string {
   const chunks: string[] = [];
   collectText(value, chunks);

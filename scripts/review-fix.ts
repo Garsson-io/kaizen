@@ -40,7 +40,7 @@ import { addSection, writeAttachment } from '../src/section-editor.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 import { readJsonValueFile, writeJsonObjectFile } from '../src/lib/json-file.js';
 import { ghExec } from './auto-dent-github.js';
-import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
+import { buildCodexExecArgs, hasCodexTerminalEvent, parseCodexJsonl } from './auto-dent-codex.js';
 import {
   PROVIDER_CAPABILITIES,
   validateProviderPlan,
@@ -606,8 +606,12 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
   // Parse provider-specific JSONL — look for the final result message.
   if (provider.provider === 'codex') {
     const parsedCodex = parseCodexJsonl(stdout);
+    const hasTerminalEvent = hasCodexTerminalEvent(parsedCodex);
     const output = parsedCodex.finalText || parsedCodex.text;
-    if (output || (!running && parsedCodex.events.length > 0)) {
+    if (running && !hasTerminalEvent) {
+      return { done: false, success: false, costUsd: 0, output: '' };
+    }
+    if (hasTerminalEvent) {
       return {
         done: true,
         success: parsedCodex.malformedLines.length === 0,
@@ -619,7 +623,7 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
       return { done: false, success: false, costUsd: 0, output: '' };
     }
     const malformed = parsedCodex.malformedLines.slice(0, 3).join('\n');
-    return { done: true, success: false, costUsd: 0, output: malformed || stdout.slice(0, 500) };
+    return { done: true, success: false, costUsd: 0, output: malformed || output || stdout.slice(0, 500) };
   }
 
   const parsed = parseStreamJsonResult(stdout);

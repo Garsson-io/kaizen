@@ -439,6 +439,20 @@ describe('checkFixResult (integration: real temp files)', () => {
       expect(r.output).toContain('Fix committed and pushed');
     } finally { teardown(); }
   });
+
+  it('keeps running Codex fixes pending until a terminal result event appears', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      const lines = [
+        JSON.stringify({ item: { type: 'agent_message', text: 'still working' } }),
+      ];
+      writeFileSync(logFile, lines.join('\n') + '\n');
+      const r = checkFixResult(logFile, process.pid, { provider: 'codex', billing: 'subscription-cli' });
+      expect(r.done).toBe(false);
+      expect(r.success).toBe(false);
+    } finally { teardown(); }
+  });
 });
 
 // ── stateKey ─────────────────────────────────────────────────────────

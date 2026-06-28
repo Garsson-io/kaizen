@@ -225,6 +225,11 @@ export function buildLiveProbeCommand(opts: Required<Pick<LiveProbeOpts, 'provid
   };
 }
 
+export function normalizeLiveProbeExitCode(provider: 'claude' | 'codex', exitCode: number, malformedJsonlLines: number): number {
+  if (provider === 'codex' && malformedJsonlLines > 0 && exitCode === 0) return 1;
+  return exitCode;
+}
+
 export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture & { exitCode: number }> {
   const {
     provider = 'claude',
@@ -242,6 +247,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
   const ctx: StreamContext = { provider };
   const start = Date.now();
   const command = buildLiveProbeCommand({ provider, prompt, cwd, maxBudget, extraArgs });
+  let malformedJsonlLines = 0;
 
   // Save the raw log for replay/debugging
   const tmpDir = mkdtempSync(join(tmpdir(), 'auto-dent-probe-'));
@@ -270,7 +276,10 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
       } catch { /* best effort */ }
 
       const parsed = parseJsonObject(line);
-      if (!parsed) return;
+      if (!parsed) {
+        if (provider === 'codex' && line.trim()) malformedJsonlLines++;
+        return;
+      }
       rawMessages.push(parsed);
       try {
         if (provider === 'codex') {
@@ -294,8 +303,12 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
 
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (provider === 'codex' && malformedJsonlLines > 0) {
+        console.log(`[codex] malformed_jsonl_lines=${malformedJsonlLines}`);
+      }
       console.log = realLog;
       const durationMs = Date.now() - start;
+      const providerExitCode = code ?? 1;
 
       resolve({
         logLines,
@@ -303,7 +316,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
         phases: extractPhasesFromLog(logLines),
         rawMessages,
         durationMs,
-        exitCode: code ?? 1,
+        exitCode: normalizeLiveProbeExitCode(provider, providerExitCode, malformedJsonlLines),
       });
     });
 
