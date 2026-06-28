@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -10,6 +10,15 @@ import {
   CustomCliBackend,
   type IssueBackendConfig,
 } from "./issue-backend.js";
+
+const ISSUE_BACKEND_SOURCE = readFileSync(new URL("./issue-backend.ts", import.meta.url), "utf-8");
+
+describe("config JSON helper source invariant", () => {
+  it("routes kaizen.config.json reads through readJsonObjectFile", () => {
+    expect(ISSUE_BACKEND_SOURCE).toContain("readJsonObjectFile");
+    expect(ISSUE_BACKEND_SOURCE).not.toContain("JSON.parse(readFileSync(configPath");
+  });
+});
 
 describe("readIssueConfig", () => {
   let tempDir: string;
@@ -57,6 +66,20 @@ describe("readIssueConfig", () => {
     const config = readIssueConfig(tempDir);
     expect(config.backend).toBe("custom");
     expect(config.config?.customCli).toBe("linear-issue-cli");
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["malformed", "{not json"],
+    ["blank", "   "],
+    ["array", "[]"],
+    ["primitive", "\"text\""],
+  ])("returns github default when config file is %s", (_name, content) => {
+    tempDir = mkdtempSync(join(tmpdir(), "issue-be-test-"));
+    writeFileSync(join(tempDir, "kaizen.config.json"), content);
+
+    expect(readIssueConfig(tempDir).backend).toBe("github");
+
     rmSync(tempDir, { recursive: true, force: true });
   });
 });
