@@ -23,7 +23,6 @@ const HOOKS_DIR = join(__dirname, '..');
 const OPT_OUT = new Set<string>([
   // bump-plugin-version.ts — migrated to git-state.ts (#1074)
   // hook-io.ts — migrated to git-state.ts (#1074)
-  'kaizen-reflect.ts',
   'pr-kaizen-clear.ts',
   'pr-kaizen-clear-fallback.ts',
   'pr-review-loop.ts',

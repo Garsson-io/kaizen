@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HookInput } from './hook-io.js';
@@ -276,6 +276,18 @@ describe('processHookInput', () => {
       const output2 = processHookInput(input, defaultOpts);
       expect(output2).toBeNull();
     });
+  });
+});
+
+describe('git runner invariant', () => {
+  it('routes kaizen-reflect git reads through argv-style gitStdout calls', () => {
+    const source = readFileSync(new URL('./kaizen-reflect.ts', import.meta.url), 'utf-8');
+
+    expect(source).not.toMatch(/execSync\(['"`]git\b/);
+    expect(source).toContain("gitStdout(['remote', 'get-url', 'origin'])");
+    expect(source).toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown')");
+    expect(source).toContain("gitStdout(['diff', '--name-only', 'main...HEAD'])");
+    expect(source).toContain("gitStdout(['worktree', 'list', '--porcelain'], '.')");
   });
 });
 

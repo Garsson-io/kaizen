@@ -19,6 +19,7 @@ import { gh } from '../lib/gh-exec.js';
 import { parseGithubPrUrl } from '../lib/github-pr.js';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
+import { gitStdout } from './lib/git-state.js';
 import {
   extractRepoFlag,
   isGhPrCommand,
@@ -41,28 +42,14 @@ type GhRunner = (args: string[]) => string;
 
 /** Detect the GitHub repo from the origin remote URL. */
 function detectGhRepo(): string | undefined {
-  try {
-    const url = execSync('git remote get-url origin', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    const match = url.match(/github\.com[:/]([^/]+\/[^/.]+)/);
-    return match?.[1];
-  } catch {
-    return undefined;
-  }
+  const url = gitStdout(['remote', 'get-url', 'origin']);
+  const match = url.match(/github\.com[:/]([^/]+\/[^/.]+)/);
+  return match?.[1];
 }
 
 /** Get current git branch. */
 function getCurrentBranch(): string {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-  } catch {
-    return 'unknown';
-  }
+  return gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown');
 }
 
 /** Get changed files for context. */
@@ -81,10 +68,7 @@ function getChangedFiles(cmdLine: string, isMerge: boolean, ghRun: GhRunner = gh
       }
       return ghRun(args).trim();
     }
-    return execSync('git diff --name-only main...HEAD', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
+    return gitStdout(['diff', '--name-only', 'main...HEAD']);
   } catch {
     return '';
   }
@@ -92,16 +76,9 @@ function getChangedFiles(cmdLine: string, isMerge: boolean, ghRun: GhRunner = gh
 
 /** Get main checkout path. */
 function getMainCheckout(): string {
-  try {
-    const output = execSync('git worktree list --porcelain', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    const firstLine = output.split('\n')[0];
-    return firstLine.replace('worktree ', '');
-  } catch {
-    return '.';
-  }
+  const output = gitStdout(['worktree', 'list', '--porcelain'], '.');
+  const firstLine = output.split('\n')[0];
+  return firstLine.replace('worktree ', '');
 }
 
 /** Send a Telegram notification via IPC. */
