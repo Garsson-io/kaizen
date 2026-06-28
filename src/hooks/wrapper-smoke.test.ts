@@ -89,6 +89,32 @@ const NOOP_INPUT = {
   tool_response: { stdout: 'hello', stderr: '', exit_code: '0' },
 };
 
+describe('wrapper smoke: root-resolution boilerplate', () => {
+  it('keeps hook wrappers from duplicating root resolution (#365)', () => {
+    const wrappers = fs
+      .readdirSync(HOOKS_DIR)
+      .filter((name) => name.endsWith('.sh'))
+      .sort();
+    const forbidden = [
+      { name: 'SCRIPT_DIR=', pattern: /^\s*SCRIPT_DIR=/m },
+      { name: 'PROJECT_ROOT=', pattern: /^\s*PROJECT_ROOT=/m },
+      {
+        name: 'inline KAIZEN_DIR dirname resolution',
+        pattern: /^\s*KAIZEN_DIR=.*dirname/m,
+      },
+    ];
+
+    const offenders = wrappers.flatMap((wrapper) => {
+      const content = fs.readFileSync(path.join(HOOKS_DIR, wrapper), 'utf-8');
+      return forbidden
+        .filter(({ pattern }) => pattern.test(content))
+        .map(({ name }) => `${wrapper}: ${name}`);
+    });
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('wrapper smoke: bash wrappers exist and are executable', () => {
   for (const wrapper of [
     'pr-review-loop-ts.sh',

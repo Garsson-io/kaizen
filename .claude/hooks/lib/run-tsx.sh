@@ -10,6 +10,8 @@
 #   source "$(dirname "$0")/lib/run-tsx.sh"
 #   run_tsx "$KAIZEN_DIR" "$KAIZEN_DIR/src/hooks/my-hook.ts"
 
+source "$(dirname "${BASH_SOURCE[0]}")/resolve-kaizen-dir.sh" || exit 0
+
 run_tsx() {
   local kaizen_dir="$1"
   local ts_file="$2"

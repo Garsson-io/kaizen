@@ -13,7 +13,7 @@
 # compilation overhead), which uses TS state functions (listStateFilesAnyBranch, etc.)
 # from state-utils.ts. See kaizen #790 gap fix.
 
-KAIZEN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$(dirname "$0")/lib/resolve-kaizen-dir.sh" 2>/dev/null || exit 0
 
 # Use pre-compiled TS version if available (no tsx overhead)
 JS_PATH="$KAIZEN_DIR/dist/hooks/pr-kaizen-clear-fallback.js"
