@@ -23,6 +23,7 @@ import {
   processStreamMessage,
   type RunResult,
   type RunMetrics,
+  type StreamContext,
 } from './auto-dent-run.js';
 import { parsePhaseMarkers as parsePhaseMarkersLocal } from './auto-dent-stream.js';
 import {
@@ -204,6 +205,10 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
   const logLines: string[] = [];
   const rawMessages: Record<string, any>[] = [];
   const result = makeRunResult();
+  // Live probe spawns a real claude session, so hooks are expected — thread the
+  // provider so the #843 hook-activation check runs here too (this is exactly
+  // where a `plugins:[]` session should be caught).
+  const ctx: StreamContext = { provider: 'claude' };
   const start = Date.now();
 
   const args = [
@@ -243,7 +248,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
       if (!parsed) return;
       rawMessages.push(parsed);
       try {
-        processStreamMessage(parsed, result, start);
+        processStreamMessage(parsed, result, start, ctx);
       } catch { /* skip malformed stream messages */ }
     });
 

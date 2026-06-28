@@ -32,6 +32,7 @@ import { join, resolve, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { readJsonValueFile } from '../src/lib/json-file.js';
+import { KAIZEN_PLUGIN_SOURCE } from '../src/kaizen-plugin-identity.js';
 
 export type CheckStatus = 'PASS' | 'WARN' | 'FAIL';
 
@@ -71,7 +72,7 @@ export interface CodexReadinessOpts {
   minVersion?: string;
 }
 
-const DEFAULT_PLUGIN = 'kaizen@kaizen';
+const DEFAULT_PLUGIN = KAIZEN_PLUGIN_SOURCE;
 const MIN_CODEX_VERSION = '0.142.3';
 const REQUIRED_CODEX_FEATURES = ['shell_tool', 'unified_exec', 'hooks'] as const;
 

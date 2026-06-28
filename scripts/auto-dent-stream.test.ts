@@ -439,6 +439,88 @@ describe('collapseWhitespace (#1170)', () => {
   });
 });
 
+describe('processStreamMessage — hook-activation proof (#843)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Real captured system.init shapes (plugins arrays copied verbatim from logs).
+  const initEmpty = { type: 'system', subtype: 'init', session_id: 'abc', plugins: [] as unknown[] };
+  const initKaizen = {
+    type: 'system',
+    subtype: 'init',
+    session_id: 'abc',
+    plugins: [{ name: 'kaizen', path: '/x/marketplaces/kaizen/', source: 'kaizen@kaizen' }],
+  };
+
+  it('marks the run DEGRADED and emits a loud banner when a claude session loads plugins:[]', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = makeRunResult();
+    const ctx: StreamContext = { provider: 'claude' };
+
+    processStreamMessage(initEmpty, result, Date.now(), ctx);
+
+    expect(result.hookActivation?.degraded).toBe(true);
+    expect(ctx.hookActivation?.degraded).toBe(true);
+    const banners = errSpy.mock.calls.map(c => String(c[0])).join('\n');
+    expect(banners).toMatch(/HOOK ENFORCEMENT DEGRADED/);
+    expect(banners).toMatch(/#843/);
+  });
+
+  it('marks the run active (not degraded) when the kaizen plugin loaded', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = makeRunResult();
+    const ctx: StreamContext = { provider: 'claude' };
+
+    processStreamMessage(initKaizen, result, Date.now(), ctx);
+
+    expect(result.hookActivation?.active).toBe(true);
+    expect(result.hookActivation?.degraded).toBe(false);
+  });
+
+  it('does not degrade a codex run with no plugins (no hook runtime expected)', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = makeRunResult();
+    const ctx: StreamContext = { provider: 'codex' };
+
+    processStreamMessage(initEmpty, result, Date.now(), ctx);
+
+    expect(result.hookActivation?.degraded).toBe(false);
+    expect(result.hookActivation?.expected).toBe(false);
+  });
+
+  it('does NOT evaluate when called without ctx (replay/harness path must not misclassify)', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = makeRunResult();
+    // No ctx → provider unknown → opt out. A replayed codex log with plugins:[]
+    // must not be flagged as a degraded claude run.
+    processStreamMessage(initEmpty, result, Date.now());
+    expect(result.hookActivation).toBeUndefined();
+  });
+
+  it('surfaces the degraded state in the in-flight progress comment', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {
+      provider: 'claude',
+      hookActivation: {
+        provider: 'claude',
+        expected: true,
+        active: false,
+        degraded: true,
+        observedPlugins: [],
+        message: 'kaizen plugin NOT loaded',
+      },
+    };
+    const comment = buildInFlightComment(1, Date.now(), result, ctx);
+    expect(comment).toMatch(/DEGRADED/);
+    expect(comment).toMatch(/#843/);
+  });
+});
+
 // #1492 — the live console must be decision-led, not tool-call-led: phase
 // markers and artifact deltas surface from every text source, not only assistant
 // prose, and a pushed branch is distinguished from a real PR.

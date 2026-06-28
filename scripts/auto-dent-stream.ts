@@ -23,6 +23,13 @@ import {
   truncateDisplay,
 } from './auto-dent-display.js';
 import { parseHookOutputs, type HookOutput } from '../src/hooks/lib/gate-signal.js';
+import type { Provider } from './auto-dent-provider.js';
+import {
+  evaluateHookActivation,
+  extractInitPlugins,
+  formatHookActivationBanner,
+  type HookActivationVerdict,
+} from './auto-dent-hook-activation.js';
 
 // ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
 
@@ -478,6 +485,10 @@ export interface StreamContext {
   resultReceivedAt?: number;
   lastPhase?: string;
   lastActivity?: string;
+  /** Provider running this session — decides whether hooks are expected (#843). */
+  provider?: Provider;
+  /** Hook-activation verdict computed from the session's `system.init` event (#843). */
+  hookActivation?: HookActivationVerdict;
   /**
    * Rendered run-state lines already printed to the live console, for cross-message
    * dedup (#1492). A decision echoed through multiple stream messages — e.g. a
@@ -522,6 +533,9 @@ export function buildInFlightComment(
     `| **Review state** | ${synthetic ? 'not applicable' : result.reviewVerdict ?? (result.prs.length > 0 ? 'pending' : 'not started')} |`,
   ];
 
+  if (ctx.hookActivation?.degraded) {
+    lines.push(`| **⚠️ Hooks** | DEGRADED — kaizen hooks did not load; run is unverified (#843) |`);
+  }
   if (ctx.lastActivity) {
     lines.push(`| **Last activity** | ${ctx.lastActivity} |`);
   }
@@ -657,6 +671,26 @@ export function processStreamMessage(
         console.log(
           `  ${color.dim(`[${elapsed}]`)}  ${color.bold('Session')} ${(msg.session_id || '').slice(0, 8)}... | model: ${msg.model || 'default'}`,
         );
+        // Prove kaizen hooks actually loaded this session (#843). The init event
+        // is ground truth for what loaded; a `plugins:[]` Claude run ran with NO
+        // kaizen hooks (no review/dirty/stop gate) and must not pass silently.
+        // Only evaluated when the run's provider is known (both live spawn paths
+        // set ctx.provider). Replay/test callers that pass no ctx opt out, so a
+        // replayed codex log is never misclassified as a degraded claude run.
+        if (ctx?.provider) {
+          const verdict = evaluateHookActivation({
+            provider: ctx.provider,
+            plugins: extractInitPlugins(msg),
+          });
+          ctx.hookActivation = verdict;
+          result.hookActivation = verdict;
+          const banner = formatHookActivationBanner(verdict);
+          if (verdict.degraded) {
+            console.error(color.red(banner));
+          } else {
+            console.log(`  ${color.dim(`[${elapsed}]`)}  ${color.dim(banner)}`);
+          }
+        }
       }
       break;
 

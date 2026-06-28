@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { execSync } from "child_process";
 import { join } from "path";
 import { parseArgs } from "util";
+import { KAIZEN_PLUGIN_SOURCE } from "./kaizen-plugin-identity.js";
 import { loadAllSkillMetadata, validateSkillDependencies, validateSkillVersions } from "./skill-metadata.js";
 import { installGitHooks, buildThinWrapper, type InstallResult } from "./setup-git-hooks.js";
 import { readJsonObjectFile, writeJsonObjectFile } from "./lib/json-file.js";
@@ -161,7 +162,7 @@ export function generateConfig(input: ConfigInput, cwd: string): ConfigResult {
  * prose in SKILL.md; now it's mechanical, so a missed manual edit
  * doesn't produce a silently-broken install.
  */
-export function enablePlugin(cwd: string, pluginName = "kaizen@kaizen"): EnableResult {
+export function enablePlugin(cwd: string, pluginName = KAIZEN_PLUGIN_SOURCE): EnableResult {
   const dir = join(cwd, ".claude");
   const path = join(dir, "settings.json");
 
@@ -491,7 +492,7 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       break;
 
     case "enable":
-      console.log(JSON.stringify(enablePlugin(cwd, values["plugin"] ?? "kaizen@kaizen")));
+      console.log(JSON.stringify(enablePlugin(cwd, values["plugin"] ?? KAIZEN_PLUGIN_SOURCE)));
       break;
 
     case "verify": {

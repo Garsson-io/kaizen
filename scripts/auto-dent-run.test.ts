@@ -2710,6 +2710,42 @@ describe('buildRunMetrics', () => {
       final_claim_warnings: ['warning'],
     });
   });
+
+  it('persists the hook-activation verdict to state.json metrics (#843)', () => {
+    const metrics = buildRunMetrics({
+      runNum: 5,
+      runStartEpoch: 1742681000,
+      duration: 12,
+      exitCode: 0,
+      runMode: 'exploit',
+      result: makeRunResult({
+        hookActivation: {
+          provider: 'claude',
+          expected: true,
+          active: false,
+          degraded: true,
+          observedPlugins: [],
+          message: 'kaizen plugin NOT loaded',
+        },
+      }),
+    });
+
+    // The degraded verdict must reach the durable, machine-readable surface —
+    // a regression dropping the field from run metrics would be silent otherwise.
+    expect(metrics.hook_activation).toMatchObject({ degraded: true, expected: true, active: false });
+  });
+
+  it('leaves hook_activation undefined when the run produced no verdict', () => {
+    const metrics = buildRunMetrics({
+      runNum: 6,
+      runStartEpoch: 1742681100,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result: makeRunResult(),
+    });
+    expect(metrics.hook_activation).toBeUndefined();
+  });
 });
 
 describe('weightedModeSelect', () => {

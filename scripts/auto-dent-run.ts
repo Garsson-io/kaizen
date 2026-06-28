@@ -158,6 +158,7 @@ import {
   IN_FLIGHT_UPDATE_INTERVAL_MS,
   type StreamContext,
 } from './auto-dent-stream.js';
+import { degradedRunLogBanner, type HookActivationVerdict } from './auto-dent-hook-activation.js';
 import {
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
@@ -303,6 +304,12 @@ export interface RunMetrics {
   final_claim_path?: string;
   /** Warnings from final-claim parsing or claim/evidence comparison (#1145). */
   final_claim_warnings?: string[];
+  /**
+   * Whether kaizen hooks actually loaded this session, from the `system.init`
+   * event (#843). `degraded` means a hook-supporting provider ran with the
+   * kaizen plugin absent — the run was NOT gated by kaizen enforcement.
+   */
+  hook_activation?: HookActivationVerdict;
 }
 
 export interface RunResult {
@@ -346,6 +353,8 @@ export interface RunResult {
   finalClaimPath?: string;
   /** Parse/comparison warnings for the final run claim (#1145). */
   finalClaimWarnings?: string[];
+  /** Hook-activation verdict from the session's `system.init` event (#843). */
+  hookActivation?: HookActivationVerdict;
 }
 
 type RunMetricsBaseField =
@@ -401,6 +410,7 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     final_claim: result.finalClaim,
     final_claim_path: result.finalClaimPath,
     final_claim_warnings: result.finalClaimWarnings,
+    hook_activation: result.hookActivation,
     ...metadata,
   };
 }
@@ -1594,7 +1604,7 @@ async function runCodex(
   return new Promise((resolvePromise) => {
     let processExited = false;
     let raw = '';
-    const ctx: StreamContext = {};
+    const ctx: StreamContext = { provider: 'codex' };
     const child = spawn('codex', buildCodexExecArgs(input.repoRoot), {
       cwd: input.repoRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -1692,7 +1702,8 @@ async function runClaude(
     issuesPruned: 0,
   };
 
-  const ctx: StreamContext = {};
+  // Claude path: hooks are expected. The init-event check (#843) proves they loaded.
+  const ctx: StreamContext = { provider: 'claude' };
 
   const logDir = dirname(stateFile);
   const modeSelection = selectMode(state, runNum);
@@ -1988,6 +1999,15 @@ function printRunSummary(
     for (const pr of result.prs) console.log(`  \u2502 ${color.green('PR:')}       ${pr}`);
   }
   console.log(`  \u2502 Review:   ${formatReviewForDisplay(result)}`);
+  if (result.hookActivation) {
+    const h = result.hookActivation;
+    const hookLine = h.degraded
+      ? color.red('DEGRADED \u2014 kaizen hooks did NOT load; run unverified (#843)')
+      : h.active
+        ? color.green('active')
+        : color.dim('n/a (provider has no hook runtime)');
+    console.log(`  \u2502 ${h.degraded ? color.red('Hooks:') : 'Hooks:'}    ${hookLine}`);
+  }
   for (const issue of result.issuesFiled)
     console.log(`  \u2502 ${color.cyan('Issue:')}    ${issue}`);
   if (result.issuesClosed.length > 0)
@@ -2364,6 +2384,14 @@ async function main(): Promise<void> {
   }
   if (result.finalClaimStatus && result.finalClaimStatus !== 'valid') {
     appendFileSync(logFile, `final_claim_status=${result.finalClaimStatus}: ${(result.finalClaimWarnings || []).join('; ')}\n`);
+  }
+  // Persist a degraded hook-activation verdict into the per-run log (#843). The
+  // controller's stderr banner is not captured here, so without this the only
+  // durable per-run record would be the state.json metric; write it next to the
+  // run it describes so a `plugins:[]` session is never silent in the logs.
+  const hookLogBanner = degradedRunLogBanner(result.hookActivation);
+  if (hookLogBanner) {
+    appendFileSync(logFile, `\n${hookLogBanner}\n`);
   }
 
   // Lifecycle validation (#639, #1103) — observability + steering, never a hard

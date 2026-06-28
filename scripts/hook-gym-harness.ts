@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import type { HookTimeline, ParsedHookEvent, Scenario } from './hook-gym-schema.js';
 import { createHookStreamProcessor } from './hook-gym-stream.js';
 import { renderPrompt } from './hook-gym-scenarios.js';
+import { KAIZEN_PLUGIN_NAME, KAIZEN_PLUGIN_SOURCE } from '../src/kaizen-plugin-identity.js';
 import { validateAgainstScenario, validateFixtureFile, formatValidationReport, type ValidationReport } from './hook-gym-validate.js';
 import { formatTimeline } from './hook-gym-format.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
@@ -118,8 +119,8 @@ export class FixtureRepo {
     // (the plugin system caches at install time, not live-links).
     log(`[fixture] Installing kaizen plugin from ${kaizenRoot}...`);
     try { execFileSync('claude', ['plugins', 'marketplace', 'add', kaizenRoot], { stdio: 'pipe', timeout: 15_000, cwd: dir }); } catch { /* may already exist */ }
-    try { execFileSync('claude', ['plugins', 'marketplace', 'update', 'kaizen'], { stdio: 'pipe', timeout: 15_000, cwd: dir }); } catch { /* best effort */ }
-    execFileSync('claude', ['plugins', 'install', 'kaizen@kaizen', '--scope', 'project'], {
+    try { execFileSync('claude', ['plugins', 'marketplace', 'update', KAIZEN_PLUGIN_NAME], { stdio: 'pipe', timeout: 15_000, cwd: dir }); } catch { /* best effort */ }
+    execFileSync('claude', ['plugins', 'install', KAIZEN_PLUGIN_SOURCE, '--scope', 'project'], {
       stdio: 'pipe', timeout: 15_000, cwd: dir,
     });
 
