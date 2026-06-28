@@ -17,3 +17,7 @@ export function readYamlFrontmatter<T extends Record<string, unknown> = Record<s
 ): T | null {
   return parseYamlFrontmatter<T>(content)?.data ?? null;
 }
+
+export function stripYamlFrontmatter(content: string): string {
+  return parseYamlFrontmatter(content)?.body ?? content;
+}

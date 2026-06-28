@@ -406,6 +406,37 @@ describe('loadReviewPrompt', () => {
     expect(prompt).not.toMatch(/^applies_to:\s+/m);
   });
 
+  it('uses shared YAML frontmatter stripping for rendered prompts', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/review-battery.ts'), 'utf8');
+
+    expect(source).not.toContain('content.replace(/^---\\n');
+  });
+
+  it('strips CRLF YAML frontmatter from rendered prompt', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'kaizen-prompt-crlf-'));
+    try {
+      writeFileSync(
+        join(tmpDir, 'review-crlf.md'),
+        [
+          '---',
+          'name: crlf',
+          'description: CRLF prompt',
+          'applies_to: pr',
+          '---',
+          'Review {{thing}}.',
+          '',
+        ].join('\r\n'),
+      );
+
+      const prompt = loadReviewPrompt('crlf', { thing: 'the diff' }, tmpDir);
+
+      expect(prompt).toBe('Review the diff.');
+      expect(prompt.startsWith('---'), 'Prompt must not start with YAML frontmatter').toBe(false);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('throws for nonexistent template', () => {
     const dir = resolvePromptsDir();
     const path = resolve(dir, 'review-plan-coverage.md');

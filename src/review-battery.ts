@@ -14,7 +14,7 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
-import { readYamlFrontmatter } from './lib/frontmatter.js';
+import { readYamlFrontmatter, stripYamlFrontmatter } from './lib/frontmatter.js';
 import { resolveProjectRoot, type GitRunner } from './lib/resolve-project-root.js';
 import { retrievePlan, issueTarget } from './structured-data.js';
 import {
@@ -407,23 +407,23 @@ export function resolvePromptsDir(git?: GitRunner): string {
 export function loadReviewPrompt(
   dimension: ReviewDimension,
   vars: Record<string, string>,
+  promptsDir?: string,
 ): string {
-  const promptsDir = resolvePromptsDir();
-  const dims = discoverDimensions(promptsDir);
+  const dir = promptsDir ?? resolvePromptsDir();
+  const dims = discoverDimensions(dir);
   const templateFile = dims[dimension];
   if (!templateFile) {
     const available = Object.keys(dims).join(', ');
     throw new Error(`Unknown review dimension: "${dimension}". Available: ${available}`);
   }
-  const templatePath = resolve(promptsDir, templateFile);
+  const templatePath = resolve(dir, templateFile);
 
   if (!existsSync(templatePath)) {
     throw new Error(`Review prompt template not found: ${templatePath}`);
   }
 
   const content = readFileSync(templatePath, 'utf8');
-  // Strip YAML frontmatter (--- ... ---) — it's for the tool loader, not the LLM
-  const body = content.replace(/^---\n[\s\S]*?\n---\n?/, '');
+  const body = stripYamlFrontmatter(content);
   return renderTemplate(body, vars);
 }
 
