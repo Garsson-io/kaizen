@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const CLI_SOURCE = join(__dirname, 'cli-experiment.ts');
+const CLI_LIFECYCLE_TEST = join(__dirname, 'cli-experiment.test.ts');
 
 function stripComments(content: string): string {
   return content
@@ -77,5 +78,12 @@ describe('cli-experiment git-subprocess invariant', () => {
     const content = readFileSync(CLI_SOURCE, 'utf-8');
     expect(content).toMatch(/resolveProjectRoot/);
     expect(content).toMatch(/resolve-project-root/);
+  });
+
+  it('cli-experiment lifecycle tests do not duplicate this Git invariant', () => {
+    const content = readFileSync(CLI_LIFECYCLE_TEST, 'utf-8');
+    expect(content).not.toContain('git rev-parse --show-toplevel');
+    expect(content).not.toContain('direct git execSync');
+    expect(content).not.toContain('resolveProjectRoot(process.cwd())');
   });
 });
