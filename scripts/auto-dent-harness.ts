@@ -38,6 +38,7 @@ import {
   type RunScore,
 } from './auto-dent-score.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
+import { parseJsonObject } from '../src/lib/json-value.js';
 
 // Result types
 
@@ -238,13 +239,12 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
         writeFileSync(logFile, line + '\n', { flag: 'a' });
       } catch { /* best effort */ }
 
+      const parsed = parseJsonObject(line);
+      if (!parsed) return;
+      rawMessages.push(parsed);
       try {
-        const parsed = JSON.parse(line);
-        rawMessages.push(parsed);
         processStreamMessage(parsed, result, start);
-      } catch {
-        // Non-JSON
-      }
+      } catch { /* skip malformed stream messages */ }
     });
 
     child.stderr?.on('data', () => {
