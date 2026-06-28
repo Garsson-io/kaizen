@@ -8,6 +8,19 @@ import {
   type ReflectionRecord,
 } from './reflection-persistence.js';
 
+const REFLECTION_PERSISTENCE_SOURCE = readFileSync(
+  new URL('./reflection-persistence.ts', import.meta.url),
+  'utf-8',
+);
+
+describe('json-lines helper source invariant', () => {
+  it('routes reflection JSONL appends through appendJsonLine', () => {
+    expect(REFLECTION_PERSISTENCE_SOURCE).toContain('appendJsonLine');
+    expect(REFLECTION_PERSISTENCE_SOURCE).toContain("from '../lib/json-lines.js'");
+    expect(REFLECTION_PERSISTENCE_SOURCE).not.toContain('appendFileSync(filePath, JSON.stringify');
+  });
+});
+
 describe('buildReflectionRecord', () => {
   it('builds record with correct disposition counts', () => {
     const impediments: ReflectionImpediment[] = [

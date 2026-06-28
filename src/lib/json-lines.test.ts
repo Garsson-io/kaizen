@@ -1,5 +1,7 @@
+import { readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseJsonLines, parseJsonLinesWithMalformedRows } from './json-lines.js';
+import { appendJsonLine, parseJsonLines, parseJsonLinesWithMalformedRows } from './json-lines.js';
 
 describe('parseJsonLines', () => {
   it('parses valid JSON lines while skipping blanks and malformed rows', () => {
@@ -23,5 +25,24 @@ describe('parseJsonLines', () => {
       { lineNumber: 3, raw: 'not-json' },
       { lineNumber: 5, raw: '{bad' },
     ]);
+  });
+});
+
+describe('appendJsonLine', () => {
+  it('creates parent directories and appends one JSON value per line', () => {
+    const dir = `/tmp/.test-json-lines-${Date.now()}-a`;
+    const filePath = join(dir, 'nested', 'events.jsonl');
+
+    try {
+      appendJsonLine(filePath, { a: 1 });
+      appendJsonLine(filePath, { b: 2 });
+
+      const lines = readFileSync(filePath, 'utf-8').trim().split('\n');
+      expect(lines).toHaveLength(2);
+      expect(JSON.parse(lines[0])).toEqual({ a: 1 });
+      expect(JSON.parse(lines[1])).toEqual({ b: 2 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

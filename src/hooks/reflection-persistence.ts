@@ -11,8 +11,8 @@
  * Part of horizon #249 (Observability), issue #272.
  */
 
-import { appendFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { appendJsonLine } from '../lib/json-lines.js';
 import { resolveTelemetryDir } from './session-telemetry.js';
 
 export interface ReflectionImpediment {
@@ -86,9 +86,8 @@ export function persistReflection(
 ): void {
   try {
     const dir = options?.telemetryDir ?? resolveTelemetryDir();
-    mkdirSync(dir, { recursive: true });
     const filePath = resolve(dir, 'reflections.jsonl');
-    appendFileSync(filePath, JSON.stringify(record) + '\n');
+    appendJsonLine(filePath, record);
   } catch {
     // Best-effort — never break the hook
   }
