@@ -19,21 +19,15 @@
  * Migrated to TS state functions in #790 gap fix.
  */
 
-import { appendFileSync, mkdirSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
-import { gitStdout } from './lib/git-state.js';
+import { appendHookAuditLog, currentHookBranch } from './lib/audit-log.js';
 import {
-  DEFAULT_AUDIT_DIR,
   DEFAULT_STATE_DIR,
   listStateFilesAnyBranch,
   readStateFile,
   writeStateFile,
 } from './state-utils.js';
-
-function currentBranch(): string {
-  return gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown');
-}
 
 async function main(): Promise<void> {
   const input = await readHookInput();
@@ -87,17 +81,11 @@ async function main(): Promise<void> {
 
   if (cleared) {
     // Log that fallback fired (the primary TS hook failed/timed out)
-    const auditDir = process.env.AUDIT_DIR ?? DEFAULT_AUDIT_DIR;
-    try {
-      mkdirSync(auditDir, { recursive: true });
-      const ts = new Date().toISOString();
-      appendFileSync(
-        join(auditDir, 'fallback-clear.log'),
-        `${ts} | FALLBACK_CLEAR | branch=${currentBranch()} | pr=${lastPrUrl} | reason=ts-hook-timeout-or-failure\n`,
-      );
-    } catch {
-      /* ignore audit failures */
-    }
+    const ts = new Date().toISOString();
+    appendHookAuditLog(
+      'fallback-clear.log',
+      `${ts} | FALLBACK_CLEAR | branch=${currentHookBranch()} | pr=${lastPrUrl} | reason=ts-hook-timeout-or-failure\n`,
+    );
   }
 
   process.exit(0);

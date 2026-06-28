@@ -94,6 +94,16 @@ describe('state IO source invariant', () => {
   });
 });
 
+describe('audit logging source invariant', () => {
+  it('routes fallback audit logging and branch fallback through shared hook helpers', () => {
+    expect(HOOK_SOURCE).toContain('appendHookAuditLog');
+    expect(HOOK_SOURCE).toContain('currentHookBranch');
+    expect(HOOK_SOURCE).not.toContain('appendFileSync(');
+    expect(HOOK_SOURCE).not.toContain('mkdirSync(auditDir');
+    expect(HOOK_SOURCE).not.toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown')");
+  });
+});
+
 describe('pr-kaizen-clear-fallback: clears gate', () => {
   it('INVARIANT: clears needs_pr_kaizen gate when KAIZEN_IMPEDIMENTS in stdout', () => {
     writeGate('needs_pr_kaizen');
@@ -204,13 +214,14 @@ describe('pr-kaizen-clear-fallback: does not touch other gate types', () => {
 });
 
 describe('git runner invariant', () => {
-  it('routes fallback branch reads through argv-style gitStdout', () => {
+  it('routes fallback branch reads through the shared hook branch helper', () => {
     const source = fs.readFileSync(
       new URL('./pr-kaizen-clear-fallback.ts', import.meta.url),
       'utf-8',
     );
 
     expect(source).not.toMatch(/execSync\(['"`]git\b/);
-    expect(source).toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown')");
+    expect(source).toContain('currentHookBranch');
+    expect(source).not.toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown')");
   });
 });
