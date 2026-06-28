@@ -600,7 +600,12 @@ This hook enforces I3 (stored test plan) and I8 (plan before implementation).`,
 ${gate.reason}
 
 Run /kaizen-write-plan — the skill knows how to create and store the plan correctly.
-  Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })`,
+  Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })
+
+If you already have a substantive plan file, store it directly and verify that
+the embedded test plan is retrievable before creating the PR:
+  npx tsx src/cli-structured-data.ts store-plan --issue ${issueNum} --repo ${repo} --file plan.md
+  npx tsx src/cli-structured-data.ts retrieve-testplan --issue ${issueNum} --repo ${repo}`,
     };
   }
 

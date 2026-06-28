@@ -28,11 +28,16 @@ Claude will install the plugin and tell you to restart. After restarting, run `/
 
 ### Manual installation
 
-**Step 1:** Install the plugin (in Claude Code):
+**Step 1:** Install the plugin for this project (in Claude Code):
 ```
-/plugin marketplace add Garsson-io/kaizen
-/plugin install kaizen@kaizen
+/plugin marketplace add Garsson-io/kaizen --scope project
+/plugin install kaizen@kaizen --scope project
 ```
+
+Project scope is the recommended default for repo/team enforcement: it records
+the plugin activation in the project so collaborators get the same hooks and
+skills after pulling. Use the default user scope only when you want kaizen for
+your own sessions without changing the repo.
 
 **Step 2:** Exit and restart Claude Code. Skills only load on startup.
 
@@ -40,6 +45,7 @@ Claude will install the plugin and tell you to restart. After restarting, run `/
 - `kaizen.config.json` — project configuration
 - `.agents/kaizen/local/policies-local.md` — project-specific policies
 - Kaizen section in `CLAUDE.md`
+- Kaizen `pre-push` git hook integration for your hook framework
 
 **No Node.js required in your host project.** Kaizen runs from its own plugin directory.
 

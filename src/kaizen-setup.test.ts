@@ -4,6 +4,7 @@ import { join, resolve } from "path";
 import { tmpdir } from "os";
 import { rmSync } from "fs";
 import { fileURLToPath } from "url";
+import { execFileSync } from "child_process";
 import {
   detectInstall,
   generateConfig,
@@ -12,6 +13,8 @@ import {
   verifyPluginContract,
   postUpdateValidate,
   enablePlugin,
+  checkPreconditions,
+  injectInstructions,
 } from "./kaizen-setup.js";
 
 let tempDir: string;
@@ -123,6 +126,18 @@ describe("scaffoldPolicies", () => {
     expect(existsSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"))).toBe(true);
   });
 
+  it("adds every kaizen session-local directory to .gitignore, including telemetry", () => {
+    const result = scaffoldPolicies(tempDir);
+    expect(result.status).toBe("ok");
+
+    const gitignore = readFileSync(join(tempDir, ".gitignore"), "utf-8");
+    expect(gitignore).toContain(".claude/review-fix/");
+    expect(gitignore).toContain(".claude/audit/");
+    expect(gitignore).toContain(".agents/kaizen/local/audit/");
+    expect(gitignore).toContain(".claude/worktrees/");
+    expect(gitignore).toContain("data/telemetry/");
+  });
+
   it("skips if already exists", () => {
     mkdirSync(join(tempDir, ".agents", "kaizen", "local"), { recursive: true });
     writeFileSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"), "existing content");
@@ -132,6 +147,126 @@ describe("scaffoldPolicies", () => {
 
     const content = readFileSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"), "utf-8");
     expect(content).toBe("existing content");
+  });
+});
+
+describe("checkPreconditions (#1085 — project-scope install can be silently hidden)", () => {
+  it("returns ok when no .gitignore exists", () => {
+    expect(checkPreconditions(tempDir)).toEqual({ step: "precondition", status: "ok", warnings: [] });
+  });
+
+  it("warns when .gitignore broadly ignores .claude/", () => {
+    writeFileSync(join(tempDir, ".gitignore"), ".claude/\n");
+    const result = checkPreconditions(tempDir);
+    expect(result.status).toBe("warn");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain(".claude/settings.json");
+    expect(result.warnings[0]).toContain(".claude/review-fix/");
+  });
+
+  it("warns for leading-slash and no-slash variants", () => {
+    writeFileSync(join(tempDir, ".gitignore"), "/.claude\n");
+    expect(checkPreconditions(tempDir).status).toBe("warn");
+  });
+
+  it("does not warn for narrow session-local ignores", () => {
+    writeFileSync(
+      join(tempDir, ".gitignore"),
+      ".claude/review-fix/\n.claude/audit/\n.claude/worktrees/\n.claude/settings.local.json\n",
+    );
+    expect(checkPreconditions(tempDir).status).toBe("ok");
+  });
+});
+
+describe("injectInstructions (#1085 — no manual {{KAIZEN_ROOT}} substitution)", () => {
+  function makePluginRoot(fragment: string): string {
+    const pluginRoot = join(tempDir, "plugin");
+    mkdirSync(join(pluginRoot, ".agents", "kaizen"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".agents", "kaizen", "instructions-fragment.md"), fragment);
+    return pluginRoot;
+  }
+
+  it("creates CLAUDE.md from the fragment and replaces the root placeholder", () => {
+    const pluginRoot = makePluginRoot("Kaizen root: {{KAIZEN_ROOT}}\n");
+    const result = injectInstructions({ cwd: tempDir, pluginRoot });
+    expect(result).toMatchObject({ step: "inject-instructions", status: "ok", path: join(tempDir, "CLAUDE.md") });
+
+    const content = readFileSync(join(tempDir, "CLAUDE.md"), "utf-8");
+    expect(content).toContain(`Kaizen root: ${pluginRoot}`);
+    expect(content).not.toContain("{{KAIZEN_ROOT}}");
+  });
+
+  it("appends idempotently with a blank-line separator", () => {
+    const pluginRoot = makePluginRoot("<!-- BEGIN KAIZEN PLUGIN -->\n## Kaizen\n<!-- END KAIZEN PLUGIN -->\n");
+    writeFileSync(join(tempDir, "CLAUDE.md"), "# Existing");
+
+    const first = injectInstructions({ cwd: tempDir, pluginRoot });
+    const afterFirst = readFileSync(first.path!, "utf-8");
+    const second = injectInstructions({ cwd: tempDir, pluginRoot });
+
+    expect(afterFirst).toBe("# Existing\n\n<!-- BEGIN KAIZEN PLUGIN -->\n## Kaizen\n<!-- END KAIZEN PLUGIN -->\n");
+    expect(second.status).toBe("skipped");
+    expect(readFileSync(second.path!, "utf-8")).toBe(afterFirst);
+  });
+
+  it("falls back to AGENTS.md when CLAUDE.md is absent", () => {
+    const pluginRoot = makePluginRoot("## Kaizen\n");
+    writeFileSync(join(tempDir, "AGENTS.md"), "# Agents\n");
+    const result = injectInstructions({ cwd: tempDir, pluginRoot });
+    expect(result.path).toBe(join(tempDir, "AGENTS.md"));
+    expect(readFileSync(join(tempDir, "AGENTS.md"), "utf-8")).toContain("## Kaizen");
+  });
+
+  it("honors an explicit target", () => {
+    const pluginRoot = makePluginRoot("## Kaizen\n");
+    const target = join(tempDir, "CUSTOM.md");
+    const result = injectInstructions({ cwd: tempDir, pluginRoot, target });
+    expect(result.path).toBe(target);
+    expect(readFileSync(target, "utf-8")).toContain("## Kaizen");
+  });
+
+  it("CLI smoke exposes precondition and inject-instructions as JSON steps", () => {
+    const pluginRoot = makePluginRoot("<!-- BEGIN KAIZEN PLUGIN -->\nKaizen {{KAIZEN_ROOT}}\n<!-- END KAIZEN PLUGIN -->\n");
+    writeFileSync(join(tempDir, ".gitignore"), ".claude/\n");
+    const setupScript = fileURLToPath(new URL("./kaizen-setup.ts", import.meta.url));
+
+    const precondition = JSON.parse(execFileSync(
+      "npx",
+      ["tsx", setupScript, "--step", "precondition", "--cwd", tempDir],
+      { encoding: "utf-8" },
+    ));
+    expect(precondition).toMatchObject({ step: "precondition", status: "warn" });
+
+    const injected = JSON.parse(execFileSync(
+      "npx",
+      ["tsx", setupScript, "--step", "inject-instructions", "--cwd", tempDir, "--plugin-root", pluginRoot],
+      { encoding: "utf-8" },
+    ));
+    expect(injected).toMatchObject({ step: "inject-instructions", status: "ok" });
+    const content = readFileSync(join(tempDir, "CLAUDE.md"), "utf-8");
+    expect(content).toContain(pluginRoot);
+    expect(content).not.toContain("{{KAIZEN_ROOT}}");
+  });
+});
+
+describe("setup docs contracts (#1085/#1080)", () => {
+  it("README recommends project-scoped install for team enforcement", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf-8");
+    expect(readme).toContain("/plugin marketplace add Garsson-io/kaizen --scope project");
+    expect(readme).toContain("/plugin install kaizen@kaizen --scope project");
+    expect(readme).toContain("Use the default user scope only");
+  });
+
+  it("setup skill uses mechanistic precondition and injection steps", () => {
+    const skill = readFileSync(new URL("../.agents/skills/kaizen-setup/SKILL.md", import.meta.url), "utf-8");
+    expect(skill).toContain("--step precondition");
+    expect(skill).toContain("--step inject-instructions");
+    expect(skill).not.toContain("If `CLAUDE_PLUGIN_ROOT` is empty, the plugin isn't installed");
+  });
+
+  it("instruction fragment has no raw root placeholder", () => {
+    const fragment = readFileSync(new URL("../.agents/kaizen/instructions-fragment.md", import.meta.url), "utf-8");
+    expect(fragment).not.toContain("{{KAIZEN_ROOT}}");
   });
 });
 

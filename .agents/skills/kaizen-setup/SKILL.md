@@ -8,19 +8,39 @@ user_invocable: true
 
 Configure kaizen for the current project. Plugin hooks, skills, and agents are registered automatically via `plugin.json`. This setup creates host-project config files.
 
-## Step 0: Check installation
+## Step 0: Resolve plugin root
 
-Verify kaizen is installed:
+`CLAUDE_PLUGIN_ROOT` is reliable inside hook invocations, but it may be empty in
+ad-hoc Bash calls made while this skill runs. Prefer it when present; otherwise
+derive the root from Claude Code's plugin registry.
+
 ```bash
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  CLAUDE_PLUGIN_ROOT="$(claude plugin list --json 2>/dev/null \
+    | jq -r '.[]? | select((.id // .name // .plugin) == "kaizen@kaizen" or (.id // .name // .plugin) == "kaizen") | (.installPath // .path // .root // .cachePath)')"
+  export CLAUDE_PLUGIN_ROOT
+fi
 echo "CLAUDE_PLUGIN_ROOT=$CLAUDE_PLUGIN_ROOT"
 ```
 
-If `CLAUDE_PLUGIN_ROOT` is empty, the plugin isn't installed. Tell the user:
+If it is still empty, the plugin isn't installed for this project. Tell the user:
 ```
-/plugin marketplace add Garsson-io/kaizen
-/plugin install kaizen@kaizen
+/plugin marketplace add Garsson-io/kaizen --scope project
+/plugin install kaizen@kaizen --scope project
 ```
-Then restart Claude Code and re-run `/kaizen-setup`.
+Then run `/reload-plugins` or restart Claude Code and re-run `/kaizen-setup`.
+
+## Step 0.25: Check project-scope preconditions
+
+Project-scope install writes activation to `.claude/settings.json`. If the host
+repo gitignores the whole `.claude/` directory, activation silently stays local.
+
+```bash
+npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" --step precondition
+```
+
+If this reports `status:"warn"`, replace broad `.claude/` ignores with the
+narrow session-local entries shown in the warning.
 
 ## Step 0.5: Enable at project scope (#1063)
 
@@ -60,7 +80,15 @@ Creates `.agents/kaizen/local/policies-local.md` if it doesn't exist.
 
 ## Step 3: Inject CLAUDE.md section
 
-Read the fragment at `${CLAUDE_PLUGIN_ROOT}/.agents/kaizen/instructions-fragment.md` and append it to the host agent-instructions file (typically `CLAUDE.md`; if your host workflow uses `AGENTS.md` as the primary instructions file, append there instead). If the target file doesn't exist, create it. If it already has a kaizen section, skip.
+Append the kaizen section to the host agent-instructions file mechanically:
+
+```bash
+npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" --step inject-instructions
+```
+
+The step picks `CLAUDE.md` when present, falls back to `AGENTS.md`, creates
+`CLAUDE.md` when neither exists, replaces the legacy root placeholder, and
+skips when the kaizen section is already present.
 
 ## Step 4: Verify
 
@@ -95,9 +123,9 @@ See `docs/git-hooks-design.md` for architecture and decision rationale.
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | Check installation | Verify CLAUDE_PLUGIN_ROOT is set |
+| 1 | Resolve root and preconditions | Resolve `CLAUDE_PLUGIN_ROOT`, run `precondition` |
 | 2 | Create config and policies | Run CLI for config + scaffold steps |
-| 3 | Inject CLAUDE.md and verify | Append kaizen section, run verify |
+| 3 | Inject instructions and verify | Run `inject-instructions`, then `verify` |
 | 4 | Install git hooks | Run `install-git-hooks` step (epic #1059) |
 
 ## Idempotency
