@@ -30,6 +30,7 @@ import {
 } from './auto-dent-run.js';
 import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
 import type { PhaseProvider } from './auto-dent-provider.js';
+import { parseJsonLines } from '../src/lib/json-lines.js';
 
 export interface PlanItem {
   issue: string;
@@ -234,22 +235,22 @@ export function extractPlanningText(provider: PlanningProviderName, raw: string)
   }
 
   let fullText = '';
-  for (const line of raw.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    try {
-      const msg = JSON.parse(line);
-      if (msg.type === 'assistant' && msg.message?.content) {
-        for (const block of msg.message.content) {
-          if (block.type === 'text') {
-            fullText += block.text;
+  for (const msg of parseJsonLines<Record<string, unknown>>(raw)) {
+    const message = msg.message;
+    if (msg.type === 'assistant' && message && typeof message === 'object') {
+      const content = (message as Record<string, unknown>).content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (!block || typeof block !== 'object') continue;
+          const record = block as Record<string, unknown>;
+          if (record.type === 'text' && typeof record.text === 'string') {
+            fullText += record.text;
           }
         }
       }
-      if (msg.type === 'result' && msg.result) {
-        fullText += '\n' + msg.result;
-      }
-    } catch {
-      // Non-JSON line
+    }
+    if (msg.type === 'result' && msg.result) {
+      fullText += '\n' + String(msg.result);
     }
   }
   return fullText;

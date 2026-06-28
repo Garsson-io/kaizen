@@ -181,6 +181,27 @@ describe('provider-aware planning (#1146)', () => {
     expect(validatePlan(extractPlanJson(codexText))).not.toBeNull();
   });
 
+  it('extracts Claude planning text from CRLF stream-json while skipping blank and malformed rows', () => {
+    const raw = [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'prefix ' }] } }),
+      '',
+      'not-json',
+      JSON.stringify({ type: 'result', result: 'result text' }),
+    ].join('\r\n');
+
+    expect(extractPlanningText('claude', raw)).toBe('prefix \nresult text');
+  });
+
+  it('delegates Claude stream-json decoding to the shared JSONL parser', () => {
+    const source = readFileSync('scripts/auto-dent-plan.ts', 'utf8');
+    const extractorSource = source.slice(
+      source.indexOf('export function extractPlanningText'),
+      source.indexOf('export function extractPlanJson'),
+    );
+
+    expect(extractorSource).not.toMatch(/JSON\.parse\(line\)/);
+  });
+
   it('validates schema-constrained Codex JSONL into a Codex-attributed plan (#1215)', () => {
     const providerPlan = {
       created_at: '2026-06-27T22:20:00Z',
