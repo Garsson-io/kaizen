@@ -3,8 +3,10 @@ import {
   computeAgeDistribution,
   computeHorizonCoverage,
   computeCreationClosureRatio,
+  computeEpicProgress,
   buildBacklogHealthReport,
   classifyBacklogHealth,
+  formatReport,
   parseArgs,
   type OpenIssue,
   type ClosedIssue,
@@ -17,8 +19,10 @@ const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86400_000).toISOStri
 function open(partial: Partial<OpenIssue>): OpenIssue {
   return {
     number: 1,
+    title: 'Test issue',
     createdAt: daysAgo(5),
     updatedAt: daysAgo(5),
+    body: '',
     labels: [],
     ...partial,
   };
@@ -80,6 +84,86 @@ describe('computeCreationClosureRatio', () => {
   });
 });
 
+describe('computeEpicProgress', () => {
+  it('flags an impacted stale epic as needing replan/continue pressure', () => {
+    const report = computeEpicProgress([
+      open({
+        number: 10,
+        title: 'Epic with partial impact',
+        labels: ['epic'],
+        updatedAt: daysAgo(35),
+        body: '- [x] #101 shipped\n- [ ] #102 remaining',
+      }),
+    ], NOW);
+
+    expect(report.needsReplan).toBe(1);
+    expect(report.items[0]).toMatchObject({
+      number: 10,
+      checkedItems: 1,
+      uncheckedItems: 1,
+      verdict: 'needs-replan',
+    });
+    expect(report.items[0].reason).toContain('completed child work exists');
+  });
+
+  it('flags an impacted epic with no remaining checklist work as needing a terminal decision', () => {
+    const report = computeEpicProgress([
+      open({
+        number: 11,
+        title: 'Epic with all tracked work done',
+        labels: ['epic'],
+        updatedAt: daysAgo(3),
+        body: '- [x] #201 shipped\n- [x] #202 shipped',
+      }),
+    ], NOW);
+
+    expect(report.needsTerminalDecision).toBe(1);
+    expect(report.items[0]).toMatchObject({
+      number: 11,
+      checkedItems: 2,
+      uncheckedItems: 0,
+      verdict: 'needs-terminal-decision',
+    });
+  });
+
+  it('flags an epic with no checklist children as needing decomposition', () => {
+    const report = computeEpicProgress([
+      open({ number: 12, title: 'Empty epic', labels: ['epic'], body: 'Broad direction only.' }),
+    ], NOW);
+
+    expect(report.needsDecomposition).toBe(1);
+    expect(report.items[0]).toMatchObject({
+      number: 12,
+      trackedItems: 0,
+      verdict: 'needs-decomposition',
+    });
+  });
+
+  it('leaves an active epic with completed and pending work healthy while fresh', () => {
+    const report = computeEpicProgress([
+      open({
+        number: 13,
+        title: 'Fresh epic',
+        labels: ['epic'],
+        updatedAt: daysAgo(5),
+        body: '- [x] #301 shipped\n- [ ] #302 next',
+      }),
+    ], NOW);
+
+    expect(report.healthy).toBe(1);
+    expect(report.items[0].verdict).toBe('healthy');
+  });
+
+  it('ignores non-epic issues', () => {
+    const report = computeEpicProgress([
+      open({ number: 14, labels: ['kaizen'], body: '- [x] #401 done' }),
+    ], NOW);
+
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+  });
+});
+
 describe('classifyBacklogHealth', () => {
   const baseReport = buildBacklogHealthReport(
     [open({ number: 1, updatedAt: daysAgo(5), labels: ['horizon/a'] })],
@@ -121,6 +205,24 @@ describe('classifyBacklogHealth', () => {
       ratio: { created: 1, closed: 1, ratio: 1.0 },
       age: { total: 10, stale30: 0, stale60: 0, stale90: 0 },
       horizon: { byHorizon: { 'horizon/a': 8, 'horizon/b': 2 }, noHorizon: 0, distinctHorizons: 2 },
+    };
+    expect(classifyBacklogHealth(report)).toBe('warning');
+  });
+
+  it('returns warning when epics need terminal progress decisions', () => {
+    const report = {
+      ...baseReport,
+      ratio: { created: 1, closed: 1, ratio: 1.0 },
+      age: { total: 1, stale30: 0, stale60: 0, stale90: 0 },
+      horizon: { byHorizon: { 'horizon/a': 1 }, noHorizon: 0, distinctHorizons: 1 },
+      epicProgress: {
+        total: 1,
+        healthy: 0,
+        needsDecomposition: 0,
+        needsReplan: 0,
+        needsTerminalDecision: 1,
+        items: [],
+      },
     };
     expect(classifyBacklogHealth(report)).toBe('warning');
   });
@@ -172,6 +274,7 @@ describe('buildBacklogHealthReport', () => {
     expect(report.age.total).toBe(2);
     expect(report.age.stale90).toBe(1);
     expect(report.horizon.noHorizon).toBe(1);
+    expect(report.epicProgress.total).toBe(0);
     expect(typeof report.generatedAt).toBe('string');
   });
 
@@ -187,6 +290,32 @@ describe('buildBacklogHealthReport', () => {
     const report = buildBacklogHealthReport([], createdIssues, closedIssues, NOW, 30);
     expect(report.ratio.ratio).toBe(3);
     expect(classifyBacklogHealth(report)).toBe('pathological');
+  });
+});
+
+describe('formatReport', () => {
+  it('prints epic terminal-pressure details', () => {
+    const report = buildBacklogHealthReport(
+      [
+        open({
+          number: 20,
+          title: 'Partially landed epic',
+          labels: ['epic'],
+          updatedAt: daysAgo(40),
+          body: '- [x] #1 done\n- [ ] #2 next',
+        }),
+      ],
+      [],
+      [],
+      NOW,
+      30,
+      'owner/repo',
+    );
+
+    const text = formatReport(report, classifyBacklogHealth(report));
+    expect(text).toContain('epic progress');
+    expect(text).toContain('#20 needs-replan');
+    expect(text).toContain('Partially landed epic');
   });
 });
 

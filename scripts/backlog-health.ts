@@ -28,8 +28,10 @@ import { gh } from '../src/lib/gh-exec.js';
 
 export interface OpenIssue {
   number: number;
+  title?: string;
   createdAt: string;
   updatedAt: string;
+  body?: string;
   labels: string[];
 }
 
@@ -66,6 +68,28 @@ export interface CreationClosureRatio {
 }
 
 export type HealthVerdict = 'healthy' | 'warning' | 'pathological';
+export type EpicProgressVerdict = 'healthy' | 'needs-decomposition' | 'needs-replan' | 'needs-terminal-decision';
+
+export interface EpicProgressItem {
+  number: number;
+  title: string;
+  updatedAt: string;
+  inactiveDays: number;
+  trackedItems: number;
+  checkedItems: number;
+  uncheckedItems: number;
+  verdict: EpicProgressVerdict;
+  reason: string;
+}
+
+export interface EpicProgressReport {
+  total: number;
+  healthy: number;
+  needsDecomposition: number;
+  needsReplan: number;
+  needsTerminalDecision: number;
+  items: EpicProgressItem[];
+}
 
 export interface BacklogHealthReport {
   repo?: string;
@@ -74,6 +98,7 @@ export interface BacklogHealthReport {
   ratio: CreationClosureRatio;
   age: AgeDistribution;
   horizon: HorizonCoverage;
+  epicProgress: EpicProgressReport;
   generatedAt: string;
 }
 
@@ -87,6 +112,25 @@ function inactivityDays(iso: string, now: Date): number {
 
 function isHorizonLabel(label: string): boolean {
   return label.startsWith('horizon/') || label.startsWith('horizon:');
+}
+
+function isEpic(issue: OpenIssue): boolean {
+  return issue.labels.includes('epic');
+}
+
+interface ChecklistItem {
+  checked: boolean;
+}
+
+function parseChecklistItems(body: string | undefined): ChecklistItem[] {
+  if (!body) return [];
+  const items: ChecklistItem[] = [];
+  const pattern = /^- \[([ xX])\]\s+.+$/gm;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(body)) !== null) {
+    items.push({ checked: match[1].toLowerCase() === 'x' });
+  }
+  return items;
 }
 
 /**
@@ -127,6 +171,55 @@ export function computeCreationClosureRatio(created: number, closed: number): Cr
   return { created, closed, ratio: created / Math.max(closed, 1) };
 }
 
+const EPIC_REPLAN_DAYS = 28;
+
+/** Progress pressure for open epics with landed/checked child work. */
+export function computeEpicProgress(issues: OpenIssue[], now: Date): EpicProgressReport {
+  const items: EpicProgressItem[] = issues
+    .filter(isEpic)
+    .map((issue) => {
+      const checklist = parseChecklistItems(issue.body);
+      const checkedItems = checklist.filter((item) => item.checked).length;
+      const trackedItems = checklist.length;
+      const uncheckedItems = trackedItems - checkedItems;
+      const inactiveDays = Math.floor(inactivityDays(issue.updatedAt, now));
+      let verdict: EpicProgressVerdict = 'healthy';
+      let reason = 'epic has active tracked work';
+
+      if (trackedItems === 0) {
+        verdict = 'needs-decomposition';
+        reason = 'open epic has no tracked checklist items';
+      } else if (checkedItems > 0 && uncheckedItems === 0) {
+        verdict = 'needs-terminal-decision';
+        reason = 'all tracked child work is checked; close, defer, or add next scoped child work';
+      } else if (checkedItems > 0 && inactiveDays > EPIC_REPLAN_DAYS) {
+        verdict = 'needs-replan';
+        reason = `completed child work exists but epic has not been updated in ${inactiveDays} days`;
+      }
+
+      return {
+        number: issue.number,
+        title: issue.title ?? '',
+        updatedAt: issue.updatedAt,
+        inactiveDays,
+        trackedItems,
+        checkedItems,
+        uncheckedItems,
+        verdict,
+        reason,
+      };
+    });
+
+  return {
+    total: items.length,
+    healthy: items.filter((item) => item.verdict === 'healthy').length,
+    needsDecomposition: items.filter((item) => item.verdict === 'needs-decomposition').length,
+    needsReplan: items.filter((item) => item.verdict === 'needs-replan').length,
+    needsTerminalDecision: items.filter((item) => item.verdict === 'needs-terminal-decision').length,
+    items,
+  };
+}
+
 /**
  * Assemble every axis into a single report for a window ending at `now`.
  *
@@ -152,6 +245,7 @@ export function buildBacklogHealthReport(
     ratio: computeCreationClosureRatio(createdInWindow, closedInWindow),
     age: computeAgeDistribution(open, now),
     horizon: computeHorizonCoverage(open),
+    epicProgress: computeEpicProgress(open, now),
     generatedAt: now.toISOString(),
   };
 }
@@ -175,6 +269,11 @@ function horizonConcentration(horizon: HorizonCoverage): number {
   return max / labeled;
 }
 
+function epicPressureCount(epicProgress: EpicProgressReport | undefined): number {
+  if (!epicProgress) return 0;
+  return epicProgress.needsDecomposition + epicProgress.needsReplan + epicProgress.needsTerminalDecision;
+}
+
 /** Classify a report into a single health verdict. Pathological wins over warning. */
 export function classifyBacklogHealth(report: BacklogHealthReport): HealthVerdict {
   const share90 = stale90Share(report.age);
@@ -184,7 +283,8 @@ export function classifyBacklogHealth(report: BacklogHealthReport): HealthVerdic
   if (
     report.ratio.ratio >= RATIO_WARNING ||
     share90 >= STALE90_SHARE_WARNING ||
-    horizonConcentration(report.horizon) >= HORIZON_CONCENTRATION_WARNING
+    horizonConcentration(report.horizon) >= HORIZON_CONCENTRATION_WARNING ||
+    epicPressureCount(report.epicProgress) > 0
   ) {
     return 'warning';
   }
@@ -195,9 +295,14 @@ export function classifyBacklogHealth(report: BacklogHealthReport): HealthVerdic
 
 interface GhOpenIssue {
   number: number;
+  title: string;
   createdAt: string;
   updatedAt: string;
   labels: { name: string }[];
+}
+
+interface GhIssueBody {
+  body: string;
 }
 
 const FETCH_LIMIT = 500;
@@ -223,17 +328,29 @@ function warnIfTruncated(label: string, count: number): void {
 export function fetchOpenIssues(repo: string): OpenIssue[] {
   const raw = gh(
     ['issue', 'list', '--repo', repo, '--state', 'open', '--limit', String(FETCH_LIMIT),
-      '--json', 'number,createdAt,updatedAt,labels'],
+      '--json', 'number,title,createdAt,updatedAt,labels'],
     60_000,
   );
   const issues: GhOpenIssue[] = JSON.parse(raw);
   warnIfTruncated('open issues', issues.length);
   return issues.map((i) => ({
     number: i.number,
+    title: i.title,
     createdAt: i.createdAt,
     updatedAt: i.updatedAt,
+    body: i.labels.some((label) => label.name === 'epic') ? fetchIssueBody(repo, i.number) : '',
     labels: i.labels.map((l) => l.name),
   }));
+}
+
+export function fetchIssueBody(repo: string, number: number): string {
+  try {
+    const raw = gh(['issue', 'view', String(number), '--repo', repo, '--json', 'body'], 30_000);
+    const issue: GhIssueBody = JSON.parse(raw);
+    return issue.body ?? '';
+  } catch {
+    return '';
+  }
 }
 
 export function fetchCreatedInWindow(repo: string, windowDays: number, now: Date): CreatedIssue[] {
@@ -278,6 +395,18 @@ export function formatReport(report: BacklogHealthReport, verdict: HealthVerdict
     .map(([h, n]) => `${h}=${n}`)
     .join('  ');
   lines.push(`  horizons (${report.horizon.distinctHorizons} distinct, ${report.horizon.noHorizon} unlabeled): ${horizons || '(none)'}`);
+  lines.push(
+    `  epic progress: ${report.epicProgress.healthy}/${report.epicProgress.total} healthy  ` +
+    `decompose ${report.epicProgress.needsDecomposition}  replan ${report.epicProgress.needsReplan}  ` +
+    `terminal-decision ${report.epicProgress.needsTerminalDecision}`,
+  );
+  const pressuredEpics = report.epicProgress.items.filter((item) => item.verdict !== 'healthy');
+  for (const item of pressuredEpics) {
+    lines.push(
+      `    #${item.number} ${item.verdict}: ${item.title} ` +
+      `(${item.checkedItems}/${item.trackedItems} checked, ${item.inactiveDays}d inactive) — ${item.reason}`,
+    );
+  }
   return lines.join('\n');
 }
 

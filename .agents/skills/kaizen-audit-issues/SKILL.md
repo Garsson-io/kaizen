@@ -25,6 +25,9 @@ Before the manual drill-downs, get the aggregate health verdict. `scripts/backlo
 computes the Issue Metabolism axes from epic #953 (creation/closure ratio, inactivity-age
 distribution, horizon coverage) and prints a single verdict (`healthy`/`warning`/`pathological`).
 The verdict is bound to the exit code (pathological → exit 1) so it can gate CI or batch runs.
+It also prints `epic progress`: open epics with no tracked checklist work, checked child work that
+has gone stale, or all tracked child work complete. Treat these as required terminal-path decisions:
+decompose into child issues, replan/continue, consciously defer, or close with rationale.
 
 ```bash
 npx tsx scripts/backlog-health.ts --repo "$ISSUES_REPO" --window 30
@@ -83,6 +86,8 @@ gh issue list --repo "$ISSUES_REPO" --state closed --label "epic" --limit 50 \
 Check each epic for:
 - **Stale body:** No update in 4+ weeks — the direction may have drifted
 - **No sub-issues linked:** Epic exists but nothing is tracked under it
+- **Completed child impact with no terminal path:** checked-off child work exists, but the epic has
+  not been replanned, decomposed further, consciously deferred, or closed
 - **Prematurely closed:** Epics are infinite games; closing one requires explicit "direction abandoned" rationale
 
 ### Step 4: Incident density audit
