@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { gh } from '../lib/gh-exec.js';
 import { parseGithubPrUrl } from '../lib/github-pr.js';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
+import { currentHookBranch } from './lib/current-branch.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
 import {
@@ -45,11 +46,6 @@ function detectGhRepo(): string | undefined {
   const url = gitStdout(['remote', 'get-url', 'origin']);
   const match = url.match(/github\.com[:/]([^/]+\/[^/.]+)/);
   return match?.[1];
-}
-
-/** Get current git branch. */
-function getCurrentBranch(): string {
-  return gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown');
 }
 
 /** Get changed files for context. */
@@ -335,7 +331,7 @@ export function processHookInput(
   // Skip if reflection was already done for this PR
   if (isReflectionDone(prUrl, stateDir)) return null;
 
-  const branch = options.branch ?? getCurrentBranch();
+  const branch = options.branch ?? currentHookBranch();
   const ghRun = options.gh ?? gh;
   const changed = options.changedFiles ?? getChangedFiles(cmdLine, isMerge, ghRun);
 

@@ -21,7 +21,8 @@
 
 import { basename } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
-import { appendHookAuditLog, currentHookBranch } from './lib/audit-log.js';
+import { appendHookAuditLog } from './lib/audit-log.js';
+import { currentHookBranch } from './lib/current-branch.js';
 import {
   DEFAULT_STATE_DIR,
   listStateFilesAnyBranch,

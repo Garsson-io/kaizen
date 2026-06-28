@@ -285,7 +285,10 @@ describe('git runner invariant', () => {
 
     expect(source).not.toMatch(/execSync\(['"`]git\b/);
     expect(source).toContain("gitStdout(['remote', 'get-url', 'origin'])");
-    expect(source).toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown')");
+    expect(source).toContain('currentHookBranch');
+    expect(source).toContain("from './lib/current-branch.js'");
+    expect(source).not.toContain('function getCurrentBranch()');
+    expect(source).not.toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown')");
     expect(source).toContain("gitStdout(['diff', '--name-only', 'main...HEAD'])");
     expect(source).toContain("gitStdout(['worktree', 'list', '--porcelain'], '.')");
   });

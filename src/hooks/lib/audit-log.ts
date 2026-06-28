@@ -1,24 +1,14 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { getCurrentBranch } from '../hook-io.js';
+import { currentHookBranch } from './current-branch.js';
 import { DEFAULT_AUDIT_DIR } from '../state-utils.js';
 
 export interface HookAuditOptions {
   auditDir?: string;
-  readBranch?: () => string;
 }
 
 export function hookAuditDir(options: HookAuditOptions = {}): string {
   return options.auditDir ?? process.env.AUDIT_DIR ?? DEFAULT_AUDIT_DIR;
-}
-
-export function currentHookBranch(options: HookAuditOptions = {}): string {
-  try {
-    const branch = (options.readBranch ?? getCurrentBranch)().trim();
-    return branch || 'unknown';
-  } catch {
-    return 'unknown';
-  }
 }
 
 export function appendHookAuditLog(
@@ -34,3 +24,5 @@ export function appendHookAuditLog(
     // Audit logging must never block hook gate transitions.
   }
 }
+
+export { currentHookBranch };
