@@ -18,6 +18,10 @@ import {
   upsertProgressStep,
   type RunProgressStep,
 } from './auto-dent-progress.js';
+import {
+  collapseWhitespace,
+  truncateDisplay,
+} from './auto-dent-display.js';
 import { parseHookOutputs, type HookOutput } from '../src/hooks/lib/gate-signal.js';
 
 // ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
@@ -60,25 +64,7 @@ function formatElapsed(startMs: number): string {
   return `${m}m${s.toString().padStart(2, '0')}s`;
 }
 
-function truncate(s: string, max: number): string {
-  // Collapse first so the one-event-one-line stream contract holds for ANY
-  // free-text field (#1170), not just Bash commands, and so the length budget
-  // is spent on visible content rather than on whitespace we'd drop anyway.
-  const oneLine = collapseWhitespace(s);
-  return oneLine.length > max ? oneLine.slice(0, max - 1) + '\u2026' : oneLine;
-}
-
-/**
- * Collapse internal whitespace \u2014 newlines, tabs, runs of spaces \u2014 to a single
- * space and trim (#1170). The live terminal stream's contract is one tool event
- * per readable line; a multiline command (heredoc, script body) otherwise spills
- * its body onto following lines with no timestamp/tool prefix, so the body looks
- * like separate auto-dent events. Display-only: the machine-readable logs keep
- * the original command verbatim.
- */
-export function collapseWhitespace(s: string): string {
-  return s.replace(/\s+/g, ' ').trim();
-}
+export { collapseWhitespace } from './auto-dent-display.js';
 
 // Semantic line budget (#1157)
 //
@@ -127,23 +113,23 @@ export function formatToolUse(
 ): string {
   switch (name) {
     case 'Read':
-      return `Read ${truncate(prettifyPath(input?.file_path || '?'), 60)}`;
+      return `Read ${truncateDisplay(prettifyPath(input?.file_path || '?'), 60)}`;
     case 'Edit':
-      return `Edit ${truncate(prettifyPath(input?.file_path || '?'), 60)}`;
+      return `Edit ${truncateDisplay(prettifyPath(input?.file_path || '?'), 60)}`;
     case 'Write':
-      return `Write ${truncate(prettifyPath(input?.file_path || '?'), 60)}`;
+      return `Write ${truncateDisplay(prettifyPath(input?.file_path || '?'), 60)}`;
     case 'Bash':
-      return `$ ${truncate(prettifyPath(stripCdPrefix(collapseWhitespace(input?.command || input?.description || '?'))), 90)}`;
+      return `$ ${truncateDisplay(prettifyPath(stripCdPrefix(collapseWhitespace(input?.command || input?.description || '?'))), 90)}`;
     case 'Grep':
-      return `Grep "${truncate(input?.pattern || '?', 30)}" ${prettifyPath(input?.path || '')}`;
+      return `Grep "${truncateDisplay(input?.pattern || '?', 30)}" ${prettifyPath(input?.path || '')}`;
     case 'Glob':
-      return `Glob ${truncate(input?.pattern || '?', 50)}`;
+      return `Glob ${truncateDisplay(input?.pattern || '?', 50)}`;
     case 'Skill':
       return `Skill /${input?.skill_name || input?.skill || '?'}`;
     case 'Agent':
-      return `Agent: ${truncate(input?.description || '?', 50)}`;
+      return `Agent: ${truncateDisplay(input?.description || '?', 50)}`;
     case 'TaskCreate':
-      return `Task+ ${truncate(input?.subject || '?', 50)}`;
+      return `Task+ ${truncateDisplay(input?.subject || '?', 50)}`;
     case 'TaskUpdate':
       return `Task~ #${input?.taskId || '?'} -> ${input?.status || '?'}`;
     case 'EnterWorktree':
@@ -211,7 +197,7 @@ export function formatPhaseMarker(marker: PhaseMarker): string {
   if (fields.issues_filed) parts.push(`${fields.issues_filed} issues filed`);
   if (fields.lessons) parts.push(fields.lessons);
 
-  return truncate(parts.join(' '), 120);
+  return truncateDisplay(parts.join(' '), 120);
 }
 
 // Artifact extraction from agent output

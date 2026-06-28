@@ -19,6 +19,7 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join, basename, resolve } from 'path';
 import { execSync } from 'child_process';
 import { readState, type BatchState } from './auto-dent-run.js';
+import { truncateDisplay } from './auto-dent-display.js';
 
 // Types
 
@@ -148,7 +149,7 @@ const CODING_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
 const DISCOVERY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Agent', 'ToolSearch']);
 const SHIPPING_TOOLS = new Set(['Bash']); // git/gh commands
 
-function truncateInput(name: string, input: Record<string, any>): string {
+function formatToolInputSummary(name: string, input: Record<string, any>): string {
   switch (name) {
     case 'Read':
     case 'Edit':
@@ -156,16 +157,16 @@ function truncateInput(name: string, input: Record<string, any>): string {
       return basename(input?.file_path || '?');
     case 'Bash': {
       const cmd = input?.command || input?.description || '?';
-      return cmd.slice(0, 60);
+      return truncateDisplay(cmd, 60, { ellipsis: '' });
     }
     case 'Grep':
-      return `"${(input?.pattern || '?').slice(0, 30)}"`;
+      return `"${truncateDisplay(input?.pattern || '?', 30, { ellipsis: '' })}"`;
     case 'Glob':
-      return (input?.pattern || '?').slice(0, 40);
+      return truncateDisplay(input?.pattern || '?', 40, { ellipsis: '' });
     case 'Skill':
       return `/${input?.skill_name || input?.skill || '?'}`;
     case 'Agent':
-      return (input?.description || '?').slice(0, 40);
+      return truncateDisplay(input?.description || '?', 40, { ellipsis: '' });
     default:
       return '';
   }
@@ -553,7 +554,7 @@ export function analyzeRunLog(logPath: string): RunAnalysis {
         if (block.type === 'tool_use') {
           const name = block.name;
           const input = block.input || {};
-          const summary = `${name} ${truncateInput(name, input)}`.trim();
+          const summary = `${name} ${formatToolInputSummary(name, input)}`.trim();
           toolEvents.push({ offsetSec, name, summary });
           toolInputs.push({ name, input });
         }
