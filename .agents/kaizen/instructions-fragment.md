@@ -2,7 +2,7 @@
 
 ## Kaizen — Continuous Improvement
 
-Kaizen is installed at `{{KAIZEN_ROOT}}`. It provides enforcement hooks, reflection workflows, and dev workflow skills. Configuration in `kaizen.config.json`.
+Kaizen is installed as an active Claude Code plugin. It provides enforcement hooks, reflection workflows, and dev workflow skills. Configuration lives in `kaizen.config.json`.
 
 ### Kaizen Skills
 
@@ -18,7 +18,7 @@ Kaizen is installed at `{{KAIZEN_ROOT}}`. It provides enforcement hooks, reflect
 
 ### Dev work skill chain — MUST follow this workflow
 
-**Full workflow docs:** [`{{KAIZEN_ROOT}}/.agents/kaizen/workflow.md`]({{KAIZEN_ROOT}}/.agents/kaizen/workflow.md)
+**Full workflow docs:** use `/kaizen-do` for the goal-driven workflow and `/kaizen-zen` for the operating philosophy. The plugin source of truth is the `Garsson-io/kaizen` repository.
 
 Key triggers — activate the right skill for the user's intent:
 
@@ -32,20 +32,20 @@ Key triggers — activate the right skill for the user's intent:
 
 ### The Zen of Kaizen
 
-Run `/kaizen-zen` to see the full commentary ([`{{KAIZEN_ROOT}}/.agents/kaizen/zen.md`]({{KAIZEN_ROOT}}/.agents/kaizen/zen.md)).
+Run `/kaizen-zen` to see the full commentary.
 
 ### Kaizen Policies
 
-**Generic policies:** [`{{KAIZEN_ROOT}}/.agents/kaizen/policies.md`]({{KAIZEN_ROOT}}/.agents/kaizen/policies.md) — recursive kaizen, hooks infrastructure, worktree isolation, co-commit tests, smoke tests ship with feature.
+**Generic policies:** provided by the kaizen plugin — recursive kaizen, hooks infrastructure, worktree isolation, co-commit tests, smoke tests ship with feature.
 
 **Host-specific policies:** [`.agents/kaizen/local/policies-local.md`](.agents/kaizen/local/policies-local.md) — project-specific enforcement rules.
 
 ### Verification Discipline
 
-**Read [`{{KAIZEN_ROOT}}/.agents/kaizen/verification.md`]({{KAIZEN_ROOT}}/.agents/kaizen/verification.md)** before writing fixes or tests. Covers: path tracing, invariant statements, runtime artifact verification, smoke tests.
+**Read the plugin's verification guidance** before writing fixes or tests. Covers: path tracing, invariant statements, runtime artifact verification, smoke tests.
 
 ### Kaizen Backlog
 
-Future work tracked as GitHub Issues. Issue taxonomy in [`{{KAIZEN_ROOT}}/docs/issue-taxonomy.md`]({{KAIZEN_ROOT}}/docs/issue-taxonomy.md). Every issue MUST have: `kaizen` + level (`level-1`/`level-2`/`level-3`) + area label.
+Future work is tracked as GitHub Issues. Every issue MUST have: `kaizen` + level (`level-1`/`level-2`/`level-3`) + area label.
 
 <!-- END KAIZEN PLUGIN -->

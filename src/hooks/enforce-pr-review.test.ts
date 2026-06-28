@@ -85,6 +85,16 @@ describe('enforce-pr-review PreToolUse — Bash commands', () => {
     expect(result.reason).toContain('round 3');
   });
 
+  it('gives the concrete store-review-summary + second diff sequence (#1085)', () => {
+    createReviewGate('https://github.com/org/repo/pull/42', '3');
+    const result = processPreToolUse('git push origin feature', TEST_BRANCH, TEST_STATE_DIR);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('store-review-summary');
+    expect(result.reason).toContain('--pr 42 --repo org/repo --round 3');
+    expect(result.reason).toContain('gh pr diff https://github.com/org/repo/pull/42');
+    expect(result.reason).toContain('/kaizen-review-pr 42');
+  });
+
   it('INVARIANT: Bash deny message identifies the blocked tool as "Bash" (kaizen #971)', () => {
     // The gate message must identify WHICH matcher fired (Bash/Edit|Write/Agent).
     // PR #964 debugging wasted significant time because the message said

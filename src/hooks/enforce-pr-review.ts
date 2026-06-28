@@ -26,13 +26,25 @@ import { findStateWithStatus } from './state-utils.js';
 const BLOCKED_TOOLS = new Set(['Edit', 'Write']);
 
 function buildDenyMessage(toolLabel: string, prUrl: string, round: string): string {
+  const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '<N>';
+  const repo = prUrl.match(/github\.com\/([^/]+\/[^/]+)/)?.[1] ?? '<owner/repo>';
+
   return `BLOCKED: ${toolLabel} is not allowed during PR review.
 
 You have an active PR review that must be completed first:
   PR: ${prUrl} (round ${round})
 
-Run \`gh pr diff ${prUrl}\` to review the diff, then work through the
-self-review checklist. Only after reviewing can you proceed with other work.
+Use the review skill for the normal path:
+  /kaizen-review-pr ${prNum}
+
+If you already performed the review manually, clearing this gate is a two-step
+mechanism:
+  1. Store a real review summary:
+     npx tsx src/cli-structured-data.ts store-review-summary --pr ${prNum} --repo ${repo} --round ${round} --text "REVIEW: <summary>"
+  2. Re-run the diff command so the PostToolUse hook observes the stored summary:
+     gh pr diff ${prUrl}
+
+The summary must describe what was reviewed. A placeholder defeats the gate.
 
 Allowed commands during review:
   gh pr diff, gh pr view, gh pr comment, gh pr edit

@@ -535,6 +535,15 @@ describe('checkPlanBeforePr', () => {
     expect(result.allowed).toBe(false);
   });
 
+  it('DENIES with direct store-plan remediation when a plan is missing (#1085)', () => {
+    const result = checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps({ retrievePlan: () => null }));
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('/kaizen-write-plan');
+    expect(result.reason).toContain('store-plan');
+    expect(result.reason).toContain('--issue 1055 --repo Garsson-io/kaizen');
+    expect(result.reason).toContain('retrieve-testplan');
+  });
+
   it('DENIES when no testplan', () => {
     const result = checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps({ retrieveTestPlan: () => null }));
     expect(result.allowed).toBe(false);
