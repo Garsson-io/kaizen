@@ -47,6 +47,7 @@ export interface DoctorOpts {
   projectRoot: string;
   homeDir: string;
   pluginName?: string;
+  codexReadiness?: CodexReadinessOpts;
 }
 
 export type CommandRunner = (cmd: string, args: readonly string[]) => string;
@@ -610,7 +611,7 @@ export function runAllChecks(opts: DoctorOpts): CheckResult[] {
     checkStalePluginCache(opts),
     checkRestartNeeded(opts),
     checkHookExecSmoke(opts),
-    checkCodexReadiness(),
+    checkCodexReadiness(opts.codexReadiness),
   ];
 }
 

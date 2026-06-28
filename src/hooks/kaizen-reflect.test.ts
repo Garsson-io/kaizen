@@ -57,6 +57,7 @@ const defaultOpts = {
   mainCheckout: '/home/user/projects/kaizen',
   changedFiles: 'src/hooks/kaizen-reflect.ts',
   sendNotification: vi.fn(),
+  runHookTimingSentinel: () => '',
 };
 
 describe('processHookInput', () => {
@@ -157,6 +158,23 @@ describe('processHookInput', () => {
         '--repo',
         'Garsson-io/kaizen',
       ]);
+    });
+
+    it('routes hook timing through the injected seam', () => {
+      const runHookTimingSentinel = vi.fn(() => 'TIMING REPORT');
+      const input = makeInput({
+        command: 'gh pr merge 42 --repo Garsson-io/kaizen --squash',
+        stdout: '✓ Pull request merged',
+      });
+
+      const output = processHookInput(input, {
+        ...defaultOpts,
+        changedFiles: 'src/a.ts\nsrc/b.ts',
+        runHookTimingSentinel,
+      });
+
+      expect(runHookTimingSentinel).toHaveBeenCalledWith('src/a.ts\nsrc/b.ts');
+      expect(output).toContain('TIMING REPORT');
     });
 
     it('sends Telegram notification on merge', () => {

@@ -33,6 +33,7 @@ export type Mergeable = 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
 export type StalePrAction =
   | 'skip-fresh' // younger than the staleness threshold — leave it alone
   | 'close-superseded' // linked issue already CLOSED — pure noise, close it
+  | 'rescue-disposition' // stale rescue PR — validate/resume, close superseded, or track follow-up
   | 'merge-ready' // clean, non-draft, issue still open — propose merge
   | 'resume' // conflicting — needs rebase/rework to reach a terminal state
   | 'review'; // unknown mergeability or draft — needs a human/agent look
@@ -55,11 +56,20 @@ export interface StalePrInput {
   mergeable: Mergeable;
   /** Whether the PR is a draft. */
   isDraft: boolean;
+  /** Whether the PR is a gate-skipped rescue PR preserving stranded work. */
+  isRescue?: boolean;
 }
 
 export interface StalePrTriage {
   action: StalePrAction;
   reason: string;
+}
+
+export function isRescuePr(input: { title?: string | null; body?: string | null }): boolean {
+  const title = input.title ?? '';
+  const body = input.body ?? '';
+  return /^\s*\[rescue\]/i.test(title) ||
+    /\b(?:FAILED-RUN RESCUE|Rescue Notice|Rescue Context|NOT VALIDATED WORK)\b/i.test(body);
 }
 
 /**
@@ -68,9 +78,10 @@ export interface StalePrTriage {
  * Precedence (most authoritative terminal signal first):
  *  1. fresh (ageDays < staleDays)            -> skip-fresh
  *  2. ALL linked issues CLOSED                -> close-superseded
- *  3. CONFLICTING                             -> resume
- *  4. MERGEABLE && !draft                     -> merge-ready
- *  5. otherwise (UNKNOWN / draft)             -> review
+ *  3. rescue PR                               -> rescue-disposition
+ *  4. CONFLICTING                             -> resume
+ *  5. MERGEABLE && !draft                     -> merge-ready
+ *  6. otherwise (UNKNOWN / draft)             -> review
  *
  * The closed-issue signal wins over mergeability because a PR whose closing
  * issues are all resolved is pure noise regardless of whether it would merge
@@ -90,6 +101,13 @@ export function classifyStalePr(input: StalePrInput): StalePrTriage {
     return {
       action: 'close-superseded',
       reason: 'every linked Closes-issue is already CLOSED — the work it closes is resolved; pure noise',
+    };
+  }
+
+  if (input.isRescue) {
+    return {
+      action: 'rescue-disposition',
+      reason: 'rescue PR with unvalidated preserved work — terminal path required: validate/resume, close as superseded, or convert to tracked follow-up',
     };
   }
 
@@ -221,6 +239,7 @@ export function triageOpenPrs(deps: TriageDeps): TriageRow[] {
       linkedIssueStates,
       mergeable: normalizeMergeable(pr.mergeable),
       isDraft: pr.isDraft,
+      isRescue: isRescuePr({ title: pr.title, body: pr.body }),
     });
     rows.push({ number: pr.number, title: pr.title, url: pr.url, ageDays, closesIssues, triage });
   }
@@ -251,6 +270,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
 
 const ACTION_ORDER: StalePrAction[] = [
   'close-superseded',
+  'rescue-disposition',
   'resume',
   'merge-ready',
   'review',
@@ -267,6 +287,9 @@ export function formatReport(rows: TriageRow[]): string {
       const closes = r.closesIssues.length > 0 ? ` closes ${r.closesIssues.map((n) => `#${n}`).join(', ')}` : '';
       lines.push(`  #${r.number} (${r.ageDays}d${closes}) — ${r.title}`);
       lines.push(`    ${r.triage.reason}`);
+      if (action === 'rescue-disposition') {
+        lines.push('    terminal path: validate/resume, close as superseded, or convert to tracked follow-up');
+      }
       lines.push(`    ${r.url}`);
     }
   }
