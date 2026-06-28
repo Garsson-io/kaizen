@@ -56,6 +56,7 @@ import {
   upsertProgressStep,
   type RunProgressStep,
 } from './auto-dent-progress.js';
+import { truncateAtWordBoundary } from './auto-dent-display.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -1268,17 +1269,7 @@ Emit these naturally as you complete each phase. Missing keys are fine — emit 
 
 // Text utilities
 
-/**
- * Truncate text at a word boundary, max `max` characters.
- * Appends ellipsis if truncated.
- */
-export function truncateAtWord(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const truncated = text.slice(0, max);
-  const lastSpace = truncated.lastIndexOf(' ');
-  const cut = lastSpace > max * 0.5 ? lastSpace : max;
-  return truncated.slice(0, cut).replace(/[,\s]+$/, '') + '...';
-}
+export const truncateAtWord = truncateAtWordBoundary;
 
 /**
  * Clean raw guidance into a readable title.
