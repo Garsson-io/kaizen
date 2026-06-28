@@ -59,6 +59,7 @@ import {
 import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
+import { hasHardQualityFailure } from '../src/verdict-binding-policy.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -820,11 +821,7 @@ export interface RunOutcomeSignals {
 export function deriveRunOutcome(signals: RunOutcomeSignals): RunOutcome {
   if (signals.stopRequested) return 'stop';
   if (signals.exitCode !== 0) return 'failure';
-  const qualityFailed =
-    signals.reviewVerdict === 'fail' ||
-    signals.processVerdict === 'process-incomplete' ||
-    signals.lifecycleHealth === 'critical';
-  if (qualityFailed) return 'failure';
+  if (hasHardQualityFailure(signals)) return 'failure';
   return signals.artifactCount > 0 ? 'success' : 'empty_success';
 }
 
