@@ -29,6 +29,16 @@ run_edit_hook_in_dir() {
   (cd "$cwd" && echo "$input" | bash "$HOOK" 2>/dev/null)
 }
 
+run_edit_hook_with_event_cwd() {
+  local process_cwd="$1"
+  local event_cwd="$2"
+  local file_path="$3"
+  local input
+  input=$(jq -n --arg cwd "$event_cwd" --arg fp "$file_path" \
+    '{"cwd":$cwd,"tool_input":{"file_path":$fp}}')
+  (cd "$process_cwd" && echo "$input" | bash "$HOOK" 2>/dev/null)
+}
+
 # Detect if we're in main checkout on main branch
 GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -107,6 +117,21 @@ git -C "$MAIN" worktree add -q -b case/260628-k1531-demo "$WT"
 
 OUTPUT=$(run_edit_hook_in_dir "$MAIN" "$MAIN/src/thing.ts")
 assert_contains "main checkout denial names active case worktree target" "$WT/src/thing.ts" "$OUTPUT"
+
+echo ""
+echo "=== Relative edit paths follow hook event cwd, not hook process cwd ==="
+
+OUTPUT=$(run_edit_hook_with_event_cwd "$WT" "$MAIN" "src/thing.ts")
+if is_denied "$OUTPUT"; then
+  echo "  PASS: event-cwd main checkout relative edit denied"
+  ((PASS++))
+else
+  echo "  FAIL: event-cwd main checkout relative edit was allowed"
+  ((FAIL++))
+fi
+
+OUTPUT=$(run_edit_hook_with_event_cwd "$MAIN" "$WT" "src/thing.ts")
+assert_eq "event-cwd worktree relative edit allowed" "" "$OUTPUT"
 
 WT2="$MAIN/.claude/worktrees/260628-k1532-demo"
 git -C "$MAIN" worktree add -q -b case/260628-k1532-demo "$WT2"

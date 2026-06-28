@@ -26,6 +26,7 @@ source "$(dirname "$0")/lib/hook-output.sh" 2>/dev/null || { exit 0; }
 
 read_hook_input
 get_file_path
+get_cwd
 
 # If no file path, allow (shouldn't happen for Edit/Write)
 if [ -z "$FILE_PATH" ]; then
@@ -35,21 +36,40 @@ fi
 source "$(dirname "$0")/lib/scope-guard.sh"
 source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
-# Resolve the main checkout path from git
-GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null)
+CONTEXT_CWD="${HOOK_CWD:-$(pwd)}"
+if [ ! -d "$CONTEXT_CWD" ]; then
+  CONTEXT_CWD=$(pwd)
+fi
+CONTEXT_CWD=$(realpath -m "$CONTEXT_CWD" 2>/dev/null || echo "$CONTEXT_CWD")
+
+# Resolve the main checkout path from the hook event cwd, not the hook process
+# cwd. Edit/Write tools report their intended cwd in the hook event; anchoring
+# relative file paths there prevents cross-worktree path drift.
+GIT_COMMON=$(git -C "$CONTEXT_CWD" rev-parse --git-common-dir 2>/dev/null)
 if [ -z "$GIT_COMMON" ]; then
   exit 0
 fi
 
-# Determine main checkout root
-if [ "$GIT_COMMON" = ".git" ]; then
-  MAIN_ROOT=$(pwd)
-else
-  MAIN_ROOT=$(dirname "$GIT_COMMON")
+GIT_COMMON_ABS=$(cd "$CONTEXT_CWD" && realpath -m "$GIT_COMMON" 2>/dev/null)
+if [ -z "$GIT_COMMON_ABS" ]; then
+  exit 0
 fi
 
-# Resolve FILE_PATH to absolute
-ABS_FILE_PATH=$(realpath -m "$FILE_PATH" 2>/dev/null || echo "$FILE_PATH")
+# Resolve FILE_PATH to absolute, using the hook event cwd for relative paths.
+case "$FILE_PATH" in
+  /*)
+    ABS_FILE_PATH=$(realpath -m "$FILE_PATH" 2>/dev/null || echo "$FILE_PATH")
+    ;;
+  *)
+    ABS_FILE_PATH=$(realpath -m "$CONTEXT_CWD/$FILE_PATH" 2>/dev/null || echo "$CONTEXT_CWD/$FILE_PATH")
+    ;;
+esac
+
+if [ "$GIT_COMMON" = ".git" ]; then
+  MAIN_ROOT=$(cd "$CONTEXT_CWD" && pwd)
+else
+  MAIN_ROOT=$(dirname "$GIT_COMMON_ABS")
+fi
 
 # Only care about files inside the main checkout
 if ! echo "$ABS_FILE_PATH" | grep -q "^${MAIN_ROOT}/"; then

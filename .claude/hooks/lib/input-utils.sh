@@ -14,6 +14,7 @@
 #   get_command              # sets COMMAND
 #   get_stdout               # sets STDOUT
 #   get_exit_code            # sets EXIT_CODE (defaults to "0")
+#   get_cwd                  # sets HOOK_CWD from the hook event cwd
 #   require_tool_bash        # exits 0 if TOOL_NAME != "Bash"
 #   require_success          # exits 0 if EXIT_CODE != "0"
 #
@@ -50,6 +51,11 @@ get_exit_code() {
 # Extract .tool_input.file_path into FILE_PATH (for Edit/Write/Read hooks).
 get_file_path() {
   FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+}
+
+# Extract .cwd into HOOK_CWD.
+get_cwd() {
+  HOOK_CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 }
 
 # Exit 0 (allow) if TOOL_NAME is not "Bash".
