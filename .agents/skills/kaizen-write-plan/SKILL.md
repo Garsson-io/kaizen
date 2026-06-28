@@ -30,6 +30,7 @@ Create these tasks at skill start using TaskCreate:
 | 1 | Collision detection | Check GitHub labels, open PRs, worktrees for existing work on this issue |
 | 2 | Problem validation | Confirm the problem exists in current code (skip if from deep-dive) |
 | 3 | Gather incidents + scope | Find concrete occurrences, assess implementation scope and architecture (skip Phase 1-2 if from deep-dive) |
+| 3b | Simplification/refactor impact assessment | Identify the related-area DRY sweep, least reasonable new surface area, and any mechanisms/schemas/standards to reuse, consolidate, simplify, or delete |
 | 4 | Phase 4.5: Form grounded plan | 6 grounding steps → write and store plan |
 | 5 | Ask the admin | Present 3 TLDRs, ask targeted questions, get approval |
 | 6 | Plan coverage review | Automated review of plan vs issue requirements |
@@ -230,6 +231,13 @@ npx tsx src/cli-dimensions.ts list && ls prompts/
 
 For each tool found: does it solve the core problem or an adjacent one? State findings in the plan's "Information Retrieved" section. This is how plans avoid re-inventing `cli-section-editor.ts`.
 
+Add a **simplification/refactor impact assessment** to this survey for every non-trivial implementation plan:
+- Name the related-area DRY sweep you performed or will perform.
+- Identify the least reasonable new surface area that could solve the issue.
+- List any existing mechanisms, schemas, helpers, prompts, or standards in the touched area that must be reused, consolidated, simplified, or deleted.
+- If no related-area refactor is warranted, say why with evidence. A bare "not needed" is not enough.
+- Preserve scope-fidelity boundaries: do not plan unrelated rewrites, but do not defer obvious competing mechanisms to optional cleanup.
+
 ### Step 3: Generate and reject at least one alternative
 
 Identify the highest-risk design choice — the one that determines where state lives or who owns an interface contract:
@@ -344,6 +352,8 @@ Rejected because: ...
 
 ## Tasks
 [Ordered, concrete, traceable to DONE WHEN]
+
+Include a task for the related-area DRY sweep and simplification/refactor impact assessment before implementation review. It should answer: did this plan solve the issue with the least reasonable new surface area, and did it avoid creating or preserving competing mechanisms?
 
 ## Seam Map & Test Plan
 [Per-behavior from all perspectives:]

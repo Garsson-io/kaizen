@@ -1367,12 +1367,7 @@ describe('Tier 1 — prompt file structure (all dimensions)', () => {
   const promptsDir = resolvePromptsDir();
   const validAppliesTo = new Set(['pr', 'plan', 'both', 'reflection']);
 
-  const dimensions = [
-    'correctness', 'dry', 'improvement-lifecycle',
-    'multi-pr-spiral', 'plan-coverage', 'plan-fidelity', 'pr-description',
-    'reflection-quality', 'requirements', 'scope-fidelity',
-    'security', 'test-plan', 'test-quality', 'tooling-fitness',
-  ];
+  const dimensions = Object.keys(discoverDimensions(promptsDir)).sort();
 
   for (const dim of dimensions) {
     const filePath = resolve(promptsDir, `review-${dim}.md`);
@@ -1415,6 +1410,31 @@ describe('Tier 1 — prompt file structure (all dimensions)', () => {
       expect(body.length, `body in review-${dim}.md is empty`).toBeGreaterThan(50);
     });
   }
+});
+
+describe('review-simplification-impact.md — first-class net quality dimension', () => {
+  const promptPath = resolve(resolvePromptsDir(), 'review-simplification-impact.md');
+
+  it('applies to both plans and PRs', () => {
+    const content = readFileSync(promptPath, 'utf8');
+    const fm = parseFrontmatter(content) as Record<string, string>;
+    expect(fm.applies_to).toBe('both');
+  });
+
+  it('requires related-area consolidation without authorizing unrelated refactors', () => {
+    const content = readFileSync(promptPath, 'utf8');
+    expect(content).toMatch(/related-area/i);
+    expect(content).toMatch(/consolidat/i);
+    expect(content).toMatch(/least reasonable new surface area/i);
+    expect(content).toMatch(/scope-fidelity/i);
+  });
+
+  it('requires reality evidence, not checkbox assertions', () => {
+    const content = readFileSync(promptPath, 'utf8');
+    expect(content).toMatch(/evidence/i);
+    expect(content).toMatch(/actually happened|diff/i);
+    expect(content).toMatch(/explicitly justified/i);
+  });
 });
 
 // ── Tier 0: Category-prevention for parseReviewOutput edge cases ──────

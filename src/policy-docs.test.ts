@@ -256,6 +256,22 @@ describe('skill files — Upholds invariants section', () => {
   });
 });
 
+describe('workflow skills — simplification/refactor impact is first-class', () => {
+  it('kaizen-write-plan requires a simplification/refactor impact assessment', () => {
+    const s = read('.agents/skills/kaizen-write-plan/SKILL.md');
+    expect(s).toMatch(/simplification\/refactor impact assessment/i);
+    expect(s).toMatch(/related-area DRY sweep/i);
+    expect(s).toMatch(/least reasonable new surface area/i);
+  });
+
+  it('kaizen-implement makes the related-area refactor/DRY pass a visible workflow task', () => {
+    const s = read('.agents/skills/kaizen-implement/SKILL.md');
+    expect(s).toMatch(/related-area simplification\/DRY refactor pass/i);
+    expect(s).toMatch(/before review/i);
+    expect(s).toMatch(/competing mechanisms/i);
+  });
+});
+
 describe('.agents/kaizen/README.md — Core Invariants points to canonical', () => {
   const readme = read('.agents/kaizen/README.md');
 
@@ -296,4 +312,3 @@ describe('review-requirements.md — B18: premature epic closure check', () => {
     expect(dim).toMatch(/gh issue view.*labels|labels.*gh issue view/);
   });
 });
-
