@@ -3554,6 +3554,18 @@ describe('test-task lifecycle evidence regression guard', () => {
   });
 });
 
+describe('workflow gate repair scheduling (#1533)', () => {
+  it('persists targeted repair prompts into run events and next-run steering', () => {
+    expect(AUTO_DENT_RUN_SOURCE).toContain('workflow_repair_prompt');
+    expect(AUTO_DENT_RUN_SOURCE).toContain('workflowRepairPromptFromProcess');
+    expect(AUTO_DENT_RUN_SOURCE).toContain('freshState.reflection_insights.push(workflowRepairPrompt)');
+    expect(AUTO_DENT_RUN_SOURCE).toContain('workflowGateStates,');
+    expect(AUTO_DENT_RUN_SOURCE).toContain('workflowRepairState,');
+    expect(AUTO_DENT_RUN_SOURCE).toContain('fill evidence for these exact gates on the existing PR');
+    expect(AUTO_DENT_RUN_SOURCE).toContain('do not restart unrelated implementation');
+  });
+});
+
 describe('auto-merge verdict binding wiring (#1220)', () => {
   it('routes post-review safety decisions into queueing and merge babysitting', () => {
     const decisionIndex = AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeDecision = decideAutoMergeSafety({');

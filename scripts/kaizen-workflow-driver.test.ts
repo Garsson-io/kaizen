@@ -71,7 +71,7 @@ describe('kaizen workflow forcing driver', () => {
     });
 
     expect(status.stages.map((stage) => stage.id)).toEqual([
-      'issue-identity',
+      'ticket-identity',
       'plan-testplan',
       'worktree-case',
       'implementation-tests',
@@ -80,6 +80,7 @@ describe('kaizen workflow forcing driver', () => {
       'review-requirements-impact',
       'reflection',
       'pr-ci-merge-cleanup',
+      'hook-provider-activation',
     ]);
     expect(status.stages.find((stage) => stage.id === 'plan-testplan')?.state).toBe('done');
     expect(status.stages.find((stage) => stage.id === 'dry-refactor')?.state).toBe('in_progress');
@@ -194,5 +195,6 @@ describe('kaizen workflow forcing driver', () => {
     expect(fromTmp.stdout).toBe(fromRoot.stdout);
     expect(fromTmp.stdout).toContain('worktree/case gate');
     expect(fromTmp.stdout).toContain('implementation with tests');
+    expect(fromTmp.stdout).toContain('hook/provider activation');
   });
 });

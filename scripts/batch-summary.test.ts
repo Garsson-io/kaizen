@@ -160,6 +160,8 @@ describe('summarizeEvents', () => {
     expect(summary.area_distribution).toEqual({});
     expect(summary.mode_distribution).toEqual({});
     expect(summary.mode_outcomes).toEqual({});
+    expect(summary.workflow_repair_gate_distribution).toEqual({});
+    expect(summary.workflow_repair_state_distribution).toEqual({});
   });
 
   it('computes cost_per_pr correctly', () => {
@@ -435,6 +437,36 @@ describe('process verdict distribution (#1149)', () => {
     expect(text).toContain('### Process Verdicts');
     expect(text).toContain('pass: 1 run');
     expect(text).toContain('process-incomplete: 1 run');
+  });
+
+  it('aggregates workflow gate ledger repair states from run.complete events (#1533)', () => {
+    const summary = summarizeEvents([
+      makeCompleteEvent({
+        run_num: 1,
+        process_verdict: 'process-incomplete',
+        workflow_repair_state: 'repair_scheduled',
+        workflow_repair_gates: ['dry-refactor', 'meet-reality', 'review-requirements-impact'],
+      }),
+      makeCompleteEvent({
+        run_num: 2,
+        process_verdict: 'process-incomplete',
+        workflow_repair_state: 'repair_scheduled',
+        workflow_repair_gates: ['dry-refactor'],
+      }),
+    ]);
+
+    expect(summary.workflow_repair_state_distribution).toEqual({ repair_scheduled: 2 });
+    expect(summary.workflow_repair_gate_distribution).toMatchObject({
+      'dry-refactor': 2,
+      'meet-reality': 1,
+      'review-requirements-impact': 1,
+    });
+
+    const text = formatPlainLanguage(summary);
+    expect(text).toContain('### Workflow Gate Ledger');
+    expect(text).toContain('Repair state repair_scheduled: 2 runs');
+    expect(text).toContain('dry-refactor (2)');
+    expect(text).toContain('meet-reality (1)');
   });
 });
 

@@ -91,6 +91,46 @@ describe('auto-dent merge policy (#1220)', () => {
   });
 });
 
+describe('auto-dent merge policy — workflow gate ledger binding (#1533)', () => {
+  const ready = {
+    prCount: 1,
+    reviewRequired: true,
+    reviewVerdict: 'pass' as const,
+    processVerdict: 'pass' as const,
+    lifecycleHealth: 'clean' as const,
+  };
+
+  it('blocks merge when the workflow gate ledger schedules evidence repair', () => {
+    const decision = decideAutoMergeSafety({
+      ...ready,
+      workflowRepairState: 'repair_scheduled',
+      workflowGateStates: {
+        'review-requirements-impact': 'invalid',
+        'dry-refactor': 'blocked',
+      },
+    });
+
+    expect(decision.allow).toBe(false);
+    expect(decision.reasons).toContain('workflow repair state repair_scheduled');
+    expect(decision.reasons).toContain('workflow gate review-requirements-impact invalid');
+    expect(decision.reasons).toContain('workflow gate dry-refactor blocked');
+  });
+
+  it('does not block merge-ready workflow ledger states', () => {
+    expect(
+      decideAutoMergeSafety({
+        ...ready,
+        workflowRepairState: 'merge_ready',
+        workflowGateStates: {
+          'review-requirements-impact': 'done',
+          'dry-refactor': 'done',
+          reflection: 'not_applicable',
+        },
+      }).allow,
+    ).toBe(true);
+  });
+});
+
 describe('auto-dent merge policy — hook_activation binding (#1220 completion / #843)', () => {
   // Baseline: an otherwise merge-ready PR-producing reviewed run.
   const ready = {

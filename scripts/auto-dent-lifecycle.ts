@@ -18,6 +18,7 @@
 
 import { readFileSync } from 'fs';
 import { parsePhaseMarkers } from './auto-dent-stream.js';
+import type { WorkflowGateId } from './workflow-gate-ledger.js';
 
 /** Canonical phase order. Phases not in this list (floating) are ignored for ordering. */
 export const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
@@ -173,6 +174,8 @@ export type ProviderReviewEvidenceStatus = 'pass' | 'fail' | 'skipped' | 'missin
 export interface ProcessEvidence {
   /** The run intentionally stopped/skipped before producing work artifacts. */
   intentionalNoOp?: boolean;
+  /** Durable ticket identity evidence exists. */
+  ticketIdentityEvidence?: boolean;
   /** Durable plan or claimed-plan assignment evidence exists. */
   planEvidence?: boolean;
   /** Durable implementation evidence exists (case/worktree or equivalent). */
@@ -191,12 +194,18 @@ export interface ProcessEvidence {
   providerReviewEvidence?: Record<string, ProviderReviewEvidenceStatus>;
   /** Durable reflection output exists. */
   reflectionEvidence?: boolean;
+  /** Related-area DRY/refactor pass evidence exists. */
+  dryRefactorEvidence?: boolean;
+  /** Meet-reality evidence exists. */
+  meetRealityEvidence?: boolean;
+  /** Hook/provider activation or external substitute evidence exists. */
+  hookProviderEvidence?: boolean;
   /** Merge readiness signal for PR-producing runs. */
   mergeReadiness?: MergeReadinessEvidence;
 }
 
 export interface ProcessCheck {
-  id: 'plan' | 'implementation' | 'pr' | 'test' | 'review' | 'review-provider' | 'reflection' | 'merge-readiness';
+  id: WorkflowGateId;
   status: ProcessCheckStatus;
   reason: string;
   remediation?: string;
@@ -243,6 +252,10 @@ function addCheck(
   checks.push({ id, status: 'fail', reason: failReason, remediation });
 }
 
+function legacyGateReason(id: WorkflowGateId, reason: string): string {
+  return `${id}: ${reason}`;
+}
+
 /**
  * Validate durable process evidence for a run. This is the richer #1149 layer:
  * marker claims describe what the worker says happened; `ProcessEvidence`
@@ -285,7 +298,16 @@ export function validateProcessEvidence(
 
   addCheck(
     checks,
-    'plan',
+    'ticket-identity',
+    hasWorkClaim,
+    evidence.ticketIdentityEvidence,
+    'work was claimed or produced without durable ticket identity evidence',
+    'durable ticket identity evidence exists',
+    'record the issue number, title, URL, repo, and scope linkage',
+  );
+  addCheck(
+    checks,
+    'plan-testplan',
     hasWorkClaim,
     evidence.planEvidence,
     'work was claimed or produced without durable plan evidence',
@@ -294,25 +316,16 @@ export function validateProcessEvidence(
   );
   addCheck(
     checks,
-    'implementation',
+    'worktree-case',
     needsImplementation,
     evidence.implementationEvidence,
-    'implementation/PR progress was claimed without durable implementation evidence',
-    'durable implementation evidence exists',
+    'implementation/PR progress was claimed without durable worktree/case evidence',
+    'durable worktree/case evidence exists',
     'create or record the case/worktree or other implementation artifact before claiming implementation',
   );
   addCheck(
     checks,
-    'pr',
-    needsPr,
-    evidence.prEvidence,
-    'PR/MERGE was claimed but no durable PR evidence exists',
-    'durable PR evidence exists',
-    'create the PR or avoid claiming PR/MERGE',
-  );
-  addCheck(
-    checks,
-    'test',
+    'implementation-tests',
     needsTest,
     evidence.testEvidence,
     'tests were claimed or a PR was produced without durable test evidence',
@@ -321,7 +334,25 @@ export function validateProcessEvidence(
   );
   addCheck(
     checks,
-    'review',
+    'dry-refactor',
+    needsPr,
+    evidence.dryRefactorEvidence,
+    'a PR exists or was claimed without related-area DRY/refactor evidence',
+    'related-area DRY/refactor evidence exists',
+    'record the related-area simplification sweep or the explicit reason no refactor was warranted',
+  );
+  addCheck(
+    checks,
+    'meet-reality',
+    needsPr,
+    evidence.meetRealityEvidence,
+    'a PR exists or was claimed without meet-reality evidence',
+    'meet-reality evidence exists',
+    'try the PR/workflow and record observed outputs and side effects',
+  );
+  addCheck(
+    checks,
+    'review-requirements-impact',
     needsReview,
     evidence.reviewEvidence,
     'a PR exists or was claimed without review evidence',
@@ -331,18 +362,14 @@ export function validateProcessEvidence(
 
   if (needsReview && evidence.providerReviewEvidence !== undefined) {
     const providerReview = completedReviewProviderStatuses(evidence.providerReviewEvidence);
-    checks.push(providerReview.complete
-      ? {
-        id: 'review-provider',
-        status: 'pass',
-        reason: 'all provider review attempts have durable pass/fail evidence',
-      }
-      : {
-        id: 'review-provider',
+    if (!providerReview.complete) {
+      checks.push({
+        id: 'review-requirements-impact',
         status: 'fail',
         reason: `provider review evidence incomplete: ${providerReview.incompleteProviders.join(', ')}`,
         remediation: 'wait for every selected provider review to finish and store its pass/fail evidence before claiming review success',
       });
+    }
   }
 
   addCheck(
@@ -356,20 +383,36 @@ export function validateProcessEvidence(
   );
 
   if (!needsMergeReadiness) {
-    checks.push({ id: 'merge-readiness', status: 'not-applicable', reason: 'no PR-producing phase required merge readiness' });
+    checks.push({ id: 'pr-ci-merge-cleanup', status: 'not-applicable', reason: 'no PR-producing phase required merge readiness' });
+  } else if (evidence.prEvidence !== true) {
+    checks.push({
+      id: 'pr-ci-merge-cleanup',
+      status: 'fail',
+      reason: 'PR/MERGE was claimed but no durable PR evidence exists',
+      remediation: 'create the PR or avoid claiming PR/MERGE',
+    });
   } else if (evidence.mergeReadiness === 'ready') {
-    checks.push({ id: 'merge-readiness', status: 'pass', reason: 'merge readiness evidence is ready' });
+    checks.push({ id: 'pr-ci-merge-cleanup', status: 'pass', reason: 'PR and merge readiness evidence are ready' });
   } else if (evidence.mergeReadiness === 'not-applicable') {
-    checks.push({ id: 'merge-readiness', status: 'not-applicable', reason: 'merge readiness not applicable' });
+    checks.push({ id: 'pr-ci-merge-cleanup', status: 'not-applicable', reason: 'merge readiness not applicable' });
   } else {
     const state = evidence.mergeReadiness ?? 'unknown';
     checks.push({
-      id: 'merge-readiness',
+      id: 'pr-ci-merge-cleanup',
       status: 'warning',
       reason: `merge readiness is ${state}`,
       remediation: 'treat as fail-open steering and re-check PR merge readiness next run',
     });
   }
+  addCheck(
+    checks,
+    'hook-provider-activation',
+    needsPr,
+    evidence.hookProviderEvidence,
+    'a PR exists or was claimed without hook/provider activation evidence',
+    'hook/provider activation evidence exists',
+    'record provider identity, hook expectation/activation, or schema-valid external substitute evidence',
+  );
 
   const failedChecks = checks.filter((check) => check.status === 'fail');
   const warningChecks = checks.filter((check) => check.status === 'warning');
@@ -459,7 +502,7 @@ export function summarizeEvidence(v: EvidenceVerification): string {
 export function summarizeProcessValidation(v: ProcessValidation): string {
   if (v.verdict === 'pass') return 'process verdict pass (durable evidence complete)';
   const actionable = [...v.failedChecks, ...v.warningChecks];
-  return `${v.verdict}: ${actionable.map((check) => `${check.id}: ${check.reason}`).join('; ')}`;
+  return `${v.verdict}: ${actionable.map((check) => legacyGateReason(check.id, check.reason)).join('; ')}`;
 }
 
 /**

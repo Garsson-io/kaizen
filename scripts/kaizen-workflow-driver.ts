@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { currentBranch, makeGitRun, type GitRun } from '../src/issue-binding.js';
 import { resolveProjectRoot } from '../src/lib/resolve-project-root.js';
+import { CANONICAL_WORKFLOW_GATES } from './workflow-gate-ledger.js';
 
 export type WorkflowMode = 'manual' | 'exploit' | 'explore' | 'reflect' | 'subtract' | 'contemplate' | string;
 
@@ -31,6 +32,7 @@ export interface WorkflowEvidenceInput {
   review?: string;
   reflection?: string;
   prCiMergeCleanup?: string;
+  hookProviderActivation?: string;
 }
 
 type ParsedArgs = Record<string, string | boolean | string[]>;
@@ -63,29 +65,26 @@ export interface WorkflowStatus {
   stages: WorkflowStageStatus[];
 }
 
-export const FULL_KAIZEN_GATE_LABELS = [
-  'ticket identity',
-  'plan/test-plan gate',
-  'worktree/case gate',
-  'implementation with tests',
-  'related-area DRY/refactor pass',
-  'meet reality',
-  'review/requirements/impact gates',
-  'reflection gate',
-  'PR/CI/merge/cleanup',
-] as const;
+export const FULL_KAIZEN_GATE_LABELS = CANONICAL_WORKFLOW_GATES.map((gate) => gate.label);
 
-const STAGES = [
-  ['issue-identity', 'ticket identity', 'issueIdentity'],
-  ['plan-testplan', 'plan/test-plan gate', 'plan'],
-  ['worktree-case', 'worktree/case gate', 'worktreeCase'],
-  ['implementation-tests', 'implementation with tests', 'implementation'],
-  ['dry-refactor', 'related-area DRY/refactor pass', 'dryRefactor'],
-  ['meet-reality', 'meet reality', 'meetReality'],
-  ['review-requirements-impact', 'review/requirements/impact gates', 'review'],
-  ['reflection', 'reflection gate', 'reflection'],
-  ['pr-ci-merge-cleanup', 'PR/CI/merge/cleanup', 'prCiMergeCleanup'],
-] as const;
+const STAGE_EVIDENCE_KEYS = {
+  'ticket-identity': 'issueIdentity',
+  'plan-testplan': 'plan',
+  'worktree-case': 'worktreeCase',
+  'implementation-tests': 'implementation',
+  'dry-refactor': 'dryRefactor',
+  'meet-reality': 'meetReality',
+  'review-requirements-impact': 'review',
+  reflection: 'reflection',
+  'pr-ci-merge-cleanup': 'prCiMergeCleanup',
+  'hook-provider-activation': 'hookProviderActivation',
+} as const satisfies Record<typeof CANONICAL_WORKFLOW_GATES[number]['id'], keyof WorkflowEvidenceInput>;
+
+const STAGES = CANONICAL_WORKFLOW_GATES.map((gate) => [
+  gate.id,
+  gate.label,
+  STAGE_EVIDENCE_KEYS[gate.id],
+] as const);
 
 const CLI_EVIDENCE_KEYS: Record<string, keyof WorkflowEvidenceInput> = {
   'issue-identity': 'issueIdentity',
@@ -97,6 +96,7 @@ const CLI_EVIDENCE_KEYS: Record<string, keyof WorkflowEvidenceInput> = {
   review: 'review',
   reflection: 'reflection',
   'pr-ci-merge-cleanup': 'prCiMergeCleanup',
+  'hook-provider-activation': 'hookProviderActivation',
 };
 
 const MODE_TERMINAL_EVIDENCE: Record<string, string> = {
