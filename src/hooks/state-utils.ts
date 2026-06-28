@@ -30,6 +30,7 @@ export interface StateFile {
   STATUS: string;
   BRANCH: string;
   ROUND?: string;
+  [key: string]: string | undefined;
 }
 
 /**
@@ -72,6 +73,11 @@ export function serializeStateFile(state: StateFile): string {
   let content = `PR_URL=${state.PR_URL}\nSTATUS=${state.STATUS}\nBRANCH=${state.BRANCH}\n`;
   if (state.ROUND) {
     content += `ROUND=${state.ROUND}\n`;
+  }
+  const canonicalKeys = new Set(['PR_URL', 'STATUS', 'BRANCH', 'ROUND']);
+  for (const key of Object.keys(state).filter(key => !canonicalKeys.has(key)).sort()) {
+    const value = state[key];
+    if (value) content += `${key}=${value}\n`;
   }
   return content;
 }
