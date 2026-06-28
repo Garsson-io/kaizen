@@ -31,6 +31,7 @@ import {
 } from '../review-sentinel.js';
 import { findOpenPrUrlForBranch } from '../lib/github-pr.js';
 import { type HookInput, readHookInput, traceHookEvent, writeHookOutput } from './hook-io.js';
+import { currentHookBranch } from './lib/current-branch.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
 import {
@@ -239,8 +240,7 @@ export function processHookInput(
   const cmdLine = stripHeredocBody(command);
   const stateDir =
     options.stateDir ?? process.env.STATE_DIR ?? DEFAULT_STATE_DIR;
-  const branch =
-    options.branch ?? gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown');
+  const branch = options.branch ?? currentHookBranch();
   const repoFromGit = options.repoFromGit ?? detectGhRepo();
   const getDiffLines = options.computeDiffLines ?? diffLines;
   const isShaValid = options.checkShaExists ?? shaExists;

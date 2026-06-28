@@ -85,6 +85,16 @@ describe('trace helper source invariant', () => {
   });
 });
 
+describe('branch helper source invariant', () => {
+  it('routes default branch fallback through currentHookBranch', () => {
+    expect(PR_REVIEW_LOOP_SOURCE).toContain('currentHookBranch');
+    expect(PR_REVIEW_LOOP_SOURCE).toContain("from './lib/current-branch.js'");
+    expect(PR_REVIEW_LOOP_SOURCE).not.toContain(
+      "gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown')",
+    );
+  });
+});
+
 /** Run the hook with JSON input and return stdout. */
 function runHook(input: object): string {
   const json = JSON.stringify(input);
