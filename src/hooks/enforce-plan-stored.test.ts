@@ -5,7 +5,7 @@
  * No GitHub or git calls are made.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
@@ -487,6 +487,24 @@ describe('checkPlanBeforePr', () => {
     } finally {
       rmSync(good, { recursive: true, force: true });
       rmSync(actual, { recursive: true, force: true });
+    }
+  });
+
+  it('DENIES parenthesized cd body-file ambiguity instead of treating it as persistent cwd', () => {
+    const good = mkdtempSync(join(tmpdir(), 'kaizen-pr-body-good-'));
+    const actual = join(good, 'actual');
+    mkdirSync(actual);
+    writeFileSync(join(good, 'body.md'), 'Closes #1055');
+    writeFileSync(join(actual, 'body.md'), `${GOOD_IMPACT_SECTION}\n\nCloses #1055`);
+    try {
+      const result = checkPlanBeforePr(
+        `cd "${good}" && (cd actual) && gh pr create --title "feat: test" --body-file body.md`,
+        makeDeps(),
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('impact-proof');
+    } finally {
+      rmSync(good, { recursive: true, force: true });
     }
   });
 

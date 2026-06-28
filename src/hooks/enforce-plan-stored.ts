@@ -29,7 +29,7 @@ import { isAbsolute, resolve, relative } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { currentHookBranch } from './lib/current-branch.js';
 import { gitStdout } from './lib/git-state.js';
-import { isGhPrCommand, stripHeredocBody, extractRepoFlag, splitCommandSegments } from './parse-command.js';
+import { isGhPrCommand, stripHeredocBody, extractRepoFlag, splitCommandSegments, effectiveCwdBeforeCommand } from './parse-command.js';
 import { CaseSystem } from '../case-system.js';
 import { extractCaseIssueFromBranch } from './lib/case-branch.js';
 import { queryIssueState, type IssueState } from '../lib/github-pr.js';
@@ -262,24 +262,8 @@ function commandOnlyChangesDirectoryBeforeCreate(cmdLine: string): boolean {
   return segments.slice(0, createIndex).every(seg => /^cd\s+/.test(seg));
 }
 
-function extractCdPath(segment: string): string | null {
-  const stripped = segment.trim().replace(/^\(\s*/, '').replace(/\s*\)$/, '');
-  const match = stripped.match(/^cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))\s*$/);
-  const target = match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
-  return target && target !== '-' ? target : null;
-}
-
 function effectiveCwdForPrCreate(cmdLine: string): string | null {
-  let cwd = process.cwd();
-  for (const segment of splitCommandSegments(cmdLine)) {
-    if (/^gh\s+pr\s+create\b/.test(segment)) return cwd;
-    if (/^\(?\s*cd\s+/.test(segment)) {
-      const target = extractCdPath(segment);
-      if (!target) return null;
-      cwd = resolve(cwd, target);
-    }
-  }
-  return null;
+  return effectiveCwdBeforeCommand(cmdLine, /^gh\s+pr\s+create\b/) ?? null;
 }
 
 function isWithinDirectory(path: string, directory: string): boolean {
