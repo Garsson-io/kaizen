@@ -1,6 +1,6 @@
 # Autonomous Guardrailed Dev Workflow
 
-How Kaizen dev agents work autonomously with quality enforcement at every step. The agent completes the full cycle — worktree, code, test, PR, review, merge, sync — without human intervention. Hooks enforce quality gates that the agent cannot bypass.
+How Kaizen dev agents work autonomously with quality enforcement at every step. The agent completes the full cycle — worktree, code, test, PR, review, gated merge, sync — without human intervention. Hooks and required checks enforce quality gates that the agent cannot bypass.
 
 ## The Full Dev Cycle
 
@@ -28,8 +28,8 @@ PR Creation (gh pr create)
   │  ─── agent is FORCED to run gh pr diff and complete review ───
   │  Up to 4 rounds of review. If issues remain → escalate to human.
   ▼
-Merge (autonomous)
-  │  gh pr merge --auto --squash --delete-branch
+Merge (gated)
+  │  Auto-dent harness queues only after verdicts pass, or direct merge hook checks stored verdict
   │  Wait for CI (gh run watch / gh pr checks --watch)
   │  Verify state=MERGED
   │  If CI fails → fix, push (auto-merge retries automatically)
