@@ -201,6 +201,7 @@ import {
 import { deriveRunTestHealth } from './auto-dent-test-health.js';
 import { createDefaultGitExec } from '../src/hooks/lib/git-state.js';
 import { runStalePrTriageMaintenance } from './stale-pr-triage.js';
+import { runBacklogHealthMaintenance } from './backlog-health.js';
 import { gh as ghArgs } from '../src/lib/gh-exec.js';
 
 // Types
@@ -1611,6 +1612,31 @@ export function closeBatchProgressIssue(
     } catch (err) {
       console.log(`  [intelligence] batch-artifacts upload skipped: ${(err as Error).message}`);
     }
+  }
+
+  // Backlog-health maintenance (#1497, PRD #951 DoD item 4): surface the
+  // issue-metabolism verdict at the once-per-batch finalize choke point. This
+  // mirrors stale-PR maintenance: best-effort and self-guarding, never blocking
+  // progress issue closure.
+  try {
+    const windowRaw = parseInt(process.env.KAIZEN_BACKLOG_HEALTH_WINDOW_DAYS ?? '', 10);
+    const windowDays = Number.isFinite(windowRaw) && windowRaw > 0 ? windowRaw : 30;
+    const result = runBacklogHealthMaintenance({
+      gh: ghArgs,
+      repo: kaizenRepo,
+      progressIssue: m[1],
+      windowDays,
+      log: (msg) => console.log(`  [backlog-health] ${msg}`),
+      err: (msg) => console.log(`  [backlog-health] ${msg}`),
+    });
+    if (result.verdict) {
+      console.log(
+        `  [backlog-health] verdict ${result.verdict}` +
+          (result.commentPosted ? ' posted' : ' (report-only)'),
+      );
+    }
+  } catch (err) {
+    console.log(`  [backlog-health] maintenance skipped: ${(err as Error).message}`);
   }
 
   // Pre-existing-PR graveyard maintenance (#1365, follow-up to #1159/PR #1363):
