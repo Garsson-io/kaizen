@@ -469,6 +469,33 @@ describe('checkFixResult (integration: real temp files)', () => {
       expect(r.output).toContain('looks fixed');
     } finally { teardown(); }
   });
+
+  it('includes Codex fix stderr when stdout has no JSONL result', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      writeFileSync(logFile, '');
+      writeFileSync(logFile + '.stderr', 'not authenticated\n');
+      const r = checkFixResult(logFile, DEAD_PID, { provider: 'codex', billing: 'subscription-cli' });
+      expect(r.done).toBe(true);
+      expect(r.success).toBe(false);
+      expect(r.output).toContain('not authenticated');
+    } finally { teardown(); }
+  });
+});
+
+describe('launchFix subprocess error visibility', () => {
+  it('records async spawn errors in both fix stdout and stderr logs', () => {
+    const source = readFileSync(new URL('./review-fix.ts', import.meta.url), 'utf8');
+    const launchSection = source.slice(
+      source.indexOf('function launchFix'),
+      source.indexOf('/**\n * Check if a detached fix session has completed.', source.indexOf('function launchFix')),
+    );
+
+    expect(launchSection).toContain("child.on('error', (spawnError)");
+    expect(launchSection).toContain('Provider spawn error: ${spawnError.message}');
+    expect(launchSection).toContain("writeFileSync(logFile + '.stderr', message, { flag: 'a' })");
+  });
 });
 
 // ── stateKey ─────────────────────────────────────────────────────────

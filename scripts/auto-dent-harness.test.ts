@@ -176,6 +176,8 @@ describe('replay: edge cases', () => {
 
     expect(liveSection).toContain("child.on('error', (err)");
     expect(liveSection).toContain('logLines.push(`[provider-error] ${err.message}`)');
+    expect(liveSection).toContain("child.stderr?.on('data', (data: Buffer)");
+    expect(liveSection).toContain('logLines.push(`[provider-stderr] ${line}`)');
   });
 
   it('builds provider-correct live probe commands without hardcoding Claude (#1580)', () => {

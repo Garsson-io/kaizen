@@ -561,6 +561,11 @@ function launchFix(prompt: string, logDir: string, round: number, provider: Revi
     detached: true,
     stdio: [stdin, out, err],
   });
+  child.on('error', (spawnError) => {
+    const message = `Provider spawn error: ${spawnError.message}\n`;
+    writeFileSync(logFile, message, { flag: 'a' });
+    writeFileSync(logFile + '.stderr', message, { flag: 'a' });
+  });
 
   child.unref();
   const pid = child.pid ?? 0;
@@ -597,6 +602,8 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
   }
 
   const stdout = readFileSync(logFile, 'utf8');
+  const stderrFile = logFile + '.stderr';
+  const stderr = existsSync(stderrFile) ? readFileSync(stderrFile, 'utf8').slice(0, 500) : '';
 
   // If process is still running and log is empty, nothing has happened yet
   if (running && !stdout.trim()) {
@@ -617,14 +624,14 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
         done: true,
         success: parsedCodex.malformedLines.length === 0 && !hasFailedTerminalEvent,
         costUsd: 0,
-        output,
+        output: output || stderr,
       };
     }
     if (running) {
       return { done: false, success: false, costUsd: 0, output: '' };
     }
     const malformed = parsedCodex.malformedLines.slice(0, 3).join('\n');
-    return { done: true, success: false, costUsd: 0, output: malformed || output || stdout.slice(0, 500) };
+    return { done: true, success: false, costUsd: 0, output: malformed || output || stderr || stdout.slice(0, 500) };
   }
 
   const parsed = parseStreamJsonResult(stdout);
@@ -637,8 +644,6 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
     return { done: false, success: false, costUsd: 0, output: '' };
   }
   // Process exited without a result line — failure
-  const stderrFile = logFile + '.stderr';
-  const stderr = existsSync(stderrFile) ? readFileSync(stderrFile, 'utf8').slice(0, 500) : '';
   console.log(`  Fix stderr: ${stderr}`);
   return { done: true, success: false, costUsd: 0, output: stdout.slice(0, 500) };
 }

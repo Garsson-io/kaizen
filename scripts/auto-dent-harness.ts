@@ -304,8 +304,10 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
       } catch { /* skip malformed stream messages */ }
     });
 
-    child.stderr?.on('data', () => {
-      // Stderr captured in log file, not needed in memory
+    child.stderr?.on('data', (data: Buffer) => {
+      for (const line of data.toString('utf8').split(/\r?\n/)) {
+        if (line.trim()) logLines.push(`[provider-stderr] ${line}`);
+      }
     });
 
     // Safety timeout
