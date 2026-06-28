@@ -20,6 +20,7 @@ import {
   decide,
   defaultQueryPrState,
   detectAgentEnv,
+  derivePushTargetBranches,
   parseStdin,
   processPrePush,
   readExistingRound,
@@ -57,6 +58,15 @@ describe('branch helper source invariant', () => {
     expect(PRE_PUSH_SOURCE).not.toContain(
       "gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], '')",
     );
+  });
+});
+
+describe('Branch PR query source invariant', () => {
+  it('routes PR history lookups through the shared github-pr helper', () => {
+    expect(PRE_PUSH_SOURCE).toContain("from '../lib/github-pr.js'");
+    expect(PRE_PUSH_SOURCE).toContain('queryBranchPrState({ repo, branch })');
+    expect(PRE_PUSH_SOURCE).not.toContain("gh(['pr', 'list'");
+    expect(PRE_PUSH_SOURCE).not.toContain('execSync(`gh pr list');
   });
 });
 
@@ -149,6 +159,48 @@ describe('parseStdin (git pre-push protocol)', () => {
     const raw = '  refs/heads/a   sha1   refs/heads/a   sha2  ';
     const refs = parseStdin(raw);
     expect(refs).toHaveLength(1);
+  });
+});
+
+describe('derivePushTargetBranches — pushed ref target contract (#1536)', () => {
+  it('extracts the remote branch target from a normal branch push', () => {
+    const refs = parseStdin('refs/heads/local abc123 refs/heads/feature/target def456');
+
+    expect(derivePushTargetBranches(refs, 'current-branch')).toEqual(['feature/target']);
+  });
+
+  it('extracts the remote branch target for all-zero remote SHA branch creation', () => {
+    const refs = parseStdin(
+      'refs/heads/local abc123 refs/heads/worktree-kz-1508-1502-transcripts 0000000000000000000000000000000000000000',
+    );
+
+    expect(derivePushTargetBranches(refs, 'main')).toEqual(['worktree-kz-1508-1502-transcripts']);
+  });
+
+  it('does not treat branch deletion as a push target', () => {
+    const refs = parseStdin(
+      'delete 0000000000000000000000000000000000000000 refs/heads/worktree-kz-1508-1502-transcripts abc123',
+    );
+
+    expect(derivePushTargetBranches(refs, 'main')).toEqual(['main']);
+  });
+
+  it('deduplicates repeated branch targets while preserving order', () => {
+    const refs = parseStdin([
+      'refs/heads/a sha-a refs/heads/feature/reused old-a',
+      'refs/heads/b sha-b refs/heads/feature/reused old-b',
+      'refs/heads/c sha-c refs/heads/feature/other old-c',
+    ].join('\n'));
+
+    expect(derivePushTargetBranches(refs, 'main')).toEqual(['feature/reused', 'feature/other']);
+  });
+
+  it('falls back to the current branch when stdin has no branch target', () => {
+    expect(derivePushTargetBranches([], 'case/current')).toEqual(['case/current']);
+  });
+
+  it('returns empty when neither stdin nor current branch identify a target', () => {
+    expect(derivePushTargetBranches([], '')).toEqual([]);
   });
 });
 
@@ -565,5 +617,98 @@ describe('processPrePush — integrated flow with injected query', () => {
     );
     expect(result.decision.action).toBe('allow_silent');
     expect(result.decision.reason).toBe('push_option_override');
+  });
+
+  it('denies deleted remote branch recreation by evaluating pushed remote branch, not checkout branch (#1536)', () => {
+    const queriedBranches: string[] = [];
+    const targetBranch = 'worktree-kz-1508-1502-transcripts';
+    const rawStdin = [
+      'refs/heads/local-followup',
+      'c0d6cd0',
+      `refs/heads/${targetBranch}`,
+      '0000000000000000000000000000000000000000',
+    ].join(' ');
+
+    const result = processPrePush(
+      rawStdin,
+      { CLAUDECODE: '1' },
+      {
+        queryPrState: (_repo, branch) => {
+          queriedBranches.push(branch);
+          return branch === targetBranch ? mergedQuery() : emptyQuery();
+        },
+      },
+    );
+
+    expect(queriedBranches).toEqual([targetBranch]);
+    expect(result.decision.action).toBe('deny');
+    expect(result.decision.reason).toBe('merged_branch_push');
+    expect(result.decision.context?.branch).toBe(targetBranch);
+  });
+
+  it('opens review gate for the pushed target branch with an open PR (#1536)', () => {
+    const queriedBranches: string[] = [];
+    const targetBranch = 'feature/open-pr-target';
+    const result = processPrePush(
+      `refs/heads/local abc123 refs/heads/${targetBranch} def456`,
+      { CLAUDECODE: '1' },
+      {
+        queryPrState: (_repo, branch) => {
+          queriedBranches.push(branch);
+          return branch === targetBranch ? openQuery() : emptyQuery();
+        },
+      },
+    );
+
+    expect(queriedBranches).toEqual([targetBranch]);
+    expect(result.decision.action).toBe('allow_gate');
+    expect(result.decision.reason).toBe('open_pr_push');
+    expect(result.decision.context?.branch).toBe(targetBranch);
+  });
+
+  it('allows silently for a pushed target branch with no PR history (#1536)', () => {
+    const queriedBranches: string[] = [];
+    const targetBranch = 'feature/fresh-target';
+    const result = processPrePush(
+      `refs/heads/local abc123 refs/heads/${targetBranch} 0000000000000000000000000000000000000000`,
+      { CLAUDECODE: '1' },
+      {
+        queryPrState: (_repo, branch) => {
+          queriedBranches.push(branch);
+          return emptyQuery();
+        },
+      },
+    );
+
+    expect(queriedBranches).toEqual([targetBranch]);
+    expect(result.decision.action).toBe('allow_silent');
+    expect(result.decision.reason).toBe('no_pr_history');
+    expect(result.decision.context?.branch).toBe(targetBranch);
+  });
+
+  it('denies a multi-ref push if any target branch is merged, even when another target has an open PR (#1536)', () => {
+    const queriedBranches: string[] = [];
+    const rawStdin = [
+      'refs/heads/local-open sha-open refs/heads/feature/open old-open',
+      'refs/heads/local-merged sha-merged refs/heads/feature/merged old-merged',
+    ].join('\n');
+
+    const result = processPrePush(
+      rawStdin,
+      { CLAUDECODE: '1' },
+      {
+        queryPrState: (_repo, branch) => {
+          queriedBranches.push(branch);
+          if (branch === 'feature/open') return openQuery();
+          if (branch === 'feature/merged') return mergedQuery();
+          return emptyQuery();
+        },
+      },
+    );
+
+    expect(queriedBranches).toEqual(['feature/open', 'feature/merged']);
+    expect(result.decision.action).toBe('deny');
+    expect(result.decision.reason).toBe('merged_branch_push');
+    expect(result.decision.context?.branch).toBe('feature/merged');
   });
 });

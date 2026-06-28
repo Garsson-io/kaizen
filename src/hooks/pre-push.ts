@@ -119,6 +119,40 @@ export function parseStdin(raw: string): GitPushRef[] {
   return refs;
 }
 
+const ZERO_SHA = '0000000000000000000000000000000000000000';
+const HEAD_REF_PREFIX = 'refs/heads/';
+
+function branchNameFromRef(ref: string): string | null {
+  if (!ref.startsWith(HEAD_REF_PREFIX)) return null;
+  const branch = ref.slice(HEAD_REF_PREFIX.length);
+  return branch.length > 0 ? branch : null;
+}
+
+/**
+ * Derive the branch names whose remote refs are being updated by this push.
+ *
+ * Git pre-push receives the actual ref update list. That list is the authority:
+ * `HEAD` can be on a different branch when an explicit refspec recreates a
+ * deleted remote PR branch (#1536). Branch deletions are intentionally ignored;
+ * deleting a stale merged PR branch is the cleanup path, not orphan work.
+ */
+export function derivePushTargetBranches(refs: GitPushRef[], currentBranch: string): string[] {
+  const targets: string[] = [];
+  const seen = new Set<string>();
+
+  for (const ref of refs) {
+    if (ref.localSha === ZERO_SHA) continue;
+    const branch = branchNameFromRef(ref.remoteRef);
+    if (!branch || seen.has(branch)) continue;
+    targets.push(branch);
+    seen.add(branch);
+  }
+
+  if (targets.length > 0) return targets;
+  const fallback = currentBranch.trim();
+  return fallback ? [fallback] : [];
+}
+
 // ── Push options (GIT_PUSH_OPTION_*) ──────────────────────────────────
 
 export function readPushOptions(env: NodeJS.ProcessEnv): string[] {
@@ -313,10 +347,23 @@ export function processPrePush(
   const repo = detectRepo();
   const pushOptions = readPushOptions(env);
   const stateDir = options.stateDir ?? DEFAULT_STATE_DIR;
+  const targetBranches = derivePushTargetBranches(refs, branch);
 
-  const query = (options.queryPrState ?? defaultQueryPrState)(repo, branch);
-  const existingRound = query.openUrl ? readExistingRound(stateDir, query.openUrl) : undefined;
-  const decision = decide({ refs, branch, repo, pushOptions, existingRound }, query);
+  const decisions = targetBranches.map((targetBranch) => {
+    const query = (options.queryPrState ?? defaultQueryPrState)(repo, targetBranch);
+    const existingRound = query.openUrl ? readExistingRound(stateDir, query.openUrl) : undefined;
+    return decide({ refs, branch: targetBranch, repo, pushOptions, existingRound }, query);
+  });
+
+  const decision = decisions.find((item) => item.action === 'deny')
+    ?? decisions.find((item) => item.action === 'allow_gate')
+    ?? decisions[0]
+    ?? {
+      action: 'allow_silent',
+      reason: 'no_push_targets',
+      message: null,
+      context: { branch },
+    };
 
   return { decision, envDetection };
 }

@@ -18,7 +18,9 @@ This is one instance of the meta-pattern in [#943](https://github.com/Garsson-io
 A native `pre-push` git hook fires whenever git pushes refs, regardless of how the push was invoked. The hook:
 
 1. **Short-circuits for humans.** Exits 0 silently when no AI-agent env var is set (see "Agent-env gating" below).
-2. **Queries PR state** via `gh pr list --head <branch> --state all`.
+2. **Derives pushed branch targets** from Git's pre-push stdin (`remoteRef`
+   values under `refs/heads/`), then queries PR state via
+   `gh pr list --head <branch> --state all` for each pushed target branch.
 3. **Decides** from three actions:
    - `allow_silent` — no PR history, closed-not-merged, or explicit `--push-option kaizen-force`
    - `allow_gate` — open PR on this branch → creates `needs_review` state file (idempotent with `pr-review-loop.ts`)
@@ -32,6 +34,7 @@ A native `pre-push` git hook fires whenever git pushes refs, regardless of how t
   └─ agent-env gate (exit 0 for humans)
   └─ exec npx tsx src/hooks/pre-push.ts
       ├─ parseStdin (git pre-push protocol)
+      ├─ derivePushTargetBranches (remote branch targets from pushed refs)
       ├─ detectAgentEnv (TS-side, defense-in-depth)
       ├─ queryPrState (gh pr list)
       ├─ decide (pure function)
@@ -41,6 +44,22 @@ A native `pre-push` git hook fires whenever git pushes refs, regardless of how t
 ```
 
 `src/hooks/pre-push.ts` is TypeScript, tested under vitest, and called by the shell wrapper — matching the established pattern of `src/hooks/stop-gate.ts` + `.claude/hooks/*.sh`.
+
+### Pushed-ref branch authority
+
+The pre-push hook must evaluate the branch refs being pushed, not just the
+current checkout branch. Git sends each ref update on stdin as:
+
+```
+<local_ref> <local_sha> <remote_ref> <remote_sha>
+```
+
+`remote_ref` under `refs/heads/` is the PR branch whose history must be checked.
+This matters when an explicit refspec recreates a deleted remote PR branch while
+`HEAD` is on a different branch: `gh pr list --head <remote branch> --state all`
+can still find the merged PR, but querying the current checkout branch would
+miss it. Branch deletion refs (`local_sha` all zeros) are ignored because
+deleting a stale merged PR branch is the cleanup path, not new orphan work.
 
 ### Agent-env gating
 
@@ -195,6 +214,9 @@ Every invocation that passes the agent-env gate writes a JSONL entry to `$KAIZEN
 ```json
 {"ts":"2026-04-16T12:34:56.789Z","hook":"pre-push","agent_detected":true,"env_vars_seen":["CLAUDECODE"],"action":"deny","reason":"merged_branch_push","branch":"feat/foo","mergedPr":41,"mergedPrUrl":"..."}
 ```
+
+The `branch` field is the pushed target branch selected from pre-push stdin,
+falling back to the current branch only when Git provides no branch target.
 
 Agent-env-gated invocations (detected=false) are also traced — proves the hook ran and short-circuited.
 
