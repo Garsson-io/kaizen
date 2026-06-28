@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { writeFileSync, unlinkSync, mkdtempSync, existsSync, readFileSync } from 'fs';
+import { writeFileSync, unlinkSync, mkdtempSync, existsSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -3189,7 +3189,7 @@ describe('buildPromptWithMetadata', () => {
     expect(meta.prompt).toBe(prompt);
   });
 
-  it('propagates claimedPlanIssue from plan', () => {
+  it('propagates claimedPlanIssue from plan for exploit prompts', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'meta-plan-'));
     const plan = {
       created_at: '2026-03-23T00:00:00Z',
@@ -3205,6 +3205,47 @@ describe('buildPromptWithMetadata', () => {
     const state = makeBatchState();
     const meta = buildPromptWithMetadata(state, 1, tmpDir);
     expect(meta.claimedPlanIssue).toBe('#451');
+    expect(meta.prompt).toContain('## Assigned Work');
+    expect(meta.prompt).toContain('#451');
+
+    const updated = JSON.parse(readFileSync(join(tmpDir, 'plan.json'), 'utf8'));
+    expect(updated.items[0].status).toBe('assigned');
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('does not consume plan items for explore prompts', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'meta-plan-explore-'));
+    const plan = {
+      created_at: '2026-03-23T00:00:00Z',
+      guidance: 'test',
+      items: [
+        { issue: '#1213', title: 'Manifest binding', score: 9, approach: 'bind it', status: 'pending' },
+      ],
+      wip_excluded: [],
+      epics_scanned: [],
+    };
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const state = makeBatchState({ guidance: 'mode:explore' });
+    const meta = buildPromptWithMetadata(state, 1, tmpDir);
+
+    expect(meta.template).toBe('explore-gaps.md');
+    expect(meta.claimedPlanIssue).toBeUndefined();
+    expect(meta.prompt).not.toContain('## Assigned Work');
+
+    const updated = JSON.parse(readFileSync(join(tmpDir, 'plan.json'), 'utf8'));
+    expect(updated.items[0].status).toBe('pending');
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('uses one selected mode for template choice and plan claim policy', () => {
+    const start = AUTO_DENT_RUN_SOURCE.indexOf('export function buildPromptWithMetadata');
+    const end = AUTO_DENT_RUN_SOURCE.indexOf('function buildPromptInline');
+    const source = AUTO_DENT_RUN_SOURCE.slice(start, end);
+
+    expect(source.match(/selectMode\(state, runNum\)/g)).toHaveLength(1);
+    expect(source).toContain('buildTemplateVars(state, runNum, logDir, { claimPlanItem: shouldClaimPlanItem })');
+    expect(source).toContain("modeSelection.mode === 'exploit' && !state.test_task");
   });
 
   it('claimedPlanIssue is undefined when no plan exists', () => {
