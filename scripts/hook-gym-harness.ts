@@ -27,6 +27,7 @@ import { renderPrompt } from './hook-gym-scenarios.js';
 import { validateAgainstScenario, validateFixtureFile, formatValidationReport, type ValidationReport } from './hook-gym-validate.js';
 import { formatTimeline } from './hook-gym-format.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
+import { parseJsonObject } from '../src/lib/json-value.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -529,11 +530,12 @@ export async function runScenario(
         buf = buf.slice(idx + 1);
         if (!line) continue;
         streamLines.push(line);
+        const msg = parseJsonObject(line);
+        if (!msg) continue;
         try {
-          const msg = JSON.parse(line);
           const wasHook = processor.process(msg);
           if (wasHook && debug) process.stderr.write(`[hook] ${line}\n`);
-        } catch { /* skip non-JSON */ }
+        } catch { /* skip malformed stream messages */ }
       }
     });
 

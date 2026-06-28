@@ -121,6 +121,19 @@ describe('RunResult.gates', () => {
   });
 });
 
+describe('runHookGymScenario stream parsing', () => {
+  it('delegates live JSON object parsing to the shared helper', () => {
+    const source = readFileSync(fileURLToPath(new URL('./hook-gym-harness.ts', import.meta.url)), 'utf8');
+    const liveSection = source.slice(
+      source.indexOf("child.stdout?.on('data'"),
+      source.indexOf("if (debug) child.stderr"),
+    );
+
+    expect(liveSection).toContain('parseJsonObject');
+    expect(liveSection).not.toContain('JSON.parse(line)');
+  });
+});
+
 describe('RunResult.agent', () => {
   it('delegates stream JSON parsing to the shared helper', () => {
     const source = readFileSync(fileURLToPath(new URL('./hook-gym-harness.ts', import.meta.url)), 'utf8');
