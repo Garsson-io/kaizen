@@ -19,16 +19,16 @@
  * Migrated to TS state functions in #790 gap fix.
  */
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { gitStdout } from './lib/git-state.js';
 import {
   DEFAULT_AUDIT_DIR,
   DEFAULT_STATE_DIR,
   listStateFilesAnyBranch,
-  parseStateFile,
-  serializeStateFile,
+  readStateFile,
+  writeStateFile,
 } from './state-utils.js';
 
 function currentBranch(): string {
@@ -56,7 +56,7 @@ async function main(): Promise<void> {
 
   // Check if there's an active kaizen gate (any branch — handles cross-worktree leak)
   const hasActive = listStateFilesAnyBranch(stateDir).some((filepath) => {
-    const state = parseStateFile(readFileSync(filepath, 'utf-8'));
+    const state = readStateFile(filepath);
     return state.STATUS === 'needs_pr_kaizen';
   });
 
@@ -71,12 +71,16 @@ async function main(): Promise<void> {
   let lastPrUrl = '';
 
   for (const filepath of listStateFilesAnyBranch(stateDir)) {
-    const content = readFileSync(filepath, 'utf-8');
-    const state = parseStateFile(content);
+    const state = readStateFile(filepath);
     if (state.STATUS !== 'needs_pr_kaizen') continue;
 
-    const updated = { ...state, STATUS: 'kaizen_done' } as Parameters<typeof serializeStateFile>[0];
-    writeFileSync(filepath, serializeStateFile(updated), { mode: 0o600 });
+    const filename = basename(filepath);
+    writeStateFile(stateDir, filename, {
+      PR_URL: state.PR_URL ?? '',
+      STATUS: 'kaizen_done',
+      BRANCH: state.BRANCH ?? '',
+      ROUND: state.ROUND,
+    });
     cleared = true;
     lastPrUrl = state.PR_URL ?? '';
   }
