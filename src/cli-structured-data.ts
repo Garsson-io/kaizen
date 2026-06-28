@@ -72,6 +72,8 @@ import {
   summarizeFindingStatuses,
   extractReviewFindingMeta,
 } from './review-finding-contract.js';
+import { formatPhaseMarkerLine } from './phase-marker.js';
+import { attachTranscript } from './transcript-attach.js';
 
 export type CliArgs = Record<string, string> & { command: string };
 type Handler = (a: CliArgs) => Promise<void>;
@@ -331,6 +333,9 @@ async function handleReadReviewSummary(a: CliArgs): Promise<void> {
 async function handleStorePlan(a: CliArgs): Promise<void> {
   const url = storePlan(issueTarget(a.issue, a.repo), resolveContent(a));
   console.log(`Plan stored: ${url}`);
+  // Structured signal (#1502): lets the auto-dent console confirm a plan was
+  // stored and surface its URL via the phase-marker ingestor — no prose regex.
+  console.log(formatPhaseMarkerLine('PLAN', { kind: 'plan', url }));
 }
 
 async function handleRetrievePlan(a: CliArgs): Promise<void> {
@@ -342,12 +347,30 @@ async function handleRetrievePlan(a: CliArgs): Promise<void> {
 async function handleStoreTestplan(a: CliArgs): Promise<void> {
   const url = storeTestPlan(issueTarget(a.issue, a.repo), resolveContent(a));
   console.log(`Test plan stored: ${url}`);
+  // Structured signal (#1502): same PLAN row, kind=testplan.
+  console.log(formatPhaseMarkerLine('PLAN', { kind: 'testplan', url }));
 }
 
 async function handleRetrieveTestplan(a: CliArgs): Promise<void> {
   const text = retrieveTestPlan(issueTarget(a.issue, a.repo));
   if (!text) { console.error('No test plan found.'); process.exit(1); }
   console.log(text);
+}
+
+// Transcript handler (#1508)
+
+async function handleAttachTranscript(a: CliArgs): Promise<void> {
+  const file = a.file;
+  if (!file) { console.error('attach-transcript requires --file <transcript.jsonl>'); process.exit(1); }
+  if (!a.pr && !a.issue) { console.error('attach-transcript requires --pr <N> or --issue <N>'); process.exit(1); }
+  const transcript = readFileSync(file, 'utf8');
+  const target = a.pr ? prTarget(a.pr, a.repo) : issueTarget(a.issue, a.repo);
+  const url = attachTranscript(
+    target,
+    { label: a.label || file.replace(/^.*\//, ''), transcript, sourcePath: a['source-path'] || file },
+    new Date().toISOString(),
+  );
+  console.log(`Transcript attached: ${url}`);
 }
 
 // Metadata handlers
@@ -448,6 +471,7 @@ export const handlers: Record<string, Handler> = {
   'retrieve-plan': handleRetrievePlan,
   'store-testplan': handleStoreTestplan,
   'retrieve-testplan': handleRetrieveTestplan,
+  'attach-transcript': handleAttachTranscript,
   'store-metadata': handleStoreMetadata,
   'retrieve-metadata': handleRetrieveMetadata,
   'query-connected': handleQueryConnected,

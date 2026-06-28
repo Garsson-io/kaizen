@@ -163,6 +163,7 @@ export interface DisplayPhaseMarker {
 export function renderPhaseMarkerSummary(marker: DisplayPhaseMarker, phaseLabel: string): string {
   const parts = [phaseLabel];
   const { fields } = marker;
+  if (fields.kind) parts.push(fields.kind); // PLAN marker: plan|testplan (#1502)
   if (fields.issue) parts.push(fields.issue);
   if (fields.title) parts.push(fields.title);
   if (fields.verdict) parts.push(fields.verdict);

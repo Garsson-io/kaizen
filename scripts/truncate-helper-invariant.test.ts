@@ -95,6 +95,57 @@ function findBareTruncateDefinitions(files: Map<string, string>): Violation[] {
     .map(([file]) => ({ file }));
 }
 
+// ── Head+tail capper drift guard (#1508 / #1385 family) ──────────────
+//
+// `truncateMiddle` (head+tail, on-disk pointer) was born private inside
+// scripts/batch-artifacts-upload.ts. When the run-transcript attachment (#1508)
+// needed the same "cap a body to GitHub's 65536-char comment limit" dance,
+// copying it would have spawned a second capper that drifts. It was hoisted to
+// src/capped-attachment.ts and both callers now share it. This guard freezes
+// that: the head+tail capper may be DEFINED only in its canonical home. Unlike
+// the bare-`truncate` scanner above, this one DOES match `truncateMiddle` —
+// because there must be exactly one.
+
+const CAPPER_HOME = 'src/capped-attachment.ts';
+
+function definesTruncateMiddle(content: string): boolean {
+  const src = stripComments(content);
+  if (/\bfunction\s+truncateMiddle\s*\(/.test(src)) return true;
+  if (/\b(?:const|let|var)\s+truncateMiddle\s*[:=]/.test(src)) return true;
+  return false;
+}
+
+function findTruncateMiddleDefinitions(files: Map<string, string>): Violation[] {
+  return Array.from(files.entries())
+    .filter(([file]) => file !== CAPPER_HOME)
+    .filter(([, content]) => definesTruncateMiddle(content))
+    .map(([file]) => ({ file }));
+}
+
+// ── Secret-scrubber singularity guard (#1508 / #1385 family) ─────────
+//
+// `scrubSecrets` is the one credential redactor before a transcript or batch
+// artifact hits a PUBLIC comment (I19). A second, divergent scrubber would be a
+// silent leak surface — one redactor could be hardened while the other rots.
+// Both public-comment paths (transcript-attach, batch-artifacts) share this one;
+// freeze that so a future copy fails CI like the capper does.
+
+const SCRUBBER_HOME = 'src/scrub-secrets.ts';
+
+function definesScrubSecrets(content: string): boolean {
+  const src = stripComments(content);
+  if (/\bfunction\s+scrubSecrets\s*\(/.test(src)) return true;
+  if (/\b(?:const|let|var)\s+scrubSecrets\s*[:=]/.test(src)) return true;
+  return false;
+}
+
+function findScrubSecretsDefinitions(files: Map<string, string>): Violation[] {
+  return Array.from(files.entries())
+    .filter(([file]) => file !== SCRUBBER_HOME)
+    .filter(([, content]) => definesScrubSecrets(content))
+    .map(([file]) => ({ file }));
+}
+
 function unallowlistedViolations(violations: Violation[], allowlist: Set<string>): Violation[] {
   return violations.filter(v => !allowlist.has(v.file));
 }
@@ -180,5 +231,60 @@ describe('truncate-helper invariant scanner', () => {
     const violations = findBareTruncateDefinitions(collectProductionFiles());
 
     expect(staleAllowlistEntries(violations, OPT_OUT)).toEqual([]);
+  });
+});
+
+describe('head+tail capper invariant scanner (#1508)', () => {
+  it('flags a truncateMiddle defined outside the canonical home', () => {
+    const violations = findTruncateMiddleDefinitions(new Map([
+      ['scripts/copy.ts', 'function truncateMiddle(t: string, m: number, p: string) { return t; }'],
+      ['scripts/copy-arrow.ts', 'const truncateMiddle = (t: string) => t;'],
+    ]));
+
+    expect(violations.map(v => v.file).sort()).toEqual([
+      'scripts/copy-arrow.ts',
+      'scripts/copy.ts',
+    ]);
+  });
+
+  it('does not flag the canonical home or mere callers', () => {
+    const violations = findTruncateMiddleDefinitions(new Map([
+      [CAPPER_HOME, 'export function truncateMiddle(t: string, m: number, p: string) { return t; }'],
+      ['scripts/caller.ts', 'const x = truncateMiddle(body, 64000, pointer);'],
+    ]));
+
+    expect(violations).toEqual([]);
+  });
+
+  it('current production tree defines truncateMiddle only in the canonical home', () => {
+    const violations = findTruncateMiddleDefinitions(collectProductionFiles());
+
+    expect(violations).toEqual([]);
+  });
+});
+
+describe('secret-scrubber singularity scanner (#1508)', () => {
+  it('flags a scrubSecrets defined outside the canonical home', () => {
+    const violations = findScrubSecretsDefinitions(new Map([
+      ['scripts/copy.ts', 'export function scrubSecrets(t: string) { return t; }'],
+      ['src/other.ts', 'const scrubSecrets = (t: string) => t;'],
+    ]));
+
+    expect(violations.map(v => v.file).sort()).toEqual(['scripts/copy.ts', 'src/other.ts']);
+  });
+
+  it('does not flag the canonical home or mere callers', () => {
+    const violations = findScrubSecretsDefinitions(new Map([
+      [SCRUBBER_HOME, 'export function scrubSecrets(t: unknown) { return { text: t, redactions: 0 }; }'],
+      ['scripts/caller.ts', 'const r = scrubSecrets(body).text;'],
+    ]));
+
+    expect(violations).toEqual([]);
+  });
+
+  it('current production tree defines scrubSecrets only in the canonical home', () => {
+    const violations = findScrubSecretsDefinitions(collectProductionFiles());
+
+    expect(violations).toEqual([]);
   });
 });

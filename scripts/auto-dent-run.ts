@@ -40,6 +40,7 @@ import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.
 import { defaultReviewFixProviders, runFixLoop } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
+import { attachTranscript } from '../src/transcript-attach.js';
 import {
   buildBatchOutcome,
   writeBatchOutcomeAttachment,
@@ -1920,6 +1921,46 @@ export function formatBatchFooter(state: BatchState): string {
   return lines.join('\n');
 }
 
+/**
+ * Attach a run's scrubbed, size-capped JSONL transcript to each of its PRs as a
+ * durable, minable `run-transcript` artifact (#1508). Best-effort and fail-open:
+ * a missing log, a malformed PR URL, or a GitHub failure is logged and skipped —
+ * it must never block the run. Extracted from the post-run path and dependency-
+ * injected so the wiring (PR-number parse, empty-repo guard, fail-open) is
+ * unit-testable without spawning a real run.
+ */
+export function attachRunTranscripts(input: {
+  prs: string[];
+  repo: string;
+  logFile: string;
+  label: string;
+  readLog?: (path: string) => string;
+  attach?: typeof attachTranscript;
+  now?: () => string;
+  log?: (msg: string) => void;
+}): void {
+  const readLog = input.readLog ?? ((p) => readFileSync(p, 'utf8'));
+  const attach = input.attach ?? attachTranscript;
+  const now = input.now ?? (() => new Date().toISOString());
+  const log = input.log ?? ((m) => console.log(m));
+
+  for (const prUrl of input.prs) {
+    const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1];
+    if (!prNum || !input.repo) continue;
+    try {
+      const transcript = readLog(input.logFile);
+      const url = attach(
+        { kind: 'pr', number: prNum, repo: input.repo },
+        { label: input.label, transcript, sourcePath: input.logFile },
+        now(),
+      );
+      log(`  [intelligence] attached run transcript to PR #${prNum}: ${url}`);
+    } catch (err) {
+      log(`  [intelligence] run-transcript attach skipped: ${(err as Error).message}`);
+    }
+  }
+}
+
 function printRunSummary(
   runNum: number,
   exitCode: number,
@@ -2282,6 +2323,14 @@ async function main(): Promise<void> {
         pr_url: prUrl,
       });
     }
+    // #1508: attach this run's scrubbed, size-capped JSONL transcript to each PR
+    // as durable, minable friction material. Best-effort and fail-open.
+    attachRunTranscripts({
+      prs: result.prs,
+      repo: state.kaizen_repo || state.host_repo || '',
+      logFile,
+      label: `${state.batch_id}/run-${runNum}`,
+    });
   }
 
   // Post-run review battery with fix loop (#891, #914)

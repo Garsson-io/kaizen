@@ -45,6 +45,7 @@ export const color = {
   red: (t: string) => ansi('31', t),
   dim: (t: string) => ansi('90', t),
   cyan: (t: string) => ansi('36', t),
+  blue: (t: string) => ansi('34', t),
   bold: (t: string) => ansi('1', t),
   magenta: (t: string) => ansi('35', t),
 };
@@ -52,6 +53,7 @@ export const color = {
 // Phase status icons with color
 const PHASE_STYLE: Record<string, (t: string) => string> = {
   PICK: color.cyan,
+  PLAN: color.blue,
   EVALUATE: color.yellow,
   IMPLEMENT: color.magenta,
   TEST: color.green,
@@ -288,6 +290,17 @@ function updateProgressFromHookOutput(output: HookOutput, result: RunResult): vo
 function progressStepFromMarker(marker: PhaseMarker): RunProgressStep | null {
   const f = marker.fields;
   switch (marker.phase) {
+    case 'PLAN':
+      // #1502: the store-plan/store-testplan CLI emits this when a plan or test
+      // plan is stored. Upgrades the ledger PLAN row from `not observed` →
+      // `stored` so an operator can confirm the I3/I8 gate's payload exists
+      // without opening the issue.
+      return {
+        phase: 'PLAN',
+        state: 'stored',
+        detail: f.kind ? `${f.kind} stored` : 'stored',
+        url: f.url,
+      };
     case 'PICK':
       return {
         phase: 'PICK',
