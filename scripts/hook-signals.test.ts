@@ -10,6 +10,17 @@ import { formatHookOutput } from '../src/hooks/lib/gate-signal.js';
  * relying on English prose. See issue #1102.
  */
 describe('detectHookSignals', () => {
+  it('delegates tolerant JSON object parsing to the shared helper', () => {
+    const source = readFileSync(fileURLToPath(new URL('./hook-signals.ts', import.meta.url)), 'utf8');
+    const parseSection = source.slice(
+      source.indexOf('function jsonSignalFromText'),
+      source.indexOf('function yamlSignals'),
+    );
+
+    expect(parseSection).toContain('parseJsonObject');
+    expect(parseSection).not.toContain('JSON.parse(trimmed)');
+  });
+
   it('detects a PreToolUse permissionDecision:"deny" envelope', () => {
     // Exact shape emitted by enforce-plan-stored.ts (stdout JSON).
     const log = [
