@@ -13,21 +13,32 @@
 
 import { beforeAll, describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(__dirname, '..');
 const CLI = resolve(REPO_ROOT, 'scripts/hook-gym.ts');
-const TSX = resolve(
-  REPO_ROOT,
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'tsx.cmd' : 'tsx',
-);
+const TSX_CLI = findAncestorFile(__dirname, 'node_modules/tsx/dist/cli.mjs');
 
 type CliResult = { stdout: string; stderr: string; status: number };
 
+function findAncestorFile(startDir: string, relativePath: string): string {
+  let dir = startDir;
+
+  while (true) {
+    const candidate = join(dir, relativePath);
+    if (existsSync(candidate)) return candidate;
+
+    const parent = dirname(dir);
+    if (parent === dir) {
+      throw new Error(`Unable to find ${relativePath} from ${startDir}`);
+    }
+    dir = parent;
+  }
+}
+
 function runCli(args: string[]): CliResult {
-  const result = spawnSync(TSX, [CLI, ...args], {
+  const result = spawnSync(process.execPath, [TSX_CLI, CLI, ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
     timeout: 30000,
