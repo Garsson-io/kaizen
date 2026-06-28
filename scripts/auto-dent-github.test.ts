@@ -9,6 +9,7 @@ import {
   classifyMergeView,
   labelArtifacts,
   queueAutoMerge,
+  cancelAutoMerge,
   extractLinkedIssue,
   isIssueClosed,
   cleanupSupersededPRs,
@@ -476,6 +477,47 @@ describe('queueAutoMerge', () => {
     expect(cmds[0]).toContain('pr merge 1');
     expect(cmds[0]).toContain('--squash --delete-branch --auto');
     expect(cmds[1]).toContain('pr merge 2');
+  });
+
+  it('does not queue unsafe auto-merge and disables any existing auto-merge request', () => {
+    mockSpawnSync.mockReturnValue(ok('ok') as any);
+    const result = makeRunResult({
+      prs: ['https://github.com/o/r/pull/1'],
+    });
+
+    queueAutoMerge(result, 'o/r', {
+      allow: false,
+      reasons: ['review verdict fail', 'process verdict process-incomplete'],
+    });
+
+    const cmds = mockSpawnSync.mock.calls.map((c) => joinArgs(c as any));
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0]).toContain('pr merge 1');
+    expect(cmds[0]).toContain('--disable-auto');
+    expect(cmds[0]).not.toContain('--squash');
+    expect(cmds[0]).not.toContain('--delete-branch');
+  });
+});
+
+describe('cancelAutoMerge', () => {
+  beforeEach(() => {
+    mockSpawnSync.mockReset();
+  });
+
+  it('disables auto-merge for each PR', () => {
+    mockSpawnSync.mockReturnValue(ok('ok') as any);
+    const result = makeRunResult({
+      prs: ['https://github.com/o/r/pull/1', 'https://github.com/o/r/pull/2'],
+    });
+
+    cancelAutoMerge(result);
+
+    const cmds = mockSpawnSync.mock.calls.map((c) => joinArgs(c as any));
+    expect(cmds).toHaveLength(2);
+    expect(cmds[0]).toContain('pr merge 1');
+    expect(cmds[0]).toContain('--disable-auto');
+    expect(cmds[1]).toContain('pr merge 2');
+    expect(cmds[1]).toContain('--disable-auto');
   });
 });
 

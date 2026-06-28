@@ -10,9 +10,30 @@
 
 import { ghExec, parseGhCommandArgs } from '../src/lib/gh-exec.js';
 import type { RunResult } from './auto-dent-run.js';
+import type { AutoMergeSafetyDecision } from './auto-dent-merge-policy.js';
 
 export { ghExec };
 export const parseShellArgs = parseGhCommandArgs;
+
+interface GitHubPullRequestRef {
+  repo: string;
+  number: string;
+}
+
+interface GitHubIssueRef {
+  repo: string;
+  number: string;
+}
+
+function parsePullRequestUrl(url: string): GitHubPullRequestRef | null {
+  const m = url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+  return m ? { repo: m[1], number: m[2] } : null;
+}
+
+function parseIssueUrl(url: string): GitHubIssueRef | null {
+  const m = url.match(/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)/);
+  return m ? { repo: m[1], number: m[2] } : null;
+}
 
 // Issue label lookup
 
@@ -48,11 +69,11 @@ export type MergeStatus =
   | 'unknown';
 
 export function checkMergeStatus(prUrl: string): MergeStatus {
-  const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-  if (!m) return 'unknown';
+  const pr = parsePullRequestUrl(prUrl);
+  if (!pr) return 'unknown';
   try {
     const json = ghExec(
-      `gh pr view ${m[2]} --repo ${m[1]} --json state,mergeStateStatus,autoMergeRequest`,
+      `gh pr view ${pr.number} --repo ${pr.repo} --json state,mergeStateStatus,autoMergeRequest`,
     );
     if (!json) return 'unknown';
     const data = JSON.parse(json);
@@ -167,9 +188,9 @@ export function driveBatchToMerge(
 
   const states: PrPollState[] = [];
   for (const pr of prUrls) {
-    const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (!m) continue; // skip invalid URLs (best-effort, module convention)
-    states.push({ pr, repo: m[1], num: m[2], status: 'pending', attempts: 0 });
+    const parsed = parsePullRequestUrl(pr);
+    if (!parsed) continue; // skip invalid URLs (best-effort, module convention)
+    states.push({ pr, repo: parsed.repo, num: parsed.number, status: 'pending', attempts: 0 });
   }
   if (states.length === 0) return [];
 
@@ -243,27 +264,51 @@ export function driveBatchToMerge(
 
 export function labelArtifacts(result: RunResult, label: string): void {
   for (const pr of result.prs) {
-    const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (m) {
-      ghExec(`gh pr edit ${m[2]} --repo ${m[1]} --add-label ${label}`);
+    const parsed = parsePullRequestUrl(pr);
+    if (parsed) {
+      ghExec(`gh pr edit ${parsed.number} --repo ${parsed.repo} --add-label ${label}`);
       console.log(`  [hygiene] labeled PR ${pr}`);
     }
   }
   for (const issue of result.issuesFiled) {
-    const m = issue.match(/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)/);
-    if (m) {
-      ghExec(`gh issue edit ${m[2]} --repo ${m[1]} --add-label ${label}`);
+    const parsed = parseIssueUrl(issue);
+    if (parsed) {
+      ghExec(`gh issue edit ${parsed.number} --repo ${parsed.repo} --add-label ${label}`);
       console.log(`  [hygiene] labeled issue ${issue}`);
     }
   }
 }
 
-export function queueAutoMerge(result: RunResult, hostRepo: string): void {
+export function cancelAutoMerge(result: RunResult): void {
   for (const pr of result.prs) {
-    const m = pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (m) {
+    const parsed = parsePullRequestUrl(pr);
+    if (parsed) {
       const out = ghExec(
-        `gh pr merge ${m[2]} --repo ${m[1]} --squash --delete-branch --auto`,
+        `gh pr merge ${parsed.number} --repo ${parsed.repo} --disable-auto`,
+      );
+      if (out) {
+        console.log(`  [hygiene] disabled auto-merge for PR ${pr}`);
+      }
+    }
+  }
+}
+
+export function queueAutoMerge(
+  result: RunResult,
+  _hostRepo: string,
+  decision: AutoMergeSafetyDecision = { allow: true, reasons: [] },
+): void {
+  if (!decision.allow) {
+    console.log(`  [hygiene] auto-merge blocked: ${decision.reasons.join('; ')}`);
+    cancelAutoMerge(result);
+    return;
+  }
+
+  for (const pr of result.prs) {
+    const parsed = parsePullRequestUrl(pr);
+    if (parsed) {
+      const out = ghExec(
+        `gh pr merge ${parsed.number} --repo ${parsed.repo} --squash --delete-branch --auto`,
       );
       if (out) {
         console.log(`  [hygiene] queued auto-merge for PR ${pr}`);
@@ -320,15 +365,13 @@ export function cleanupSupersededPRs(
   const results: CleanupResult[] = [];
 
   for (const prUrl of prUrls) {
-    const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-    if (!m) continue;
-
-    const [, prRepo, prNum] = m;
+    const parsed = parsePullRequestUrl(prUrl);
+    if (!parsed) continue;
 
     try {
       // Get PR state and body
       const json = ghExec(
-        `gh pr view ${prNum} --repo ${prRepo} --json state,body`,
+        `gh pr view ${parsed.number} --repo ${parsed.repo} --json state,body`,
       );
       if (!json) {
         results.push({ pr: prUrl, action: 'failed' });
@@ -357,10 +400,10 @@ export function cleanupSupersededPRs(
       if (isIssueClosed(issueNum, repo)) {
         // Close the superseded PR
         const closeResult = ghExec(
-          `gh pr close ${prNum} --repo ${prRepo} --comment "Superseded — issue #${issueNum} was already resolved by another PR in this batch."`,
+          `gh pr close ${parsed.number} --repo ${parsed.repo} --comment "Superseded — issue #${issueNum} was already resolved by another PR in this batch."`,
         );
         if (closeResult !== undefined) {
-          console.log(`  [cleanup] closed superseded PR #${prNum} (issue #${issueNum} already resolved)`);
+          console.log(`  [cleanup] closed superseded PR #${parsed.number} (issue #${issueNum} already resolved)`);
           results.push({ pr: prUrl, action: 'closed', issue: `#${issueNum}` });
         } else {
           results.push({ pr: prUrl, action: 'failed', issue: `#${issueNum}` });
