@@ -59,6 +59,7 @@ function runHookRaw(rawStdin: string, extraEnv: Record<string, string> = {}): st
 
 let testStateDir: string;
 const HOOK_PATH = path.resolve(__dirname, 'pr-review-loop.ts');
+const PR_REVIEW_LOOP_SOURCE = fs.readFileSync(HOOK_PATH, 'utf-8');
 
 beforeEach(() => {
   testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-review-test-'));
@@ -66,6 +67,13 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(testStateDir, { recursive: true, force: true });
+});
+
+describe('state file read helper source invariant', () => {
+  it('routes runtime state file reads through readStateFile', () => {
+    expect(PR_REVIEW_LOOP_SOURCE).toContain('readStateFile');
+    expect(PR_REVIEW_LOOP_SOURCE).not.toContain('parseStateFile(readFileSync');
+  });
 });
 
 /** Run the hook with JSON input and return stdout. */

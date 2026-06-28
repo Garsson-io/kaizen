@@ -43,8 +43,8 @@ import {
   DEFAULT_STATE_DIR,
   ensureStateDir,
   listStateFilesForCurrentWorktree,
-  parseStateFile,
   prUrlToStateKey,
+  readStateFile,
   writeStateFile,
 } from './state-utils.js';
 
@@ -180,7 +180,7 @@ function findStateByStatuses(
   let latestMtime = 0;
 
   for (const fp of listStateFilesForCurrentWorktree(branch, stateDir)) {
-    const state = parseStateFile(readFileSync(fp, 'utf-8'));
+    const state = readStateFile(fp);
     if (state.STATUS && statusSet.has(state.STATUS)) {
       const mtime = statSync(fp).mtimeMs;
       if (mtime > latestMtime) {
@@ -367,7 +367,7 @@ export function processHookInput(
     const nextRound = round + 1;
 
     // Diff-size scaling (kaizen #117, #909)
-    const rawState = parseStateFile(readFileSync(found.filepath, 'utf-8'));
+    const rawState = readStateFile(found.filepath);
     const lastPushSha = (rawState as Record<string, string>).LAST_REVIEWED_SHA ?? '';
     const lastFullReviewSha = (rawState as Record<string, string>).LAST_FULL_REVIEW_SHA ?? lastPushSha;
 

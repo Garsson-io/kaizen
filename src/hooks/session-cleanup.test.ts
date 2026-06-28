@@ -1,9 +1,13 @@
-import { existsSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupMergedReviewStates } from './session-cleanup.js';
 
 const TEST_STATE_DIR = '/tmp/.test-session-cleanup';
+const SESSION_CLEANUP_SOURCE = readFileSync(
+  new URL('./session-cleanup.ts', import.meta.url),
+  'utf-8',
+);
 
 beforeEach(() => {
   if (existsSync(TEST_STATE_DIR)) {
@@ -32,6 +36,15 @@ function makeStale(filename: string) {
   const old = new Date(Date.now() - 3 * 3600 * 1000); // 3 hours ago
   utimesSync(filepath, old, old);
 }
+
+describe('state file read helper source invariant', () => {
+  it('routes cleanup state file scans through readStateFile', () => {
+    expect(SESSION_CLEANUP_SOURCE).toContain('readStateFile');
+    expect(SESSION_CLEANUP_SOURCE).not.toMatch(
+      /const content = readFileSync\(filepath, 'utf-8'\);\s*const state = parseStateFile\(content\);/,
+    );
+  });
+});
 
 describe('cleanupMergedReviewStates', () => {
   it('returns 0 when no state files exist', () => {

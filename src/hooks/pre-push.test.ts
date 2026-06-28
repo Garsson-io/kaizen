@@ -29,7 +29,16 @@ import {
   type PrePushDecision,
 } from './pre-push.js';
 
+const PRE_PUSH_SOURCE = fs.readFileSync(new URL('./pre-push.ts', import.meta.url), 'utf-8');
+
 // ── detectAgentEnv ────────────────────────────────────────────────────
+
+describe('state file read helper source invariant', () => {
+  it('routes existing-round state reads through readStateFile', () => {
+    expect(PRE_PUSH_SOURCE).toContain('readStateFile');
+    expect(PRE_PUSH_SOURCE).not.toContain('parseStateFile(readFileSync');
+  });
+});
 
 describe('detectAgentEnv', () => {
   it('returns detected=false when no agent vars set (I-A)', () => {
