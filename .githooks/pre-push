@@ -2,7 +2,7 @@
 # .githooks/pre-push — kaizen mechanistic push-time gate (epic #1059).
 #
 # Agent-only: exits 0 silently for manual (non-agent) git operations.
-# When CLAUDECODE / CLAUDE_PROJECT_DIR / CODEX_SESSION / KAIZEN_SESSION is set,
+# When CLAUDECODE / CLAUDE_PROJECT_DIR / CODEX_CI / CODEX_SESSION / KAIZEN_SESSION is set,
 # delegates to src/hooks/pre-push.ts which:
 #   - blocks push to branch whose most-recent PR is MERGED with no newer OPEN (#1032)
 #   - opens needs_review gate on push to an open-PR branch (#909, #1057)
@@ -15,6 +15,7 @@ set -eu
 
 # ── Agent-env gate ─────────────────────────────────────────────────────
 if [ -z "${CLAUDECODE:-}" ] && [ -z "${CLAUDE_PROJECT_DIR:-}" ] \
+   && [ -z "${CODEX_CI:-}" ] \
    && [ -z "${CODEX_SESSION:-}" ] && [ -z "${KAIZEN_SESSION:-}" ]; then
   exit 0
 fi

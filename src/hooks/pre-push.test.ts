@@ -95,6 +95,12 @@ describe('detectAgentEnv', () => {
     expect(result.vars).toContain('CODEX_SESSION');
   });
 
+  it('detects CODEX_CI from Codex tool-call environments (#1536)', () => {
+    const result = detectAgentEnv({ CODEX_CI: '1' });
+    expect(result.detected).toBe(true);
+    expect(result.vars).toContain('CODEX_CI');
+  });
+
   it('detects KAIZEN_SESSION', () => {
     const result = detectAgentEnv({ KAIZEN_SESSION: '1' });
     expect(result.detected).toBe(true);
@@ -113,7 +119,7 @@ describe('detectAgentEnv', () => {
   });
 
   it('AGENT_ENV_VARS list matches epic design decision', () => {
-    expect(AGENT_ENV_VARS).toEqual(['CLAUDECODE', 'CLAUDE_PROJECT_DIR', 'CODEX_SESSION', 'KAIZEN_SESSION']);
+    expect(AGENT_ENV_VARS).toEqual(['CLAUDECODE', 'CLAUDE_PROJECT_DIR', 'CODEX_CI', 'CODEX_SESSION', 'KAIZEN_SESSION']);
   });
 });
 

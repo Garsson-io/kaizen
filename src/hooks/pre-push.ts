@@ -85,6 +85,7 @@ export interface PrePushOptions extends HookTraceOptions {
 export const AGENT_ENV_VARS = [
   'CLAUDECODE',
   'CLAUDE_PROJECT_DIR',
+  'CODEX_CI',
   'CODEX_SESSION',
   'KAIZEN_SESSION',
 ] as const;
