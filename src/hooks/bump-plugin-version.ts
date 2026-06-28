@@ -12,11 +12,13 @@
  * Part of kAIzen Agent Control Flow — kaizen #775
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { isGhPrCommand, stripHeredocBody } from './parse-command.js';
 import { createDefaultGitExec, resolveTargetWorktree, type GitExec } from './lib/git-state.js';
+import { readJsonObjectFile } from '../lib/json-file.js';
+import { parseJsonObject } from '../lib/json-value.js';
 
 export function bumpPluginVersion(
   command: string,
@@ -60,16 +62,14 @@ export function bumpPluginVersion(
 
   // Compare version on current branch vs main
   const mainVersion = (() => {
-    try {
-      const raw = git(['show', 'origin/main:.claude-plugin/plugin.json']);
-      return raw ? JSON.parse(raw).version || '0.0.0' : '0.0.0';
-    } catch {
-      return '0.0.0';
-    }
+    const raw = git(['show', 'origin/main:.claude-plugin/plugin.json']);
+    const parsed = raw ? parseJsonObject(raw) : null;
+    return typeof parsed?.version === 'string' ? parsed.version : '0.0.0';
   })();
 
-  const content = JSON.parse(readFileSync(pluginJson, 'utf-8'));
-  const currentVersion: string = content.version || '0.0.0';
+  const content = readJsonObjectFile(pluginJson);
+  if (!content) return null;
+  const currentVersion = typeof content.version === 'string' ? content.version : '0.0.0';
 
   if (mainVersion !== currentVersion) {
     // Already bumped (author did minor/major, or previous auto-bump)

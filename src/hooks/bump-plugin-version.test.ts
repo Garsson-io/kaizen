@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bumpPluginVersion } from './bump-plugin-version.js';
 import type { GitExec } from './lib/git-state.js';
@@ -7,6 +8,10 @@ import type { GitExec } from './lib/git-state.js';
 const TEST_DIR = '/tmp/.test-bump-plugin';
 const PLUGIN_DIR = join(TEST_DIR, '.claude-plugin');
 const PLUGIN_JSON = join(PLUGIN_DIR, 'plugin.json');
+const BUMP_PLUGIN_VERSION_SOURCE = readFileSync(
+  new URL('./bump-plugin-version.ts', import.meta.url),
+  'utf-8',
+);
 
 function writePluginAt(root: string, version: string) {
   const dir = join(root, '.claude-plugin');
@@ -21,13 +26,17 @@ function writePlugin(version: string) {
 // argv-safe GitExec seam (git-state.ts contract). Records each git argv so
 // tests can assert command ordering AND -C worktree anchoring (#1073/#240).
 function trackingGit(mainVersion: string) {
+  return trackingGitRaw(JSON.stringify({ version: mainVersion }));
+}
+
+function trackingGitRaw(mainPluginJson: string) {
   const calls: string[][] = [];
   const exec: GitExec = (args) => {
     const argv = [...args];
     calls.push(argv);
     const joined = argv.join(' ');
     if (joined.includes('show origin/main:.claude-plugin/plugin.json')) {
-      return { stdout: JSON.stringify({ version: mainVersion }), stderr: '', exitCode: 0 };
+      return { stdout: mainPluginJson, stderr: '', exitCode: 0 };
     }
     if (joined.includes('rev-parse --show-toplevel')) {
       return { stdout: TEST_DIR, stderr: '', exitCode: 0 };
@@ -38,6 +47,15 @@ function trackingGit(mainVersion: string) {
 }
 
 const mockGit = (mainVersion: string) => trackingGit(mainVersion).exec;
+
+describe('JSON helper source invariant', () => {
+  it('uses shared JSON helpers for plugin manifest parsing', () => {
+    expect(BUMP_PLUGIN_VERSION_SOURCE).toContain('parseJsonObject');
+    expect(BUMP_PLUGIN_VERSION_SOURCE).toContain('readJsonObjectFile');
+    expect(BUMP_PLUGIN_VERSION_SOURCE).not.toContain('JSON.parse(raw)');
+    expect(BUMP_PLUGIN_VERSION_SOURCE).not.toContain('JSON.parse(readFileSync(pluginJson');
+  });
+});
 
 beforeEach(() => {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
@@ -80,6 +98,61 @@ describe('bumpPluginVersion', () => {
       projectRoot: TEST_DIR,
     });
     expect(result).toBeNull();
+  });
+
+  it('fails open when origin/main plugin JSON is malformed', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'bump-plugin-main-json-'));
+    try {
+      writePluginAt(projectRoot, '1.0.5');
+      const result = bumpPluginVersion('gh pr create --title "test"', {
+        exec: trackingGitRaw('{not json').exec,
+        projectRoot,
+      });
+
+      expect(result).toBeNull();
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fails open when current plugin.json is malformed', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'bump-plugin-current-json-'));
+    try {
+      const pluginDir = join(projectRoot, '.claude-plugin');
+      const pluginJson = join(pluginDir, 'plugin.json');
+      mkdirSync(pluginDir, { recursive: true });
+      writeFileSync(pluginJson, '{not json');
+
+      expect(() => bumpPluginVersion('gh pr create --title "test"', {
+        exec: mockGit('1.0.5'),
+        projectRoot,
+      })).not.toThrow();
+      expect(bumpPluginVersion('gh pr create --title "test"', {
+        exec: mockGit('1.0.5'),
+        projectRoot,
+      })).toBeNull();
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fails open when current plugin.json is not an object', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'bump-plugin-current-array-'));
+    try {
+      const pluginDir = join(projectRoot, '.claude-plugin');
+      const pluginJson = join(pluginDir, 'plugin.json');
+      mkdirSync(pluginDir, { recursive: true });
+      writeFileSync(pluginJson, '[]');
+
+      const result = bumpPluginVersion('gh pr create --title "test"', {
+        exec: mockGit('0.0.0'),
+        projectRoot,
+      });
+
+      expect(result).toBeNull();
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it('does not create temp files', () => {
