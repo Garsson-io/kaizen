@@ -54,6 +54,11 @@ function fit(overrides: Partial<Record<AutoDentPhase, PhaseFit>>): Record<AutoDe
   return { ...NONE, ...overrides };
 }
 
+/**
+ * Descriptive provider capability rows for reports/operators. Runtime dispatch
+ * uses scripts/auto-dent-provider.ts PROVIDER_CAPABILITIES; keep this matrix
+ * aligned with validateProviderCapabilityRuntimeAlignment().
+ */
 export const PROVIDER_CAPABILITIES: ProviderCapability[] = [
   {
     id: 'claude-kaizen-skills',

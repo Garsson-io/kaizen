@@ -98,6 +98,11 @@ export type ProviderCapability = z.infer<typeof ProviderCapabilitySchema>;
  * future paths — they are NOT accepted for unattended batches, which is what
  * validateProviderPlan enforces.
  */
+/**
+ * Runtime provider capability SSOT. Dispatchers and validators consume this
+ * shape directly; descriptive/rendering rows in auto-dent-provider-capabilities
+ * must align to it but do not drive runtime decisions.
+ */
 export const PROVIDER_CAPABILITIES: readonly ProviderCapability[] = [
   // --- Claude (subscription CLI) — the proven path today ---
   { provider: 'claude', phase: 'planning', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'Claude Code plans the kaizen lifecycle natively under subscription.' },
