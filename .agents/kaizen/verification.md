@@ -85,6 +85,16 @@ Every non-docs kaizen PR should carry an Impact proof in the PR description:
 
 The BEFORE belongs in the stored plan's `## Impact Baseline`, captured before implementation changes the system. The AFTER belongs in the PR body after the same scenario is rerun. For pure refactors/no-behavior changes, use honest structural proof such as "three competing paths -> one path"; do not invent a behavior delta.
 
+For artifact-heavy proof, prefer a compact Impact table backed by linked durable artifacts:
+
+```
+| Goal | BEFORE artifact | AFTER artifact | Observable delta | Goal met? |
+|---|---|---|---|---|
+| <issue goal slice> | <link to baseline artifact> | <link to matching post-change artifact> | <inspectable change> | yes / partial (deferred #M) / no |
+```
+
+Put detailed logs, transcripts, screenshots, generated files, review output, API responses, state dumps, or test output in a durable evidence bundle such as an issue comment, PR comment, named attachment, or CI artifact, then link to it from the table. Do not describe the artifact when it can be shown.
+
 ## Skill Change Policy — MANDATORY before modifying any SKILL.md (kaizen #959)
 
 **Never change a skill without proving the change improves agent behavior.**
