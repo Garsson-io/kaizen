@@ -212,6 +212,16 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       rationale: 'GitHub check wrapper consuming the stored review verdict, not a new verdict producer.',
     },
     {
+      signature: 'src/independent-judge.ts:const:VerdictSchema',
+      label: 'Independent judge reply verdict schema',
+      rationale: 'Spawned-judge primitive output introduced by #1231; terminal binding belongs to the follow-on consumer/gate work (#1230).',
+    },
+    {
+      signature: 'src/independent-judge.ts:interface:JudgeVerdict',
+      label: 'Independent judge vote verdict',
+      rationale: 'Per-judge vote shape for the #1231 primitive; it is not yet an irreversible terminal-action authorizer.',
+    },
+    {
       signature: 'src/hooks/enforce-merge-verdict.ts:function:checkMergeVerdict',
       label: 'Merge verdict consumer check',
       rationale: 'Consumer of the stored review verdict at merge time, not a new verdict producer.',
