@@ -15,12 +15,12 @@
  * Migration: kaizen #320 (Phase 3 of #223)
  */
 
-import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gh } from '../lib/gh-exec.js';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
+import { gitStdout } from './lib/git-state.js';
 import { verifyIssueRef, type RefStatus } from './lib/issue-ref-verifier.js';
 import { parseGithubPrUrl } from '../lib/github-pr.js';
 import { resolveProjectRoot } from '../lib/resolve-project-root.js';
@@ -62,14 +62,7 @@ function getAuditDir(): string {
 }
 
 function currentBranch(): string {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-  } catch {
-    return 'unknown';
-  }
+  return gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown');
 }
 
 function logAudit(file: string, line: string): void {

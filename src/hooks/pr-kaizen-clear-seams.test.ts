@@ -113,6 +113,18 @@ describe('KAIZEN_UNFINISHED seam: grep pattern false-positive prevention', () =>
   });
 });
 
+describe('git runner invariant', () => {
+  it('routes pr-kaizen-clear branch reads through argv-style gitStdout', () => {
+    const source = fs.readFileSync(
+      new URL('./pr-kaizen-clear.ts', import.meta.url),
+      'utf-8',
+    );
+
+    expect(source).not.toMatch(/execSync\(['"`]git\b/);
+    expect(source).toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD'], 'unknown')");
+  });
+});
+
 // ── Piped KAIZEN_IMPEDIMENTS seam ────────────────────────────────────
 
 describe('KAIZEN_IMPEDIMENTS seam: piped command extraction', () => {
