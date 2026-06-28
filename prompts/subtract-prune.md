@@ -8,6 +8,8 @@ Run tag: {{run_tag}}
 Batch: {{batch_id}}
 Guidance: {{guidance}}
 
+{{goal_forcing_contract}}
+
 {{#issues_closed}}
 Issues already addressed in previous runs (do not rework): {{issues_closed}}
 {{/issues_closed}}
@@ -27,12 +29,6 @@ PRs already created in this batch (avoid overlapping work): {{prs}}
 
 {{contemplation_recommendations}}
 {{/contemplation_recommendations}}
-
-## Merge & Labeling Policy
-
-After creating a PR, do NOT run merge commands yourself.
-The auto-dent harness queues auto-merge after review verdicts and process evidence are known.
-Leave the PR open for the harness-owned terminal action.
 
 ## Subtraction Tasks
 
@@ -63,8 +59,6 @@ Before deleting anything, check the issue or PR that created it.
 Every deletion must explain WHY in the commit message or close comment.
 If you can't determine why something exists, leave it alone.
 
-## Progress Markers
-
-AUTO_DENT_PHASE: PICK | issue=<what you're pruning>
-AUTO_DENT_PHASE: PR | url=<PR URL if code was removed>
-AUTO_DENT_PHASE: REFLECT | issues_filed=<N> | lessons=<what you removed and why>
+Use the shared harness terminal protocol for phase markers. In this mode,
+`PICK` names the pruning target, `PR` names the PR when code changed, and
+`REFLECT` records what was removed and why.

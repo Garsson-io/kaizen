@@ -117,28 +117,60 @@ describe('buildPrompt', () => {
     const prompt = buildPrompt(state, 1);
     expect(prompt).not.toContain('gh pr merge');
     expect(prompt).toContain('Garsson-io/kaizen');
-    expect(prompt).toContain('The auto-dent harness queues auto-merge after review');
-    expect(prompt).toContain('status=<queued/merged/blocked>');
+    expect(prompt).toContain('Harness terminal protocol');
+    expect(prompt).toContain('Leave merge commands and auto-merge queueing to the auto-dent harness');
+    expect(prompt).toContain('Explicitly close every issue the PR fixes in the host repo');
   });
 
   it('keeps merge policy under harness control in subtract mode', () => {
     const state = makeBatchState({ host_repo: 'Garsson-io/kaizen', guidance: 'mode:subtract' });
     const prompt = buildPrompt(state, 1);
     expect(prompt).not.toContain('gh pr merge');
-    expect(prompt).toContain('The auto-dent harness queues auto-merge after review');
+    expect(prompt).toContain('Harness terminal protocol');
+    expect(prompt).toContain('Leave merge commands and auto-merge queueing to the auto-dent harness');
   });
 
   it('keeps merge policy under harness control in synthetic test-task mode', () => {
     const state = makeBatchState({ host_repo: 'Garsson-io/kaizen', test_task: true });
     const prompt = buildPrompt(state, 1);
     expect(prompt).not.toContain('gh pr merge');
-    expect(prompt).toContain('The auto-dent harness queues auto-merge after review');
+    expect(prompt).toContain('Harness terminal protocol');
+    expect(prompt).toContain('Leave merge commands and auto-merge queueing to the auto-dent harness');
   });
 
   it('includes structured STOP phase marker instructions', () => {
     const state = makeBatchState();
     const prompt = buildPrompt(state, 1);
     expect(prompt).toContain('AUTO_DENT_PHASE: STOP | reason=');
+  });
+
+  it('renders the shared headless /goal forcing contract into auto-dent prompts', () => {
+    const state = makeBatchState();
+    const prompt = buildPrompt(state, 1);
+    expect(prompt).toContain('Headless /goal Equivalent');
+    expect(prompt).toContain('same forcing function as /goal');
+    expect(prompt).toContain('Do not finish this run');
+    expect(prompt).toContain('related-area DRY/refactor pass');
+    expect(prompt).toContain('meet reality');
+  });
+
+  it('renders the shared contract into every selected prompt mode', () => {
+    const cases = [
+      { label: 'exploit', state: makeBatchState(), run: 1, expectedMode: 'exploit' },
+      { label: 'explore', state: makeBatchState({ guidance: 'mode:explore' }), run: 1, expectedMode: 'explore' },
+      { label: 'reflect', state: makeBatchState({ guidance: 'mode:reflect' }), run: 1, expectedMode: 'reflect' },
+      { label: 'subtract', state: makeBatchState({ guidance: 'mode:subtract' }), run: 1, expectedMode: 'subtract' },
+      { label: 'contemplate', state: makeBatchState(), run: 14, expectedMode: 'contemplate' },
+      { label: 'test-task', state: makeBatchState({ test_task: true }), run: 1, expectedMode: 'exploit' },
+    ];
+
+    for (const { label, state, run, expectedMode } of cases) {
+      const prompt = buildPrompt(state, run);
+      expect(prompt, `${label} missing shared contract`).toContain('Headless /goal Equivalent');
+      expect(prompt, `${label} missing harness protocol`).toContain('Harness terminal protocol');
+      expect(prompt, `${label} missing status CLI`).toContain('kaizen-workflow-driver.ts status');
+      expect(prompt, `${label} selected wrong mode`).toContain(`Mode: ${expectedMode}`);
+    }
   });
 
   it('generates test-task prompt when test_task is true', () => {
@@ -217,6 +249,13 @@ describe('buildTemplateVars', () => {
     const state = makeBatchState();
     const vars = buildTemplateVars(state, 1, tmpDir);
     expect(vars.claimed_plan_issue).toBe('');
+  });
+
+  it('exposes the shared goal forcing contract as a template variable', () => {
+    const vars = buildTemplateVars(makeBatchState(), 1);
+    expect(vars.goal_forcing_contract).toContain('Headless /goal Equivalent');
+    expect(vars.goal_forcing_contract).toContain('plan/test-plan gate');
+    expect(vars.goal_forcing_contract).toContain('review/requirements/impact gates');
   });
 });
 
@@ -635,7 +674,7 @@ describe('loadPromptTemplate', () => {
     expect(template).not.toBeNull();
     expect(template).toContain('{{guidance}}');
     expect(template).toContain('{{run_tag}}');
-    expect(template).toContain('AUTO_DENT_PHASE: STOP');
+    expect(template).toContain('{{goal_forcing_contract}}');
   });
 
   it('loads test-task template file', () => {
@@ -2956,6 +2995,7 @@ describe('buildPromptWithMetadata', () => {
     const meta = buildPromptWithMetadata(state, 1);
     expect(meta.template).toBe('explore-gaps.md');
     expect(meta.hash).toMatch(/^[0-9a-f]{12}$/);
+    expect(meta.prompt).toContain('issues filed');
   });
 
   it('returns different template for reflect mode', () => {

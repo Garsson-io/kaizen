@@ -298,6 +298,43 @@ describe("kaizen-file-issue — Duplicate Decision Table", () => {
 });
 
 // ---------------------------------------------------------------------------
+// kaizen-do — /goal forcing-function workflow driver (#1507)
+// ---------------------------------------------------------------------------
+
+describe("kaizen-do — /goal workflow driver", () => {
+  it("starts with a literal /goal and requires ticket number/title/URL", () => {
+    const skill = loadSkill("kaizen-do");
+    expect(skill).toContain("literal `/goal`");
+    expect(skill).toContain("/goal Complete the full kaizen workflow");
+    expect(skill).toContain("ticket number, title, and URL");
+  });
+
+  it("lists full kaizen gates including DRY/refactor and meet-reality proof", () => {
+    const skill = loadSkill("kaizen-do");
+    for (const phrase of [
+      "plan/test-plan gate",
+      "worktree/case gate",
+      "implementation with tests",
+      "related-area DRY/refactor pass",
+      "meet reality",
+      "review/requirements/impact gates",
+      "reflection gate",
+      "PR/CI/merge/cleanup",
+    ]) {
+      expect(skill).toContain(phrase);
+    }
+    expect(skill).toContain("reduce competing mechanisms, schemas, and drift");
+    expect(skill).toContain("observe outputs and side effects");
+  });
+
+  it("routes status calls through the reusable workflow driver CLI", () => {
+    const skill = loadSkill("kaizen-do");
+    expect(skill).toContain("scripts/kaizen-workflow-driver.ts status");
+    expect(skill).toContain("Do not hand-roll a second checklist");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // kaizen-evaluate — Phase 4.5: Plan Formation (kaizen #981)
 // ---------------------------------------------------------------------------
 

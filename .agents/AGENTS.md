@@ -79,6 +79,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | Skill | When to Use |
 |-------|-------------|
 | `/kaizen-reflect` | Post-work reflection — classify impediments, file issues |
+| `/kaizen-do` | Goal-driven workflow driver — sets `/goal`, then drives one issue/task through the full kaizen gates |
 | `/kaizen-pick` | Select next issue from backlog |
 | `/kaizen-gaps` | Strategic analysis — tooling gaps, horizon concentration |
 | `/kaizen-evaluate` | Scope gate — evaluate issue before implementation |
@@ -103,6 +104,8 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 **Substantive test plan before implementation**: An issue MUST have a stored, *substantive* plan AND test plan (`retrieve-testplan` ≠ null and it passes the substance heuristic) before any source code is written — not just before the PR. A one-sentence stub cannot guide implementation, which is the whole point of writing it first. The `enforce-plan-stored` hook (I3/I8) enforces this at the FIRST source edit *and* at `gh pr create` with the identical substance bar; do not retrofit the plan at PR time. If the gate blocks you, run `/kaizen-write-plan` — don't reach for the stub. (#1035)
 
 **PR bodies**: Always use `/kaizen-write-pr` when creating or editing PR descriptions. Never write a bare `gh pr create --body` with a few bullet points. The Story Spine narrative makes PRs reviewable without reading the diff.
+
+**Goal-driven workflow driver**: Use `/kaizen-do <issue|task>` when asked to work a ticket or task to completion. It starts by setting a literal `/goal` containing the ticket number/title/URL and then drives the existing kaizen gates: plan/test-plan, worktree/case, implementation/tests, related-area DRY/refactor, meet-reality proof, review/requirements/impact, reflection, PR/CI/merge/cleanup. Use `npx tsx scripts/kaizen-workflow-driver.ts status --issue <N> --repo "$ISSUES_REPO" --mode manual` for status calls instead of hand-rolling a checklist.
 
 **Structured data**: Use `npx tsx src/cli-structured-data.ts` as the primary interface for storing and retrieving structured data on PRs and issues. Key commands:
 - Reviews: `store-review-finding`, `store-review-summary`, `list-review-rounds`, `read-review-finding`

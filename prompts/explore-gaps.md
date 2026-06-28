@@ -8,6 +8,8 @@ Run tag: {{run_tag}}
 Batch: {{batch_id}}
 Guidance: {{guidance}}
 
+{{goal_forcing_contract}}
+
 {{#issues_closed}}
 Issues already addressed in previous runs (do not rework): {{issues_closed}}
 {{/issues_closed}}
