@@ -19,7 +19,7 @@
  *   npx tsx scripts/auto-dent-ctl.ts watchdog --threshold 600
  */
 
-import { readdirSync, readFileSync, existsSync, writeFileSync, appendFileSync } from 'fs';
+import { readdirSync, readFileSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BatchState, RunMetrics } from './auto-dent-run.js';
@@ -41,7 +41,7 @@ import {
   type ReadOutcomesDeps,
 } from './batch-outcome.js';
 import { truncateDisplay } from './auto-dent-display.js';
-import { parseJsonLines } from '../src/lib/json-lines.js';
+import { appendJsonLine, parseJsonLines } from '../src/lib/json-lines.js';
 
 function getRepoRoot(): string {
   try {
@@ -847,7 +847,7 @@ export function appendBatchToAggregate(
   }
 
   const record = buildAggregateBatchRecord(batch);
-  appendFileSync(aggregatePath, JSON.stringify(record) + '\n');
+  appendJsonLine(aggregatePath, record);
   return { action: 'appended', path: aggregatePath };
 }
 
