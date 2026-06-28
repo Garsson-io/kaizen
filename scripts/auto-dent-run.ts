@@ -598,10 +598,12 @@ export function buildTemplateVars(
   state: BatchState,
   runNum: number,
   logDir?: string,
+  options: { claimPlanItem?: boolean } = {},
 ): Record<string, string> {
   const runTag = `${state.batch_id}/run-${runNum}`;
   const hostRepo = state.host_repo || state.kaizen_repo || 'unknown';
   const now = new Date();
+  const shouldClaimPlanItem = options.claimPlanItem ?? true;
 
   // Try to claim next item from plan (if a plan exists)
   let planAssignment = '';
@@ -609,7 +611,7 @@ export function buildTemplateVars(
   let reflectionInsights = '';
   let priorReflections = '';
   if (logDir) {
-    const planItem = claimNextItem(logDir);
+    const planItem = shouldClaimPlanItem ? claimNextItem(logDir) : null;
     if (planItem) {
       claimedPlanIssue = planItem.issue;
       const lines = [
@@ -1359,10 +1361,12 @@ export function populateCrossBatchSteering(
 }
 
 export function buildPromptWithMetadata(state: BatchState, runNum: number, logDir?: string): PromptMetadata {
-  const vars = buildTemplateVars(state, runNum, logDir);
+  const modeSelection = selectMode(state, runNum);
+  const shouldClaimPlanItem = modeSelection.mode === 'exploit' && !state.test_task;
+  const vars = buildTemplateVars(state, runNum, logDir, { claimPlanItem: shouldClaimPlanItem });
   const claimedPlanIssue = vars.claimed_plan_issue || undefined;
 
-  const { template: templateFile } = selectMode(state, runNum);
+  const templateFile = modeSelection.template;
   const templateContent = loadPromptTemplate(templateFile);
 
   if (templateContent) {
@@ -1377,14 +1381,14 @@ export function buildPromptWithMetadata(state: BatchState, runNum: number, logDi
 
   // Inline fallback (kept for backward compatibility)
   return {
-    prompt: buildPromptInline(state, runNum),
+    prompt: buildPromptInline(state, runNum, modeSelection),
     template: 'inline',
     hash: 'none',
     claimedPlanIssue,
   };
 }
 
-function buildPromptInline(state: BatchState, runNum: number): string {
+function buildPromptInline(state: BatchState, runNum: number, modeSelection: ModeSelection): string {
   const runTag = `${state.batch_id}/run-${runNum}`;
   const kaizenRepo = state.kaizen_repo || 'unknown';
   const hostRepo = state.host_repo || kaizenRepo;
@@ -1429,7 +1433,7 @@ You are running inside an auto-dent batch loop (run ${runNum}${state.max_runs > 
 After this run completes, the loop will start another run with fresh context.
 Run to completion. Do not ask for confirmation — make autonomous decisions.`;
 
-  prompt += `\n\n${renderAutoDentGoalContract(selectMode(state, runNum).mode)}`;
+  prompt += `\n\n${renderAutoDentGoalContract(modeSelection.mode)}`;
 
   if (state.issues_closed.length > 0) {
     prompt += `\n\nIssues already addressed in previous runs (do not rework): ${state.issues_closed.join(' ')}`;
