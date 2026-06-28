@@ -237,6 +237,55 @@ describe("kaizen-do — /goal workflow driver", () => {
 });
 
 // ---------------------------------------------------------------------------
+// kaizen-autodent — inside-harness auto-dent workflow (#1154)
+// ---------------------------------------------------------------------------
+
+describe("kaizen-autodent — inside-harness auto-dent workflow", () => {
+  it("is a user-invocable hook-independent auto-dent skill", () => {
+    const skill = loadSkill("kaizen-autodent");
+    expect(skill).toContain("inside-harness auto-dent");
+    expect(skill).toContain("hook-independent");
+    expect(skill).toContain("parent/umbrella issue");
+    expect(skill).toContain("sub-issue list");
+  });
+
+  it("requires one eligible sub-issue and one scope-matched PR at a time", () => {
+    const skill = loadSkill("kaizen-autodent");
+    expect(skill).toContain("one eligible sub-issue");
+    expect(skill).toContain("one scope-matched PR");
+    expect(skill).toContain("Do NOT close the parent epic");
+    expect(skill).toContain("Fixes <sub-issue>");
+  });
+
+  it("names durable artifacts and treats hooks as advisory feedback", () => {
+    const skill = loadSkill("kaizen-autodent");
+    for (const phrase of [
+      "issue identity",
+      "stored plan/test-plan",
+      "worktree/case",
+      "commits and tests",
+      "related-area DRY/refactor",
+      "meet-reality output",
+      "review/requirements/impact",
+      "reflection evidence",
+      "PR/CI/merge/cleanup",
+      "hook/provider activation",
+    ]) {
+      expect(skill).toContain(phrase);
+    }
+    expect(skill).toContain("Hooks are helpful feedback, not proof");
+  });
+
+  it("delegates per-sub-issue execution and status to the shared contracts", () => {
+    const skill = loadSkill("kaizen-autodent");
+    expect(skill).toContain("/kaizen-do");
+    expect(skill).toContain("scripts/kaizen-workflow-driver.ts status");
+    expect(skill).toContain("docs/workflow-gate-ledger.md");
+    expect(skill).toContain("Do not hand-roll another gate checklist");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // kaizen-evaluate — Phase 4.5: Plan Formation (kaizen #981)
 // ---------------------------------------------------------------------------
 
