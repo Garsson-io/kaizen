@@ -16,7 +16,6 @@
  *   session.cleanup();
  */
 
-import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -28,10 +27,10 @@ import {
   chmodSync,
   unlinkSync,
 } from "node:fs";
-import { basename, join, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { KAIZEN_PLUGIN_SOURCE } from "../kaizen-plugin-identity.js";
+import { KAIZEN_ROOT, resolveTsxBin } from "./test-runtime.js";
 
 import {
   runHook,
@@ -49,9 +48,6 @@ import {
 
 // ── Constants ──
 
-const __filename_esm = fileURLToPath(import.meta.url);
-const __dirname_esm = dirname(__filename_esm);
-const KAIZEN_ROOT = resolve(typeof __dirname !== "undefined" ? __dirname : __dirname_esm, "../..");
 const HOOKS_DIR = join(KAIZEN_ROOT, ".claude", "hooks");
 
 // ── Hook Registry (derived from plugin.json) ──
@@ -64,16 +60,16 @@ export interface SessionHookRegistry {
   Stop: string[];
 }
 
-interface PluginHookCommand {
+export interface PluginHookCommand {
   command?: string;
 }
 
-interface PluginHookGroup {
+export interface PluginHookGroup {
   matcher?: string;
   hooks?: PluginHookCommand[];
 }
 
-interface PluginManifest {
+export interface PluginManifest {
   hooks?: Record<string, PluginHookGroup[]>;
 }
 
@@ -99,8 +95,7 @@ function hookNames(groups: PluginHookGroup[] | undefined, matcher?: RegExp): str
   return names;
 }
 
-export function loadDefaultHookRegistry(): SessionHookRegistry {
-  const manifest = JSON.parse(readFileSync(PLUGIN_JSON_PATH, "utf-8")) as PluginManifest;
+export function buildHookRegistryFromManifest(manifest: PluginManifest): SessionHookRegistry {
   const hooks = manifest.hooks ?? {};
   return {
     SessionStart: hookNames(hooks.SessionStart),
@@ -111,21 +106,9 @@ export function loadDefaultHookRegistry(): SessionHookRegistry {
   };
 }
 
-function resolveTsxBin(): string | undefined {
-  const local = join(KAIZEN_ROOT, "node_modules", ".bin", "tsx");
-  if (existsSync(local)) return local;
-
-  try {
-    const gitCommonDir = execFileSync("git", ["-C", KAIZEN_ROOT, "rev-parse", "--git-common-dir"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    const mainRoot = dirname(gitCommonDir);
-    const mainTsx = join(mainRoot, "node_modules", ".bin", "tsx");
-    return existsSync(mainTsx) ? mainTsx : undefined;
-  } catch {
-    return undefined;
-  }
+export function loadDefaultHookRegistry(): SessionHookRegistry {
+  const manifest = JSON.parse(readFileSync(PLUGIN_JSON_PATH, "utf-8")) as PluginManifest;
+  return buildHookRegistryFromManifest(manifest);
 }
 
 // ── Types ──
@@ -304,6 +287,14 @@ export class SessionSimulator {
     return this.stateFiles().filter(filename =>
       this.stateFileContents(filename).includes(content),
     );
+  }
+
+  stateSummary(): string {
+    const files = this.stateFiles();
+    if (files.length === 0) return "(no state files)";
+    return files
+      .map(filename => `--- ${filename} ---\n${this.stateFileContents(filename)}`)
+      .join("\n");
   }
 
   stepStderr(index: number): string {

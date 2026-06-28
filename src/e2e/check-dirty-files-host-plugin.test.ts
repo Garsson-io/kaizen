@@ -15,26 +15,12 @@ import { execSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { resolveTsxBin } from './test-runtime.js';
 
 const KAIZEN_REPO_ROOT = path.resolve(__dirname, '../..');
 const HOOK_TS = path.join(KAIZEN_REPO_ROOT, 'src/hooks/check-dirty-files.ts');
 
-function findTsx(): string | null {
-  const local = path.join(KAIZEN_REPO_ROOT, 'node_modules/.bin/tsx');
-  if (fs.existsSync(local)) return local;
-  try {
-    const common = execSync('git rev-parse --git-common-dir', {
-      cwd: KAIZEN_REPO_ROOT,
-      encoding: 'utf-8',
-    }).trim();
-    const mainRoot = path.dirname(path.resolve(KAIZEN_REPO_ROOT, common));
-    const mainTsx = path.join(mainRoot, 'node_modules/.bin/tsx');
-    if (fs.existsSync(mainTsx)) return mainTsx;
-  } catch { /* ignore */ }
-  return null;
-}
-
-const TSX_BIN = findTsx();
+const TSX_BIN = resolveTsxBin(KAIZEN_REPO_ROOT);
 
 interface HookResult {
   exitCode: number;

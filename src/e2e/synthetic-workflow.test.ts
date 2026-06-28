@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { SessionSimulator } from "./session-simulator.js";
+import { buildHookRegistryFromManifest, SessionSimulator, type PluginManifest } from "./session-simulator.js";
 
 describe("Synthetic Workflow E2E", () => {
   let session: SessionSimulator;
@@ -36,6 +36,11 @@ describe("Synthetic Workflow E2E", () => {
       "kaizen-verify-before-stop.sh",
       "kaizen-check-cleanup-on-stop.sh",
     ];
+  }
+
+  function expectStateFilesContaining(session: SessionSimulator, content: string, count: number): void {
+    const files = session.stateFilesContaining(content);
+    expect(files, `Expected ${count} state file(s) containing ${content}\n${session.stateSummary()}`).toHaveLength(count);
   }
 
   describe("scope-guard propagation", () => {
@@ -133,6 +138,37 @@ describe("Synthetic Workflow E2E", () => {
       );
     });
 
+    it("classifies hook registry groups from a synthetic manifest fixture", () => {
+      const manifest: PluginManifest = {
+        hooks: {
+          SessionStart: [
+            { hooks: [{ command: ".claude/hooks/session-start.sh" }] },
+          ],
+          PreToolUse: [
+            { matcher: "Bash", hooks: [{ command: ".claude/hooks/bash-only.sh" }] },
+            { matcher: "Bash|Edit", hooks: [{ command: ".claude/hooks/bash-and-edit.sh" }] },
+            { matcher: "NotebookEdit|Write", hooks: [{ command: ".claude/hooks/write-family.sh" }] },
+            { matcher: "Read", hooks: [{ command: ".claude/hooks/read-only.sh" }] },
+          ],
+          PostToolUse: [
+            { matcher: "Edit", hooks: [{ command: ".claude/hooks/post-edit.sh" }] },
+            { matcher: "Bash|Write", hooks: [{ command: ".claude/hooks/post-bash.sh" }] },
+          ],
+          Stop: [
+            { hooks: [{ command: "bash .claude/hooks/stop.sh" }] },
+          ],
+        },
+      };
+
+      expect(buildHookRegistryFromManifest(manifest)).toEqual({
+        SessionStart: ["session-start.sh"],
+        PreToolUseBash: ["bash-only.sh", "bash-and-edit.sh"],
+        PreToolUseWrite: ["bash-and-edit.sh", "write-family.sh"],
+        PostToolUseBash: ["post-bash.sh"],
+        Stop: ["stop.sh"],
+      });
+    });
+
     it("does not set PR workflow gates for failed PR creation outcomes", () => {
       session = new SessionSimulator();
       session.setHome("clean");
@@ -141,8 +177,8 @@ describe("Synthetic Workflow E2E", () => {
         exitCode: "1",
       });
 
-      expect(session.stateFilesContaining("STATUS=needs_review")).toEqual([]);
-      expect(session.stateFilesContaining("STATUS=needs_pr_kaizen")).toEqual([]);
+      expectStateFilesContaining(session, "STATUS=needs_review", 0);
+      expectStateFilesContaining(session, "STATUS=needs_pr_kaizen", 0);
     });
 
     it("sets persisted PR workflow gates for successful PR creation outcomes", () => {
@@ -154,8 +190,8 @@ describe("Synthetic Workflow E2E", () => {
         "https://github.com/Garsson-io/kaizen/pull/943",
       );
 
-      expect(session.stateFilesContaining("STATUS=needs_review")).toHaveLength(1);
-      expect(session.stateFilesContaining("STATUS=needs_pr_kaizen")).toHaveLength(1);
+      expectStateFilesContaining(session, "STATUS=needs_review", 1);
+      expectStateFilesContaining(session, "STATUS=needs_pr_kaizen", 1);
 
       const stopResult = session.fireStop();
       expect(stopResult.results.some((result) => result.stdout.includes('"decision":"block"'))).toBe(true);

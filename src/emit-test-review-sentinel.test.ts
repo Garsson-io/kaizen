@@ -1,28 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { validateReviewSentinel } from './review-sentinel.js';
+import { resolveTsxBin } from './e2e/test-runtime.js';
 
 // The `emit-test-review-sentinel` command can write a sentinel that PASSES the
 // review gate. That is exactly the fabrication a malicious/confused caller could
 // use to bypass review (#1019/#1212). Its only protection is the
 // KAIZEN_TEST_RUNNER guard — so prove, end-to-end, that the guard holds.
 const CLI = resolve(__dirname, 'cli-structured-data.ts');
-const LOCAL_TSX = resolve(__dirname, '..', 'node_modules', '.bin', 'tsx');
 const PR_URL = 'https://github.com/Garsson-io/kaizen/pull/55';
 
-function resolveTsxBin(): string {
-  if (existsSync(LOCAL_TSX)) return LOCAL_TSX;
-  const gitCommon = spawnSync('git', ['-C', resolve(__dirname, '..'), 'rev-parse', '--git-common-dir'], {
-    encoding: 'utf8',
-  }).stdout.trim();
-  return resolve(dirname(gitCommon), 'node_modules', '.bin', 'tsx');
-}
-
 function run(stateDir: string, env: Record<string, string>) {
-  const tsx = resolveTsxBin();
+  const tsx = resolveTsxBin(resolve(__dirname, '..'));
+  if (!tsx) throw new Error('tsx not found — cannot run sentinel guard test');
   return spawnSync(tsx, [CLI, 'emit-test-review-sentinel', '--repo', 'Garsson-io/kaizen', '--pr', '55', '--round', '1'], {
     encoding: 'utf8',
     env: { ...process.env, STATE_DIR: stateDir, ...env },

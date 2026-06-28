@@ -218,6 +218,8 @@ When a gate blocks commands, it needs an allowlist of commands that ARE permitte
 - **Always test both paths:** the "allowed" path AND the "denied" path
 - **Shared lib changes require E2E tests:** Use `SessionSimulator` (`src/e2e/session-simulator.ts`) to fire hooks in session order with controlled environments
 - **TypeScript E2E harness:** `src/e2e/hook-runner.ts` provides event builders, `runHook()`, and mock utilities
+- **Session hook registries are manifest-derived:** `SessionSimulator` loads `.claude-plugin/plugin.json` through `loadDefaultHookRegistry()`. Do not hand-maintain a parallel full hook list in E2E tests; narrow `session.hooks` only when the test intentionally exercises a focused subset.
+- **Hook subprocess tests should be deterministic in worktrees:** use `resolveTsxBin()` from `src/e2e/test-runtime.ts` for TypeScript E2E tests, pass `KAIZEN_TSX_BIN` to bash trampolines when invoking them from test harnesses, and disable advisory background noise with `HOOK_TIMING_SENTINEL_DISABLED=true` and `SEND_TELEGRAM_IPC_DISABLED=true`.
 
 ## Anti-Patterns
 
