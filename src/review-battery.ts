@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import YAML from 'yaml';
-import { resolveProjectRoot } from './lib/resolve-project-root.js';
+import { resolveProjectRoot, type GitRunner } from './lib/resolve-project-root.js';
 import { retrievePlan, issueTarget } from './structured-data.js';
 import {
   normalizeFindingStatus,
@@ -397,9 +397,9 @@ export function renderTemplate(template: string, vars: Record<string, string>): 
  * Resolve the prompts directory. Checks repo-root/prompts first,
  * then falls back to the directory relative to this file.
  */
-export function resolvePromptsDir(exec?: (cmd: string) => string): string {
+export function resolvePromptsDir(git?: GitRunner): string {
   const thisDir = dirname(new URL(import.meta.url).pathname);
-  const root = resolveProjectRoot(thisDir, exec);
+  const root = resolveProjectRoot(thisDir, git);
   const dir = resolve(root, 'prompts');
   if (existsSync(dir)) return dir;
   return resolve(thisDir, '..', 'prompts');
