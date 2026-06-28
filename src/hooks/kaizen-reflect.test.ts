@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HookInput } from './hook-io.js';
 import {
+  AUDIT_ISSUES_MERGE_INTERVAL,
+  formatAuditIssuesAdvisory,
   generateCreateReflection,
   generateMergeReflection,
   processHookInput,
@@ -232,6 +234,40 @@ describe('processHookInput', () => {
         expect.stringContaining('Use shared gh helper'),
       );
     });
+
+    it('adds the audit-issues advisory at the periodic merge interval', () => {
+      const input = makeInput({
+        command:
+          'gh pr merge https://github.com/Garsson-io/kaizen/pull/42 --squash',
+        stdout: '✓ Pull request merged',
+      });
+
+      const output = processHookInput(input, {
+        ...defaultOpts,
+        sendNotification: vi.fn(),
+        mergedPrCount: AUDIT_ISSUES_MERGE_INTERVAL,
+      });
+
+      expect(output).toContain('/kaizen-audit-issues');
+      expect(output).toContain(`${AUDIT_ISSUES_MERGE_INTERVAL} merged PRs`);
+      expect(output).toContain('non-blocking');
+    });
+
+    it('omits the audit-issues advisory outside the periodic merge interval', () => {
+      const input = makeInput({
+        command:
+          'gh pr merge https://github.com/Garsson-io/kaizen/pull/42 --squash',
+        stdout: '✓ Pull request merged',
+      });
+
+      const output = processHookInput(input, {
+        ...defaultOpts,
+        sendNotification: vi.fn(),
+        mergedPrCount: AUDIT_ISSUES_MERGE_INTERVAL - 1,
+      });
+
+      expect(output).not.toContain('/kaizen-audit-issues');
+    });
   });
 
   describe('non-PR commands', () => {
@@ -412,6 +448,23 @@ describe('generateMergeReflection', () => {
   it('shows fallback message when no transcript_path', () => {
     const output = generateMergeReflection('url', 'branch', 'files', '/main');
     expect(output).toContain('no transcript path available');
+  });
+});
+
+describe('formatAuditIssuesAdvisory', () => {
+  it('renders a non-blocking audit advisory on the merge interval', () => {
+    const output = formatAuditIssuesAdvisory(AUDIT_ISSUES_MERGE_INTERVAL);
+
+    expect(output).toContain('/kaizen-audit-issues');
+    expect(output).toContain(`${AUDIT_ISSUES_MERGE_INTERVAL} merged PRs`);
+    expect(output).toContain('non-blocking');
+    expect(output).toContain('#237');
+  });
+
+  it('returns empty text below and between intervals', () => {
+    expect(formatAuditIssuesAdvisory(0)).toBe('');
+    expect(formatAuditIssuesAdvisory(AUDIT_ISSUES_MERGE_INTERVAL - 1)).toBe('');
+    expect(formatAuditIssuesAdvisory(AUDIT_ISSUES_MERGE_INTERVAL + 1)).toBe('');
   });
 });
 

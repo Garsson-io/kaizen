@@ -1,8 +1,10 @@
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   countChangedFiles,
+  countSessionEvents,
   emitSessionEvent,
   type SessionEventEnvelope,
   type SessionPrCreatedEvent,
@@ -11,6 +13,10 @@ import {
 } from './session-telemetry.js';
 
 const SESSION_TELEMETRY_SOURCE = readFileSync(new URL('./session-telemetry.ts', import.meta.url), 'utf-8');
+
+function makeTelemetryTestDir(suffix: string): string {
+  return mkdtempSync(join(tmpdir(), `.test-st-${suffix}-`));
+}
 
 describe('json-lines helper source invariant', () => {
   it('routes telemetry JSONL appends through appendJsonLine', () => {
@@ -22,7 +28,7 @@ describe('json-lines helper source invariant', () => {
 
 describe('emitSessionEvent', () => {
   it('writes a pr_created event with correct envelope', () => {
-    const dir = `/tmp/.test-st-${Date.now()}-a`;
+    const dir = makeTelemetryTestDir('a');
     emitSessionEvent(
       {
         type: 'session.pr_created',
@@ -45,7 +51,7 @@ describe('emitSessionEvent', () => {
   });
 
   it('appends multiple event types', () => {
-    const dir = `/tmp/.test-st-${Date.now()}-b`;
+    const dir = makeTelemetryTestDir('b');
     emitSessionEvent(
       { type: 'session.pr_merged', session_id: 's2', pr_url: 'url', branch: 'b', changed_files_count: 5 },
       { telemetryDir: dir },
@@ -63,7 +69,7 @@ describe('emitSessionEvent', () => {
   });
 
   it('creates nested directories', () => {
-    const dir = `/tmp/.test-st-${Date.now()}-c`;
+    const dir = makeTelemetryTestDir('c');
     const nested = join(dir, 'nested', 'deep');
     emitSessionEvent(
       { type: 'session.pr_created', session_id: 's1', pr_url: 'u', branch: 'b', changed_files_count: 0 },
@@ -74,7 +80,7 @@ describe('emitSessionEvent', () => {
   });
 
   it('writes a stop_gate event with diagnostics', () => {
-    const dir = `/tmp/.test-st-${Date.now()}-sg`;
+    const dir = makeTelemetryTestDir('sg');
     emitSessionEvent(
       {
         type: 'session.stop_gate',
@@ -110,6 +116,31 @@ describe('emitSessionEvent', () => {
         { telemetryDir: '/dev/null/impossible' },
       );
     }).not.toThrow();
+  });
+});
+
+describe('countSessionEvents', () => {
+  it('counts matching telemetry events and ignores malformed or unrelated rows', () => {
+    const dir = makeTelemetryTestDir('count');
+    writeFileSync(
+      join(dir, 'events.jsonl'),
+      [
+        JSON.stringify({ timestamp: 't1', source: 'interactive', event: { type: 'session.pr_merged' } }),
+        'not json',
+        JSON.stringify({ timestamp: 't2', source: 'interactive', event: { type: 'session.pr_created' } }),
+        JSON.stringify({ timestamp: 't3', source: 'interactive', event: { type: 'session.pr_merged' } }),
+        JSON.stringify({ timestamp: 't4', source: 'interactive' }),
+      ].join('\n'),
+    );
+
+    expect(countSessionEvents('session.pr_merged', { telemetryDir: dir })).toBe(2);
+    expect(countSessionEvents('session.pr_created', { telemetryDir: dir })).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns zero when the telemetry file is missing or unreadable', () => {
+    expect(countSessionEvents('session.pr_merged', { telemetryDir: '/tmp/does-not-exist-kaizen-st' })).toBe(0);
+    expect(countSessionEvents('session.pr_merged', { telemetryDir: '/dev/null/impossible' })).toBe(0);
   });
 });
 

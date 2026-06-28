@@ -14,6 +14,7 @@
  * Part of horizon #249 (Observability), issue #671.
  */
 
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { appendJsonLine } from '../lib/json-lines.js';
 
@@ -98,6 +99,35 @@ export function emitSessionEvent(
     appendJsonLine(filePath, envelope);
   } catch {
     // Telemetry is best-effort — never break the hook
+  }
+}
+
+/**
+ * Count events already persisted in events.jsonl.
+ * Best-effort: malformed rows and missing files count as zero, because hook
+ * telemetry must never make advisory prompts brittle.
+ */
+export function countSessionEvents(
+  type: SessionEvent['type'],
+  options?: { telemetryDir?: string },
+): number {
+  try {
+    const dir = options?.telemetryDir ?? resolveTelemetryDir();
+    const filePath = resolve(dir, 'events.jsonl');
+    const content = readFileSync(filePath, 'utf-8');
+    let count = 0;
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const envelope = JSON.parse(line) as Partial<SessionEventEnvelope>;
+        if (envelope.event?.type === type) count += 1;
+      } catch {
+        // Ignore partial/corrupt rows; telemetry is advisory.
+      }
+    }
+    return count;
+  } catch {
+    return 0;
   }
 }
 
