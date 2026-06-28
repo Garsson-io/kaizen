@@ -870,11 +870,12 @@ export function extractClosingIssues(prBody: string): string[] {
 
 /**
  * For each issue the PR closes, if it is now CLOSED and still carries an
- * in-progress status label, remove those labels and add `status:done` in a
- * single argv `gh issue edit` call (routed through the injected ghRun boundary,
- * pinned to the kaizen repo). Conservative: acts ONLY when an in-progress label
- * is actually present — issues closed as not-planned/duplicate with no status
- * label are left untouched (never blindly stamped `status:done`).
+ * in-progress status label, remove those labels (one `gh issue edit`) and then
+ * add `status:done` (a separate best-effort edit), both routed through the
+ * injected ghRun boundary and pinned to the kaizen repo. Conservative: acts ONLY
+ * when an in-progress label is actually present — issues closed as
+ * not-planned/duplicate with no status label are left untouched (never blindly
+ * stamped `status:done`).
  */
 export function reconcileClosedIssueStatusLabels(
   prBody: string,
