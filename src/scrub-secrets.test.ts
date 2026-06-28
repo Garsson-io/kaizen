@@ -74,8 +74,12 @@ describe('scrubSecrets', () => {
     expect(redactions).toBe(0);
   });
 
-  it('is idempotent on the text', () => {
-    const input = 'A=sk-ant-deadbeefdeadbeef0000 B ghp_0123456789abcdefABCDEF0123456789abcd';
+  it('is idempotent on the text (incl. URL userinfo + KV-with-spaces)', () => {
+    const input = [
+      'A=sk-ant-deadbeefdeadbeef0000 B ghp_0123456789abcdefABCDEF0123456789abcd',
+      'DB=postgres://admin:s3cr3tpassword@db.host:5432/app',
+      'PASSWORD=my secret pass phrase',
+    ].join('\n');
     const once = scrubSecrets(input).text;
     const twice = scrubSecrets(once).text;
     expect(twice).toBe(once);
