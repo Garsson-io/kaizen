@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseYamlFrontmatter, readYamlFrontmatter } from './frontmatter.js';
+import { parseYamlFrontmatter, readYamlFrontmatter, stripYamlFrontmatter } from './frontmatter.js';
 
 describe('parseYamlFrontmatter', () => {
   it('returns null when markdown has no leading YAML frontmatter', () => {
@@ -29,5 +29,15 @@ describe('parseYamlFrontmatter', () => {
     const parsed = readYamlFrontmatter('---\r\nname: sentinel\r\napplies_to: both\r\n---\r\nBody');
 
     expect(parsed).toEqual({ name: 'sentinel', applies_to: 'both' });
+  });
+
+  it('strips YAML frontmatter and returns the markdown body', () => {
+    const body = stripYamlFrontmatter('---\r\nname: prompt\r\n---\r\nBody\r\n');
+
+    expect(body).toBe('Body\r\n');
+  });
+
+  it('leaves markdown without frontmatter unchanged', () => {
+    expect(stripYamlFrontmatter('# Heading\n\nBody')).toBe('# Heading\n\nBody');
   });
 });
