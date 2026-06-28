@@ -118,6 +118,20 @@ describe('git runner invariant', () => {
   });
 });
 
+describe('branch helper source invariant', () => {
+  it('routes default current branch lookup through currentHookBranch with empty fallback', () => {
+    const source = readFileSync(
+      new URL('./enforce-plan-stored.ts', import.meta.url),
+      'utf-8',
+    );
+
+    expect(source).toContain('currentHookBranch');
+    expect(source).toContain("from './lib/current-branch.js'");
+    expect(source).toContain("fallback: ''");
+    expect(source).not.toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD']");
+  });
+});
+
 
 // ── Gate 1: Edit/Write ──────────────────────────────────────────────
 
