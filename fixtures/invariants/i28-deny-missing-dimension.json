@@ -1,0 +1,25 @@
+[
+  {
+    "type": "system",
+    "subtype": "hook_started",
+    "hook_id": "I28-post-01",
+    "hook_name": "PostToolUse:Bash",
+    "hook_event": "PostToolUse",
+    "uuid": "uuid-start",
+    "session_id": "fixture-session"
+  },
+  {
+    "type": "system",
+    "subtype": "hook_response",
+    "hook_id": "I28-post-01",
+    "hook_name": "PostToolUse:Bash",
+    "hook_event": "PostToolUse",
+    "output": "---\nhook: pr-review-loop\ntype: gate-set\ngate: needs_review\npr: https://github.com/Garsson-io/kaizen/pull/1038\nround: 1\nreason: missing_review_dimensions\n---\n\n📋 REVIEW ROUND 1/4\n⚠️ missing review dimension: plan-completeness.\nRun `/kaizen-review-pr https://github.com/Garsson-io/kaizen/pull/1038` and store findings for every listed dimension before clearing the gate.\n",
+    "stdout": "",
+    "stderr": "",
+    "exit_code": 0,
+    "outcome": "success",
+    "uuid": "uuid-resp",
+    "session_id": "fixture-session"
+  }
+]

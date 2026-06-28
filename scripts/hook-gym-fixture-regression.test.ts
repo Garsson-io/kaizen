@@ -28,6 +28,8 @@ describe('invariant fixture regression', () => {
     { fixture: 'i1-deny-missing-closes.json', scenario: 'invariant-i1-deny-missing-closes' },
     { fixture: 'i3-deny-no-testplan.json', scenario: 'invariant-i3-deny-no-testplan' },
     { fixture: 'i8-deny-no-plan.json', scenario: 'invariant-i8-deny-no-plan' },
+    { fixture: 'i27-deny-untracked-deferral.json', scenario: 'invariant-i27-deny-untracked-deferral' },
+    { fixture: 'i28-deny-missing-dimension.json', scenario: 'invariant-i28-deny-missing-dimension' },
     { fixture: 'i26-deny-branch-from-feature.json', scenario: 'invariant-i26-deny-branch-from-feature' },
   ];
 
