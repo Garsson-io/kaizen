@@ -89,12 +89,16 @@ function ghPrCreate(body: string): string {
   return `gh pr create --title "feat: test" --body "$(cat <<'EOF'\n${body}\nEOF\n)"`;
 }
 
-function ghPrCreateWithBodyFile(body: string): { command: string; cleanup: () => void } {
+function ghPrCreateWithBodyFile(
+  body: string,
+  options: { equalsForm?: boolean } = {},
+): { command: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'kaizen-pr-body-'));
   const path = join(dir, 'body.md');
   writeFileSync(path, body);
+  const bodyFileFlag = options.equalsForm ? '--body-file=body.md' : '--body-file "body.md"';
   return {
-    command: `gh pr create --title "feat: test" --body-file "${path}"`,
+    command: `cd "${dir}" && gh pr create --title "feat: test" ${bodyFileFlag}`,
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -381,6 +385,17 @@ describe('checkPlanBeforePr', () => {
     }
   });
 
+  it('allows populated Impact proof supplied through --body-file=path', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`, {
+      equalsForm: true,
+    });
+    try {
+      expect(checkPlanBeforePr(command, makeDeps()).allowed).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('extracts the issue link from --body-file when no issue is declared', () => {
     const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`);
     try {
@@ -400,6 +415,12 @@ describe('checkPlanBeforePr', () => {
     } finally {
       cleanup();
     }
+  });
+
+  it('DENIES unsafe body-file paths outside the command cwd', () => {
+    const result = checkPlanBeforePr('gh pr create --title "feat: test" --body-file /dev/zero', makeDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('impact-proof');
   });
 
   it('allows non-pr-create commands', () => {

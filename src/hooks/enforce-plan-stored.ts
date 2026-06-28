@@ -15,11 +15,12 @@
  * Part of kaizen #1055.
  */
 
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, realpathSync, readFileSync, statSync } from 'node:fs';
+import { isAbsolute, resolve, relative } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { currentHookBranch } from './lib/current-branch.js';
 import { gitStdout } from './lib/git-state.js';
-import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-command.js';
+import { isGhPrCommand, stripHeredocBody, extractRepoFlag, extractCdTarget } from './parse-command.js';
 import { CaseSystem } from '../case-system.js';
 import { extractCaseIssueFromBranch } from './lib/case-branch.js';
 import { queryIssueState, type IssueState } from '../lib/github-pr.js';
@@ -213,6 +214,7 @@ const IMPACT_FIELDS: ImpactField[] = [
 ];
 
 const PLACEHOLDER_VALUE = /^(?:tbd|todo|pending|placeholder|n\/a|na|<[^>]+>|\.\.\.)$/i;
+const MAX_PR_BODY_FILE_BYTES = 128 * 1024;
 
 export function checkImpactProofSubstance(prBodyText: string): string[] {
   const section = parseSections(prBodyText).find(s => /^Impact\b/i.test(s.name))?.content ?? null;
@@ -232,8 +234,13 @@ export function checkImpactProofSubstance(prBodyText: string): string[] {
 }
 
 function extractBodyFilePath(cmdLine: string): string | null {
-  const match = cmdLine.match(/(?:--body-file|-F)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  const match = cmdLine.match(/(?:--body-file(?:=|\s+)|-F\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/);
   return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+}
+
+function isWithinDirectory(path: string, directory: string): boolean {
+  const rel = relative(directory, path);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
 }
 
 function readPrBodyText(fullCommand: string, cmdLine: string): string {
@@ -241,7 +248,15 @@ function readPrBodyText(fullCommand: string, cmdLine: string): string {
   if (!bodyFile || bodyFile === '-') return fullCommand;
 
   try {
-    return readFileSync(bodyFile, 'utf-8');
+    const cdTarget = extractCdTarget(cmdLine);
+    const effectiveCwd = realpathSync(cdTarget ? resolve(process.cwd(), cdTarget) : process.cwd());
+    const requestedPath = isAbsolute(bodyFile) ? bodyFile : resolve(effectiveCwd, bodyFile);
+    const realPath = realpathSync(requestedPath);
+    if (!isWithinDirectory(realPath, effectiveCwd)) return fullCommand;
+
+    const stats = statSync(realPath);
+    if (!stats.isFile() || stats.size > MAX_PR_BODY_FILE_BYTES) return fullCommand;
+    return readFileSync(realPath, 'utf-8');
   } catch {
     // Fall back to the raw command so the caller fails closed with the normal
     // missing-impact guidance instead of making file IO errors a new hook mode.

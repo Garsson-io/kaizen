@@ -27,7 +27,8 @@ function loadSkill(name: string): string {
  * Run claude -p with the local plugin dir loaded.
  * Returns the text result or throws on error (including non-zero exit).
  */
-function runSkill(prompt: string, opts: { maxBudget?: number; timeout?: number } = {}): string {
+function runSkill(prompt: string, opts: { maxBudget?: number; timeout?: number; artifactName?: string } = {}): string {
+  const startedAt = Date.now();
   const proc = spawnSync(
     "claude",
     [
@@ -47,27 +48,58 @@ function runSkill(prompt: string, opts: { maxBudget?: number; timeout?: number }
       env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "cli" },
     },
   );
+  const durationMs = Date.now() - startedAt;
+
+  const rawDir = resolve(KAIZEN_ROOT, "artifacts", "skill-smoke");
+  mkdirSync(rawDir, { recursive: true });
+  const artifactBase = (opts.artifactName ?? `skill-run-${startedAt}`)
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const rawPath = resolve(rawDir, `${artifactBase || "skill-run"}.json`);
+  const rawStdout = proc.stdout ?? "";
+  const rawStderr = proc.stderr ?? "";
+  let costUsd: number | null = null;
+  try {
+    const parsed = JSON.parse(rawStdout);
+    costUsd = typeof parsed.total_cost_usd === "number" ? parsed.total_cost_usd : null;
+  } catch {
+    costUsd = null;
+  }
+  writeFileSync(
+    rawPath,
+    JSON.stringify({
+      command: "claude -p",
+      model: "claude-haiku-4-5-20251001",
+      durationMs,
+      costUsd,
+      status: proc.status,
+      signal: proc.signal,
+      stdout: rawStdout,
+      stderr: rawStderr,
+    }, null, 2),
+    "utf-8",
+  );
 
   // System-level spawn failure (e.g., claude not on PATH)
-  if (proc.error) throw new Error(`claude spawn error: ${proc.error.message}`);
+  if (proc.error) throw new Error(`claude spawn error: ${proc.error.message}; raw output: ${rawPath}`);
 
   // Non-zero exit: API error, auth failure, budget exceeded, etc.
   if (proc.status !== 0) {
-    throw new Error(`claude exited ${proc.status}:\nstdout: ${(proc.stdout ?? "").slice(0, 400)}\nstderr: ${(proc.stderr ?? "").slice(0, 400)}`);
+    throw new Error(`claude exited ${proc.status}; raw output: ${rawPath}`);
   }
 
-  const raw = (proc.stdout ?? "").trim();
-  if (!raw) throw new Error("claude produced empty output (possible timeout or silent crash)");
+  const raw = rawStdout.trim();
+  if (!raw) throw new Error(`claude produced empty output (possible timeout or silent crash); raw output: ${rawPath}`);
 
   let parsed: { result?: string; is_error?: boolean };
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error(`claude output not JSON:\nstdout: ${raw.slice(0, 800)}\nstderr: ${(proc.stderr ?? "").slice(0, 400)}`);
+    throw new Error(`claude output not JSON; raw output: ${rawPath}`);
   }
 
-  if (parsed.is_error) throw new Error(`claude returned error: ${(proc.stdout ?? "").slice(0, 500)}`);
-  if (!parsed.result) throw new Error(`claude returned empty result: ${(proc.stdout ?? "").slice(0, 300)}`);
+  if (parsed.is_error) throw new Error(`claude returned error; raw output: ${rawPath}`);
+  if (!parsed.result) throw new Error(`claude returned empty result; raw output: ${rawPath}`);
   return parsed.result;
 }
 
@@ -385,12 +417,24 @@ describe("kaizen workflow — Impact proof discipline (#1505)", () => {
         "Return only the Impact Baseline block with fields for Goal, Acceptance signal, BEFORE, AFTER capture method, and Residual scan.",
       ].join("\n");
 
-      const output = runSkill(prompt, { maxBudget: 0.10, timeout: 90_000 });
+      const output = runSkill(prompt, {
+        maxBudget: 0.10,
+        timeout: 90_000,
+        artifactName: "impact-baseline-live-smoke",
+      });
       expect(output).toMatch(/Impact Baseline/i);
       expect(output).toMatch(/Acceptance signal/i);
       expect(output).toMatch(/BEFORE/i);
     },
   );
+
+  it("live skill smoke harness persists raw output checkpoints", () => {
+    const source = readFileSync(new URL("./skill-change.test.ts", import.meta.url), "utf-8");
+    expect(source).toContain("artifacts\", \"skill-smoke");
+    expect(source).toContain("durationMs");
+    expect(source).toContain("costUsd");
+    expect(source).toContain("raw output:");
+  });
 });
 
 // ---------------------------------------------------------------------------
