@@ -79,6 +79,7 @@ function simulatePush(diffLines: number) {
       branch: BRANCH,
       checkShaExists: () => true,
       computeDiffLines: () => diffLines,
+      isMergeFromMainPush: () => false,
     },
   );
 }
