@@ -37,6 +37,7 @@ import {
   type ReviewProvider,
 } from '../src/review-battery.js';
 import { addSection, writeAttachment } from '../src/section-editor.js';
+import { parseJsonLines } from '../src/lib/json-lines.js';
 import { ghExec } from './auto-dent-github.js';
 import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
 import {
@@ -59,6 +60,13 @@ export interface StreamJsonResult {
   output: string;
 }
 
+interface StreamJsonMessage {
+  type?: unknown;
+  subtype?: unknown;
+  total_cost_usd?: number;
+  result?: string;
+}
+
 /**
  * Parse a stream-json JSONL log (--output-format stream-json --verbose).
  * Scans for the final message with type === "result" and extracts
@@ -69,19 +77,16 @@ export interface StreamJsonResult {
  */
 export function parseStreamJsonResult(stdout: string): StreamJsonResult {
   if (!stdout.trim()) return { found: false, success: false, costUsd: 0, output: '' };
-  for (const line of stdout.trim().split('\n').reverse()) {
-    try {
-      const msg = JSON.parse(line.trim());
-      if (msg.type === 'result') {
-        return {
-          found: true,
-          success: msg.subtype !== 'error_during_generation',
-          // total_cost_usd is a top-level field on the result message (not nested in usage)
-          costUsd: msg.total_cost_usd ?? 0,
-          output: msg.result ?? '',
-        };
-      }
-    } catch { continue; }
+  for (const msg of parseJsonLines<StreamJsonMessage>(stdout).reverse()) {
+    if (msg.type === 'result') {
+      return {
+        found: true,
+        success: msg.subtype !== 'error_during_generation',
+        // total_cost_usd is a top-level field on the result message (not nested in usage)
+        costUsd: msg.total_cost_usd ?? 0,
+        output: msg.result ?? '',
+      };
+    }
   }
   return { found: false, success: false, costUsd: 0, output: '' };
 }

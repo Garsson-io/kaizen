@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync as spawnRaw } from 'node:child_process';
@@ -116,6 +116,18 @@ describe('parseStreamJsonResult', () => {
     const r = parseStreamJsonResult(log);
     expect(r.found).toBe(true);
     expect(r.costUsd).toBeCloseTo(0.09);
+  });
+
+  it('delegates JSONL row parsing to the shared helper', () => {
+    const source = readFileSync(new URL('./review-fix.ts', import.meta.url), 'utf8');
+    const functionBody = source.slice(
+      source.indexOf('export function parseStreamJsonResult'),
+      source.indexOf('// ── Fix-running phase handler'),
+    );
+
+    expect(functionBody).toContain('parseJsonLines');
+    expect(functionBody).not.toContain('JSON.parse(line.trim())');
+    expect(functionBody).not.toContain(".split('\\n')");
   });
 });
 
