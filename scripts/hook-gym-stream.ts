@@ -16,6 +16,7 @@ import type {
   HookTimeline,
 } from './hook-gym-schema.js';
 import { parseGateSignal } from '../src/hooks/lib/gate-signal.js';
+import { parseJsonLines } from '../src/lib/json-lines.js';
 
 // ── Gate detection patterns ────────────────────────────────────────
 
@@ -290,15 +291,8 @@ export function createHookStreamProcessor() {
  */
 export function parseLogFile(logContent: string): HookTimeline {
   const processor = createHookStreamProcessor();
-  for (const line of logContent.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const msg = JSON.parse(trimmed);
-      processor.process(msg);
-    } catch {
-      // Skip non-JSON lines
-    }
+  for (const msg of parseJsonLines<Record<string, any>>(logContent)) {
+    processor.process(msg);
   }
   return processor.getTimeline();
 }
