@@ -191,6 +191,18 @@ describe('buildPrompt', () => {
   });
 });
 
+describe('closeBatchProgressIssue maintenance wiring', () => {
+  it('runs backlog-health maintenance during batch finalize', () => {
+    const closeSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
+    );
+
+    expect(closeSection).toContain('runBacklogHealthMaintenance');
+    expect(closeSection).toContain('[backlog-health]');
+  });
+});
+
 describe('buildTemplateVars', () => {
   it('builds all expected template variables', () => {
     const state = makeBatchState({

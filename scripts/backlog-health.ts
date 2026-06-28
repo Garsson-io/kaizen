@@ -24,6 +24,8 @@
 
 import { gh } from '../src/lib/gh-exec.js';
 
+type GhRunner = (args: string[], timeoutMs?: number) => string;
+
 // Types
 
 export interface OpenIssue {
@@ -325,8 +327,8 @@ function warnIfTruncated(label: string, count: number): void {
   }
 }
 
-export function fetchOpenIssues(repo: string): OpenIssue[] {
-  const raw = gh(
+export function fetchOpenIssues(repo: string, ghRun: GhRunner = gh): OpenIssue[] {
+  const raw = ghRun(
     ['issue', 'list', '--repo', repo, '--state', 'open', '--limit', String(FETCH_LIMIT),
       '--json', 'number,title,createdAt,updatedAt,labels'],
     60_000,
@@ -338,14 +340,14 @@ export function fetchOpenIssues(repo: string): OpenIssue[] {
     title: i.title,
     createdAt: i.createdAt,
     updatedAt: i.updatedAt,
-    body: i.labels.some((label) => label.name === 'epic') ? fetchIssueBody(repo, i.number) : '',
+    body: i.labels.some((label) => label.name === 'epic') ? fetchIssueBody(repo, i.number, ghRun) : '',
     labels: i.labels.map((l) => l.name),
   }));
 }
 
-export function fetchIssueBody(repo: string, number: number): string {
+export function fetchIssueBody(repo: string, number: number, ghRun: GhRunner = gh): string {
   try {
-    const raw = gh(['issue', 'view', String(number), '--repo', repo, '--json', 'body'], 30_000);
+    const raw = ghRun(['issue', 'view', String(number), '--repo', repo, '--json', 'body'], 30_000);
     const issue: GhIssueBody = JSON.parse(raw);
     return issue.body ?? '';
   } catch {
@@ -353,9 +355,14 @@ export function fetchIssueBody(repo: string, number: number): string {
   }
 }
 
-export function fetchCreatedInWindow(repo: string, windowDays: number, now: Date): CreatedIssue[] {
+export function fetchCreatedInWindow(
+  repo: string,
+  windowDays: number,
+  now: Date,
+  ghRun: GhRunner = gh,
+): CreatedIssue[] {
   const since = windowSince(windowDays, now);
-  const raw = gh(
+  const raw = ghRun(
     ['issue', 'list', '--repo', repo, '--state', 'all', '--limit', String(FETCH_LIMIT),
       '--search', `created:>=${since}`, '--json', 'number,createdAt'],
     60_000,
@@ -365,9 +372,14 @@ export function fetchCreatedInWindow(repo: string, windowDays: number, now: Date
   return issues.map((i) => ({ number: i.number, createdAt: i.createdAt }));
 }
 
-export function fetchClosedInWindow(repo: string, windowDays: number, now: Date): ClosedIssue[] {
+export function fetchClosedInWindow(
+  repo: string,
+  windowDays: number,
+  now: Date,
+  ghRun: GhRunner = gh,
+): ClosedIssue[] {
   const since = windowSince(windowDays, now);
-  const raw = gh(
+  const raw = ghRun(
     ['issue', 'list', '--repo', repo, '--state', 'closed', '--limit', String(FETCH_LIMIT),
       '--search', `closed:>=${since}`, '--json', 'number,closedAt'],
     60_000,
@@ -390,10 +402,7 @@ export function formatReport(report: BacklogHealthReport, verdict: HealthVerdict
   lines.push(
     `  inactivity: >30d ${report.age.stale30}  >60d ${report.age.stale60}  >90d ${report.age.stale90}`,
   );
-  const horizons = Object.entries(report.horizon.byHorizon)
-    .sort((a, b) => b[1] - a[1])
-    .map(([h, n]) => `${h}=${n}`)
-    .join('  ');
+  const horizons = formatHorizonCounts(report.horizon, { separator: '  ' });
   lines.push(`  horizons (${report.horizon.distinctHorizons} distinct, ${report.horizon.noHorizon} unlabeled): ${horizons || '(none)'}`);
   lines.push(
     `  epic progress: ${report.epicProgress.healthy}/${report.epicProgress.total} healthy  ` +
@@ -408,6 +417,100 @@ export function formatReport(report: BacklogHealthReport, verdict: HealthVerdict
     );
   }
   return lines.join('\n');
+}
+
+function formatHorizonCounts(
+  horizon: HorizonCoverage,
+  opts: { separator: string; limit?: number },
+): string {
+  return Object.entries(horizon.byHorizon)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, opts.limit)
+    .map(([h, n]) => `${h}=${n}`)
+    .join(opts.separator);
+}
+
+export function formatBacklogHealthSection(report: BacklogHealthReport, verdict: HealthVerdict): string {
+  const horizons = formatHorizonCounts(report.horizon, { separator: ', ', limit: 5 });
+  const epic = report.epicProgress;
+  return [
+    '### Backlog Health',
+    '',
+    '| Metric | Value |',
+    '|--------|-------|',
+    `| **Verdict** | ${verdict.toUpperCase()} |`,
+    `| **Open issues** | ${report.totalOpen} |`,
+    `| **Creation/closure** | ${report.ratio.created} created / ${report.ratio.closed} closed = ${report.ratio.ratio.toFixed(2)}:1 |`,
+    `| **Inactivity** | >30d ${report.age.stale30} · >60d ${report.age.stale60} · >90d ${report.age.stale90} |`,
+    `| **Horizons** | ${report.horizon.distinctHorizons} distinct, ${report.horizon.noHorizon} unlabeled${horizons ? ` · ${horizons}` : ''} |`,
+    `| **Epic pressure** | ${epic.healthy}/${epic.total} healthy · decompose ${epic.needsDecomposition} · replan ${epic.needsReplan} · terminal-decision ${epic.needsTerminalDecision} |`,
+  ].join('\n');
+}
+
+export interface BacklogHealthMaintenanceResult {
+  report: BacklogHealthReport | null;
+  verdict: HealthVerdict | null;
+  section: string;
+  commentPosted: boolean;
+}
+
+export interface BacklogHealthMaintenanceDeps {
+  repo: string;
+  progressIssue?: string;
+  windowDays?: number;
+  now?: Date;
+  gh?: GhRunner;
+  fetchOpenIssues?: (repo: string) => OpenIssue[];
+  fetchCreatedInWindow?: (repo: string, windowDays: number, now: Date) => CreatedIssue[];
+  fetchClosedInWindow?: (repo: string, windowDays: number, now: Date) => ClosedIssue[];
+  log?: (message: string) => void;
+  err?: (message: string) => void;
+}
+
+export function runBacklogHealthMaintenance(
+  deps: BacklogHealthMaintenanceDeps,
+): BacklogHealthMaintenanceResult {
+  const err = deps.err ?? (() => {});
+  const log = deps.log ?? (() => {});
+  const ghRun = deps.gh ?? gh;
+  const now = deps.now ?? new Date();
+  const windowDays = deps.windowDays ?? 30;
+
+  let report: BacklogHealthReport;
+  let verdict: HealthVerdict;
+  let section: string;
+  try {
+    const open = (deps.fetchOpenIssues ?? ((repo) => fetchOpenIssues(repo, ghRun)))(deps.repo);
+    const created = (deps.fetchCreatedInWindow ?? ((repo, window, at) => fetchCreatedInWindow(repo, window, at, ghRun)))(
+      deps.repo,
+      windowDays,
+      now,
+    );
+    const closed = (deps.fetchClosedInWindow ?? ((repo, window, at) => fetchClosedInWindow(repo, window, at, ghRun)))(
+      deps.repo,
+      windowDays,
+      now,
+    );
+    report = buildBacklogHealthReport(open, created, closed, now, windowDays, deps.repo);
+    verdict = classifyBacklogHealth(report);
+    section = formatBacklogHealthSection(report, verdict);
+  } catch (e) {
+    err(`backlog-health scan failed: ${(e as Error).message}`);
+    return { report: null, verdict: null, section: '', commentPosted: false };
+  }
+
+  let commentPosted = false;
+  if (deps.progressIssue) {
+    try {
+      ghRun(['issue', 'comment', deps.progressIssue, '--repo', deps.repo, '--body', section]);
+      commentPosted = true;
+      log(`posted backlog-health report to #${deps.progressIssue}`);
+    } catch (e) {
+      err(`failed to post backlog-health report: ${(e as Error).message}`);
+    }
+  }
+
+  return { report, verdict, section, commentPosted };
 }
 
 // CLI

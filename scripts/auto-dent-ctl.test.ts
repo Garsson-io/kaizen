@@ -27,6 +27,7 @@ import {
   type WatchdogResult,
   type AggregateBatchRecord,
 } from './auto-dent-ctl.js';
+import type { DrySweepReport } from './auto-dent-dry-sweep.js';
 import type { RunMetrics } from './auto-dent-run.js';
 import { makeBatchState } from './auto-dent-test-utils.js';
 
@@ -645,6 +646,57 @@ describe('buildBatchReflection', () => {
     const reflection = buildBatchReflection(batch);
     const stopInsight = reflection.insights.find((i) => i.message.includes('stop signals'));
     expect(stopInsight).toBeDefined();
+  });
+
+  it('surfaces dry-sweep findings as advisory reflection insight', () => {
+    const drySweepReport: DrySweepReport = {
+      generatedAt: '2026-06-29T00:00:00.000Z',
+      repo: 'Garsson-io/kaizen',
+      recentPrLimit: 20,
+      candidates: [
+        {
+          kind: 'progress_comments',
+          summary: 'Direct progress comments compete with marker attachments',
+          confidence: 85,
+          evidence: [
+            { path: 'scripts/auto-dent-run.ts', line: 10, symbol: 'gh issue comment', detail: 'direct comment' },
+            { path: 'src/section-editor.ts', line: 338, symbol: 'writeAttachment', detail: 'shared attachment primitive' },
+          ],
+          files: ['scripts/auto-dent-run.ts', 'src/section-editor.ts'],
+          recentPrs: [
+            {
+              number: 100,
+              title: 'refactor(auto-dent): progress comments',
+              mergedAt: '2026-06-28T10:00:00Z',
+              changedFiles: ['scripts/auto-dent-run.ts'],
+              url: 'https://github.com/Garsson-io/kaizen/pull/100',
+            },
+          ],
+          suggestedUnificationTarget: 'src/section-editor.ts writeAttachment',
+        },
+      ],
+    };
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        run_history: [
+          makeRunMetrics({ run: 1, prs: ['https://github.com/Garsson-io/kaizen/pull/1'] }),
+          makeRunMetrics({ run: 2, prs: ['https://github.com/Garsson-io/kaizen/pull/2'] }),
+          makeRunMetrics({ run: 3, prs: ['https://github.com/Garsson-io/kaizen/pull/3'] }),
+        ],
+      }),
+    });
+
+    const reflection = buildBatchReflection(batch, { drySweepReport });
+
+    expect(reflection.insights).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'recommendation',
+        message: expect.stringContaining('DRY sweep found 1 candidate'),
+      }),
+    ]));
+    expect(formatBatchReflection(reflection)).toContain('progress_comments');
+    expect(formatBatchReflectionComment(reflection)).toContain('DRY sweep found 1 candidate');
   });
 
   it('builds run history table', () => {

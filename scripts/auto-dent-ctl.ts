@@ -8,6 +8,7 @@
  *   score [batch-id]    Score batches — efficiency, success rate, cost-per-PR, hook activation health
  *   score --post-hoc    Include live merge status checks
  *   cleanup [batch-id]  Close superseded PRs whose issues are already resolved from GitHub
+ *   dry-sweep [--repo R]  Cross-PR DRY/refactor/simplify drift scan (#1164)
  *   reflect [batch-id]  Cross-run pattern analysis (#551)
  *   reflect --post [batch-id]  Post reflection summary to progress issue (#571)
  *   watchdog [--threshold N]  Check active batches for stale heartbeats, halt if stuck
@@ -16,6 +17,7 @@
  *   npx tsx scripts/auto-dent-ctl.ts status
  *   npx tsx scripts/auto-dent-ctl.ts halt
  *   npx tsx scripts/auto-dent-ctl.ts halt batch-260321-0136-a1b2
+ *   npx tsx scripts/auto-dent-ctl.ts dry-sweep --repo Garsson-io/kaizen
  *   npx tsx scripts/auto-dent-ctl.ts watchdog --threshold 600
  */
 
@@ -43,6 +45,13 @@ import {
 import { truncateDisplay } from './auto-dent-display.js';
 import { appendJsonLine, parseJsonLines } from '../src/lib/json-lines.js';
 import { readJsonValueFile, writeJsonValueFile } from '../src/lib/json-file.js';
+import { writeAttachment } from '../src/section-editor.js';
+import {
+  buildDrySweepReport,
+  formatDrySweepReport,
+  summarizeDrySweepReport,
+  type DrySweepReport,
+} from './auto-dent-dry-sweep.js';
 
 function getRepoRoot(): string {
   try {
@@ -388,11 +397,18 @@ export interface BatchReflection {
   runHistoryTable: string;
 }
 
+export interface BuildBatchReflectionOptions {
+  drySweepReport?: DrySweepReport | null;
+}
+
 /**
  * Build a batch reflection from state data.
  * Analyzes run history to find patterns, efficiency anomalies, and recommendations.
  */
-export function buildBatchReflection(batch: BatchInfo): BatchReflection {
+export function buildBatchReflection(
+  batch: BatchInfo,
+  opts: BuildBatchReflectionOptions = {},
+): BatchReflection {
   const s = batch.state;
   const history = s.run_history || [];
   const insights: ReflectionInsight[] = [];
@@ -507,6 +523,13 @@ export function buildBatchReflection(batch: BatchInfo): BatchReflection {
         message: `Expensive: $${avgCostPerPr.toFixed(2)}/PR is above the $3.00 threshold — consider simpler issues`,
       });
     }
+  }
+
+  if (opts.drySweepReport && opts.drySweepReport.candidates.length > 0) {
+    insights.push({
+      type: 'recommendation',
+      message: summarizeDrySweepReport(opts.drySweepReport),
+    });
   }
 
   // Build run history table
@@ -998,6 +1021,7 @@ Usage:
   auto-dent-ctl.ts score [batch-id]    Score batch(es) — efficiency, success rate, cost
   auto-dent-ctl.ts score --post-hoc [batch-id]  Include live PR merge status checks
   auto-dent-ctl.ts cleanup [batch-id]  Close superseded PRs whose issues are already resolved
+  auto-dent-ctl.ts dry-sweep [--repo R] [--limit N] [--json] [--post ISSUE]  Cross-PR DRY drift scan
   auto-dent-ctl.ts reflect [batch-id]  Cross-run pattern analysis and learning (#551)
   auto-dent-ctl.ts reflect --post [batch-id]  Post reflection summary to progress issue (#571)
   auto-dent-ctl.ts reflect --prompt [batch-id]  Output rendered prompt for Claude reflection
@@ -1161,6 +1185,40 @@ Cross-batch learning (#586):
       break;
     }
 
+    case 'dry-sweep': {
+      const repoIdx = args.indexOf('--repo');
+      const limitIdx = args.indexOf('--limit');
+      const postIdx = args.indexOf('--post');
+      const repo = resolveKaizenRepo(repoIdx >= 0 ? args[repoIdx + 1] : undefined, logsDir);
+      const limit = limitIdx >= 0 && args[limitIdx + 1] ? parseInt(args[limitIdx + 1], 10) : 20;
+      const report = buildDrySweepReport({
+        root: getRepoRoot(),
+        repo: repo || undefined,
+        recentPrLimit: Number.isFinite(limit) ? limit : 20,
+      });
+
+      if (args.includes('--json')) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(formatDrySweepReport(report));
+      }
+
+      if (postIdx >= 0) {
+        const issue = args[postIdx + 1];
+        if (!issue || !repo) {
+          console.error('Usage: auto-dent-ctl.ts dry-sweep --post ISSUE --repo owner/repo');
+          process.exit(1);
+        }
+        const url = writeAttachment(
+          { kind: 'issue', number: issue.replace(/^#/, ''), repo },
+          'auto-dent/dry-sweep',
+          formatDrySweepReport(report),
+        );
+        console.log(`Posted dry-sweep attachment: ${url}`);
+      }
+      break;
+    }
+
     case 'watchdog': {
       const thresholdIdx = args.indexOf('--threshold');
       const threshold = thresholdIdx >= 0 && args[thresholdIdx + 1]
@@ -1216,7 +1274,13 @@ Cross-batch learning (#586):
           continue;
         }
 
-        const reflection = buildBatchReflection(batch);
+        const repo = batch.state.kaizen_repo || batch.state.host_repo || resolveKaizenRepo(undefined, logsDir);
+        const drySweepReport = buildDrySweepReport({
+          root: getRepoRoot(),
+          repo: repo || undefined,
+          recentPrLimit: 20,
+        });
+        const reflection = buildBatchReflection(batch, { drySweepReport });
 
         if (showPrompt) {
           const vars = buildReflectionTemplateVars(reflection, batch.state);
