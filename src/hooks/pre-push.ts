@@ -25,12 +25,13 @@
  *   I-F: --force-with-lease push option → allow even on merged branch
  */
 
-import { appendFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_STATE_DIR, ensureStateDir, prUrlToStateKey, readStateFile, writeStateFile } from './state-utils.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
 import { queryBranchPrState, type BranchPrQueryResult } from '../lib/github-pr.js';
+import { traceHookEvent, type HookTraceOptions } from './hook-io.js';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -71,9 +72,8 @@ export interface PrePushDecision {
 /** Branch PR-state query result used by the pre-push decision. */
 export type PrQueryResult = BranchPrQueryResult;
 
-export interface PrePushOptions {
+export interface PrePushOptions extends HookTraceOptions {
   stateDir?: string;
-  traceFile?: string;
   queryPrState?: (repo: string, branch: string) => PrQueryResult;
   now?: () => number;
 }
@@ -242,38 +242,18 @@ export function defaultQueryPrState(repo: string, branch: string): PrQueryResult
   return queryBranchPrState({ repo, branch });
 }
 
-// ── Trace ─────────────────────────────────────────────────────────────
-
-function getTraceFile(options: PrePushOptions): string {
-  return options.traceFile ?? process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
-}
-
-function isTraceEnabled(): boolean {
-  return process.env.KAIZEN_HOOK_TRACE !== '0';
-}
-
 export function trace(
   decision: PrePushDecision,
   envDetection: { detected: boolean; vars: string[] },
   options: PrePushOptions = {},
 ): void {
-  if (!isTraceEnabled()) return;
-  try {
-    appendFileSync(
-      getTraceFile(options),
-      JSON.stringify({
-        ts: new Date().toISOString(),
-        hook: 'pre-push',
-        agent_detected: envDetection.detected,
-        env_vars_seen: envDetection.vars,
-        action: decision.action,
-        reason: decision.reason,
-        ...(decision.context ?? {}),
-      }) + '\n',
-    );
-  } catch {
-    /* never fail on trace */
-  }
+  traceHookEvent('pre-push', {
+    agent_detected: envDetection.detected,
+    env_vars_seen: envDetection.vars,
+    action: decision.action,
+    reason: decision.reason,
+    ...(decision.context ?? {}),
+  }, options);
 }
 
 // ── Side-effecting orchestration (idempotent gate write) ──────────────

@@ -40,6 +40,15 @@ describe('state file read helper source invariant', () => {
   });
 });
 
+describe('trace helper source invariant', () => {
+  it('routes trace writes through hook-io traceHookEvent', () => {
+    expect(PRE_PUSH_SOURCE).toContain('traceHookEvent');
+    expect(PRE_PUSH_SOURCE).not.toContain("import { appendFileSync");
+    expect(PRE_PUSH_SOURCE).not.toContain('function getTraceFile');
+    expect(PRE_PUSH_SOURCE).not.toContain('function isTraceEnabled');
+  });
+});
+
 describe('detectAgentEnv', () => {
   it('returns detected=false when no agent vars set (I-A)', () => {
     const result = detectAgentEnv({});

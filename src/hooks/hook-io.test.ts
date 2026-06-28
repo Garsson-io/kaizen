@@ -3,8 +3,10 @@ import { Readable } from 'node:stream';
 import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writeHookOutput, getCurrentBranch, readHookInput, traceNullInput } from './hook-io.js';
+import { writeHookOutput, getCurrentBranch, readHookInput, traceHookEvent, traceNullInput } from './hook-io.js';
 import type { GitExec } from './lib/git-state.js';
+
+const HOOK_IO_SOURCE = readFileSync(new URL('./hook-io.ts', import.meta.url), 'utf-8');
 
 describe('hook-io', () => {
   afterEach(() => {
@@ -241,6 +243,35 @@ describe('hook-io', () => {
         traceNullInput('any-hook');
         // MUST NOT have written any trace file
         expect(existsSync(traceFile)).toBe(false);
+      } finally {
+        if (origTrace !== undefined) process.env.KAIZEN_HOOK_TRACE = origTrace;
+        else delete process.env.KAIZEN_HOOK_TRACE;
+        rmSync(traceDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('traceHookEvent source invariant', () => {
+    it('INVARIANT: exposes shared trace writer with explicit trace-file override support', () => {
+      expect(HOOK_IO_SOURCE).toContain('traceHookEvent');
+      expect(HOOK_IO_SOURCE).toContain('traceFile?: string');
+      expect(HOOK_IO_SOURCE).toContain('options.traceFile');
+    });
+
+    it('INVARIANT: writes to explicit trace file override', () => {
+      const traceDir = mkdtempSync(join(tmpdir(), 'hook-io-override-'));
+      const traceFile = join(traceDir, 'trace.jsonl');
+      const origTrace = process.env.KAIZEN_HOOK_TRACE;
+      delete process.env.KAIZEN_HOOK_TRACE;
+
+      try {
+        traceHookEvent('test-hook', { action: 'observe', reason: 'override_path' }, { traceFile });
+        expect(existsSync(traceFile)).toBe(true);
+        const entry = JSON.parse(readFileSync(traceFile, 'utf8').trim());
+        expect(entry.hook).toBe('test-hook');
+        expect(entry.action).toBe('observe');
+        expect(entry.reason).toBe('override_path');
+        expect(entry.ts).toBeDefined();
       } finally {
         if (origTrace !== undefined) process.env.KAIZEN_HOOK_TRACE = origTrace;
         else delete process.env.KAIZEN_HOOK_TRACE;
