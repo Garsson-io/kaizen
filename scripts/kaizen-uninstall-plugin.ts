@@ -29,6 +29,7 @@ import { join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { readJsonObjectFile, writeJsonObjectFile } from '../src/lib/json-file.js';
+import { KAIZEN_PLUGIN_SOURCE } from '../src/kaizen-plugin-identity.js';
 
 export interface UninstallOpts {
   plugin: string;
@@ -164,7 +165,7 @@ export function runUninstall(opts: UninstallOpts): UninstallResult {
 }
 
 function parseArgv(argv: string[]): UninstallOpts {
-  let plugin = 'kaizen@kaizen';
+  let plugin = KAIZEN_PLUGIN_SOURCE;
   let homeDir = homedir();
   let projectRoot = process.cwd();
   let skipNpmInstall = false;

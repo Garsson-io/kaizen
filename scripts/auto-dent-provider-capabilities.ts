@@ -7,6 +7,7 @@
  */
 
 import { escapeMarkdownTableCell } from './markdown-table.js';
+import type { Provider } from './auto-dent-provider.js';
 
 export const AUTO_DENT_PHASES = [
   'planning',
@@ -18,7 +19,10 @@ export const AUTO_DENT_PHASES = [
 ] as const;
 
 export type AutoDentPhase = typeof AUTO_DENT_PHASES[number];
-export type AgentProvider = 'claude' | 'codex' | 'provider-independent';
+// The provider union has a single definition in auto-dent-provider.ts; this
+// alias keeps the `AgentProvider` name used throughout this module while
+// guaranteeing the two can never drift apart (#843).
+export type AgentProvider = Provider;
 export type BillingMode = 'subscription-cli' | 'local-only' | 'api-token';
 export type PhaseFit = 'best' | 'supported' | 'partial' | 'avoid' | 'not-applicable';
 
