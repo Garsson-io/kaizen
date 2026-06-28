@@ -20,7 +20,7 @@
  * Migration: kaizen #320 (Phase 3 of #223)
  */
 
-import { appendFileSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   buildReviewSentinelRecord,
@@ -314,17 +314,14 @@ export function processHookInput(
     }
 
     const key = prUrlToStateKey(prUrl);
-    const fp = writeStateFile(stateDir, key, {
+    const sha = gitStdout(['rev-parse', 'HEAD']);
+    writeStateFile(stateDir, key, {
       PR_URL: prUrl,
       ROUND: '1',
       STATUS: 'needs_review',
       BRANCH: branch,
+      ...(sha ? { LAST_REVIEWED_SHA: sha, LAST_FULL_REVIEW_SHA: sha } : {}),
     });
-    const sha = gitStdout(['rev-parse', 'HEAD']);
-    if (sha) {
-      appendFileSync(fp, `LAST_REVIEWED_SHA=${sha}\n`);
-      appendFileSync(fp, `LAST_FULL_REVIEW_SHA=${sha}\n`);
-    }
 
     const createMsg = `\n\ud83d\udccb PR created: ${prUrl}\n\nMANDATORY SELF-REVIEW LOOP \u2014 you MUST complete this before proceeding.\nROUND 1/${MAX_ROUNDS}: Start your review now.\n${printChecklist(prUrl, '1', MAX_ROUNDS)}\nTrack your round: "ROUND N/${MAX_ROUNDS}: [reviewing|issues found|clean]"\n`;
     return decide('create_gate', 'pr_created', createMsg, { prUrl },
@@ -382,15 +379,15 @@ export function processHookInput(
     // review-fix push — it must always require a new review round,
     // regardless of size. (Bug found via hook-gym TDD, kaizen #1053.)
     if (found.status !== 'passed' && incrementalLines > 0 && incrementalLines <= SMALL_PUSH_THRESHOLD && cumulativeLines <= CUMULATIVE_CAP) {
-      const fp = writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {
+      const sha = gitStdout(['rev-parse', 'HEAD']);
+      writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {
         PR_URL: found.prUrl,
         ROUND: String(nextRound),
         STATUS: 'passed',
         BRANCH: branch,
+        ...(sha ? { LAST_REVIEWED_SHA: sha } : {}),
+        ...(lastFullReviewSha ? { LAST_FULL_REVIEW_SHA: lastFullReviewSha } : {}),
       });
-      const sha = gitStdout(['rev-parse', 'HEAD']);
-      if (sha) appendFileSync(fp, `LAST_REVIEWED_SHA=${sha}\n`);
-      if (lastFullReviewSha) appendFileSync(fp, `LAST_FULL_REVIEW_SHA=${lastFullReviewSha}\n`);
       return decide('auto_pass', 'small_incremental_and_cumulative',
         `\n\ud83d\udd0d Small push (${incrementalLines} lines, ${cumulativeLines} cumulative) \u2014 abbreviated review (round ${nextRound}/${MAX_ROUNDS}). Auto-passed.\n`,
         diffContext);
@@ -444,17 +441,14 @@ export function processHookInput(
       return decide('needs_review', reason, msg, { prUrl: found.prUrl, round: found.round, sentinelReason: sentinelResult.reason });
     }
 
-    const fp = writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {
+    const sha = gitStdout(['rev-parse', 'HEAD']);
+    writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {
       PR_URL: found.prUrl,
       ROUND: found.round,
       STATUS: 'passed',
       BRANCH: branch,
+      ...(sha ? { LAST_REVIEWED_SHA: sha, LAST_FULL_REVIEW_SHA: sha } : {}),
     });
-    const sha = gitStdout(['rev-parse', 'HEAD']);
-    if (sha) {
-      appendFileSync(fp, `LAST_REVIEWED_SHA=${sha}\n`);
-      appendFileSync(fp, `LAST_FULL_REVIEW_SHA=${sha}\n`);
-    }
 
     const msg = `\n\ud83d\udccb REVIEW ROUND ${found.round}/${MAX_ROUNDS}\n${printChecklist(found.prUrl, found.round, MAX_ROUNDS)}\n\u2705 REVIEW PASSED (round ${found.round}/${MAX_ROUNDS})\n`;
     return decide('review_passed', 'diff_reviewed', msg, { prUrl: found.prUrl, round: found.round },

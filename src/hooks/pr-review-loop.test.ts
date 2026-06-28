@@ -76,6 +76,14 @@ describe('state file read helper source invariant', () => {
   });
 });
 
+describe('state file write helper source invariant', () => {
+  it('routes review SHA metadata writes through writeStateFile', () => {
+    expect(PR_REVIEW_LOOP_SOURCE).toContain('LAST_REVIEWED_SHA');
+    expect(PR_REVIEW_LOOP_SOURCE).toContain('LAST_FULL_REVIEW_SHA');
+    expect(PR_REVIEW_LOOP_SOURCE).not.toContain('appendFileSync(fp,');
+  });
+});
+
 describe('trace helper source invariant', () => {
   it('routes trace writes through hook-io traceHookEvent', () => {
     expect(PR_REVIEW_LOOP_SOURCE).toContain('traceHookEvent');

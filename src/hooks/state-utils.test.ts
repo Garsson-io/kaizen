@@ -94,6 +94,20 @@ describe('serializeStateFile', () => {
     });
     expect(content).toContain('ROUND=2');
   });
+
+  it('includes additional metadata fields after canonical fields', () => {
+    const content = serializeStateFile({
+      PR_URL: 'url',
+      STATUS: 'needs_review',
+      BRANCH: 'main',
+      ROUND: '2',
+      LAST_REVIEWED_SHA: 'abc123',
+      LAST_FULL_REVIEW_SHA: 'def456',
+    });
+
+    expect(content).toContain('LAST_REVIEWED_SHA=abc123');
+    expect(content).toContain('LAST_FULL_REVIEW_SHA=def456');
+  });
 });
 
 describe('writeStateFile', () => {
