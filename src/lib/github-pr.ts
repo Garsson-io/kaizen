@@ -1,4 +1,5 @@
 import { gh as defaultGh } from './gh-exec.js';
+import { parseJsonArray, parseJsonObject } from './json-value.js';
 
 export type GhRunner = (args: string[]) => string;
 
@@ -50,14 +51,9 @@ export function parseGithubPrUrl(prUrl: string | undefined | null): GithubPrUrl 
 }
 
 export function parseFirstPrUrl(output: string): string | undefined {
-  try {
-    const parsed = JSON.parse(output || '[]') as unknown;
-    if (!Array.isArray(parsed)) return undefined;
-    const url = (parsed[0] as { url?: unknown } | undefined)?.url;
-    return typeof url === 'string' && url.length > 0 ? url : undefined;
-  } catch {
-    return undefined;
-  }
+  const parsed = parseJsonArray(output);
+  const url = (parsed[0] as { url?: unknown } | undefined)?.url;
+  return typeof url === 'string' && url.length > 0 ? url : undefined;
 }
 
 function normalizeBranchPrSummary(input: unknown): BranchPrSummary | undefined {
@@ -71,23 +67,17 @@ function normalizeBranchPrSummary(input: unknown): BranchPrSummary | undefined {
 }
 
 export function parseBranchPrQueryResult(output: string): BranchPrQueryResult {
-  try {
-    const parsed = JSON.parse(output || '[]') as unknown;
-    if (!Array.isArray(parsed)) return emptyBranchPrQueryResult();
-    const prs = parsed
-      .map((item) => normalizeBranchPrSummary(item))
-      .filter((item): item is BranchPrSummary => item != null);
-    if (prs.length === 0) return emptyBranchPrQueryResult();
+  const prs = parseJsonArray(output)
+    .map((item) => normalizeBranchPrSummary(item))
+    .filter((item): item is BranchPrSummary => item != null);
+  if (prs.length === 0) return emptyBranchPrQueryResult();
 
-    const open = prs.find((pr) => pr.state === 'OPEN');
-    return {
-      mostRecent: prs[0],
-      hasOpen: open != null,
-      ...(open ? { openUrl: open.url } : {}),
-    };
-  } catch {
-    return emptyBranchPrQueryResult();
-  }
+  const open = prs.find((pr) => pr.state === 'OPEN');
+  return {
+    mostRecent: prs[0],
+    hasOpen: open != null,
+    ...(open ? { openUrl: open.url } : {}),
+  };
 }
 
 export function findOpenPrUrlForBranch(options: FindOpenPrUrlForBranchOptions): string | undefined {
@@ -145,13 +135,9 @@ export function parseIssueNumber(token: string | undefined | null): number | nul
  * "do not block" — never as "closed".
  */
 export function parseIssueState(output: string): IssueState | null {
-  try {
-    const parsed = JSON.parse(output || '{}') as { state?: unknown };
-    const raw = typeof parsed.state === 'string' ? parsed.state.toUpperCase() : null;
-    return raw === 'OPEN' || raw === 'CLOSED' ? raw : null;
-  } catch {
-    return null;
-  }
+  const parsed = parseJsonObject(output);
+  const raw = typeof parsed?.state === 'string' ? parsed.state.toUpperCase() : null;
+  return raw === 'OPEN' || raw === 'CLOSED' ? raw : null;
 }
 
 export interface QueryIssueStateOptions {
