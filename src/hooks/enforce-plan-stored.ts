@@ -15,9 +15,9 @@
  * Part of kaizen #1055.
  */
 
-import { execSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { readHookInput, traceNullInput } from './hook-io.js';
+import { gitStdout } from './lib/git-state.js';
 import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-command.js';
 import { CaseSystem } from '../case-system.js';
 import { extractCaseIssueFromBranch } from './lib/case-branch.js';
@@ -46,36 +46,36 @@ export interface PlanCheckDeps {
 
 // ── Defaults ────────────────────────────────────────────────────────
 
-function exec(cmd: string): string {
-  try {
-    return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-  } catch {
-    return '';
-  }
+function currentGitBranch(): string {
+  return gitStdout(['rev-parse', '--abbrev-ref', 'HEAD']);
+}
+
+function gitCommonDir(): string {
+  return gitStdout(['rev-parse', '--git-common-dir']);
 }
 
 const DEFAULT_DEPS: PlanCheckDeps = {
   caseSystem: new CaseSystem(),
   getChangedFiles: () => {
-    const r = exec('git diff --name-only main...HEAD 2>/dev/null');
+    const r = gitStdout(['diff', '--name-only', 'main...HEAD']);
     return r ? r.split('\n').filter(Boolean) : [];
   },
-  getCurrentBranch: () => exec('git rev-parse --abbrev-ref HEAD 2>/dev/null'),
-  detectRepo: () => exec('git remote get-url origin 2>/dev/null').replace(/.*github\.com[:/]/, '').replace(/\.git$/, ''),
+  getCurrentBranch: currentGitBranch,
+  detectRepo: () => gitStdout(['remote', 'get-url', 'origin']).replace(/.*github\.com[:/]/, '').replace(/\.git$/, ''),
   isInWorktree: () => {
-    const gitDir = exec('git rev-parse --git-dir 2>/dev/null');
-    const gitCommon = exec('git rev-parse --git-common-dir 2>/dev/null');
+    const gitDir = gitStdout(['rev-parse', '--git-dir']);
+    const gitCommon = gitCommonDir();
     return !!gitDir && !!gitCommon && gitDir !== gitCommon;
   },
-  getWorktreeRoot: () => exec('git rev-parse --show-toplevel 2>/dev/null'),
+  getWorktreeRoot: () => gitStdout(['rev-parse', '--show-toplevel']),
   getMainCheckout: () => {
-    const gitCommon = exec('git rev-parse --git-common-dir 2>/dev/null');
+    const gitCommon = gitCommonDir();
     if (!gitCommon) return '';
     // git-common-dir is typically <main>/.git, so parent is main checkout
     return gitCommon.replace(/\/\.git$/, '').replace(/\/\.git\/.*$/, '');
   },
   getDeclaredIssue: () => {
-    const v = exec('git config --get kaizen.issue 2>/dev/null');
+    const v = gitStdout(['config', '--get', 'kaizen.issue']);
     return v && /^\d+$/.test(v) ? v : null;
   },
 };
@@ -406,7 +406,7 @@ function logEscapeHatchUse(context: string): void {
       ts: new Date().toISOString(),
       hook: 'enforce-plan-stored',
       context,
-      branch: (() => { try { return exec('git rev-parse --abbrev-ref HEAD 2>/dev/null'); } catch { return ''; } })(),
+      branch: currentGitBranch(),
       cwd: process.cwd(),
     }) + '\n';
     // Append-only; never throw

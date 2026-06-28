@@ -23,8 +23,6 @@ const HOOKS_DIR = join(__dirname, '..');
 const OPT_OUT = new Set<string>([
   // bump-plugin-version.ts — migrated to git-state.ts (#1074)
   // hook-io.ts — migrated to git-state.ts (#1074)
-  'prehook-no-verify.ts',
-  'enforce-plan-stored.ts',
   'pr-quality-checks.ts',
 ]);
 

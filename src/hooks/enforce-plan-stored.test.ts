@@ -5,6 +5,7 @@
  * No GitHub or git calls are made.
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, afterEach } from 'vitest';
 import {
   checkPlanBeforePr,
@@ -98,6 +99,21 @@ describe('extractCaseIssueFromBranch', () => {
     expect(extractCaseIssueFromBranch('worktree-2606261134-38ae')).toBeNull());
   it('returns null for a bare k<N> branch (not the canonical case shape)', () =>
     expect(extractCaseIssueFromBranch('k40-something')).toBeNull());
+});
+
+describe('git runner invariant', () => {
+  it('routes default git reads through argv-style gitStdout', () => {
+    const source = readFileSync(
+      new URL('./enforce-plan-stored.ts', import.meta.url),
+      'utf-8',
+    );
+
+    expect(source).not.toMatch(/execSync\(cmd/);
+    expect(source).not.toContain('git diff --name-only main...HEAD');
+    expect(source).not.toContain('git rev-parse --abbrev-ref HEAD');
+    expect(source).not.toContain('git remote get-url origin');
+    expect(source).toContain('gitStdout([');
+  });
 });
 
 
