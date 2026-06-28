@@ -8,13 +8,13 @@
  * Bash predecessor deleted in #790.
  */
 
-import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { readHookInput } from './hook-io.js';
 import {
   DEFAULT_STATE_DIR,
-  parseStateFile,
   pruneStaleStateFiles,
+  readStateFile,
 } from './state-utils.js';
 import { gh } from '../lib/gh-exec.js';
 
@@ -44,8 +44,7 @@ export function cleanupMergedReviewStates(
   for (const entry of readdirSync(stateDir)) {
     const filepath = join(stateDir, entry);
     try {
-      const content = readFileSync(filepath, 'utf-8');
-      const state = parseStateFile(content);
+      const state = readStateFile(filepath);
 
       if (state.STATUS !== 'needs_review') continue;
       if (!state.PR_URL) continue;

@@ -25,9 +25,9 @@
  *   I-F: --force-with-lease push option → allow even on merged branch
  */
 
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { DEFAULT_STATE_DIR, ensureStateDir, parseStateFile, prUrlToStateKey, writeStateFile } from './state-utils.js';
+import { DEFAULT_STATE_DIR, ensureStateDir, prUrlToStateKey, readStateFile, writeStateFile } from './state-utils.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
 import { queryBranchPrState, type BranchPrQueryResult } from '../lib/github-pr.js';
@@ -347,13 +347,9 @@ export function processPrePush(
 export function readExistingRound(stateDir: string, prUrl: string): number | undefined {
   const filepath = join(stateDir, prUrlToStateKey(prUrl));
   if (!existsSync(filepath)) return undefined;
-  try {
-    const state = parseStateFile(readFileSync(filepath, 'utf-8'));
-    const r = parseInt(state.ROUND ?? '', 10);
-    return Number.isFinite(r) && r > 0 ? r : undefined;
-  } catch {
-    return undefined;
-  }
+  const state = readStateFile(filepath);
+  const r = parseInt(state.ROUND ?? '', 10);
+  return Number.isFinite(r) && r > 0 ? r : undefined;
 }
 
 // ── CLI entry ─────────────────────────────────────────────────────────
