@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -207,6 +207,16 @@ describe('extractToolActions', () => {
     expect(actions[0].result).toBeDefined();
     expect(actions[1].result).toBeDefined();
     expect(actions[2].result).toBeUndefined(); // no result yet
+  });
+
+  it('delegates tolerant stream-json decoding to the shared JSONL parser', () => {
+    const source = readFileSync('scripts/hook-gym-replay.ts', 'utf8');
+    const extractorSource = source.slice(
+      source.indexOf('export function extractToolActions'),
+      source.indexOf('/** Extract text content from a tool_result block. */'),
+    );
+
+    expect(extractorSource).not.toMatch(/JSON\.parse\(line\)/);
   });
 });
 
