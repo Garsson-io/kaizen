@@ -52,8 +52,8 @@ const PLUGIN_JSON_PATH = join(KAIZEN_ROOT, ".claude-plugin", "plugin.json");
 // ── Shared Test State ──
 
 let hostProject: string;
-let mockDir: MockDir;
-let stateDir: StateDir;
+let mockDir: MockDir | undefined;
+let stateDir: StateDir | undefined;
 
 // Parse plugin.json for hook registration verification
 const pluginJson = JSON.parse(readFileSync(PLUGIN_JSON_PATH, "utf-8"));
@@ -64,7 +64,10 @@ function hookPath(name: string): string {
   return join(HOOKS_DIR, name);
 }
 
-function hookEnv(opts?: { branch?: string; isWorktree?: boolean }): Record<string, string> {
+function hookEnv(): Record<string, string> {
+  if (!mockDir || !stateDir) {
+    throw new Error("hookEnv requires workflow hook test setup");
+  }
   return {
     STATE_DIR: stateDir.path,
     AUDIT_DIR: join(stateDir.path, "audit"),
@@ -94,18 +97,6 @@ beforeAll(() => {
 
 afterAll(() => {
   rmSync(hostProject, { recursive: true, force: true });
-});
-
-beforeEach(() => {
-  mockDir = createMockDir();
-  addGitMock(mockDir, { branch: "wt/test-branch", isWorktree: true });
-  addGhMock(mockDir);
-  stateDir = createStateDir();
-});
-
-afterEach(() => {
-  mockDir?.cleanup();
-  stateDir?.cleanup();
 });
 
 // ════════════════════════════════════════════════════════════════════
@@ -276,6 +267,20 @@ describe("Part 4: Dev workflow simulation through hooks", () => {
   // through individual hooks. This is the trigger-to-outcome test:
   // given a sequence of Claude Code events, do hooks produce the
   // correct enforcement decisions?
+
+  beforeEach(() => {
+    mockDir = createMockDir();
+    addGitMock(mockDir, { branch: "wt/test-branch", isWorktree: true });
+    addGhMock(mockDir);
+    stateDir = createStateDir();
+  });
+
+  afterEach(() => {
+    mockDir?.cleanup();
+    stateDir?.cleanup();
+    mockDir = undefined;
+    stateDir = undefined;
+  });
 
   describe("4a: Write enforcement (enforce-worktree-writes)", () => {
     it("blocks source code writes in main checkout on main branch", () => {
