@@ -1100,6 +1100,36 @@ describe('formatAggregateStats', () => {
     expect(output).toContain('Recent batches');
     expect(output).toContain('b1');
   });
+
+  it('formats recent-batch guidance through the shared display helper (#1354)', () => {
+    const stats = computeAggregateStats([{
+      batch_id: 'b1',
+      guidance: 'focus on hooks reliability and review evidence quality',
+      batch_start: 1742680800,
+      batch_end: 1742684400,
+      total_runs: 5,
+      successful_runs: 3,
+      success_rate: 0.6,
+      total_cost_usd: 10,
+      total_prs: 3,
+      total_issues_closed: 2,
+      total_issues_filed: 1,
+      total_duration_seconds: 1500,
+      stop_reason: 'completed',
+      mode_breakdown: { exploit: { runs: 5, successes: 3, prs: 3, cost: 10 } },
+      issues_attempted: [],
+      prs: [],
+      recorded_at: '2026-03-22T00:00:00.000Z',
+    }]);
+
+    const output = formatAggregateStats(stats);
+    expect(output).toContain('| b1 | focus on hooks reliability and review... |');
+  });
+
+  it('does not keep private guidance truncation logic in aggregate stats (#1354)', () => {
+    const source = readFileSync('scripts/auto-dent-ctl.ts', 'utf8');
+    expect(source).not.toMatch(/guidance\.slice\(0,\s*37\)\s*\+\s*['"]\.\.\.['"]/);
+  });
 });
 
 describe('buildSteerOutput — cloud-backed steer command (#940 Phase 2)', () => {
