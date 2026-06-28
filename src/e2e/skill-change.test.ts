@@ -402,6 +402,83 @@ Review this diff for DRY violations. Output JSON only.`;
 });
 
 // ---------------------------------------------------------------------------
+// Behavioral smoke test — simplification-impact detects additive-only workflow
+// ---------------------------------------------------------------------------
+
+describe("Behavioral: simplification-impact dimension detects additive-only workflow changes", () => {
+  it.skipIf(!isLive)(
+    "INVARIANT: simplification-impact returns MISSING/PARTIAL when a plan adds a parallel PR workflow with no related-area sweep",
+    () => {
+      const fixturePlan = `## Success Criteria
+GOAL: PRs must include an Architecture section.
+DONE WHEN: Agents add a new PR checklist item.
+
+## Information Retrieved
+- Existing /kaizen-write-pr already owns PR description structure.
+- Existing review-pr dimensions already inspect PR descriptions.
+
+## Tasks
+1. Add a new Architecture checkbox to PR bodies.
+2. Update one prompt to mention the checkbox.
+
+## Seam Map & Test Plan
+| # | Behavior | Perspective | Level | Test File | Invariant |
+|---|----------|-------------|-------|-----------|-----------|
+| 1 | PR body has Architecture checkbox | agent | Unit | policy-docs.test.ts | Text exists |
+`;
+
+      const fixtureDiff = `diff --git a/.agents/skills/kaizen-write-pr/SKILL.md b/.agents/skills/kaizen-write-pr/SKILL.md
+@@ -20,6 +20,7 @@ Follow the story with structured sections:
+ 1. Architecture
++2. Architecture checklist item
+diff --git a/prompts/review-pr-description.md b/prompts/review-pr-description.md
+@@ -10,6 +10,7 @@ Review PR body quality.
++Check for Architecture checkbox.
+`;
+
+      const dimPrompt = readFileSync(
+        resolve(KAIZEN_ROOT, "prompts/review-simplification-impact.md"),
+        "utf-8",
+      );
+
+      const prompt = `${dimPrompt}
+
+## Issue
+
+PR workflow must treat simplification/refactor impact as first-class, not optional cleanup.
+
+## Plan to Review
+
+${fixturePlan}
+
+## PR Diff to Review
+
+\`\`\`diff
+${fixtureDiff}
+\`\`\`
+
+Review this plan and diff for simplification impact. Output JSON only.`;
+
+      const output = runSkill(prompt, { maxBudget: 0.15, timeout: 90_000 });
+      const jsonMatch = output.match(/```json\s*([\s\S]+?)\s*```/);
+      expect(jsonMatch, "output should contain a JSON findings block").toBeTruthy();
+      const findings = JSON.parse(jsonMatch![1]);
+
+      expect(findings.dimension).toBe("simplification-impact");
+      const hasGap = findings.findings.some(
+        (f: { status: string; detail?: string }) =>
+          (f.status === "MISSING" || f.status === "PARTIAL") &&
+          /surface area|parallel|related-area|consolidat|DRY/i.test(f.detail ?? ""),
+      );
+      expect(
+        hasGap,
+        "simplification-impact must flag additive-only workflow changes without related-area simplification evidence",
+      ).toBe(true);
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Behavioral: Phase 4.5 produces structured plan fields (Policy 10 proof)
 // ---------------------------------------------------------------------------
 

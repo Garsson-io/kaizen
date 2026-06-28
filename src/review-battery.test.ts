@@ -1432,7 +1432,8 @@ describe('review-simplification-impact.md — first-class net quality dimension'
   it('requires reality evidence, not checkbox assertions', () => {
     const content = readFileSync(promptPath, 'utf8');
     expect(content).toMatch(/evidence/i);
-    expect(content).toMatch(/actually happened|diff/i);
+    expect(content).toMatch(/diff backs up/i);
+    expect(content).toMatch(/checkbox in a PR body is not enough/i);
     expect(content).toMatch(/explicitly justified/i);
   });
 });

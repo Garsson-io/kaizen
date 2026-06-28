@@ -270,6 +270,11 @@ describe('workflow skills — simplification/refactor impact is first-class', ()
     expect(s).toMatch(/before review/i);
     expect(s).toMatch(/competing mechanisms/i);
   });
+
+  it('kaizen-review-pr documents the simplification-impact data-needs grouping', () => {
+    const s = read('.agents/skills/kaizen-review-pr/SKILL.md');
+    expect(s).toMatch(/`\[diff, issue, plan\]`: simplification-impact/);
+  });
 });
 
 describe('.agents/kaizen/README.md — Core Invariants points to canonical', () => {

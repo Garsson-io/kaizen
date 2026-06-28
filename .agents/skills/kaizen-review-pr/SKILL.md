@@ -123,7 +123,6 @@ Data needs determine grouping efficiency — dimensions with identical `needs` s
 - `[diff, tests]` / `[diff, tests, issue]`: test-quality, test-plan
 - `[diff, issue, plan, pr]`: improvement-lifecycle, plan-fidelity
 - `[diff, issue, plan]`: simplification-impact
-- `[diff, pr_body]`: skill-changes
 
 ### Step 2b: Spawn agents (in parallel)
 
