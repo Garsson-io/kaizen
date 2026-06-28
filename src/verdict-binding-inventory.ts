@@ -81,6 +81,12 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       producer: 'scripts/batch-outcome.ts: BatchOutcomeSchema.parse()',
       terminalCritical: true,
     },
+    {
+      id: 'hook-activation-verdict',
+      label: 'Hook-activation verdict',
+      producer: 'scripts/auto-dent-hook-activation.ts: evaluateHookActivation() from the session system.init event',
+      terminalCritical: true,
+    },
   ],
   terminalActions: [
     {
@@ -136,12 +142,12 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       id: 'merge',
       label: 'Merge',
       terminalAction: 'Direct gh pr merge and auto-dent auto-merge queueing',
-      consumedVerdicts: ['review-round-verdict', 'review-battery-verdict', 'process-evidence-verdict', 'lifecycle-health-verdict'],
-      enforcingConsumer: 'enforce-merge-verdict blocks direct FAIL merges; decideAutoMergeSafety blocks unsafe auto-merge queueing',
-      failureModeBlocked: 'A PR with FAIL review/process/lifecycle verdicts cannot be merged or queued by the normal paths.',
+      consumedVerdicts: ['review-round-verdict', 'review-battery-verdict', 'process-evidence-verdict', 'lifecycle-health-verdict', 'hook-activation-verdict'],
+      enforcingConsumer: 'enforce-merge-verdict blocks direct FAIL merges; decideAutoMergeSafety blocks unsafe auto-merge queueing, including degraded/unknown hook-activation (#1220)',
+      failureModeBlocked: 'A PR with FAIL review/process/lifecycle verdicts — or a degraded run where kaizen hooks did not load (or no system.init was seen on a hook-expecting provider) — cannot be merged or queued by the normal paths.',
       sourceEvidence: [
         { file: 'src/hooks/enforce-merge-verdict.ts', tokens: ['deriveStoredRoundVerdict', "verdict === 'FAIL'", 'MERGE BLOCKED'] },
-        { file: 'scripts/auto-dent-merge-policy.ts', tokens: ['qualityVerdictBlockReasons', 'decideAutoMergeSafety'] },
+        { file: 'scripts/auto-dent-merge-policy.ts', tokens: ['qualityVerdictBlockReasons', 'decideAutoMergeSafety', 'hookActivationBlockReasons'] },
         { file: '.claude-plugin/plugin.json', tokens: ['kaizen-enforce-merge-verdict-ts.sh'] },
       ],
     },

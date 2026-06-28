@@ -2638,6 +2638,12 @@ async function main(): Promise<void> {
     reviewVerdict,
     processVerdict,
     lifecycleHealth,
+    // Bind the hook-activation verdict (#843/#1500) to the merge decision (#1220):
+    // a run whose kaizen hooks did not load (degraded), or one where no
+    // `system.init` was observed on a hook-expecting provider, is not merge-ready.
+    // Default provider to 'claude' (hook-expecting) for legacy state → fail-closed.
+    hookActivation: result.hookActivation,
+    provider: state.provider ?? 'claude',
   });
   const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);
   if (!autoMergeDecision.allow) {
@@ -2676,6 +2682,12 @@ async function main(): Promise<void> {
     const driveResults = driveBatchToMerge(allBatchPRs, {
       maxAttempts: 6,
       sleepMs: 10_000,
+      // An unsafe PR whose auto-merge cancel FAILED stays in the batch so it
+      // remains visible/babysat, but must never be advanced toward merge — else
+      // the babysitter would merge the very PR the merge-readiness gate refused
+      // (#1220). `cancelFailed` is non-empty only when a block fired, so this is
+      // a no-op for healthy runs.
+      holdPrs: cancelFailed,
     });
     const stuck = driveResults.filter((r) => r.status === 'stuck');
     for (const r of driveResults) {

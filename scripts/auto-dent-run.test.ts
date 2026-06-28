@@ -56,6 +56,7 @@ import {
 } from './auto-dent-run.js';
 import * as github from './auto-dent-github.js';
 import { makeBatchState, makeRunResult } from './auto-dent-test-utils.js';
+import { decideAutoMergeSafety } from './auto-dent-merge-policy.js';
 
 const AUTO_DENT_RUN_SOURCE = readFileSync(new URL('./auto-dent-run.ts', import.meta.url), 'utf8');
 
@@ -3515,6 +3516,82 @@ describe('auto-merge verdict binding wiring (#1220)', () => {
     expect(unsafeSetIndex).toBeGreaterThan(cancelFailedIndex);
     expect(filterIndex).toBeGreaterThan(unsafeSetIndex);
     expect(driveIndex).toBeGreaterThan(filterIndex);
+  });
+
+  it('holds cancel-failed unsafe PRs out of the merge-advance step (#1220 fail-open guard)', () => {
+    // An unsafe PR we failed to --disable-auto must stay visible in babysitting
+    // but never be update-branched toward merge. Assert the drive call passes
+    // `holdPrs: cancelFailed`.
+    const driveCall = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('driveBatchToMerge(allBatchPRs'),
+      AUTO_DENT_RUN_SOURCE.indexOf('driveBatchToMerge(allBatchPRs') + 800,
+    );
+    expect(driveCall).toContain('holdPrs: cancelFailed');
+  });
+
+  it('feeds the hook-activation verdict + provider into the merge decision (#1220 completion)', () => {
+    // Source-invariant guard: the fields are OPTIONAL on AutoMergeSafetySignals,
+    // so typecheck cannot catch the call site dropping them. Assert the wiring at
+    // the choke point binds the hook signal and defaults a missing provider to the
+    // hook-expecting 'claude' (fail-closed).
+    const callSite = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeDecision = decideAutoMergeSafety({'),
+      AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeQueue = queueAutoMerge('),
+    );
+    expect(callSite).toContain('hookActivation: result.hookActivation');
+    expect(callSite).toContain("provider: state.provider ?? 'claude'");
+  });
+
+  it('stream → verdict → gate: a degraded claude run is blocked from auto-merge end-to-end', () => {
+    // Build a REAL degraded verdict by replaying a captured plugins:[] system.init
+    // through the production stream processor (the same path main() uses), then feed
+    // the resulting RunResult into the merge gate exactly as the call site does.
+    const result = makeRunResult({ prs: ['https://github.com/Garsson-io/kaizen/pull/1220'] });
+    const ctx: StreamContext = { provider: 'claude' };
+    processStreamMessage(
+      { type: 'system', subtype: 'init', session_id: 'deadbeefcafef00d', model: 'claude-opus-4-6', plugins: [] },
+      result,
+      Date.now(),
+      ctx,
+    );
+    expect(result.hookActivation?.degraded).toBe(true);
+
+    const state = makeBatchState({ test_task: false }); // provider undefined → defaults to claude
+    const decision = decideAutoMergeSafety({
+      prCount: result.prs.length,
+      reviewRequired: !state.test_task,
+      reviewVerdict: 'pass',
+      processVerdict: 'pass',
+      lifecycleHealth: 'clean',
+      hookActivation: result.hookActivation,
+      provider: state.provider ?? 'claude',
+    });
+    expect(decision.allow).toBe(false);
+    expect(decision.reasons).toContain('hook enforcement degraded (kaizen hooks did not load)');
+  });
+
+  it('stream → verdict → gate: a codex run with plugins:[] still auto-merges (provider asymmetry)', () => {
+    const result = makeRunResult({ prs: ['https://github.com/Garsson-io/kaizen/pull/1221'] });
+    const ctx: StreamContext = { provider: 'codex' };
+    processStreamMessage(
+      { type: 'system', subtype: 'init', session_id: 'codexsession01', model: 'gpt-5-codex', plugins: [] },
+      result,
+      Date.now(),
+      ctx,
+    );
+    expect(result.hookActivation?.degraded).toBe(false);
+
+    const state = makeBatchState({ test_task: false, provider: 'codex' });
+    const decision = decideAutoMergeSafety({
+      prCount: result.prs.length,
+      reviewRequired: !state.test_task,
+      reviewVerdict: 'pass',
+      processVerdict: 'pass',
+      lifecycleHealth: 'clean',
+      hookActivation: result.hookActivation,
+      provider: state.provider ?? 'claude',
+    });
+    expect(decision.allow).toBe(true);
   });
 });
 
