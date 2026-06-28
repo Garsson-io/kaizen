@@ -831,6 +831,90 @@ export function autoCloseKaizenIssues(prUrl: string, ghRun: GhRunner = gh): void
       }
     } catch {}
   }
+
+  // Reconcile workflow status labels for issues this PR actually CLOSES (#1229).
+  // GitHub auto-closes the linked issue on squash-merge before this hook runs, so
+  // the close loop above may find it already CLOSED and leave its in-progress
+  // status label (status:has-pr/active/...) stale. Strip those and stamp
+  // status:done so a PR-closed issue can't retain an in-progress status.
+  try {
+    reconcileClosedIssueStatusLabels(prBody, ghRun);
+  } catch {}
+}
+
+/** In-progress kaizen workflow status labels that must not survive issue closure. */
+export const IN_PROGRESS_STATUS_LABELS = [
+  'status:has-pr',
+  'status:active',
+  'status:backlog',
+  'status:blocked',
+] as const;
+
+/**
+ * Issue numbers a PR body CLOSES via a GitHub closing keyword
+ * (close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved), with or
+ * without the `Garsson-io/kaizen` repo prefix. Narrower than the mention-regex
+ * used for auto-close: `Parent:`/`Refs:` mentions are intentionally excluded so
+ * only genuinely-closed issues get their status labels reconciled.
+ */
+export function extractClosingIssues(prBody: string): string[] {
+  const nums = new Set<string>();
+  const re =
+    /(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+(?:Garsson-io\/kaizen)?#(\d+)/gi;
+  for (const m of prBody.matchAll(re)) nums.add(m[1]);
+  return [...nums];
+}
+
+/**
+ * For each issue the PR closes, if it is now CLOSED and still carries an
+ * in-progress status label, remove those labels and add `status:done` in a
+ * single argv `gh issue edit` call (routed through the injected ghRun boundary,
+ * pinned to the kaizen repo). Conservative: acts ONLY when an in-progress label
+ * is actually present — issues closed as not-planned/duplicate with no status
+ * label are left untouched (never blindly stamped `status:done`).
+ */
+export function reconcileClosedIssueStatusLabels(
+  prBody: string,
+  ghRun: GhRunner = gh,
+): void {
+  for (const num of extractClosingIssues(prBody)) {
+    try {
+      const state = ghRun([
+        'issue',
+        'view',
+        num,
+        '--repo',
+        'Garsson-io/kaizen',
+        '--json',
+        'state',
+        '--jq',
+        '.state',
+      ]).trim();
+      if (state !== 'CLOSED') continue;
+
+      const labelsRaw = ghRun([
+        'issue',
+        'view',
+        num,
+        '--repo',
+        'Garsson-io/kaizen',
+        '--json',
+        'labels',
+        '--jq',
+        '[.labels[].name]',
+      ]).trim();
+      const labels: string[] = JSON.parse(labelsRaw);
+      const toRemove = IN_PROGRESS_STATUS_LABELS.filter(l =>
+        labels.includes(l),
+      );
+      if (toRemove.length === 0) continue; // no divergence → nothing to do
+
+      const args = ['issue', 'edit', num, '--repo', 'Garsson-io/kaizen'];
+      for (const l of toRemove) args.push('--remove-label', l);
+      if (!labels.includes('status:done')) args.push('--add-label', 'status:done');
+      ghRun(args);
+    } catch {}
+  }
 }
 
 // ── Main entry point ─────────────────────────────────────────────────

@@ -9,7 +9,12 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { gh } from '../lib/gh-exec.js';
-import { defaultPostComment, autoCloseKaizenIssues } from './pr-kaizen-clear.js';
+import {
+  defaultPostComment,
+  autoCloseKaizenIssues,
+  extractClosingIssues,
+  reconcileClosedIssueStatusLabels,
+} from './pr-kaizen-clear.js';
 
 vi.mock('../lib/gh-exec.js', () => ({
   gh: vi.fn(() => ''),
@@ -127,5 +132,100 @@ describe('autoCloseKaizenIssues — gh-exec argv migration', () => {
     autoCloseKaizenIssues(PR_URL, ghRun);
 
     expect(ghRun.mock.calls.every(c => c[0][0] === 'pr')).toBe(true);
+  });
+});
+
+describe('extractClosingIssues — #1229', () => {
+  it('parses close/fix/resolve keywords with and without repo prefix', () => {
+    const body = [
+      'Closes #1215',
+      'Fixes Garsson-io/kaizen#42',
+      'resolved #7',
+      'Parent: #999', // mention, not a closing keyword
+      'Refs: Garsson-io/kaizen#888',
+    ].join('\n');
+    expect(extractClosingIssues(body).sort()).toEqual(['1215', '42', '7']);
+  });
+
+  it('returns no numbers for a body with only mentions', () => {
+    expect(extractClosingIssues('Parent: #1\nRefs: #2')).toEqual([]);
+  });
+});
+
+describe('reconcileClosedIssueStatusLabels — #1229', () => {
+  // Mock ghRun: closing-keyword issue is CLOSED and carries `labels` (passed in).
+  function makeLabelGhRun(state: string, labels: string[]) {
+    return vi.fn((args: string[]) => {
+      if (args[0] === 'issue' && args[1] === 'view' && args.includes('state'))
+        return state;
+      if (args[0] === 'issue' && args[1] === 'view' && args.includes('labels'))
+        return JSON.stringify(labels);
+      return '';
+    });
+  }
+
+  it('removes the in-progress status label and adds status:done on a closed issue', () => {
+    const ghRun = makeLabelGhRun('CLOSED', ['kaizen', 'status:has-pr']);
+    reconcileClosedIssueStatusLabels('Closes #1215', ghRun);
+
+    const edit = ghRun.mock.calls.map(c => c[0]).find(a => a[1] === 'edit');
+    expect(edit).toEqual([
+      'issue',
+      'edit',
+      '1215',
+      '--repo',
+      'Garsson-io/kaizen',
+      '--remove-label',
+      'status:has-pr',
+      '--add-label',
+      'status:done',
+    ]);
+  });
+
+  it('removes every in-progress label present in one edit call', () => {
+    const ghRun = makeLabelGhRun('CLOSED', ['status:has-pr', 'status:active']);
+    reconcileClosedIssueStatusLabels('Fixes #42', ghRun);
+
+    const edit = ghRun.mock.calls.map(c => c[0]).find(a => a[1] === 'edit')!;
+    const removed = edit
+      .map((v, i) => (v === '--remove-label' ? edit[i + 1] : null))
+      .filter(Boolean);
+    expect(removed.sort()).toEqual(['status:active', 'status:has-pr']);
+    expect(edit).toContain('--add-label');
+  });
+
+  it('does NOT stamp status:done when no in-progress label is present', () => {
+    const ghRun = makeLabelGhRun('CLOSED', ['kaizen', 'bug']);
+    reconcileClosedIssueStatusLabels('Closes #42', ghRun);
+
+    const editCalls = ghRun.mock.calls.map(c => c[0]).filter(a => a[1] === 'edit');
+    expect(editCalls).toHaveLength(0);
+  });
+
+  it('skips issues that are still OPEN', () => {
+    const ghRun = makeLabelGhRun('OPEN', ['status:has-pr']);
+    reconcileClosedIssueStatusLabels('Closes #42', ghRun);
+
+    const editCalls = ghRun.mock.calls.map(c => c[0]).filter(a => a[1] === 'edit');
+    expect(editCalls).toHaveLength(0);
+  });
+
+  it('does not reconcile mentioned-but-not-closed issues', () => {
+    const ghRun = makeLabelGhRun('CLOSED', ['status:has-pr']);
+    reconcileClosedIssueStatusLabels('Parent: #999\nRefs: #888', ghRun);
+    expect(ghRun).not.toHaveBeenCalled();
+  });
+
+  it('pins all label calls to the kaizen repo even for a host-repo PR body', () => {
+    const ghRun = makeLabelGhRun('CLOSED', ['status:active']);
+    reconcileClosedIssueStatusLabels('Closes Garsson-io/kaizen#42', ghRun);
+
+    const issueCalls = ghRun.mock.calls.map(c => c[0]).filter(a => a[0] === 'issue');
+    expect(issueCalls.length).toBeGreaterThan(0);
+    for (const a of issueCalls) {
+      expect(a[a.indexOf('--repo') + 1]).toBe('Garsson-io/kaizen');
+    }
+    // every argv element is a discrete token — no fused shell string
+    for (const a of issueCalls) expect(a.some(t => t.includes(' '))).toBe(false);
   });
 });
