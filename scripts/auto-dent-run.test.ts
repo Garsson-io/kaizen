@@ -496,6 +496,33 @@ describe('populateCrossBatchSteering — close the loop (#940 Phase 2)', () => {
     expect(readState(f).cross_batch_steering).toEqual(result);
   });
 
+  it('persists a cross-batch bandit prior from the same outcome read', () => {
+    const state = makeBatchState({ batch_id: 'self' });
+    const f = tmpState(state);
+    populateCrossBatchSteering(state, f, {
+      read: () => [
+        {
+          schema_version: 1, batch_id: 'p1', guidance: 'g', batch_start: 1, batch_end: 2,
+          wall_seconds: 1, stop_reason: 'completed',
+          totals: { runs: 6, successful_runs: 3, prs: 3, issues_closed: 3, issues_filed: 0, cost_usd: 6, duration_seconds: 100, lines_deleted: 0, issues_pruned: 0 },
+          success_rate: 0.5, avg_cost_per_success: 2, overall_efficiency: 0.5, review_fail_rate: 0,
+          cost_anomaly_count: 0, mode_diversity: 2, trend: null,
+          mode_breakdown: [
+            { mode: 'exploit', runs: 3, successes: 3, success_rate: 1, cost_usd: 3, prs: 3, avg_cost: 1, efficiency: 1, lines_deleted: 0, issues_pruned: 0 },
+            { mode: 'explore', runs: 3, successes: 0, success_rate: 0, cost_usd: 3, prs: 0, avg_cost: 1, efficiency: 0, lines_deleted: 0, issues_pruned: 0 },
+          ],
+          prs: [], issues_closed: [], issues_filed: [],
+        },
+      ],
+    });
+
+    expect(state.cross_batch_bandit_prior).toMatchObject({
+      source: 'batch-outcome',
+      source_batches: 1,
+    });
+    expect(readState(f).cross_batch_bandit_prior).toEqual(state.cross_batch_bandit_prior);
+  });
+
   it('is idempotent — does not refetch when already populated', () => {
     const state = makeBatchState({ cross_batch_steering: ['already here'] });
     const f = tmpState(state);
@@ -2607,6 +2634,30 @@ describe('computeBanditWeights', () => {
     expect(computeBanditWeights(history)).toBeNull();
   });
 
+  it('uses prior plays and rewards to warm-start a fresh batch below minRuns', () => {
+    const result = computeBanditWeights([], {
+      minRuns: 10,
+      explorationC: 0,
+      prior: {
+        source: 'batch-outcome',
+        source_batches: 2,
+        decay: 1,
+        modes: {
+          exploit: { plays: 10, total_reward: 10 },
+          explore: { plays: 10, total_reward: 0 },
+          reflect: { plays: 10, total_reward: 0 },
+          subtract: { plays: 10, total_reward: 0 },
+        },
+      },
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.totalPlays).toBe(40);
+    expect(result!.weights.exploit).toBeCloseTo(1, 5);
+    expect(result!.weights.explore).toBeCloseTo(0, 5);
+    expect(result!.details.find((d) => d.mode === 'exploit')!.plays).toBe(10);
+  });
+
   it('returns weights that sum to 1.0 with sufficient data', () => {
     const history = makeHistory(
       { exploit: 9, explore: 1, reflect: 1, subtract: 1 },
@@ -3205,6 +3256,31 @@ describe('selectMode bandit integration', () => {
     const result = selectMode(state, 7);
     expect(result.reason).toBe('schedule');
     expect(result.mode).toBe('explore');
+  });
+
+  it('uses cross-batch bandit prior instead of scheduled explore in a fresh batch', () => {
+    const state = makeBatchState({
+      run_history: [makeRunMetrics({ run: 0, mode: 'exploit', prs: ['pr'] })],
+      cross_batch_bandit_prior: {
+        source: 'batch-outcome',
+        source_batches: 2,
+        decay: 1,
+        modes: {
+          exploit: { plays: 12, total_reward: 12 },
+          explore: { plays: 12, total_reward: 0 },
+          reflect: { plays: 12, total_reward: 0 },
+          subtract: { plays: 12, total_reward: 0 },
+        },
+      },
+    });
+
+    const result = selectMode(state, 7);
+
+    expect(result.reason).toBe('bandit');
+    expect(result.bandit).toBeDefined();
+    expect(result.bandit!.details.find((d) => d.mode === 'exploit')!.meanReward).toBeGreaterThan(
+      result.bandit!.details.find((d) => d.mode === 'explore')!.meanReward,
+    );
   });
 
   it('signal overrides take priority over adaptive selection', () => {
