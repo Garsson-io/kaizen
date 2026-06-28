@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import { readYamlFrontmatter, stripYamlFrontmatter } from './lib/frontmatter.js';
+import { firstMarkdownFence, markdownFences } from './lib/markdown-fence.js';
 import { resolveProjectRoot, type GitRunner } from './lib/resolve-project-root.js';
 import { retrievePlan, issueTarget } from './structured-data.js';
 import {
@@ -338,9 +339,7 @@ export function validateReviewCoverage(
  *   - Malformed JSON (returns null)
  */
 export function parseReviewOutput(raw: string, dimension: string): DimensionReview | null {
-  // Try to extract JSON from markdown code fences first
-  const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  const jsonStr = fenceMatch ? fenceMatch[1].trim() : raw.trim();
+  const jsonStr = firstMarkdownFence(raw, ['json', ''])?.code ?? raw.trim();
 
   // Try to find a JSON object in the text
   const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
@@ -593,9 +592,8 @@ export interface SpawnBatchReviewOptions extends Omit<SpawnReviewOptions, 'dimen
  */
 export function parseAllReviewOutputs(raw: string, expectedDimensions: string[]): DimensionReview[] {
   const results: DimensionReview[] = [];
-  const fenceRe = /```(?:json)?\s*\n?([\s\S]*?)\n?```/g;
-  for (const match of raw.matchAll(fenceRe)) {
-    const review = parseReviewOutput(match[0], '');
+  for (const block of markdownFences(raw, ['json', ''])) {
+    const review = parseReviewOutput(block.code, '');
     if (review && review.dimension) results.push(review);
   }
   return results;

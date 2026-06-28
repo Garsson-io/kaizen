@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { clearCommentCache } from './section-editor.js';
 import {
   prTarget,
@@ -462,7 +463,25 @@ describe('retrieveTestPlan — lookup order', () => {
   });
 });
 
+describe('retrieveMetadata', () => {
+  it('parses YAML metadata fallback from CRLF fence with spaced language label', () => {
+    ghReturns(''); // no metadata attachment
+    ghReturns('Body\r\n``` YAML \r\ndeep_dive:\r\n  pr: 1377\r\n```\r\n');
+
+    const metadata = retrieveMetadata(issue);
+
+    expect(metadata).toEqual({ deep_dive: { pr: 1377 } });
+  });
+});
+
 describe('storeIterationState + retrieveIterationState', () => {
+  it('uses shared markdown fence parsing for structured data attachments', () => {
+    const source = readFileSync(new URL('./structured-data.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('text.match(/```yaml');
+    expect(source).not.toContain('attachment.content.match(/```json');
+  });
+
   it('round-trips JSON state', () => {
     ghReturns(''); ghReturns('https://...');
     storeIterationState(pr, { round: 3, phase: 'fix_running', cost: 1.5 });
@@ -470,6 +489,12 @@ describe('storeIterationState + retrieveIterationState', () => {
     ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:iteration/state -->\n```json\n{"round":3,"phase":"fix_running","cost":1.5}\n```' }));
     const state = retrieveIterationState(pr);
     expect(state).toEqual({ round: 3, phase: 'fix_running', cost: 1.5 });
+  });
+
+  it('round-trips JSON state from CRLF fence with spaced language label', () => {
+    ghReturns(JSON.stringify({ url: 'u', body: '<!-- kaizen:iteration/state -->\r\n``` JSON \r\n{"round":4,"phase":"fix_done"}\r\n```' }));
+    const state = retrieveIterationState(pr);
+    expect(state).toEqual({ round: 4, phase: 'fix_done' });
   });
 });
 

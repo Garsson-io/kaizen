@@ -71,6 +71,15 @@ function makeMeta(name: string, needs: string[] = ['diff']): DimensionMeta {
 // Tier 1: Schema and parser tests
 
 describe('parseReviewOutput', () => {
+  it('uses shared markdown fence parsing', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/review-battery.ts'), 'utf8');
+
+    expect(source).not.toContain('fenceMatch');
+    expect(source).not.toContain('fenceRe');
+    expect(source).not.toContain('raw.match(/```');
+    expect(source).not.toContain('raw.matchAll(fenceRe)');
+  });
+
   it('parses valid JSON with findings', () => {
     const raw = `Here is my review:
 \`\`\`json
@@ -99,6 +108,14 @@ describe('parseReviewOutput', () => {
     const result = parseReviewOutput(raw, 'plan-coverage');
     expect(result).not.toBeNull();
     expect(result!.verdict).toBe('pass');
+  });
+
+  it('parses fenced JSON with CRLF and spaced language label', () => {
+    const raw = 'result\r\n``` JSON \r\n{"dimension":"requirements","summary":"ok","findings":[]}\r\n```\r\n';
+    const result = parseReviewOutput(raw, 'requirements');
+
+    expect(result).not.toBeNull();
+    expect(result!.dimension).toBe('requirements');
   });
 
   it('normalizes status variants', () => {
@@ -849,6 +866,22 @@ Second dimension:
     const results = parseAllReviewOutputs(raw, ['requirements']);
     expect(results).toHaveLength(1);
     expect(results[0].dimension).toBe('requirements');
+  });
+
+  it('parses multiple CRLF fenced JSON blocks with spaced language labels', () => {
+    const raw = [
+      '``` JSON ',
+      '{"dimension":"requirements","summary":"ok","findings":[]}',
+      '```',
+      '``` json ',
+      '{"dimension":"test-quality","summary":"ok","findings":[]}',
+      '```',
+      '',
+    ].join('\r\n');
+
+    const results = parseAllReviewOutputs(raw, ['requirements', 'test-quality']);
+
+    expect(results.map(r => r.dimension)).toEqual(['requirements', 'test-quality']);
   });
 });
 
