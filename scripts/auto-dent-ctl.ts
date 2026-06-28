@@ -41,6 +41,7 @@ import {
   type ReadOutcomesDeps,
 } from './batch-outcome.js';
 import { truncateDisplay } from './auto-dent-display.js';
+import { parseJsonLines } from '../src/lib/json-lines.js';
 
 function getRepoRoot(): string {
   try {
@@ -839,17 +840,9 @@ export function appendBatchToAggregate(
 ): { action: 'appended' | 'already_exists' | 'error'; path: string } {
   const aggregatePath = join(logsDir, 'aggregate.jsonl');
 
-  // Check for duplicate
-  if (existsSync(aggregatePath)) {
-    const existing = readFileSync(aggregatePath, 'utf8');
-    const lines = existing.split('\n').filter(Boolean);
-    for (const line of lines) {
-      try {
-        const record = JSON.parse(line);
-        if (record.batch_id === batch.batchId) {
-          return { action: 'already_exists', path: aggregatePath };
-        }
-      } catch { /* skip malformed lines */ }
+  for (const record of readAggregate(logsDir)) {
+    if (record.batch_id === batch.batchId) {
+      return { action: 'already_exists', path: aggregatePath };
     }
   }
 
@@ -866,13 +859,7 @@ export function readAggregate(logsDir: string): AggregateBatchRecord[] {
   if (!existsSync(aggregatePath)) return [];
 
   const content = readFileSync(aggregatePath, 'utf8');
-  const records: AggregateBatchRecord[] = [];
-  for (const line of content.split('\n').filter(Boolean)) {
-    try {
-      records.push(JSON.parse(line));
-    } catch { /* skip malformed lines */ }
-  }
-  return records;
+  return parseJsonLines<AggregateBatchRecord>(content);
 }
 
 export interface AggregateStats {
