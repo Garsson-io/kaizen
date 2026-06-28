@@ -143,10 +143,11 @@ export function buildCappedBody(opts: CappedBodyOptions): string {
   let body = assemble();
 
   // Final backstop: if decoration alone still overshoots (pathological), hard-cut.
+  // Reserve the EXACT suffix length (it scales with the pointer) so the result is
+  // provably ≤ budget, not budget + pointer.length.
   if (body.length > budget) {
-    body =
-      body.slice(0, budget - 80) +
-      `\n\n... [comment truncated — full data on disk at ${opts.pointer}] ...`;
+    const suffix = `\n\n... [comment truncated — full data on disk at ${opts.pointer}] ...`;
+    body = body.slice(0, Math.max(0, budget - suffix.length)) + suffix;
   }
 
   return body;

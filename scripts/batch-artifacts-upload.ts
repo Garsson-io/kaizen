@@ -31,6 +31,7 @@ import {
   DEFAULT_BODY_BUDGET,
   type CappedBlock,
 } from '../src/capped-attachment.js';
+import { scrubSecrets } from '../src/scrub-secrets.js';
 
 /** Named-attachment key on the progress issue. Sibling of `batch-outcome`. */
 export const BATCH_ARTIFACTS_ATTACHMENT = 'batch-artifacts';
@@ -101,16 +102,25 @@ export function buildArtifactsComment(parts: ArtifactParts, nowIso: string): str
     ? `### Batch Summary\n\n\`\`\`\n${parts.summary.trimEnd()}\n\`\`\``
     : null;
 
+  // Scrub before inlining (#1508, I19): events.jsonl/state.json are dumped into a
+  // PUBLIC issue comment, the same leak surface the run-transcript path guards.
+  // The shared scrubber fails closed, so an unscrubbable block is withheld, never
+  // leaked. (Normal batch state has no secret-shaped keys, so this is a no-op in
+  // the common case.)
   const blocks: CappedBlock[] = [];
   if (parts.eventsJsonl) {
     blocks.push({
       label: `events.jsonl (${eventCount} events)`,
       fence: 'jsonl',
-      content: parts.eventsJsonl.trimEnd(),
+      content: scrubSecrets(parts.eventsJsonl.trimEnd()).text,
     });
   }
   if (parts.stateJson) {
-    blocks.push({ label: 'state.json', fence: 'json', content: parts.stateJson.trimEnd() });
+    blocks.push({
+      label: 'state.json',
+      fence: 'json',
+      content: scrubSecrets(parts.stateJson.trimEnd()).text,
+    });
   }
 
   return buildCappedBody({

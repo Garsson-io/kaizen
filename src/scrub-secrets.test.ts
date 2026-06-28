@@ -39,6 +39,27 @@ describe('scrubSecrets', () => {
     expect(a.text).toContain(REDACTED);
   });
 
+  it('redacts the password in a URL/DSN userinfo (keeps scheme+user)', () => {
+    const { text } = scrubSecrets('DATABASE_URL was postgres://admin:s3cr3tpassword@db.host:5432/app');
+    expect(text).toContain('postgres://admin:');
+    expect(text).toContain(REDACTED);
+    expect(text).toContain('@db.host:5432/app'); // host kept
+    expect(text).not.toContain('s3cr3tpassword');
+  });
+
+  it('redacts a KEY=value secret even when the value contains spaces', () => {
+    const { text } = scrubSecrets('PASSWORD=my secret pass phrase');
+    expect(text).toContain('PASSWORD=');
+    expect(text).toContain(REDACTED);
+    expect(text).not.toContain('my secret pass phrase');
+  });
+
+  it('redacts Slack xapp- app-level tokens', () => {
+    const { text } = scrubSecrets('SLACK_APP_TOKEN=xapp-1-A0123456789-abcdefghij');
+    expect(text).not.toContain('xapp-1-A0123456789-abcdefghij');
+    expect(text).toContain(REDACTED);
+  });
+
   it('redacts PEM private key blocks', () => {
     const pem = '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----';
     const { text } = scrubSecrets(`key:\n${pem}\ndone`);

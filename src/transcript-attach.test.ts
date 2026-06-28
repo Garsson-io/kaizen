@@ -25,6 +25,17 @@ describe('buildTranscriptComment', () => {
     expect(body).toContain('logs/auto-dent/run-1.log');
   });
 
+  it('propagates the fail-closed sentinel when scrubbing cannot complete (no raw leak)', () => {
+    // A non-string transcript forces scrubSecrets to fail closed.
+    const { body, redactions } = buildTranscriptComment(
+      { label: 'bad', transcript: undefined as unknown as string, sourcePath: 'logs/x.log' },
+      NOW,
+    );
+    expect(redactions).toBe(-1);
+    expect(body).toContain('content withheld'); // SCRUB_FAILED sentinel surfaced
+    expect(body).toContain('## Session Transcript: `bad`');
+  });
+
   it('caps an oversized transcript under GitHub’s comment limit', () => {
     const huge = Array.from({ length: 8000 }, (_, i) => `{"tool":"Bash","i":${i}}`).join('\n');
     const { body } = buildTranscriptComment(

@@ -54,6 +54,7 @@ import {
   extractPlanText,
   populateCrossBatchSteering,
   shouldRunCodexProvider,
+  attachRunTranscripts,
 } from './auto-dent-run.js';
 import * as github from './auto-dent-github.js';
 import { makeBatchState, makeRunResult } from './auto-dent-test-utils.js';
@@ -3562,5 +3563,63 @@ describe('post-run runId lifetime (#1128 regression guard)', () => {
     expect(declarationIndex).toBeLessThan(reviewIndex);
     expect(source.split(declaration).length - 1).toBe(1);
     expect(source.slice(declarationIndex, reviewIndex)).toContain('run_id: runId');
+  });
+});
+
+describe('attachRunTranscripts (#1508 wiring)', () => {
+  const baseTranscript = '{"type":"system"}\n{"type":"result"}';
+
+  function harness(over: Partial<Parameters<typeof attachRunTranscripts>[0]> = {}) {
+    const attached: Array<{ target: any; parts: any }> = [];
+    const logs: string[] = [];
+    attachRunTranscripts({
+      prs: ['https://github.com/o/r/pull/42'],
+      repo: 'o/r',
+      logFile: '/logs/run-1.log',
+      label: 'batch/run-1',
+      readLog: () => baseTranscript,
+      attach: (target, parts) => {
+        attached.push({ target, parts });
+        return 'https://github.com/o/r/pull/42#issuecomment-1';
+      },
+      now: () => '2026-06-28T00:00:00Z',
+      log: (m) => logs.push(m),
+      ...over,
+    });
+    return { attached, logs };
+  }
+
+  it('attaches to each PR with the parsed PR number, label, and source path', () => {
+    const { attached } = harness();
+    expect(attached).toHaveLength(1);
+    expect(attached[0].target).toEqual({ kind: 'pr', number: '42', repo: 'o/r' });
+    expect(attached[0].parts.label).toBe('batch/run-1');
+    expect(attached[0].parts.sourcePath).toBe('/logs/run-1.log');
+    expect(attached[0].parts.transcript).toBe(baseTranscript);
+  });
+
+  it('skips a URL with no /pull/<N> (no throw, no attach)', () => {
+    const { attached } = harness({ prs: ['https://github.com/o/r/pull/new/branch'] });
+    expect(attached).toHaveLength(0);
+  });
+
+  it('skips when the repo is empty', () => {
+    const { attached } = harness({ repo: '' });
+    expect(attached).toHaveLength(0);
+  });
+
+  it('fails open when reading the log throws (logs a skip, does not throw)', () => {
+    const { attached, logs } = harness({
+      readLog: () => { throw new Error('ENOENT'); },
+    });
+    expect(attached).toHaveLength(0);
+    expect(logs.some((l) => l.includes('skipped'))).toBe(true);
+  });
+
+  it('handles multiple PRs independently', () => {
+    const { attached } = harness({
+      prs: ['https://github.com/o/r/pull/1', 'https://github.com/o/r/pull/2'],
+    });
+    expect(attached.map((a) => a.target.number)).toEqual(['1', '2']);
   });
 });

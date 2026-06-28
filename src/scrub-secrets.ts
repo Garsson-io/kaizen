@@ -37,7 +37,7 @@ const TOKEN_PATTERNS: RegExp[] = [
   /gh[pousr]_[A-Za-z0-9]{16,}/g,                // GitHub PAT/OAuth/server/refresh
   /github_pat_[A-Za-z0-9_]{20,}/g,              // GitHub fine-grained PAT
   /AKIA[0-9A-Z]{16}/g,                          // AWS access key id
-  /xox[baprs]-[A-Za-z0-9-]{10,}/g,              // Slack
+  /(?:xox[baprs]|xapp)-[A-Za-z0-9-]{10,}/g,     // Slack bot/user/app tokens
   /AIza[0-9A-Za-z_-]{35}/g,                     // Google API key
   /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWT
 ];
@@ -47,13 +47,18 @@ const TOKEN_PATTERNS: RegExp[] = [
  * secret. We keep the key + separator (capture group 1) and redact the value.
  */
 const KV_PATTERNS: RegExp[] = [
+  // URL userinfo password: scheme://user:<password>@host  (DSNs, git remotes).
+  // Keep scheme+user; redact the password. `@host` is a lookahead so the generic
+  // single-group replacer (keeps group 1, redacts the rest) preserves the host.
+  /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)[^\s@/]+(?=@)/gi,
   // Authorization: <scheme token>  /  "authorization": "<token>"
   // Consume the WHOLE header value (e.g. `Bearer <token>`), not just the scheme word.
   /(["']?[Aa]uthorization["']?\s*[:=]\s*)["']?[^\n"',}]{6,}/g,
   // Bearer <token> (also matches inside an Authorization value)
   /(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/g,
   // FOO_API_KEY=...  /  "client_secret": "..."  /  PASSWORD=...
-  /(["']?[\w.-]*(?:API_?KEY|APIKEY|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE_KEY|ACCESS_KEY|CLIENT_SECRET|CREDENTIALS?)[\w.-]*["']?\s*[:=]\s*)["']?[^\s"',}]+/gi,
+  // Value runs to end-of-line / JSON delimiter so spaces in the value don't leak.
+  /(["']?[\w.-]*(?:API_?KEY|APIKEY|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE_KEY|ACCESS_KEY|CLIENT_SECRET|CREDENTIALS?)[\w.-]*["']?\s*[:=]\s*)["']?[^\n"',}]+/gi,
 ];
 
 /**

@@ -330,9 +330,9 @@ async function handleRetrieveTestplan(a: CliArgs): Promise<void> {
 async function handleAttachTranscript(a: CliArgs): Promise<void> {
   const file = a.file;
   if (!file) { console.error('attach-transcript requires --file <transcript.jsonl>'); process.exit(1); }
+  if (!a.pr && !a.issue) { console.error('attach-transcript requires --pr <N> or --issue <N>'); process.exit(1); }
   const transcript = readFileSync(file, 'utf8');
   const target = a.pr ? prTarget(a.pr, a.repo) : issueTarget(a.issue, a.repo);
-  if (!a.pr && !a.issue) { console.error('attach-transcript requires --pr <N> or --issue <N>'); process.exit(1); }
   const url = attachTranscript(
     target,
     { label: a.label || file.replace(/^.*\//, ''), transcript, sourcePath: a['source-path'] || file },
