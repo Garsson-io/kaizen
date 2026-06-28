@@ -20,6 +20,8 @@ import {
   parseFrontmatter,
   reviewBriefing,
 } from './review-battery.js';
+import { hasYamlFrontmatterBlock } from './lib/frontmatter.js';
+import { firstMarkdownFence } from './lib/markdown-fence.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -161,8 +163,7 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
     // Check frontmatter exists and has required fields
     const fm = parseFrontmatter(content);
     if (!fm) {
-      const hasFrontmatterBlock = /^---\n[\s\S]*?\n---/.test(content);
-      errors.push(hasFrontmatterBlock ? 'Frontmatter YAML is invalid (cannot parse)' : 'Missing YAML frontmatter');
+      errors.push(hasYamlFrontmatterBlock(content) ? 'Frontmatter YAML is invalid (cannot parse)' : 'Missing YAML frontmatter');
     } else {
       if (!fm.name) errors.push('Frontmatter missing "name" field');
       if (!fm.description) errors.push('Frontmatter missing "description" field');
@@ -173,7 +174,7 @@ export function cmdValidate(promptsDir?: string): { results: ValidationResult[];
     }
 
     // Check for ```json output format section
-    if (!content.includes('```json')) {
+    if (!firstMarkdownFence(content, 'json')) {
       errors.push('Missing ```json output format section');
     }
 

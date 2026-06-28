@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseYamlFrontmatter, readYamlFrontmatter, stripYamlFrontmatter } from './frontmatter.js';
+import { hasYamlFrontmatterBlock, parseYamlFrontmatter, readYamlFrontmatter, stripYamlFrontmatter } from './frontmatter.js';
 
 describe('parseYamlFrontmatter', () => {
   it('returns null when markdown has no leading YAML frontmatter', () => {
@@ -8,6 +8,13 @@ describe('parseYamlFrontmatter', () => {
 
   it('returns null for malformed YAML without throwing', () => {
     const content = '---\nname: foo: bar\ndescription: nope\n---\nBody';
+    expect(parseYamlFrontmatter(content)).toBeNull();
+  });
+
+  it('detects a CRLF frontmatter block even when its YAML is malformed', () => {
+    const content = '---\r\nname: foo: bar\r\ndescription: nope\r\n---\r\nBody';
+
+    expect(hasYamlFrontmatterBlock(content)).toBe(true);
     expect(parseYamlFrontmatter(content)).toBeNull();
   });
 

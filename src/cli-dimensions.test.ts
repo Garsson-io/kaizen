@@ -246,6 +246,13 @@ describe('cli-dimensions with temp fixtures', () => {
     expect(v.results[0].errors).toContain('Missing ```json output format section');
   });
 
+  it('validate accepts JSON output fences through the shared markdown fence parser', () => {
+    writeFileSync(resolve(tmpDir, 'review-json.md'), '---\nname: json\ndescription: test\napplies_to: pr\n---\n``` JSON \n{}\n```\n');
+    const v = cmdValidate(tmpDir);
+    expect(v.ok).toBe(true);
+    expect(v.results[0].errors).toEqual([]);
+  });
+
   it('validate catches frontmatter name/filename mismatch', () => {
     writeFileSync(resolve(tmpDir, 'review-correct-name.md'), '---\nname: wrong-name\ndescription: test\napplies_to: pr\n---\n```json\n{}\n```\n');
     const v = cmdValidate(tmpDir);
@@ -265,6 +272,22 @@ describe('cli-dimensions with temp fixtures', () => {
     const entry = v.results.find(r => r.file === 'review-badyaml.md');
     expect(entry?.errors[0]).toContain('invalid');
     expect(entry?.errors[0]).not.toContain('Missing YAML frontmatter');
+  });
+
+  it('validate distinguishes malformed CRLF YAML frontmatter from missing frontmatter', () => {
+    writeFileSync(resolve(tmpDir, 'review-badcrlf.md'), '---\r\nname: bad: yaml\r\ndescription: test\r\n---\r\nBody\r\n```json\r\n{}\r\n```\r\n');
+    const v = cmdValidate(tmpDir);
+    expect(v.ok).toBe(false);
+    const entry = v.results.find(r => r.file === 'review-badcrlf.md');
+    expect(entry?.errors[0]).toContain('invalid');
+    expect(entry?.errors[0]).not.toContain('Missing YAML frontmatter');
+  });
+
+  it('keeps validate on shared frontmatter and markdown fence parsers', () => {
+    const source = readFileSync(new URL('./cli-dimensions.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toContain("content.includes('```json')");
+    expect(source).not.toMatch(/\/\^---\\n/);
   });
 
   it('formatValidation shows FAIL for invalid dimensions', () => {

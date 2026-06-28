@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDelimitedYamlBlocks, parseLeadingDelimitedYamlBlock } from './yaml-block.js';
+import { hasLeadingDelimitedYamlBlock, parseDelimitedYamlBlocks, parseLeadingDelimitedYamlBlock } from './yaml-block.js';
 
 describe('parseLeadingDelimitedYamlBlock', () => {
   it('parses a leading YAML block and preserves trailing body', () => {
@@ -14,6 +14,11 @@ describe('parseLeadingDelimitedYamlBlock', () => {
 
   it('returns null when the leading YAML block is invalid', () => {
     expect(parseLeadingDelimitedYamlBlock('---\nname: nope: invalid\n---\nBody')).toBeNull();
+  });
+
+  it('detects a leading block with CRLF delimiters without parsing it', () => {
+    expect(hasLeadingDelimitedYamlBlock('---\r\nname: nope: invalid\r\n---\r\nBody')).toBe(true);
+    expect(hasLeadingDelimitedYamlBlock('# Heading\r\n---\r\nname: later\r\n---')).toBe(false);
   });
 });
 
