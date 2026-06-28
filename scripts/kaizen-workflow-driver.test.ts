@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { resolve } from 'node:path';
 
 import {
@@ -11,6 +11,16 @@ import {
   renderWorkflowStatusMarkdown,
   renderAutoDentGoalContract,
 } from './kaizen-workflow-driver.js';
+
+const TSX_CLI = resolve('node_modules/tsx/dist/cli.mjs');
+const WORKFLOW_DRIVER = 'scripts/kaizen-workflow-driver.ts';
+
+function runWorkflowDriver(args: string[], options: { cwd?: string; script?: string } = {}): SpawnSyncReturns<string> {
+  return spawnSync(process.execPath, [TSX_CLI, options.script ?? WORKFLOW_DRIVER, ...args], {
+    cwd: options.cwd,
+    encoding: 'utf8',
+  });
+}
 
 describe('kaizen workflow forcing driver', () => {
   it('manual driver starts with a literal /goal and names the ticket identity', () => {
@@ -149,9 +159,7 @@ describe('kaizen workflow forcing driver', () => {
   });
 
   it('CLI exposes workflow status for operators and agents with explicit gate evidence', () => {
-    const result = spawnSync('npx', [
-      'tsx',
-      'scripts/kaizen-workflow-driver.ts',
+    const result = runWorkflowDriver([
       'status',
       '--mode',
       'exploit',
@@ -159,9 +167,7 @@ describe('kaizen workflow forcing driver', () => {
       'done: shared workflow driver reused',
       '--meet-reality',
       'done: CLI output inspected',
-    ], {
-      encoding: 'utf8',
-    });
+    ]);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('## Kaizen Workflow Status');
@@ -174,8 +180,6 @@ describe('kaizen workflow forcing driver', () => {
 
   it('CLI status resolves repo evidence from the script location, not process cwd', () => {
     const args = [
-      'tsx',
-      'scripts/kaizen-workflow-driver.ts',
       'status',
       '--mode',
       'manual',
@@ -184,10 +188,10 @@ describe('kaizen workflow forcing driver', () => {
       '--meet-reality',
       'done: cwd invariant',
     ];
-    const fromRoot = spawnSync('npx', args, { encoding: 'utf8' });
-    const fromTmp = spawnSync('npx', ['tsx', resolve('scripts/kaizen-workflow-driver.ts'), ...args.slice(2)], {
+    const fromRoot = runWorkflowDriver(args);
+    const fromTmp = runWorkflowDriver(args, {
       cwd: '/tmp',
-      encoding: 'utf8',
+      script: resolve(WORKFLOW_DRIVER),
     });
 
     expect(fromRoot.status).toBe(0);
