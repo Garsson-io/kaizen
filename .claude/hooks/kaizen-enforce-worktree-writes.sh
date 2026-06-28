@@ -73,4 +73,19 @@ fi
 
 # Block the write — source code on main branch
 REASON="Cannot write to '$FILE_PATH' — it's source code in the main checkout ($MAIN_ROOT) on main branch. Use a worktree for code changes. Runtime dirs (groups/, data/, store/, logs/) and .claude/ are allowed."
+source "$(dirname "$0")/lib/resolve-kaizen-dir.sh" 2>/dev/null || true
+WORKTREE_HINT=""
+if [ -n "${KAIZEN_DIR:-}" ] && [ -f "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" ]; then
+  if [ -x "$KAIZEN_DIR/node_modules/.bin/tsx" ]; then
+    WORKTREE_HINT=$("$KAIZEN_DIR/node_modules/.bin/tsx" "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" main-edit-hint --main-root "$MAIN_ROOT" --rel-path "$REL_PATH" 2>/dev/null || true)
+  elif command -v npx >/dev/null 2>&1; then
+    WORKTREE_HINT=$(npx --prefix "$KAIZEN_DIR" tsx "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" main-edit-hint --main-root "$MAIN_ROOT" --rel-path "$REL_PATH" 2>/dev/null || true)
+  fi
+fi
+
+if [ -n "$WORKTREE_HINT" ]; then
+  REASON="$REASON
+
+$WORKTREE_HINT"
+fi
 emit_deny "$REASON"

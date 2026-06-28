@@ -68,6 +68,10 @@ export interface ReviewSentinelInput {
   totalMissing?: number;
 }
 
+export interface WriteReviewSentinelInput extends ReviewSentinelInput {
+  stateDir: string;
+}
+
 export interface ReviewSentinelValidation {
   ok: boolean;
   reason: string;
@@ -142,6 +146,31 @@ export function buildReviewSentinelRecord(input: ReviewSentinelInput): ReviewSen
 
 export function serializeReviewSentinel(record: ReviewSentinelRecord): string {
   return `${JSON.stringify(record, null, 2)}\n`;
+}
+
+export function writeReviewSentinelFile(input: WriteReviewSentinelInput): string {
+  if (fs.existsSync(input.stateDir)) {
+    const stateDirStat = fs.lstatSync(input.stateDir);
+    if (stateDirStat.isSymbolicLink() || !stateDirStat.isDirectory()) {
+      throw new Error(`unsafe review sentinel state dir: ${input.stateDir}`);
+    }
+  }
+  fs.mkdirSync(input.stateDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(input.stateDir, 0o700);
+  const record = buildReviewSentinelRecord(input);
+  const path = reviewSentinelPath(input.stateDir, input.prUrl, input.round);
+  const fd = fs.openSync(
+    path,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    fs.writeFileSync(fd, serializeReviewSentinel(record));
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.chmodSync(path, 0o600);
+  return path;
 }
 
 export function validateReviewSentinel(

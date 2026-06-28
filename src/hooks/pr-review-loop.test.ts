@@ -396,6 +396,59 @@ describe('pr-review-loop: gh pr diff', () => {
     expect(state.ROUND).toBe('2');
   });
 
+  it('writes review sentinels owner-only', () => {
+    writeSentinel('Garsson-io_kaizen_1558', '1');
+
+    const sentinelPath = path.join(testStateDir, 'Garsson-io_kaizen_1558.reviewed-r1');
+    const mode = fs.statSync(sentinelPath).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it('clears a stale local round when a later valid passing sentinel exists', () => {
+    createPendingReviewState('1559', '1');
+    writeSentinel('Garsson-io_kaizen_1559', '3');
+
+    const output = runHook(
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/1559'),
+    );
+
+    expect(output).toContain('REVIEW ROUND 3/4');
+    expect(output).toContain('REVIEW PASSED');
+    const state = readState('Garsson-io_kaizen_1559');
+    expect(state.STATUS).toBe('passed');
+    expect(state.ROUND).toBe('3');
+  });
+
+  it('uses the newest valid later sentinel and skips invalid newer candidates', () => {
+    createPendingReviewState('1560', '1');
+    writeSentinel('Garsson-io_kaizen_1560', '2');
+    fs.writeFileSync(path.join(testStateDir, 'Garsson-io_kaizen_1560.reviewed-r4'), 'not json\n');
+
+    const output = runHook(
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/1560'),
+    );
+
+    expect(output).toContain('REVIEW ROUND 2/4');
+    const state = readState('Garsson-io_kaizen_1560');
+    expect(state.STATUS).toBe('passed');
+    expect(state.ROUND).toBe('2');
+  });
+
+  it('does not clear a stale local round using a below-current sentinel', () => {
+    createPendingReviewState('1561', '2');
+    writeSentinel('Garsson-io_kaizen_1561', '1');
+
+    const output = runHook(
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/1561'),
+    );
+
+    expect(output).toContain('REVIEW ROUND 2/4');
+    expect(output).toContain('no valid review sentinel stored for round 2');
+    const state = readState('Garsson-io_kaizen_1561');
+    expect(state.STATUS).toBe('needs_review');
+    expect(state.ROUND).toBe('2');
+  });
+
   it('denies gate clear and names missing review dimensions', () => {
     createPendingReviewState('1038', '1');
     const allDimensions = expectedPrReviewDimensions();

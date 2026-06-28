@@ -160,7 +160,7 @@ Git worktrees share the common git dir (`.git/objects`, refs, and `.git/hooks/` 
 - `.githooks/*` is a checked-out path → each worktree runs **its own copy** of `.githooks/pre-push` resolved against the working tree.
 - If a worktree is on a branch that doesn't have `.githooks/` committed → git silently finds no hook and runs nothing.
 
-Mitigation: `.claude/hooks/kaizen-worktree-setup.sh` (SessionStart) verifies `.githooks/pre-push` exists and is executable, and warns if `core.hooksPath` is unset.
+Mitigation: `.claude/hooks/kaizen-worktree-setup.sh` (SessionStart) verifies `.githooks/pre-push` exists and is executable, and warns if `core.hooksPath` is unset. The same hook delegates to `src/hooks/worktree-integrity.ts` to normalize Claude Code EnterWorktree's sanitized `worktree-case+<date>-k<N>-...` branch shape back to canonical `case/<date>-k<N>-...` before issue binding.
 
 ### Per-worktree `kaizen.issue` binding (#1111)
 
@@ -174,7 +174,7 @@ No shared-scope "unset on provisioning" is safe under concurrency (it would clea
 - `git config extensions.worktreeConfig true` enables per-worktree keys.
 - `git config --worktree kaizen.issue <N>` writes a binding the merged read (`git config --get`) prefers over the shared value — independent per worktree.
 - `src/issue-binding.ts` is the single read/write primitive; `src/cli-issue-binding.ts` exposes `bind` / `read` / `check-leak` so the harness and agents never touch raw shared config.
-- The SessionStart guard in `kaizen-worktree-setup.sh` detects an inherited (leaked) binding at the provisioning choke point and steers to the per-worktree fix (advisory — the #1106 edit-time hook still fail-closes as defense-in-depth).
+- The SessionStart guard in `kaizen-worktree-setup.sh` calls `src/hooks/worktree-integrity.ts`, which normalizes sanitized case branches, self-heals canonical case branches by writing the worktree-scoped binding, and detects inherited leaked bindings at the provisioning choke point (advisory — the #1106 edit-time hook still fail-closes as defense-in-depth).
 
 ## Coexistence with `pr-review-loop.ts`
 

@@ -1,4 +1,15 @@
-import { readFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildReviewSentinelRecord,
@@ -7,6 +18,7 @@ import {
   validateReviewSentinel,
   reviewSentinelPath,
   reviewSentinelStateKey,
+  writeReviewSentinelFile,
 } from './review-sentinel.js';
 import { prUrlToStateKey } from './hooks/state-utils.js';
 
@@ -145,5 +157,76 @@ describe('review sentinel contract', () => {
         round: 1,
       }),
     ).toThrow('invalid PR URL');
+  });
+
+  it('writes new sentinel dirs and files owner-only', () => {
+    const root = mkdtempSync(join(tmpdir(), 'review-sentinel-mode-'));
+    const stateDir = join(root, 'state');
+    const path = writeReviewSentinelFile({
+      stateDir,
+      prUrl: PR_URL,
+      round: 1,
+      dimensionsReviewed: expectedPrReviewDimensions(),
+      findingCount: 1,
+      totalDone: 1,
+    });
+
+    expect(statSync(stateDir).mode & 0o777).toBe(0o700);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it('repairs existing sentinel file permissions', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'review-sentinel-repair-'));
+    const path = reviewSentinelPath(stateDir, PR_URL, 1);
+    writeFileSync(path, 'old\n', { mode: 0o644 });
+    chmodSync(path, 0o644);
+
+    writeReviewSentinelFile({
+      stateDir,
+      prUrl: PR_URL,
+      round: 1,
+      dimensionsReviewed: expectedPrReviewDimensions(),
+      findingCount: 1,
+      totalDone: 1,
+    });
+
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it('rejects preexisting sentinel symlinks without overwriting the target', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'review-sentinel-symlink-'));
+    const target = join(stateDir, 'target');
+    writeFileSync(target, 'do not overwrite\n');
+    const path = reviewSentinelPath(stateDir, PR_URL, 1);
+    symlinkSync(target, path);
+
+    expect(() => writeReviewSentinelFile({
+      stateDir,
+      prUrl: PR_URL,
+      round: 1,
+      dimensionsReviewed: expectedPrReviewDimensions(),
+      findingCount: 1,
+      totalDone: 1,
+    })).toThrow();
+    expect(readFileSync(target, 'utf8')).toBe('do not overwrite\n');
+    expect(readlinkSync(path)).toBe(target);
+  });
+
+  it('rejects symlinked state directories', () => {
+    const root = mkdtempSync(join(tmpdir(), 'review-sentinel-dir-symlink-'));
+    const realDir = join(root, 'real');
+    const linkedDir = join(root, 'linked');
+    writeFileSync(realDir, 'not a dir');
+    symlinkSync(realDir, linkedDir);
+
+    expect(existsSync(linkedDir)).toBe(true);
+    expect(() => writeReviewSentinelFile({
+      stateDir: linkedDir,
+      prUrl: PR_URL,
+      round: 1,
+      dimensionsReviewed: expectedPrReviewDimensions(),
+      findingCount: 1,
+      totalDone: 1,
+    })).toThrow('unsafe review sentinel state dir');
   });
 });

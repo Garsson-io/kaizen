@@ -189,7 +189,9 @@ import {
   type LifecycleEvidence,
   type ProcessEvidence,
   type ProcessVerdict,
+  type ProcessValidation,
 } from './auto-dent-lifecycle.js';
+import type { WorkflowGateId, WorkflowGateState } from './workflow-gate-ledger.js';
 import {
   classifyRunExit,
   collectRunWorktrees,
@@ -830,6 +832,62 @@ export function deriveRunOutcome(signals: RunOutcomeSignals): RunOutcome {
   if (signals.exitCode !== 0) return 'failure';
   if (hasHardQualityFailure(signals)) return 'failure';
   return signals.artifactCount > 0 ? 'success' : 'empty_success';
+}
+
+function processCheckState(status: ProcessValidation['checks'][number]['status']): WorkflowGateState {
+  switch (status) {
+    case 'pass':
+      return 'done';
+    case 'fail':
+      return 'invalid';
+    case 'warning':
+      return 'blocked';
+    case 'not-applicable':
+      return 'not_applicable';
+  }
+}
+
+function workflowGateStatesFromProcess(processValidation: ProcessValidation): Partial<Record<WorkflowGateId, WorkflowGateState>> {
+  const states: Partial<Record<WorkflowGateId, WorkflowGateState>> = {};
+  for (const check of processValidation.checks) {
+    const state = processCheckState(check.status);
+    const existing = states[check.id];
+    if (existing === 'invalid' || (existing === 'blocked' && state !== 'invalid')) continue;
+    states[check.id] = state;
+  }
+  return states;
+}
+
+function workflowRepairStateFromProcess(
+  processValidation: ProcessValidation,
+  prCount: number,
+): 'not_required' | 'repair_scheduled' | 'merge_ready' | 'blocked_with_reason' | 'repair_budget_exhausted' {
+  if (processValidation.verdict === 'pass') return 'merge_ready';
+  if (prCount > 0 && processValidation.failedChecks.length > 0) return 'repair_scheduled';
+  if (processValidation.warningChecks.length > 0) return 'blocked_with_reason';
+  return 'not_required';
+}
+
+function workflowRepairPromptFromProcess(input: {
+  processValidation: ProcessValidation;
+  prUrl?: string;
+  issue?: string;
+  branch?: string;
+  runId: string;
+}): string {
+  const actionable = [...input.processValidation.failedChecks, ...input.processValidation.warningChecks];
+  const gates = actionable.map((check) =>
+    `- ${check.id}: ${check.reason}${check.remediation ? `; repair=${check.remediation}` : ''}`,
+  ).join('\n');
+  return [
+    `Repair evidence for run ${input.runId}.`,
+    `PR: ${input.prUrl ?? '(unknown PR)'}`,
+    `Issue: ${input.issue ?? '(unknown issue)'}`,
+    `Branch: ${input.branch ?? '(unknown branch)'}`,
+    'fill evidence for these exact gates on the existing PR; do not restart unrelated implementation.',
+    gates,
+    'Update the workflow gate ledger evidence, then stop only at merge_ready, blocked_with_reason, or repair_budget_exhausted.',
+  ].join('\n');
 }
 
 /** Schedulable cognitive modes (contemplate is an overlay, not bandit-scheduled). */
@@ -2395,6 +2453,10 @@ async function main(): Promise<void> {
   let processVerdict: ProcessVerdict = 'fail-open-warning';
   let processIssueCount = 0;
   let processSummary = 'fail-open-warning: process validator did not run';
+  let workflowGateStates: Partial<Record<WorkflowGateId, WorkflowGateState>> = {};
+  let workflowRepairGates: WorkflowGateId[] = [];
+  let workflowRepairState: 'not_required' | 'repair_scheduled' | 'merge_ready' | 'blocked_with_reason' | 'repair_budget_exhausted' = 'not_required';
+  let workflowRepairPrompt: string | undefined;
   try {
     const lifecycle = validateRunLifecycle(logFile);
 
@@ -2429,15 +2491,41 @@ async function main(): Promise<void> {
       result.cases.length === 0;
     const processEvidence: ProcessEvidence = {
       intentionalNoOp,
+      ticketIdentityEvidence: Boolean(state.test_task) || Boolean(result.pickedIssue && result.pickedIssue !== 'not applicable'),
       planEvidence: Boolean(state.test_task) || Boolean(promptMeta.claimedPlanIssue),
       implementationEvidence: Boolean(state.test_task) ? result.prs.length > 0 : result.cases.length > 0,
       prEvidence: result.prs.length > 0,
       testEvidence: Boolean(state.test_task) || hasDurableTestMarker,
       reviewEvidence: Boolean(state.test_task) || (result.reviewVerdict != null && result.reviewVerdict !== 'skipped'),
       reflectionEvidence: Boolean(state.test_task) || result.issuesFiled.length + result.issuesClosed.length > 0,
+      dryRefactorEvidence: Boolean(state.test_task) || result.progressSteps?.some((step) =>
+        step.phase === 'DRY' || step.phase === 'DRY-REFACTOR' || /dry|refactor|simplification/i.test(`${step.phase} ${step.detail}`),
+      ),
+      meetRealityEvidence: Boolean(state.test_task) || result.progressSteps?.some((step) =>
+        step.phase === 'MEET-REALITY' || /meet reality|dogfood|tried|observed output/i.test(`${step.phase} ${step.detail}`),
+      ),
+      hookProviderEvidence: Boolean(state.test_task) ||
+        state.provider === 'codex' ||
+        Boolean(result.hookActivation && !result.hookActivation.degraded),
       mergeReadiness,
     };
     const processValidation = validateProcessEvidence(lifecycle, processEvidence);
+    workflowGateStates = workflowGateStatesFromProcess(processValidation);
+    workflowRepairGates = [...new Set([
+      ...processValidation.failedChecks.map((check) => check.id),
+      ...processValidation.warningChecks.map((check) => check.id),
+    ])];
+    workflowRepairState = workflowRepairStateFromProcess(processValidation, result.prs.length);
+    if (workflowRepairState === 'repair_scheduled') {
+      workflowRepairPrompt = workflowRepairPromptFromProcess({
+        processValidation,
+        prUrl: result.prs[0],
+        issue: result.pickedIssue,
+        branch: result.cases[0],
+        runId,
+      });
+      appendFileSync(logFile, `workflow_repair_prompt<<EOF\n${workflowRepairPrompt}\nEOF\n`);
+    }
     if (result.finalClaim) {
       const claimWarnings = compareFinalClaimToEvidence(result.finalClaim, {
         prs: result.prs,
@@ -2474,6 +2562,21 @@ async function main(): Promise<void> {
       processVerdict = folded.verdict;
       processIssueCount = folded.issueCount;
       processSummary = folded.summary;
+      if (claimEvidenceWarnings.length > 0) {
+        workflowRepairState = result.prs.length > 0 ? 'repair_scheduled' : workflowRepairState;
+        for (const gate of ['review-requirements-impact', 'implementation-tests'] as WorkflowGateId[]) {
+          if (!workflowRepairGates.includes(gate)) workflowRepairGates.push(gate);
+        }
+        if (!workflowRepairPrompt && workflowRepairState === 'repair_scheduled') {
+          workflowRepairPrompt = workflowRepairPromptFromProcess({
+            processValidation,
+            prUrl: result.prs[0],
+            issue: result.pickedIssue,
+            branch: result.cases[0],
+            runId,
+          });
+        }
+      }
     }
     if (processVerdict !== 'pass' && lifecycleHealth !== 'critical') {
       lifecycleHealth = 'degraded';
@@ -2600,6 +2703,10 @@ async function main(): Promise<void> {
       process_verdict: processVerdict,
       process_issue_count: processIssueCount,
       process_summary: processSummary,
+      workflow_gate_states: workflowGateStates,
+      workflow_repair_gates: workflowRepairGates,
+      workflow_repair_state: workflowRepairState,
+      workflow_repair_prompt: workflowRepairPrompt,
       review_verdict: reviewVerdict,
       review_cost_usd: reviewCostUsd,
       phase_providers: phaseProvidersForState(state),
@@ -2664,6 +2771,11 @@ async function main(): Promise<void> {
     // of observed failed test ids stays `unknown`; only real run-log evidence can
     // become pass/unowned-failures.
     testHealth,
+    // #1533: consume the canonical workflow gate ledger at the merge terminal
+    // action, so a stale legacy process verdict cannot hide pending/invalid
+    // evidence-repair gates.
+    workflowGateStates,
+    workflowRepairState,
   });
   const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);
   if (!autoMergeDecision.allow) {
@@ -2804,6 +2916,10 @@ async function main(): Promise<void> {
       process_verdict: processVerdict,
       process_issue_count: processIssueCount,
       process_summary: processSummary,
+      workflow_gate_states: workflowGateStates,
+      workflow_repair_gates: workflowRepairGates,
+      workflow_repair_state: workflowRepairState,
+      workflow_repair_prompt: workflowRepairPrompt,
       review_verdict: reviewVerdict,
       review_cost_usd: reviewCostUsd,
       test_health: testHealth,
@@ -2868,6 +2984,13 @@ async function main(): Promise<void> {
     if (!freshState.reflection_insights.includes(lifecycleSteeringNote)) {
       freshState.reflection_insights.push(lifecycleSteeringNote);
       console.log(`  ${color.red('[lifecycle]')} steering insight added for next run`);
+    }
+  }
+  if (workflowRepairPrompt) {
+    if (!freshState.reflection_insights) freshState.reflection_insights = [];
+    if (!freshState.reflection_insights.includes(workflowRepairPrompt)) {
+      freshState.reflection_insights.push(workflowRepairPrompt);
+      console.log(`  ${color.yellow('[workflow-repair]')} targeted evidence repair queued for next run`);
     }
   }
 

@@ -381,12 +381,16 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
   });
 
   const fullEvidence = (over: Partial<ProcessEvidence> = {}): ProcessEvidence => ({
+    ticketIdentityEvidence: true,
     planEvidence: true,
     implementationEvidence: true,
     prEvidence: true,
     testEvidence: true,
     reviewEvidence: true,
     reflectionEvidence: true,
+    dryRefactorEvidence: true,
+    meetRealityEvidence: true,
+    hookProviderEvidence: true,
     mergeReadiness: 'ready',
     ...over,
   });
@@ -398,7 +402,7 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     );
     expect(result.verdict).toBe('process-incomplete');
     expect(result.checks).toContainEqual(expect.objectContaining({
-      id: 'implementation',
+      id: 'worktree-case',
       status: 'fail',
     }));
   });
@@ -410,7 +414,7 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     );
     expect(result.verdict).toBe('process-incomplete');
     expect(result.checks).toContainEqual(expect.objectContaining({
-      id: 'test',
+      id: 'implementation-tests',
       status: 'fail',
     }));
   });
@@ -422,7 +426,7 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     );
     expect(result.verdict).toBe('process-incomplete');
     expect(result.checks).toContainEqual(expect.objectContaining({
-      id: 'plan',
+      id: 'plan-testplan',
       status: 'fail',
     }));
   });
@@ -434,7 +438,7 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     );
     expect(result.verdict).toBe('process-incomplete');
     expect(result.checks).toContainEqual(expect.objectContaining({
-      id: 'review',
+      id: 'review-requirements-impact',
       status: 'fail',
     }));
   });
@@ -458,7 +462,7 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     );
     expect(result.verdict).toBe('fail-open-warning');
     expect(result.checks).toContainEqual(expect.objectContaining({
-      id: 'merge-readiness',
+      id: 'pr-ci-merge-cleanup',
       status: 'warning',
     }));
   });
@@ -505,7 +509,7 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     );
     expect(result.verdict).toBe('process-incomplete');
     expect(result.checks).toContainEqual(expect.objectContaining({
-      id: 'implementation',
+      id: 'worktree-case',
       status: 'fail',
     }));
   });
@@ -522,7 +526,7 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     );
     expect(result.verdict).toBe('pass');
     expect(result.checks).toContainEqual(expect.objectContaining({
-      id: 'review-provider',
+      id: 'review-requirements-impact',
       status: 'pass',
     }));
   });
@@ -555,12 +559,16 @@ describe('adversarial false-success fixtures (#1150)', () => {
   };
 
   const fullEvidence = (over: Partial<ProcessEvidence> = {}): ProcessEvidence => ({
+    ticketIdentityEvidence: true,
     planEvidence: true,
     implementationEvidence: true,
     prEvidence: true,
     testEvidence: true,
     reviewEvidence: true,
     reflectionEvidence: true,
+    dryRefactorEvidence: true,
+    meetRealityEvidence: true,
+    hookProviderEvidence: true,
     mergeReadiness: 'ready',
     ...over,
   });
@@ -582,7 +590,7 @@ describe('adversarial false-success fixtures (#1150)', () => {
         'AUTO_DENT_PHASE: PR | url=https://github.com/test/repo/pull/1',
       ],
       evidence: fullEvidence({ testEvidence: false }),
-      expectedFailedIds: ['test'],
+      expectedFailedIds: ['implementation-tests'],
     },
     {
       name: 'claude-claims-review-passed-without-review-attachment',
@@ -594,7 +602,7 @@ describe('adversarial false-success fixtures (#1150)', () => {
         'review: pass',
       ],
       evidence: fullEvidence({ reviewEvidence: false }),
-      expectedFailedIds: ['review'],
+      expectedFailedIds: ['review-requirements-impact'],
     },
     {
       name: 'codex-claims-reflection-done-without-durable-reflection-output',
@@ -619,7 +627,7 @@ describe('adversarial false-success fixtures (#1150)', () => {
         'AUTO_DENT_PHASE: PR | url=https://github.com/test/repo/pull/4',
       ],
       evidence: fullEvidence({ implementationEvidence: false, prEvidence: true }),
-      expectedFailedIds: ['implementation'],
+      expectedFailedIds: ['worktree-case'],
     },
     {
       name: 'provider-neutral-resume-lost-plan-state',
@@ -630,7 +638,7 @@ describe('adversarial false-success fixtures (#1150)', () => {
         'AUTO_DENT_PHASE: TEST | result=pass | count=2',
       ],
       evidence: fullEvidence({ planEvidence: false, prEvidence: false, mergeReadiness: 'not-applicable' }),
-      expectedFailedIds: ['plan'],
+      expectedFailedIds: ['plan-testplan'],
     },
     {
       name: 'hybrid-review-never-completes-but-worker-claims-success',
@@ -648,7 +656,7 @@ describe('adversarial false-success fixtures (#1150)', () => {
           codex: 'pending',
         },
       }),
-      expectedFailedIds: ['review-provider'],
+      expectedFailedIds: ['review-requirements-impact'],
     },
   ];
 

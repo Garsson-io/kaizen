@@ -7,6 +7,14 @@ import {
 } from '../src/verdict-binding-policy.js';
 import { providerClaimsHookSupport, type HookActivationVerdict } from './auto-dent-hook-activation.js';
 import type { Provider } from './auto-dent-provider.js';
+import type { WorkflowGateId, WorkflowGateState } from './workflow-gate-ledger.js';
+
+export type WorkflowRepairState =
+  | 'not_required'
+  | 'repair_scheduled'
+  | 'merge_ready'
+  | 'blocked_with_reason'
+  | 'repair_budget_exhausted';
 
 export interface AutoMergeSafetySignals {
   /** Number of PRs this terminal action would affect. Non-PR runs have no merge action. */
@@ -22,6 +30,10 @@ export interface AutoMergeSafetySignals {
    * `qualityVerdictBlockReasons` SSOT — no separate rule here.
    */
   testHealth?: TestHealthVerdict;
+  /** Canonical workflow gate states emitted by the process ledger (#1533). */
+  workflowGateStates?: Partial<Record<WorkflowGateId, WorkflowGateState>>;
+  /** Evidence-repair loop state emitted with the workflow gate ledger (#1533). */
+  workflowRepairState?: WorkflowRepairState;
   /**
    * Hook-activation verdict for the run (#843/#1500). `undefined` means no
    * `system.init` event was observed this run, so hook state is unknown.
@@ -76,10 +88,31 @@ export function hookActivationBlockReasons(signals: AutoMergeSafetySignals): str
   return [];
 }
 
+export function workflowGateBlockReasons(signals: AutoMergeSafetySignals): string[] {
+  if (signals.prCount <= 0) return [];
+
+  const reasons: string[] = [];
+  if (
+    signals.workflowRepairState === 'repair_scheduled' ||
+    signals.workflowRepairState === 'blocked_with_reason' ||
+    signals.workflowRepairState === 'repair_budget_exhausted'
+  ) {
+    reasons.push(`workflow repair state ${signals.workflowRepairState}`);
+  }
+
+  for (const [gate, state] of Object.entries(signals.workflowGateStates ?? {}) as Array<[WorkflowGateId, WorkflowGateState]>) {
+    if (state === 'invalid' || state === 'blocked' || state === 'pending') {
+      reasons.push(`workflow gate ${gate} ${state}`);
+    }
+  }
+  return [...new Set(reasons)];
+}
+
 export function autoMergeBlockReasons(signals: AutoMergeSafetySignals): string[] {
   if (signals.prCount <= 0) return [];
   return [
     ...qualityVerdictBlockReasons(signals, { requireReview: signals.reviewRequired }),
+    ...workflowGateBlockReasons(signals),
     ...hookActivationBlockReasons(signals),
   ];
 }
