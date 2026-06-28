@@ -15,6 +15,8 @@ export interface ParsedCodexJsonl {
   malformedLines: string[];
 }
 
+export type AutoDentStreamMessage = Record<string, any>;
+
 export function buildCodexExecArgs(repoRoot: string): string[] {
   return [
     'exec',
@@ -50,6 +52,100 @@ function isFinalEvent(event: unknown): boolean {
   if (!event || typeof event !== 'object') return false;
   const type = String((event as Record<string, unknown>).type ?? '').toLowerCase();
   return type.includes('final') || type === 'result';
+}
+
+function textFrom(value: unknown): string {
+  const chunks: string[] = [];
+  collectText(value, chunks);
+  return chunks.join('\n');
+}
+
+function assistantText(text: string): AutoDentStreamMessage {
+  return {
+    type: 'assistant',
+    message: {
+      content: [{ type: 'text', text }],
+    },
+  };
+}
+
+function resultText(text: string): AutoDentStreamMessage {
+  return {
+    type: 'result',
+    subtype: 'success',
+    result: text,
+  };
+}
+
+export function normalizeCodexFinalTextToStreamMessages(text: string): AutoDentStreamMessage[] {
+  return text ? [resultText(text)] : [];
+}
+
+function extractPullRequestUrl(text: string): string | undefined {
+  return text.match(/https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/)?.[0];
+}
+
+/**
+ * Normalize provider-specific Codex JSONL rows into the same stream-json shape
+ * that `processStreamMessage()` already consumes for Claude.
+ */
+export function normalizeCodexEventToStreamMessages(event: unknown): AutoDentStreamMessage[] {
+  if (!event || typeof event !== 'object') return [];
+
+  const obj = event as Record<string, unknown>;
+  const item = obj.item;
+  if (item && typeof item === 'object') {
+    const itemObj = item as Record<string, unknown>;
+    if (itemObj.type === 'agent_message') {
+      const text = textFrom(itemObj.text);
+      return text ? [assistantText(text)] : [];
+    }
+
+    if (itemObj.type === 'command_execution') {
+      const messages: AutoDentStreamMessage[] = [];
+      const command = typeof itemObj.command === 'string' ? itemObj.command : '';
+      if (command) {
+        messages.push({
+          type: 'assistant',
+          message: {
+            content: [{
+              type: 'tool_use',
+              name: 'Bash',
+              input: { command },
+            }],
+          },
+        });
+      }
+
+      const output = textFrom(itemObj.aggregated_output ?? itemObj.output);
+      if (output) {
+        const toolResult: AutoDentStreamMessage = {
+          type: 'user',
+          message: {
+            content: [{ type: 'tool_result', content: output }],
+          },
+        };
+        const prUrl = extractPullRequestUrl(output);
+        if (prUrl) {
+          toolResult.tool_use_result = {
+            gitOperation: {
+              pr: {
+                action: 'created',
+                url: prUrl,
+              },
+            },
+          };
+        }
+        messages.push(toolResult);
+      }
+
+      return messages;
+    }
+  }
+
+  if (!isFinalEvent(event)) return [];
+  const text = textFrom(event);
+  return normalizeCodexFinalTextToStreamMessages(text);
 }
 
 export function parseCodexJsonl(jsonl: string): ParsedCodexJsonl {

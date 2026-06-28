@@ -151,7 +151,6 @@ import {
 } from './auto-dent-github.js';
 import {
   color,
-  extractArtifacts,
   processStreamMessage,
   parsePhaseMarkers,
   postInFlightUpdate,
@@ -162,12 +161,13 @@ import {
 import {
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
+  normalizeCodexEventToStreamMessages,
+  normalizeCodexFinalTextToStreamMessages,
   parseCodexJsonl,
 } from './auto-dent-codex.js';
 import {
   compareFinalClaimToEvidence,
   foldFinalClaimWarningsIntoProcess,
-  parseFinalRunClaim,
   writeFinalClaimArtifact,
   type FinalClaimStatus,
   type FinalRunClaim,
@@ -1594,6 +1594,7 @@ async function runCodex(
   return new Promise((resolvePromise) => {
     let processExited = false;
     let raw = '';
+    const ctx: StreamContext = {};
     const child = spawn('codex', buildCodexExecArgs(input.repoRoot), {
       cwd: input.repoRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -1612,10 +1613,21 @@ async function runCodex(
       }
     }, maxRunMs);
 
-    child.stdout?.on('data', (data: Buffer) => {
-      const s = data.toString();
-      raw += s;
-      appendFileSync(rawFile, s);
+    const rl = createInterface({ input: child.stdout! });
+    rl.on('line', (line) => {
+      raw += line + '\n';
+      appendFileSync(rawFile, line + '\n');
+
+      const event = parseJsonObject(line);
+      if (!event) return;
+
+      try {
+        for (const streamMessage of normalizeCodexEventToStreamMessages(event)) {
+          processStreamMessage(streamMessage, input.result, runStart, ctx);
+        }
+      } catch {
+        // Raw JSONL remains durable; a malformed display row should not hide run completion.
+      }
     });
 
     child.stderr?.on('data', (data: Buffer) => {
@@ -1627,8 +1639,11 @@ async function runCodex(
       processExited = true;
       clearTimeout(wallTimer);
       const parsed = parseCodexJsonl(raw);
-      input.result.toolCalls = parsed.events.length;
-      extractArtifacts([parsed.text, parsed.finalText].join('\n'), input.result);
+      if (!input.result.finalClaimStatus && parsed.finalText) {
+        for (const streamMessage of normalizeCodexFinalTextToStreamMessages(parsed.finalText)) {
+          processStreamMessage(streamMessage, input.result, runStart, ctx);
+        }
+      }
 
       appendFileSync(input.logFile, `\n--- codex final text ---\n${parsed.finalText || parsed.text}\n`);
       const markers = extractCodexPhaseMarkers(parsed);
@@ -1638,10 +1653,6 @@ async function runCodex(
       if (parsed.malformedLines.length > 0) {
         appendFileSync(input.logFile, `\n[codex] malformed_jsonl_lines=${parsed.malformedLines.length}\n`);
       }
-      const claimResult = parseFinalRunClaim(parsed.finalText || parsed.text);
-      input.result.finalClaimStatus = claimResult.status;
-      input.result.finalClaim = claimResult.claim;
-      input.result.finalClaimWarnings = claimResult.warnings;
 
       const duration = Math.floor((Date.now() - runStart) / 1000);
       resolvePromise({
