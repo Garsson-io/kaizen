@@ -555,6 +555,30 @@ describe('buildBatchReflection', () => {
     expect(reflection.avgCostPerPr).toBeCloseTo(3.25);
   });
 
+  it('surfaces explore to exploit conversion in reflection comments', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        run_history: [
+          makeRunMetrics({ run: 1, mode: 'explore', issues_filed: ['#10', '#11'] }),
+          makeRunMetrics({ run: 2, mode: 'exploit', prs: ['pr1'], issues_closed: ['https://github.com/Garsson-io/kaizen/issues/10'] }),
+          makeRunMetrics({ run: 3, mode: 'reflect', issues_closed: ['#11'] }),
+        ],
+      }),
+    });
+
+    const reflection = buildBatchReflection(batch);
+    const comment = formatBatchReflectionComment(reflection);
+
+    expect(reflection.exploreExploitConversion).toMatchObject({
+      exploreIssuesFiled: 2,
+      exploreIssuesClosedByExploit: 1,
+      conversionRate: 0.5,
+    });
+    expect(comment).toContain('Explore->exploit conversion');
+    expect(comment).toContain('1/2 (50%)');
+  });
+
   it('detects high success rate pattern', () => {
     const runs = Array.from({ length: 5 }, (_, i) =>
       makeRunMetrics({ run: i + 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/' + (100 + i)] }),

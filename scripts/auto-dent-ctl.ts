@@ -52,6 +52,11 @@ import {
   summarizeDrySweepReport,
   type DrySweepReport,
 } from './auto-dent-dry-sweep.js';
+import {
+  computeExploreExploitConversion,
+  formatExploreExploitConversion,
+  type ExploreExploitConversion,
+} from './auto-dent-explore-conversion.js';
 
 function getRepoRoot(): string {
   try {
@@ -393,6 +398,7 @@ export interface BatchReflection {
   issuesClosedCount: number;
   successRate: number;
   avgCostPerPr: number;
+  exploreExploitConversion: ExploreExploitConversion;
   insights: ReflectionInsight[];
   runHistoryTable: string;
 }
@@ -421,6 +427,7 @@ export function buildBatchReflection(
   const failedRuns = scores.filter((r) => !r.success);
   const successRate = scores.length > 0 ? successfulRuns.length / scores.length : 0;
   const avgCostPerPr = totalPrs > 0 ? totalCost / totalPrs : 0;
+  const exploreExploitConversion = computeExploreExploitConversion(history);
 
   // Insight: overall success rate
   if (scores.length >= 3) {
@@ -532,6 +539,13 @@ export function buildBatchReflection(
     });
   }
 
+  if (exploreExploitConversion.exploreIssuesFiled > 0) {
+    insights.push({
+      type: exploreExploitConversion.exploreIssuesClosedByExploit > 0 ? 'success_pattern' : 'recommendation',
+      message: `Explore->exploit conversion: ${formatExploreExploitConversion(exploreExploitConversion)} explore-filed issue(s) closed by exploit runs`,
+    });
+  }
+
   // Build run history table
   const tableLines: string[] = [
     '| Run | Duration | Cost | PRs | Issues | Status |',
@@ -554,6 +568,7 @@ export function buildBatchReflection(
     issuesClosedCount: totalIssuesClosed,
     successRate,
     avgCostPerPr,
+    exploreExploitConversion,
     insights,
     runHistoryTable: tableLines.join('\n'),
   };
@@ -575,6 +590,7 @@ export function formatBatchReflectionComment(reflection: BatchReflection): strin
     `| **PRs created** | ${reflection.totalPrs} |`,
     `| **Issues closed** | ${reflection.issuesClosedCount} |`,
     `| **Avg cost/PR** | ${reflection.avgCostPerPr > 0 ? '$' + reflection.avgCostPerPr.toFixed(2) : 'N/A'} |`,
+    `| **Explore->exploit conversion** | ${reflection.exploreExploitConversion.exploreIssuesFiled > 0 ? formatExploreExploitConversion(reflection.exploreExploitConversion) : 'N/A'} |`,
     '',
   ];
 
