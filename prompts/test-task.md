@@ -13,7 +13,7 @@ Run tag: {{run_tag}}
    ```
 3. Commit with message: "test: probe {{run_tag}}"
 4. Create a PR: `gh pr create --title "test: probe {{run_tag}}" --body "Synthetic test task for pipeline validation. Run tag: {{run_tag}}" --repo {{host_repo}}`
-5. Leave auto-merge to the harness after review verdicts are known
+5. Leave auto-merge to the harness.
 
 Do not ask for confirmation. Complete all steps.
 
@@ -36,23 +36,4 @@ Issues already addressed in previous runs (do not rework): {{issues_closed}}
 PRs already created in this batch (avoid overlapping work): {{prs}}
 {{/prs}}
 
-## Merge & Labeling Policy
-
-After creating a PR, do NOT run merge commands yourself.
-The auto-dent harness queues auto-merge after review verdicts and process evidence are known.
-Leave the PR open for the harness-owned terminal action.
-
-## Stopping the Loop
-
-If you determine there is no more meaningful work to do matching the guidance
-(backlog exhausted, all relevant issues claimed, or remaining issues are
-blocked/too risky), include this exact marker in your final response:
-
-AUTO_DENT_PHASE: STOP | reason=<reason>
-
-For example: "AUTO_DENT_PHASE: STOP | reason=backlog exhausted — no more open issues matching 'hooks reliability'"
-This will gracefully stop the batch loop. Only use this when you've genuinely
-run out of work — not when a single run is complete.
-
-When done, summarize what was accomplished. List all PRs created, issues filed,
-and issues closed with full URLs.
+When done, follow the shared harness terminal protocol from the goal-forcing contract.

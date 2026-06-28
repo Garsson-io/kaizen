@@ -1,5 +1,10 @@
 #!/usr/bin/env npx tsx
 import { spawnSync } from 'node:child_process';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { currentBranch, makeGitRun, type GitRun } from '../src/issue-binding.js';
+import { resolveProjectRoot } from '../src/lib/resolve-project-root.js';
 
 export type WorkflowMode = 'manual' | 'exploit' | 'explore' | 'reflect' | 'subtract' | 'contemplate' | string;
 
@@ -41,6 +46,8 @@ export interface WorkflowEvidenceLookupInput {
   repo?: string;
   issue?: WorkflowIssueIdentity;
   issueNumber?: string;
+  projectRoot?: string;
+  gitRun?: GitRun;
 }
 
 export interface WorkflowStageStatus {
@@ -147,6 +154,13 @@ export function renderAutoDentGoalContract(mode: WorkflowMode): string {
     'The related-area DRY/refactor pass is required for implementation work: reduce competing mechanisms, schemas, and drift in the area touched by the ticket.',
     'Meet reality before declaring done: try the PR/workflow, observe outputs and side effects, and record whether the original goal changed in reality.',
     '',
+    'Harness terminal protocol:',
+    '- Leave merge commands and auto-merge queueing to the auto-dent harness after review verdicts and process evidence are known.',
+    '- Explicitly close every issue the PR fixes in the host repo after creating the PR; do not rely only on PR closing keywords for non-default-branch runs.',
+    '- Emit AUTO_DENT_PHASE markers as real phases complete: PICK, EVALUATE, IMPLEMENT, TEST, PR, MERGE, DECOMPOSE, REFLECT.',
+    '- Emit AUTO_DENT_PHASE: STOP | reason=<reason> only when meaningful matching work is genuinely exhausted, not at the end of a normal run.',
+    '- When done, summarize PRs created, issues filed, issues closed, tests, review status, and any remaining blockers with full URLs.',
+    '',
     'For status, use the reusable workflow status call:',
     '  npx tsx scripts/kaizen-workflow-driver.ts status --mode <mode> --issue <N> --repo <owner/repo>',
     'Pass explicit stage evidence when automation or skills have proof the CLI cannot infer, for example:',
@@ -250,52 +264,54 @@ function fetchIssueIdentity(repo: string, issue: string): WorkflowIssueIdentity 
   return undefined;
 }
 
-function runText(command: string, args: string[]): string {
+function defaultProjectRoot(): string {
+  return resolveProjectRoot(dirname(fileURLToPath(import.meta.url)));
+}
+
+function runText(command: string, args: string[], cwd: string): string {
   const result = spawnSync(command, args, {
+    cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
   });
   return result.status === 0 ? result.stdout.trim() : '';
 }
 
-function hasStoredArtifact(kind: 'plan' | 'testplan', repo: string, issue: string): boolean {
+function hasStoredArtifact(kind: 'plan' | 'testplan', repo: string, issue: string, cwd: string): boolean {
   const command = kind === 'plan' ? 'retrieve-plan' : 'retrieve-testplan';
-  const output = runText('npx', ['tsx', 'src/cli-structured-data.ts', command, '--issue', issue, '--repo', repo]);
+  const output = runText('npx', ['tsx', 'src/cli-structured-data.ts', command, '--issue', issue, '--repo', repo], cwd);
   if (!output) return false;
   return !/^No (plan|test plan) found\./i.test(output.trim());
 }
 
-function currentBranch(): string {
-  return runText('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
+function hasLocalChanges(run: GitRun): boolean {
+  return run(['status', '--short']).stdout !== '';
 }
 
-function hasLocalChanges(): boolean {
-  return runText('git', ['status', '--short']) !== '';
-}
-
-function hasBranchCommits(): boolean {
-  const output = runText('git', ['log', '--oneline', 'origin/main..HEAD']);
-  return output !== '';
+function hasBranchCommits(run: GitRun): boolean {
+  return run(['log', '--oneline', 'origin/main..HEAD']).stdout !== '';
 }
 
 export function collectWorkflowEvidence(input: WorkflowEvidenceLookupInput): WorkflowEvidenceInput {
   const evidence: WorkflowEvidenceInput = {};
+  const projectRoot = input.projectRoot ?? defaultProjectRoot();
+  const gitRun = input.gitRun ?? makeGitRun(projectRoot);
   const issue = input.issue;
   const issueNumber = input.issueNumber ?? (issue ? String(issue.number) : '');
   if (issue) {
     evidence.issueIdentity = `Issue #${issue.number} loaded from ${input.repo ?? 'repo'}: ${issue.title} (${issue.url})`;
   }
-  if (input.repo && issueNumber && hasStoredArtifact('plan', input.repo, issueNumber) && hasStoredArtifact('testplan', input.repo, issueNumber)) {
+  if (input.repo && issueNumber && hasStoredArtifact('plan', input.repo, issueNumber, projectRoot) && hasStoredArtifact('testplan', input.repo, issueNumber, projectRoot)) {
     evidence.plan = `stored plan and test plan found for #${issueNumber}`;
   }
 
-  const branch = currentBranch();
+  const branch = currentBranch(gitRun);
   if (branch && branch !== 'main' && branch !== 'master') {
     evidence.worktreeCase = `working on branch ${branch}`;
   }
-  if (hasBranchCommits()) {
+  if (hasBranchCommits(gitRun)) {
     evidence.implementation = 'branch has commits ahead of origin/main';
-  } else if (hasLocalChanges()) {
+  } else if (hasLocalChanges(gitRun)) {
     evidence.implementation = 'in progress: local changes are present';
   }
 

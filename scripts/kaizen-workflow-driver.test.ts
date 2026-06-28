@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 
 import {
   FULL_KAIZEN_GATE_LABELS,
@@ -155,5 +156,30 @@ describe('kaizen workflow forcing driver', () => {
     expect(result.stdout).toContain('CLI output inspected');
     expect(result.stdout).toContain('| meet reality | done |');
     expect(result.stdout).toContain('pending');
+  });
+
+  it('CLI status resolves repo evidence from the script location, not process cwd', () => {
+    const args = [
+      'tsx',
+      'scripts/kaizen-workflow-driver.ts',
+      'status',
+      '--mode',
+      'manual',
+      '--dry-refactor',
+      'done: cwd invariant',
+      '--meet-reality',
+      'done: cwd invariant',
+    ];
+    const fromRoot = spawnSync('npx', args, { encoding: 'utf8' });
+    const fromTmp = spawnSync('npx', ['tsx', resolve('scripts/kaizen-workflow-driver.ts'), ...args.slice(2)], {
+      cwd: '/tmp',
+      encoding: 'utf8',
+    });
+
+    expect(fromRoot.status).toBe(0);
+    expect(fromTmp.status).toBe(0);
+    expect(fromTmp.stdout).toBe(fromRoot.stdout);
+    expect(fromTmp.stdout).toContain('worktree/case gate');
+    expect(fromTmp.stdout).toContain('implementation with tests');
   });
 });
