@@ -29,6 +29,7 @@ import {
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { KAIZEN_PLUGIN_SOURCE } from "../kaizen-plugin-identity.js";
 
 import {
   runHook,
@@ -139,7 +140,7 @@ export class SessionSimulator {
     switch (preset) {
       case "bad_kaizen_install":
         writeFileSync(settingsPath, JSON.stringify({
-          enabledPlugins: { "kaizen@kaizen": true, "other-plugin@1.0": true },
+          enabledPlugins: { [KAIZEN_PLUGIN_SOURCE]: true, "other-plugin@1.0": true },
         }, null, 2));
         break;
       case "clean":
@@ -250,7 +251,7 @@ export class SessionSimulator {
   homeHasKaizen(): boolean {
     const settingsPath = join(this.fakeHome, ".claude", "settings.json");
     if (!existsSync(settingsPath)) return false;
-    return readFileSync(settingsPath, "utf-8").includes('"kaizen@kaizen"');
+    return readFileSync(settingsPath, "utf-8").includes(`"${KAIZEN_PLUGIN_SOURCE}"`);
   }
 
   settingsJson(): string {
