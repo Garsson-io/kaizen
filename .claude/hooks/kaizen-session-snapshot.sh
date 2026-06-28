@@ -12,7 +12,7 @@
 # Non-blocking. Silent on success. Exits 0 even on write failure.
 
 set -u
-KAIZEN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$(dirname "$0")/lib/resolve-kaizen-dir.sh" 2>/dev/null || exit 0
 
 # Resolve tsx from the kaizen repo's node_modules, then fall back to npx.
 # Stay silent if neither is available — this hook must never break startup.
