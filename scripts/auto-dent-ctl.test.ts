@@ -989,6 +989,34 @@ describe('readAggregate', () => {
     const records = readAggregate(tmpDir);
     expect(records).toHaveLength(2);
   });
+
+  it('parses CRLF aggregate JSONL while skipping blank and malformed rows', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'agg-test-'));
+    writeFileSync(
+      join(tmpDir, 'aggregate.jsonl'),
+      [
+        '{"batch_id":"b1","total_runs":1}',
+        '',
+        'not json',
+        '{"batch_id":"b2","total_runs":2}',
+      ].join('\r\n'),
+    );
+
+    const records = readAggregate(tmpDir);
+
+    expect(records.map((record) => record.batch_id)).toEqual(['b1', 'b2']);
+  });
+
+  it('delegates tolerant aggregate JSONL decoding to the shared parser', () => {
+    const source = readFileSync('scripts/auto-dent-ctl.ts', 'utf8');
+    const aggregateSource = source.slice(
+      source.indexOf('export function appendBatchToAggregate'),
+      source.indexOf('export interface AggregateStats'),
+    );
+
+    expect(aggregateSource).not.toMatch(/JSON\.parse\(line\)/);
+    expect(aggregateSource).not.toMatch(/\.split\(['"]\\n['"]\)/);
+  });
 });
 
 describe('computeAggregateStats', () => {
