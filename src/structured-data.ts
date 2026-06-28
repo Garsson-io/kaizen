@@ -38,6 +38,7 @@ import {
   type RoundVerdict,
 } from './review-finding-contract.js';
 import { firstMarkdownFence } from './lib/markdown-fence.js';
+import { parseJsonMetaComment } from './lib/meta-comment.js';
 
 // ── Target helpers ──────────────────────────────────────────────────
 
@@ -106,19 +107,15 @@ export type { ReviewFinding, ReviewFindingData } from './review-finding-contract
 const STATUS_ICON: Record<string, string> = { DONE: '✅', PARTIAL: '⚠️', MISSING: '❌' };
 
 function extractSummaryRoundVerdict(summary: string): RoundVerdict | null {
-  const match = summary.match(/^<!-- meta:(\{.*\}) -->/);
-  if (!match) return null;
-  try {
-    const meta = JSON.parse(match[1]) as { round_verdict?: RoundVerdict; verdict?: string };
-    if (meta.round_verdict === 'PASS' || meta.round_verdict === 'PASS_WITH_PARTIALS' || meta.round_verdict === 'FAIL') {
-      return meta.round_verdict;
-    }
-    if (meta.verdict === 'fail') return 'FAIL';
-    if (meta.verdict === 'pass') return 'PASS';
-    return null;
-  } catch {
-    return null;
+  const meta = parseJsonMetaComment(summary);
+  if (!meta || typeof meta !== 'object') return null;
+  const verdictMeta = meta as { round_verdict?: RoundVerdict; verdict?: string };
+  if (verdictMeta.round_verdict === 'PASS' || verdictMeta.round_verdict === 'PASS_WITH_PARTIALS' || verdictMeta.round_verdict === 'FAIL') {
+    return verdictMeta.round_verdict;
   }
+  if (verdictMeta.verdict === 'fail') return 'FAIL';
+  if (verdictMeta.verdict === 'pass') return 'PASS';
+  return null;
 }
 
 /**
