@@ -82,15 +82,21 @@ export function parseKnownFailures(content: string): KnownFailuresValidation {
       return;
     }
     const { test, issue, reason, addedBy } = entry as Partial<KnownFailure>;
-    const testOk = typeof test === 'string' && test.trim().length > 0;
+    // A `test` must look like a real test identifier, not a catch-all. Naive
+    // `id.includes(test)` matching means an over-broad entry (e.g. "test" or
+    // "py") would silently tolerate unrelated failures — so require a recognizable
+    // delimiter (`.`/`/`/`:`/`-`, present in every pytest nodeid, vitest name, or
+    // shell test file) and a minimum length. Use the full nodeid to be safe.
+    const testStr = typeof test === 'string' ? test.trim() : '';
+    const testOk = testStr.length >= 5 && /[.:/\\-]/.test(testStr);
     const issueOk = typeof issue === 'number' && Number.isInteger(issue) && issue > 0;
     const reasonOk = typeof reason === 'string' && reason.trim().length > 0;
-    if (!testOk) errors.push(`${where}.test: must be a non-empty string`);
+    if (!testOk) errors.push(`${where}.test: must be a specific test id (≥5 chars and contain one of . / : -), not a catch-all`);
     if (!issueOk) errors.push(`${where}.issue: must be a positive integer (the owning open issue)`);
     if (!reasonOk) errors.push(`${where}.reason: must be a non-empty string (why it is tolerated)`);
     if (testOk && issueOk && reasonOk) {
       entries.push({
-        test: test!.trim(),
+        test: testStr,
         issue: issue!,
         reason: reason!.trim(),
         ...(typeof addedBy === 'string' && addedBy.trim() ? { addedBy: addedBy.trim() } : {}),

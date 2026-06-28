@@ -17,11 +17,20 @@ const ok = (entries: Partial<KnownFailure>[]) =>
 describe('parseKnownFailures', () => {
   it('accepts a valid entry and ignores unknown top-level keys', () => {
     const r = parseKnownFailures(
-      JSON.stringify({ _doc: 'note', knownFailures: [{ test: 'a::b', issue: 1481, reason: 'tracked' }] }),
+      JSON.stringify({ _doc: 'note', knownFailures: [{ test: 'mod.py::test_x', issue: 1481, reason: 'tracked' }] }),
     );
     expect(r.ok).toBe(true);
     expect(r.errors).toEqual([]);
-    expect(r.entries).toEqual([{ test: 'a::b', issue: 1481, reason: 'tracked' }]);
+    expect(r.entries).toEqual([{ test: 'mod.py::test_x', issue: 1481, reason: 'tracked' }]);
+  });
+
+  it('rejects a catch-all / too-generic test id (no delimiter or < 5 chars)', () => {
+    expect(parseKnownFailures(ok([{ test: 'test_', issue: 1, reason: 'x' }])).ok).toBe(false);
+    expect(parseKnownFailures(ok([{ test: 'tests', issue: 1, reason: 'x' }])).ok).toBe(false); // no delimiter
+    expect(parseKnownFailures(ok([{ test: 'a.b', issue: 1, reason: 'x' }])).ok).toBe(false);   // too short
+    // but real test ids pass:
+    expect(parseKnownFailures(ok([{ test: 'foo.py', issue: 1, reason: 'x' }])).ok).toBe(true);
+    expect(parseKnownFailures(ok([{ test: 'test-foo-bar', issue: 1, reason: 'x' }])).ok).toBe(true);
   });
 
   it('accepts an empty registry', () => {

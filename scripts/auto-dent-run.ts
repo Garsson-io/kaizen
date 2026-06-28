@@ -2649,7 +2649,7 @@ async function main(): Promise<void> {
     // classification) and the `known-failures` CI gate. The harness does not run
     // the suite itself, so it has no truthful run-level test signal to pass here
     // yet — left `unknown` (non-blocking) rather than fabricated. Capturing a
-    // run-level test-failure signal for the harness is a deferred follow-up,
+    // run-level test-failure signal for the harness is tracked as #1527,
     // mirroring how #1220 deferred run-success consumption to #1501.
   });
   const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);

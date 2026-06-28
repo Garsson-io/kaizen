@@ -25,10 +25,12 @@ A failing test is **never** invisible background noise. Before you merge:
      and tolerated; otherwise the suite fails.
    - The `known-failures` CI job fails if any registry entry's owning issue is
      closed or missing (fix the test or re-file an owner).
-   - The merge-readiness SSOT (`qualityVerdictBlockReasons`, consumed by both
-     `enforce-merge-verdict` and `decideAutoMergeSafety`) blocks merge on a
+   - The merge-readiness SSOT (`qualityVerdictBlockReasons`, consumed by
+     `decideAutoMergeSafety` for auto-dent auto-merge) blocks merge on a
      `testHealth: unowned-failures` signal; `test-health-verdict` is a
-     terminal-critical entry in `docs/verdict-binding-inventory.md`.
+     terminal-critical entry in `docs/verdict-binding-inventory.md`. (The direct
+     `enforce-merge-verdict` PreToolUse gate consumes the stored review-round
+     verdict, not test health.)
 
 <!-- Example:
 10. Never install system packages on the host. System deps go in Dockerfiles.

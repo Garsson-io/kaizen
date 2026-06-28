@@ -17,7 +17,7 @@
  *     green while an unowned failure exists.
  */
 import { readFileSync } from 'node:fs';
-import { ghResult } from '../src/lib/gh-exec.js';
+import { ghResult, type GhResult } from '../src/lib/gh-exec.js';
 import {
   loadKnownFailures,
   findOwnershipProblems,
@@ -25,6 +25,7 @@ import {
   isKnownFailure,
   type IssueState,
   type KnownFailure,
+  type KnownFailuresValidation,
 } from '../src/known-failures.js';
 
 function readArg(name: string): string | undefined {
@@ -32,24 +33,35 @@ function readArg(name: string): string | undefined {
   return idx >= 0 ? process.argv[idx + 1] : undefined;
 }
 
+/** Map a `gh issue view --json state` result to an IssueState (pure, testable). */
+export function parseIssueState(res: GhResult): IssueState {
+  if (res.status !== 0) return 'missing';
+  try {
+    const state = String((JSON.parse(res.stdout) as { state?: string }).state ?? '').toLowerCase();
+    return state === 'open' ? 'open' : state === 'closed' ? 'closed' : 'missing';
+  } catch {
+    return 'missing';
+  }
+}
+
 /** Resolve a GitHub issue's state via `gh`, mapping a not-found to `missing`. */
-export function ghIssueState(repo: string | undefined): (issue: number) => IssueState {
+export function ghIssueState(
+  repo: string | undefined,
+  run: (args: string[]) => GhResult = ghResult,
+): (issue: number) => IssueState {
   return (issue: number): IssueState => {
     const args = ['issue', 'view', String(issue), '--json', 'state'];
     if (repo) args.push('--repo', repo);
-    const res = ghResult(args);
-    if (res.status !== 0) return 'missing';
-    try {
-      const state = String((JSON.parse(res.stdout) as { state?: string }).state ?? '').toLowerCase();
-      return state === 'open' ? 'open' : state === 'closed' ? 'closed' : 'missing';
-    } catch {
-      return 'missing';
-    }
+    return parseIssueState(run(args));
   };
 }
 
-export function runValidate(repo: string | undefined, stateOf: (issue: number) => IssueState): number {
-  const reg = loadKnownFailures();
+export function runValidate(
+  repo: string | undefined,
+  stateOf: (issue: number) => IssueState,
+  load: () => KnownFailuresValidation = loadKnownFailures,
+): number {
+  const reg = load();
   if (!reg.ok) {
     console.error('known-failures: registry is invalid:');
     reg.errors.forEach(e => console.error(`  - ${e}`));
