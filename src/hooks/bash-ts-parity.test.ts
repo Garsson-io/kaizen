@@ -31,6 +31,11 @@ const EXCLUSIONS: Record<string, string> = {
   // check-dirty-files bash wrapper just dispatches to the TS hook.
   extractCdTarget:
     'ts-only: cwd-drift fix landed in TS hook (#1073); bash wrapper only dispatches',
+
+  // The Impact-proof body-file gate is TS-only; the bash hook layer has no
+  // corresponding body-file read path to keep in sync.
+  effectiveCwdBeforeCommand:
+    'ts-only: used by enforce-plan-stored Impact body-file resolution; no bash consumer',
 };
 
 /** Extract function names from a bash script (matches `function_name() {`). */

@@ -5,7 +5,9 @@
  * No GitHub or git calls are made.
  */
 
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
 import {
   checkPlanBeforePr,
@@ -73,8 +75,35 @@ const GOOD_TEST_PLAN = `## Test Plan
 | 2 | Token refresh on 401 response | Unit |
 | 3 | Config validation rejects bad input | Unit |`;
 
+const GOOD_IMPACT_SECTION = `## Impact (goal -> before/after -> match)
+
+- Goal (#1055): Non-docs PR creation shows observable issue impact before merge.
+- Acceptance signal: A PR body carries comparable evidence for the linked issue goal.
+- BEFORE: Base hook allowed a body with only Closes #1055 and no impact proof.
+- AFTER: Head hook blocks the missing-proof body and allows this populated proof.
+- Delta: Missing proof changes from allowed to blocked with impact-proof guidance.
+- Goal met?: yes
+- Residual scan: none`;
+
 function ghPrCreate(body: string): string {
   return `gh pr create --title "feat: test" --body "$(cat <<'EOF'\n${body}\nEOF\n)"`;
+}
+
+function ghPrCreateWithBodyFile(
+  body: string,
+  options: { equalsForm?: boolean; shortFlag?: boolean; filename?: string } = {},
+): { command: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'kaizen-pr-body-'));
+  const filename = options.filename ?? 'body.md';
+  const path = join(dir, filename);
+  writeFileSync(path, body);
+  const bodyFileFlag = options.shortFlag
+    ? `-F "${filename}"`
+    : options.equalsForm ? `--body-file=${filename}` : `--body-file "${filename}"`;
+  return {
+    command: `cd "${dir}" && gh pr create --title "feat: test" ${bodyFileFlag}`,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
 }
 
 afterEach(() => { delete process.env.KAIZEN_SKIP_PLAN_CHECK; });
@@ -129,6 +158,19 @@ describe('branch helper source invariant', () => {
     expect(source).toContain("from './lib/current-branch.js'");
     expect(source).toContain("fallback: ''");
     expect(source).not.toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD']");
+  });
+});
+
+describe('Impact proof parser invariant', () => {
+  it('reuses the structured section parser instead of hand-rolled markdown slicing', () => {
+    const source = readFileSync(
+      new URL('./enforce-plan-stored.ts', import.meta.url),
+      'utf-8',
+    );
+
+    expect(source).toContain("from '../section-editor.js'");
+    expect(source).toContain('parseSections(prBodyText)');
+    expect(source).not.toContain('findIndex((line) => /^##');
   });
 });
 
@@ -264,7 +306,7 @@ describe('checkPlanBeforeEdit', () => {
 
     it('B6: substance deny reason is the same at the edit gate and the PR gate', () => {
       const editReason = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => STUB_PLAN })).reason ?? '';
-      const prReason = checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps({ retrievePlan: () => STUB_PLAN })).reason ?? '';
+      const prReason = checkPlanBeforePr(ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`), makeDeps({ retrievePlan: () => STUB_PLAN })).reason ?? '';
       // Same heuristic, same message body — one substance bar at both choke points.
       expect(editReason).toContain('not substantive');
       expect(prReason).toContain('not substantive');
@@ -276,7 +318,7 @@ describe('checkPlanBeforeEdit', () => {
       // Any plan that passes at PR time must pass at edit time — same heuristic.
       const deps = makeDeps();
       expect(checkPlanBeforeEdit('src/thing.ts', deps).allowed).toBe(true);
-      expect(checkPlanBeforePr(ghPrCreate('Closes #1055'), deps).allowed).toBe(true);
+      expect(checkPlanBeforePr(ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`), deps).allowed).toBe(true);
     });
   });
 
@@ -326,8 +368,162 @@ describe('checkPlanBeforeEdit', () => {
 // ── Gate 2: gh pr create ────────────────────────────────────────────
 
 describe('checkPlanBeforePr', () => {
-  it('allows when plan + testplan exist', () => {
-    expect(checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps()).allowed).toBe(true);
+  it('DENIES non-docs PR without populated Impact proof even when plan + testplan exist', () => {
+    const result = checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('impact-proof');
+    expect(result.reason).toContain('Impact');
+  });
+
+  it('allows when plan + testplan exist and PR body contains populated Impact proof', () => {
+    expect(checkPlanBeforePr(ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`), makeDeps()).allowed).toBe(true);
+  });
+
+  it('allows populated Impact proof supplied through --body-file', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`);
+    try {
+      expect(checkPlanBeforePr(command, makeDeps()).allowed).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('allows populated Impact proof supplied through --body-file=path', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`, {
+      equalsForm: true,
+    });
+    try {
+      expect(checkPlanBeforePr(command, makeDeps()).allowed).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('allows populated Impact proof supplied through -F path', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`, {
+      shortFlag: true,
+    });
+    try {
+      expect(checkPlanBeforePr(command, makeDeps()).allowed).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('extracts the issue link from --body-file when no issue is declared', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`);
+    try {
+      const result = checkPlanBeforePr(command, makeDeps({}, { getDeclaredIssue: () => null }));
+      expect(result.allowed).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('DENIES --body-file PRs when the file lacks Impact proof', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile('Closes #1055');
+    try {
+      const result = checkPlanBeforePr(command, makeDeps());
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('impact-proof');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('DENIES unsafe body-file paths outside the command cwd', () => {
+    const result = checkPlanBeforePr('gh pr create --title "feat: test" --body-file /dev/zero', makeDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('impact-proof');
+  });
+
+  it('DENIES rejected body-file paths even when earlier command text has Impact proof', () => {
+    const compound = `${ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`)}; gh pr create --title "feat: test" --body-file /dev/zero`;
+    const result = checkPlanBeforePr(compound, makeDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('impact-proof');
+  });
+
+  it('DENIES oversized body files without reading them', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\n${'x'.repeat(128 * 1024)}`);
+    try {
+      const result = checkPlanBeforePr(command, makeDeps());
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('impact-proof');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('DENIES when only an earlier non-create command has an Impact body file', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`, {
+      filename: 'good.md',
+    });
+    try {
+      const compound = command.replace(
+        'gh pr create --title "feat: test" --body-file "good.md"',
+        'gh pr comment 1 --body-file "good.md"; gh pr create --title "feat: test" --body "Closes #1055"',
+      );
+      const result = checkPlanBeforePr(compound, makeDeps());
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('impact-proof');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('DENIES when an earlier cd has a valid body file but the create cwd body lacks Impact proof', () => {
+    const good = mkdtempSync(join(tmpdir(), 'kaizen-pr-body-good-'));
+    const actual = mkdtempSync(join(tmpdir(), 'kaizen-pr-body-actual-'));
+    writeFileSync(join(good, 'body.md'), `${GOOD_IMPACT_SECTION}\n\nCloses #1055`);
+    writeFileSync(join(actual, 'body.md'), 'Closes #1055');
+    try {
+      const result = checkPlanBeforePr(
+        `cd "${good}" && cd "${actual}" && gh pr create --title "feat: test" --body-file body.md`,
+        makeDeps(),
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('impact-proof');
+    } finally {
+      rmSync(good, { recursive: true, force: true });
+      rmSync(actual, { recursive: true, force: true });
+    }
+  });
+
+  it('DENIES parenthesized cd body-file ambiguity instead of treating it as persistent cwd', () => {
+    const good = mkdtempSync(join(tmpdir(), 'kaizen-pr-body-good-'));
+    const actual = join(good, 'actual');
+    mkdirSync(actual);
+    writeFileSync(join(good, 'body.md'), 'Closes #1055');
+    writeFileSync(join(actual, 'body.md'), `${GOOD_IMPACT_SECTION}\n\nCloses #1055`);
+    try {
+      const result = checkPlanBeforePr(
+        `cd "${good}" && (cd actual) && gh pr create --title "feat: test" --body-file body.md`,
+        makeDeps(),
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('impact-proof');
+    } finally {
+      rmSync(good, { recursive: true, force: true });
+    }
+  });
+
+  it('DENIES when only an earlier non-create command has inline Impact proof', () => {
+    const compound = `${ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`)}; gh pr create --title "feat: test" --body "Closes #1055"`;
+    const result = checkPlanBeforePr(compound, makeDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('impact-proof');
+  });
+
+  it('DENIES when an Impact section is missing a required field', () => {
+    const partialImpact = GOOD_IMPACT_SECTION
+      .split('\n')
+      .filter(line => !line.startsWith('- Delta:'))
+      .join('\n');
+    const result = checkPlanBeforePr(ghPrCreate(`${partialImpact}\n\nCloses #1055`), makeDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('impact-proof');
+    expect(result.reason).toContain('Missing Impact field: Delta');
   });
 
   it('allows non-pr-create commands', () => {
@@ -406,7 +602,7 @@ describe('checkPlanBeforePr', () => {
 
   it('#318 (B6): allows create for an OPEN issue (no regression)', () => {
     const result = checkPlanBeforePr(
-      ghPrCreate('Closes #1055'),
+      ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`),
       makeDeps({}, { getIssueState: () => 'OPEN' }),
     );
     expect(result.allowed).toBe(true);
@@ -432,6 +628,24 @@ describe('checkPlanBeforePr', () => {
     );
     expect(result.allowed).toBe(true);
     expect(called).toBe(false);
+  });
+
+  it('DENIES when Impact proof has placeholder fields', () => {
+    const placeholderImpact = `## Impact (goal -> before/after -> match)
+
+- Goal (#1055): TBD
+- Acceptance signal: TBD
+- BEFORE: TBD
+- AFTER: TBD
+- Delta: TBD
+- Goal met?: TBD
+- Residual scan: TBD
+
+Closes #1055`;
+    const result = checkPlanBeforePr(ghPrCreate(placeholderImpact), makeDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('impact-proof');
+    expect(result.reason).toContain('placeholder');
   });
 });
 

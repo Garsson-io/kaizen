@@ -150,6 +150,13 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       id: 'hook-activation-verdict',
       label: 'Hook-activation verdict',
       producer: 'scripts/auto-dent-hook-activation.ts: evaluateHookActivation() from the session system.init event',
+      producerSignatures: [
+        'scripts/auto-dent-hook-activation.ts:function:evaluateHookActivation',
+        'scripts/auto-dent-hook-activation.ts:interface:HookActivationVerdict',
+      ],
+      sourceEvidence: [
+        { file: 'scripts/auto-dent-hook-activation.ts', tokens: ['evaluateHookActivation', 'HookActivationVerdict'] },
+      ],
       terminalCritical: true,
     },
   ],

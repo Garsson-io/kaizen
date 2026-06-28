@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   detectGhRepo,
+  effectiveCwdBeforeCommand,
   extractCdTarget,
   extractGitCPath,
   extractPrNumber,
@@ -292,6 +293,26 @@ describe('extractCdTarget', () => {
 
   it('returns first cd target when multiple present', () => {
     expect(extractCdTarget('cd /a && cd /b && gh pr create')).toBe('/a');
+  });
+});
+
+describe('effectiveCwdBeforeCommand', () => {
+  const target = /^gh\s+pr\s+create\b/;
+
+  it('returns the initial cwd when no cd precedes the target command', () => {
+    expect(effectiveCwdBeforeCommand('gh pr create', target, '/repo')).toBe('/repo');
+  });
+
+  it('tracks multiple persistent cd segments before the target command', () => {
+    expect(effectiveCwdBeforeCommand('cd /a && cd b && gh pr create', target, '/repo')).toBe('/a/b');
+  });
+
+  it('fails closed for parenthesized cd segments before the target command', () => {
+    expect(effectiveCwdBeforeCommand('cd /a && (cd b) && gh pr create', target, '/repo')).toBeUndefined();
+  });
+
+  it('fails closed for cd - before the target command', () => {
+    expect(effectiveCwdBeforeCommand('cd - && gh pr create', target, '/repo')).toBeUndefined();
   });
 });
 

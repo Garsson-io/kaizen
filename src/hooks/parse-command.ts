@@ -141,6 +141,35 @@ export function extractCdTarget(cmdLine: string): string | undefined {
   return undefined;
 }
 
+function extractPersistentCdPath(segment: string): string | null {
+  const match = segment.match(/^cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))\s*$/);
+  const target = match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+  return target && target !== '-' ? target : null;
+}
+
+/**
+ * Track plain `cd <dir>` segments before the first segment matching
+ * `targetPattern`, returning that target command's effective cwd. Parenthesized
+ * or otherwise unrecognised cd forms return undefined so callers can fail
+ * closed instead of pretending subshell state persists.
+ */
+export function effectiveCwdBeforeCommand(
+  cmdLine: string,
+  targetPattern: RegExp,
+  initialCwd = process.cwd(),
+): string | undefined {
+  let cwd = initialCwd;
+  for (const segment of splitCommandSegments(cmdLine)) {
+    if (targetPattern.test(segment)) return cwd;
+    if (/^\(?\s*cd\s+/.test(segment)) {
+      const target = extractPersistentCdPath(segment);
+      if (!target) return undefined;
+      cwd = target.startsWith('/') ? target : `${cwd.replace(/\/$/, '')}/${target}`;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Extract --repo flag value from a command line.
  */
