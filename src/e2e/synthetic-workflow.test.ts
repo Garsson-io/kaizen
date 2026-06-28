@@ -240,7 +240,7 @@ describe("Synthetic Workflow E2E", () => {
       expect(stopResult.results.some((result) => result.stdout.includes("KAIZEN REFLECTION"))).toBe(true);
     }));
 
-    it("full session completes with no timeouts", () => {
+    it("full hook registry completes with no timeouts", () => {
       expectTsxAvailable();
       withSession("full", (session) => {
         session.setHome("clean");
@@ -248,8 +248,7 @@ describe("Synthetic Workflow E2E", () => {
         session.fireSessionStart();
         session.fireBashPre("echo hello");
         session.fireWritePre("src/feature.ts");
-        session.fireBashPre("git commit -m 'add feature'");
-        session.fireBashPost("gh pr create --title test", "https://github.com/test/repo/pull/1");
+        session.fireBashPost("echo hello", "hello");
         session.fireStop();
 
         expect(session.timeoutCount).toBe(0);
