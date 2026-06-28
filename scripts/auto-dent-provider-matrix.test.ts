@@ -116,6 +116,57 @@ describe('provider comparison matrix (#1152)', () => {
     });
   });
 
+  it('rejects provider comparison artifacts with invalid phase provider records (#1490)', () => {
+    const artifact = buildProviderComparisonArtifact({
+      batchId: 'matrix-invalid',
+      scenario: 'synthetic-lifecycle',
+      generatedAt: '2026-06-27T13:00:00.000Z',
+      results: defaultProviderComparisonResults(),
+    });
+    const invalid = {
+      ...artifact,
+      results: [
+        {
+          ...artifact.results[0],
+          phaseProviders: {
+            planning: { provider: 'not-a-provider', billing: 'subscription-cli' },
+          },
+        },
+      ],
+    };
+
+    expect(() => parseProviderComparisonArtifact(JSON.stringify(invalid))).toThrow(
+      /phaseProviders/,
+    );
+  });
+
+  it('rejects provider comparison artifacts with impossible metric values (#1490)', () => {
+    const artifact = buildProviderComparisonArtifact({
+      batchId: 'matrix-invalid-metrics',
+      scenario: 'synthetic-lifecycle',
+      generatedAt: '2026-06-27T13:00:00.000Z',
+      results: defaultProviderComparisonResults(),
+    });
+    const invalid = {
+      ...artifact,
+      results: [
+        {
+          ...artifact.results[0],
+          metrics: {
+            ...artifact.results[0].metrics,
+            processPassRate: -1,
+            emptySuccessRate: 2,
+            hookRejections: -3,
+          },
+        },
+      ],
+    };
+
+    expect(() => parseProviderComparisonArtifact(JSON.stringify(invalid))).toThrow(
+      /metrics/,
+    );
+  });
+
   it('formats reports with provider strategy, verdict, failure class, metrics, and recommendation', () => {
     const artifact = buildProviderComparisonArtifact({
       batchId: 'matrix-1152',

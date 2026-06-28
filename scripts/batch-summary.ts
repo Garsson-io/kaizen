@@ -18,6 +18,7 @@ import { resolve } from 'path';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 import type { EventEnvelope, RunCompleteEvent, RunIssuePickedEvent, RunPrCreatedEvent } from './auto-dent-events.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
+import { PHASES, safeParsePhaseProviderRecord } from './auto-dent-provider.js';
 
 export interface BatchSummary {
   batch_id: string;
@@ -163,7 +164,7 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
   // phase_providers (legacy events) contribute nothing — the map stays sparse.
   const phaseProviderDistribution: Record<string, Record<string, number>> = {};
   for (const e of completeEvents) {
-    const phaseProviders = e.event.phase_providers;
+    const phaseProviders = safeParsePhaseProviderRecord(e.event.phase_providers);
     if (!phaseProviders) continue;
     for (const [phase, pp] of Object.entries(phaseProviders)) {
       if (!pp) continue;
@@ -212,16 +213,6 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     process_verdict_distribution: processVerdictDistribution,
   };
 }
-
-/** Lifecycle phase display order for the provider-per-phase summary block (#1143). */
-const PHASE_DISPLAY_ORDER = [
-  'planning',
-  'implementation',
-  'review',
-  'fix',
-  'reflection',
-  'validation',
-];
 
 /**
  * Format a BatchSummary as plain-language text suitable for posting
@@ -317,9 +308,10 @@ export function formatPlainLanguage(summary: BatchSummary): string {
   if (providerPhases.length > 0) {
     lines.push('');
     lines.push('### Provider per Phase');
+    const knownProviderPhases = new Set<string>(PHASES);
     const ordered = [
-      ...PHASE_DISPLAY_ORDER.filter((p) => providerPhases.includes(p)),
-      ...providerPhases.filter((p) => !PHASE_DISPLAY_ORDER.includes(p)).sort(),
+      ...PHASES.filter((p) => providerPhases.includes(p)),
+      ...providerPhases.filter((p) => !knownProviderPhases.has(p)).sort(),
     ];
     for (const phase of ordered) {
       const byProvider = summary.phase_provider_distribution[phase];

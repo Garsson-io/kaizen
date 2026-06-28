@@ -46,7 +46,7 @@ import {
   readBatchOutcomesFromGithub,
   computeSteeringRecommendations,
 } from './batch-outcome.js';
-import { defaultPhaseProviders, type PhaseProviderRecord } from './auto-dent-provider.js';
+import { phaseProvidersForAgentProvider, type PhaseProviderRecord } from './auto-dent-provider.js';
 import {
   buildKaizenCycleSteps,
   formatIssueForDisplay,
@@ -59,6 +59,7 @@ import {
 import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
+import { hasHardQualityFailure } from '../src/verdict-binding-policy.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -820,11 +821,7 @@ export interface RunOutcomeSignals {
 export function deriveRunOutcome(signals: RunOutcomeSignals): RunOutcome {
   if (signals.stopRequested) return 'stop';
   if (signals.exitCode !== 0) return 'failure';
-  const qualityFailed =
-    signals.reviewVerdict === 'fail' ||
-    signals.processVerdict === 'process-incomplete' ||
-    signals.lifecycleHealth === 'critical';
-  if (qualityFailed) return 'failure';
+  if (hasHardQualityFailure(signals)) return 'failure';
   return signals.artifactCount > 0 ? 'success' : 'empty_success';
 }
 
@@ -1268,10 +1265,6 @@ Emit these naturally as you complete each phase. Missing keys are fine — emit 
   return prompt;
 }
 
-// Text utilities
-
-export const truncateAtWord = truncateAtWordBoundary;
-
 /**
  * Clean raw guidance into a readable title.
  * Fixes obvious typos, normalizes whitespace, sentence-cases.
@@ -1322,7 +1315,7 @@ export function ensureBatchProgressIssue(
   }
 
   const cleanGuidance = cleanGuidanceForTitle(state.guidance);
-  const title = `[Auto-Dent] ${truncateAtWord(cleanGuidance, 70)} (${state.batch_id})`;
+  const title = `[Auto-Dent] ${truncateAtWordBoundary(cleanGuidance, 70)} (${state.batch_id})`;
   const startedAt = new Date(state.batch_start * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
   const body = [
     `## Auto-Dent Batch`,
@@ -2027,16 +2020,7 @@ function printRunSummary(
 }
 
 function phaseProvidersForState(state: BatchState): PhaseProviderRecord {
-  if (state.provider !== 'codex') return defaultPhaseProviders();
-  const codex = { provider: 'codex' as const, billing: 'subscription-cli' as const };
-  return {
-    planning: codex,
-    implementation: codex,
-    review: { provider: 'claude', billing: 'subscription-cli' },
-    fix: codex,
-    reflection: codex,
-    validation: { provider: 'provider-independent', billing: 'local-only' },
-  };
+  return phaseProvidersForAgentProvider(state.provider);
 }
 
 export function shouldRunCodexProvider(state: Pick<BatchState, 'provider'>): boolean {
@@ -2654,6 +2638,12 @@ async function main(): Promise<void> {
     reviewVerdict,
     processVerdict,
     lifecycleHealth,
+    // Bind the hook-activation verdict (#843/#1500) to the merge decision (#1220):
+    // a run whose kaizen hooks did not load (degraded), or one where no
+    // `system.init` was observed on a hook-expecting provider, is not merge-ready.
+    // Default provider to 'claude' (hook-expecting) for legacy state → fail-closed.
+    hookActivation: result.hookActivation,
+    provider: state.provider ?? 'claude',
   });
   const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);
   if (!autoMergeDecision.allow) {
@@ -2692,6 +2682,12 @@ async function main(): Promise<void> {
     const driveResults = driveBatchToMerge(allBatchPRs, {
       maxAttempts: 6,
       sleepMs: 10_000,
+      // An unsafe PR whose auto-merge cancel FAILED stays in the batch so it
+      // remains visible/babysat, but must never be advanced toward merge — else
+      // the babysitter would merge the very PR the merge-readiness gate refused
+      // (#1220). `cancelFailed` is non-empty only when a block fired, so this is
+      // a no-op for healthy runs.
+      holdPrs: cancelFailed,
     });
     const stuck = driveResults.filter((r) => r.status === 'stuck');
     for (const r of driveResults) {
