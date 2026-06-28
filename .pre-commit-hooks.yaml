@@ -1,0 +1,9 @@
+- id: kaizen-pre-push
+  name: Kaizen pre-push gate
+  description: Agent-only PR review loop enforcement
+  entry: kaizen-pre-push
+  language: node
+  stages: [pre-push]
+  always_run: true
+  pass_filenames: false
+  verbose: false

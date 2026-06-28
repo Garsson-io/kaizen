@@ -82,13 +82,12 @@ npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts"
 Result reports the detected framework, modified files, and any post-install commands (e.g., for pre-commit hosts: `pre-commit install --hook-type pre-push`). With `--run-post-install true`, those commands run automatically.
 
 **What gets installed:**
-- `.kaizen-hooks/pre-push` — entry script (agent-env gate + dispatch to kaizen plugin)
 - Framework-specific injection (one of):
-  - pre-commit: adds `local` repo hook `kaizen-pre-push` to `.pre-commit-config.yaml`
-  - husky: appends chain block to `.husky/pre-push`
-  - lefthook: adds `pre-push.commands.kaizen-pre-push` to `lefthook.yml`
-  - raw `.git/hooks/pre-push`: appends chain block
-  - none: creates `.githooks/pre-push` and sets `git config core.hooksPath .githooks`
+  - pre-commit: adds a remote `https://github.com/Garsson-io/kaizen` repo hook `kaizen-pre-push` with a pinned `rev`; no `.kaizen-hooks/` host wrapper is written
+  - husky: writes `.kaizen-hooks/pre-push` and appends a chain block to `.husky/pre-push`
+  - lefthook: writes `.kaizen-hooks/pre-push` and adds `pre-push.commands.kaizen-pre-push` to `lefthook.yml`
+  - raw `.git/hooks/pre-push`: writes `.kaizen-hooks/pre-push` and appends a chain block
+  - none: writes `.kaizen-hooks/pre-push`, creates `.githooks/pre-push`, and sets `git config core.hooksPath .githooks`
 
 See `docs/git-hooks-design.md` for architecture and decision rationale.
 
