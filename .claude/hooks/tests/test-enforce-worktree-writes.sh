@@ -108,4 +108,9 @@ git -C "$MAIN" worktree add -q -b case/260628-k1531-demo "$WT"
 OUTPUT=$(run_edit_hook_in_dir "$MAIN" "$MAIN/src/thing.ts")
 assert_contains "main checkout denial names active case worktree target" "$WT/src/thing.ts" "$OUTPUT"
 
+WT2="$MAIN/.claude/worktrees/260628-k1532-demo"
+git -C "$MAIN" worktree add -q -b case/260628-k1532-demo "$WT2"
+OUTPUT=$(run_edit_hook_in_dir "$MAIN" "$MAIN/src/thing.ts")
+assert_contains "multiple matching case worktrees avoids guessing" "Multiple active case worktrees contain this relative path" "$OUTPUT"
+
 print_results

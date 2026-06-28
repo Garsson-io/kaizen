@@ -383,6 +383,7 @@ class TestPostToolUseFormat:
 
     @pytest.mark.parametrize("hook", ["pr-review-loop-ts.sh", "kaizen-reflect-ts.sh"])
     def test_no_deny_json_in_post_hooks(self, review_harness, hook):
+        review_harness.set_env("HOOK_TIMING_SENTINEL_DISABLED", "true")
         inp = PostToolUseInput.bash(
             "gh pr create --title test --body test",
             stdout="https://github.com/Garsson-io/kaizen/pull/70")

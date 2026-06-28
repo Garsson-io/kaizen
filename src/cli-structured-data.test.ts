@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { openSync, readFileSync, writeFileSync } from 'node:fs';
 import { handlers, parseArgs, resolveContent, resolveRound, type CliArgs } from './cli-structured-data.js';
 import {
   nextReviewRound,
@@ -11,8 +11,19 @@ import {
 } from './structured-data.js';
 
 vi.mock('node:fs', () => ({
+  constants: {
+    O_CREAT: 0o100,
+    O_NOFOLLOW: 0o400000,
+    O_TRUNC: 0o1000,
+    O_WRONLY: 0o1,
+  },
+  chmodSync: vi.fn(),
+  closeSync: vi.fn(),
+  existsSync: vi.fn().mockReturnValue(false),
+  lstatSync: vi.fn(),
   readFileSync: vi.fn().mockReturnValue('file-content'),
   mkdirSync: vi.fn(),
+  openSync: vi.fn().mockReturnValue(42),
   writeFileSync: vi.fn(),
   readdirSync: vi.fn(),
 }));
@@ -214,14 +225,16 @@ describe('store-review-batch — review sentinel', () => {
     });
     log.mockRestore();
 
-    // writeFileSync must have been called with a path containing '.reviewed-r1'
-    const calls = vi.mocked(writeFileSync).mock.calls;
-    const sentinelCall = calls.find(
+    // Sentinel writer opens the deterministic path, then writes through the fd
+    // so pre-existing symlinks cannot be followed.
+    const sentinelOpen = vi.mocked(openSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r1'),
     );
-    expect(sentinelCall).toBeDefined();
-    expect(String(sentinelCall![0])).toMatch(/\.reviewed-r1$/);
-    const payload = JSON.parse(String(sentinelCall![1]));
+    expect(sentinelOpen).toBeDefined();
+    expect(String(sentinelOpen![0])).toMatch(/\.reviewed-r1$/);
+    const sentinelWrite = vi.mocked(writeFileSync).mock.calls.find(([fd]) => fd === 42);
+    expect(sentinelWrite).toBeDefined();
+    const payload = JSON.parse(String(sentinelWrite![1]));
     expect(payload).toMatchObject({
       schemaVersion: 1,
       prUrl: 'https://github.com/org/repo/pull/903',
@@ -244,11 +257,13 @@ describe('store-review-batch — review sentinel', () => {
     });
     log.mockRestore();
 
-    const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
+    const sentinelCall = vi.mocked(openSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r1'),
     );
     expect(sentinelCall).toBeDefined();
-    const payload = JSON.parse(String(sentinelCall![1]));
+    const sentinelWrite = vi.mocked(writeFileSync).mock.calls.find(([fd]) => fd === 42);
+    expect(sentinelWrite).toBeDefined();
+    const payload = JSON.parse(String(sentinelWrite![1]));
     expect(payload).toMatchObject({
       findingCount: 6,
       totalDone: 4,
@@ -275,8 +290,7 @@ describe('store-review-batch — review sentinel', () => {
     });
     log.mockRestore();
 
-    const calls = vi.mocked(writeFileSync).mock.calls;
-    const sentinelCall = calls.find(
+    const sentinelCall = vi.mocked(openSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r'),
     );
     expect(sentinelCall).toBeDefined();
@@ -302,11 +316,13 @@ describe('store-review-summary — pure storage, then sentinel', () => {
       5,
       undefined,
     );
-    const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
+    const sentinelCall = vi.mocked(openSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r5'),
     );
     expect(sentinelCall).toBeDefined();
-    const payload = JSON.parse(String(sentinelCall![1]));
+    const sentinelWrite = vi.mocked(writeFileSync).mock.calls.find(([fd]) => fd === 42);
+    expect(sentinelWrite).toBeDefined();
+    const payload = JSON.parse(String(sentinelWrite![1]));
     expect(payload).toMatchObject({
       schemaVersion: 1,
       prUrl: 'https://github.com/Garsson-io/kaizen/pull/903',
@@ -416,7 +432,7 @@ describe('store-review-finding — strict payload validation (#1039)', () => {
       text: JSON.stringify([{ dimension: 'correctness', verdict: 'fail', summary: 'bad', findings: [] }]),
     } as CliArgs)).rejects.toThrow('process.exit(1)');
     // Sentinel must NOT be written when batch is rejected
-    const sentinelCall = vi.mocked(writeFileSync).mock.calls.find(
+    const sentinelCall = vi.mocked(openSync).mock.calls.find(
       ([path]) => typeof path === 'string' && path.includes('.reviewed-r'),
     );
     expect(sentinelCall).toBeUndefined();

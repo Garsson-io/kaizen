@@ -17,7 +17,7 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 |------|-------|----------|--------|---------|
 | `kaizen-check-wip.sh` | L1 | No | plugin.json | Detects in-progress work (dirty worktrees, open PRs) when starting a new session in the main checkout. |
 | `kaizen-session-cleanup-ts.sh` → `session-cleanup.ts` | L2 | No | plugin.json | Clears stale state files for merged/closed PRs. Migrated to TS in #786. |
-| `kaizen-worktree-setup.sh` | L1 | No | settings.json | Symlinks `node_modules` and `dist` from main repo into fresh worktrees. Prevents MODULE_NOT_FOUND and hook compilation failures. Idempotent; copy-on-write safe. Issue #705. |
+| `kaizen-worktree-setup.sh` → `src/hooks/worktree-integrity.ts` | L1/L2 | No | settings.json | Provisions fresh worktrees: symlinks `node_modules`/`dist`, normalizes EnterWorktree-sanitized `worktree-case+...` branches back to canonical `case/...`, and self-heals/warns on per-worktree `kaizen.issue` bindings. Issues #705, #1506. |
 
 ## PreToolUse Hooks — Bash Matcher
 
@@ -36,7 +36,7 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 
 | Hook | Level | Blocking | Purpose |
 |------|-------|----------|---------|
-| `kaizen-enforce-worktree-writes.sh` | L3 | Yes (deny) | Blocks source edits in main checkout on main branch. |
+| `kaizen-enforce-worktree-writes.sh` → `src/hooks/worktree-integrity.ts` | L3 | Yes (deny) | Blocks source edits in main checkout on main branch and, when exactly one active case worktree matches the relative file path, names the intended worktree target. |
 | `kaizen-enforce-case-exists.sh` | L2 | Yes (deny) | Blocks edits in worktrees without a kaizen case. Issue #94. |
 | `kaizen-enforce-pr-review-ts.sh` → `enforce-pr-review.ts` | L3 | Yes (deny) | **Gate**: Blocks Edit/Write during PR review. Issue #775. |
 

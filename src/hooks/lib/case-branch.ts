@@ -17,3 +17,15 @@ export function extractCaseIssueFromBranch(branch: string): string | null {
   const m = branch.match(/^case\/\d{6,}-k(\d+)(?:-|$)/);
   return m ? m[1] : null;
 }
+
+/**
+ * Claude Code's generic EnterWorktree tool can sanitize a requested
+ * `case/<date>-k<N>-slug` branch to `worktree-case+<date>-k<N>-slug`.
+ * Convert only that exact sanitized case shape back to the canonical branch.
+ */
+export function canonicalCaseBranchFromSanitized(branch: string): string | null {
+  const m = branch.match(/^worktree-case\+(\d{6,}-k\d+(?:-.+)?)$/);
+  if (!m) return null;
+  const canonical = `case/${m[1]}`;
+  return extractCaseIssueFromBranch(canonical) ? canonical : null;
+}
