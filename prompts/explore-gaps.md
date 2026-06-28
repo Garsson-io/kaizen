@@ -67,6 +67,27 @@ Pick the highest-value exploration from this list:
 
 ## Output
 
+### Required artifact
+
+Write a durable candidate-task manifest to:
+
+`{{candidate_manifest_path}}`
+
+This file is required even if you also file GitHub issues. It is the scouting
+artifact the next exploit/subtract run can consume. Use this JSON shape:
+
+```json
+{{candidate_manifest_schema}}
+```
+
+Rules:
+- Include every promising candidate you discovered, including candidates you did
+  not file as issues.
+- Use `suggested_mode` to describe how the next run should approach the candidate.
+- If no candidates exist, write `"candidates": []` and explain why in the run
+  summary.
+- A run that only files issues but writes no manifest is incomplete scouting.
+
 For each discovery:
 1. File a GitHub issue in {{kaizen_repo}} with clear title and context
 2. Label it `source:auto-dent-explore` and `kaizen`

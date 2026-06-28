@@ -24,7 +24,7 @@ import { spawn, execFileSync, execSync } from 'child_process';
 import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
-import { dirname, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { firstHookReason } from './hook-signals.js';
 import { claimNextItem, markItem, resetAssignedItems, readPlan, themeProgress } from './auto-dent-plan.js';
@@ -61,6 +61,7 @@ import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
 import { hasHardQualityFailure } from '../src/verdict-binding-policy.js';
+import { extractPlanText } from '../src/structured-data.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -275,6 +276,12 @@ export interface RunMetrics {
   lines_deleted?: number;
   /** Issues closed as obsolete/duplicate (not-planned), not fixed */
   issues_pruned?: number;
+  /** Per-run explore-mode candidate-task manifest path, when available (#1196). */
+  candidate_manifest_path?: string;
+  /** Number of candidates parsed from the explore-mode candidate-task manifest (#1196). */
+  candidate_manifest_count?: number;
+  /** Non-fatal candidate manifest parse/read warnings (#1196). */
+  candidate_manifest_warnings?: string[];
   /** Prompt template file name used for this run */
   prompt_template?: string;
   /** SHA-256 hash of the prompt template content (first 12 chars) */
@@ -341,6 +348,12 @@ export interface RunResult {
   linesDeleted: number;
   /** Issues closed as not-planned (pruned, not fixed) */
   issuesPruned: number;
+  /** Per-run explore-mode candidate-task manifest path, when available (#1196). */
+  candidateManifestPath?: string;
+  /** Number of candidates parsed from the explore-mode candidate-task manifest (#1196). */
+  candidateManifestCount?: number;
+  /** Non-fatal candidate manifest parse/read warnings (#1196). */
+  candidateManifestWarnings?: string[];
   /** Structured failure classification */
   failureClass?: string;
   /** Whether the run was killed by the wall-clock timeout watchdog (#686) */
@@ -382,6 +395,9 @@ type RunMetricsBaseField =
   | 'mode'
   | 'lines_deleted'
   | 'issues_pruned'
+  | 'candidate_manifest_path'
+  | 'candidate_manifest_count'
+  | 'candidate_manifest_warnings'
   | 'final_claim_status'
   | 'final_claim'
   | 'final_claim_path'
@@ -419,6 +435,9 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     mode: runMode,
     lines_deleted: result.linesDeleted,
     issues_pruned: result.issuesPruned,
+    candidate_manifest_path: result.candidateManifestPath,
+    candidate_manifest_count: result.candidateManifestCount,
+    candidate_manifest_warnings: result.candidateManifestWarnings,
     final_claim_status: result.finalClaimStatus,
     final_claim: result.finalClaim,
     final_claim_path: result.finalClaimPath,
@@ -427,7 +446,59 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     ...metadata,
   };
 }
-import { extractPlanText } from '../src/structured-data.js';
+
+export interface CandidateTaskManifestParseResult {
+  path: string;
+  count: number;
+  warnings: string[];
+}
+
+export function candidateTaskManifestPath(logDir: string, runNum: number): string {
+  return join(logDir, `run-${runNum}-candidate-tasks-manifest.json`);
+}
+
+export const CANDIDATE_TASK_MANIFEST_SCHEMA = [
+  '{',
+  '  "version": 1,',
+  '  "runTag": "<batch-id>/run-<N>",',
+  '  "generatedAt": "<ISO timestamp>",',
+  '  "candidates": [',
+  '    {',
+  '      "id": "<stable short id>",',
+  '      "title": "<candidate task title>",',
+  '      "rationale": "<why this should be worked>",',
+  '      "refs": ["#123", "path/to/file.ts"],',
+  '      "suggested_mode": "exploit|subtract|reflect|contemplate"',
+  '    }',
+  '  ]',
+  '}',
+].join('\n');
+
+export function parseCandidateTaskManifest(path: string): CandidateTaskManifestParseResult {
+  if (!existsSync(path)) {
+    return { path, count: 0, warnings: [`candidate task manifest missing: ${path}`] };
+  }
+
+  const raw = readFileSync(path, 'utf8');
+  const parsed = parseJsonObject(raw);
+  if (!parsed) {
+    return { path, count: 0, warnings: [`candidate task manifest malformed JSON: ${path}`] };
+  }
+
+  const candidates = (parsed as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates)) {
+    return { path, count: 0, warnings: [`candidate task manifest candidates must be an array: ${path}`] };
+  }
+
+  return { path, count: candidates.length, warnings: [] };
+}
+
+function attachCandidateTaskManifest(result: RunResult, path: string): void {
+  const parsed = parseCandidateTaskManifest(path);
+  result.candidateManifestPath = parsed.path;
+  result.candidateManifestCount = parsed.count;
+  result.candidateManifestWarnings = parsed.warnings;
+}
 export { extractPlanText };
 
 // State I/O
@@ -639,6 +710,9 @@ export function buildTemplateVars(
     ? crossBatchSteering.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
   const modeSelection = selectMode(state, runNum);
+  const manifestPath = logDir
+    ? candidateTaskManifestPath(logDir, runNum)
+    : `run-${runNum}-candidate-tasks-manifest.json`;
 
   return {
     guidance: state.guidance,
@@ -666,6 +740,8 @@ export function buildTemplateVars(
     prior_reflections: priorReflections,
     failure_class_summary: failureClassSummary,
     contemplation_recommendations: contemplationRecsText,
+    candidate_manifest_path: manifestPath,
+    candidate_manifest_schema: CANDIDATE_TASK_MANIFEST_SCHEMA,
     goal_forcing_contract: renderAutoDentGoalContract(modeSelection.mode),
   };
 }
@@ -768,7 +844,7 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
  * Compute mode-appropriate success metric for a run.
  * Each mode has its own definition of "success":
  *   - exploit: PRs produced
- *   - explore: issues filed (its purpose is discovery, not PRs)
+ *   - explore: candidate-task manifest entries + issues filed (durable scouting)
  *   - reflect: issues filed (insights that become actionable issues)
  *   - subtract: lines deleted + issues pruned (reduction, not addition)
  *   - contemplate: fixed baseline (strategic value not measurable per-run)
@@ -778,7 +854,7 @@ export function modeSuccess(mode: string, metrics: RunMetrics): number {
     case 'exploit':
       return metrics.prs.length;
     case 'explore':
-      return metrics.issues_filed.length;
+      return metrics.issues_filed.length + (metrics.candidate_manifest_count ?? 0);
     case 'reflect':
       return metrics.issues_filed.length;
     case 'subtract':
@@ -1867,9 +1943,12 @@ async function runClaude(
   // Save rendered prompt for observability (#602)
   const promptFile = `${logDir}/run-${runNum}-prompt.md`;
   writeFileSync(promptFile, prompt + '\n');
+  const candidateManifestPath = modeSelection.mode === 'explore'
+    ? candidateTaskManifestPath(logDir, runNum)
+    : undefined;
 
   if (shouldRunCodexProvider(state)) {
-    return runCodex({
+    const codexResult = await runCodex({
       state,
       runNum,
       logFile,
@@ -1881,6 +1960,10 @@ async function runClaude(
       modeReason: modeSelection.reason,
       result,
     });
+    if (candidateManifestPath) {
+      attachCandidateTaskManifest(codexResult.result, candidateManifestPath);
+    }
+    return codexResult;
   }
 
   const nonce = `${new Date()
@@ -2036,6 +2119,9 @@ async function runClaude(
       processExited = true;
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       const duration = Math.floor((Date.now() - runStart) / 1000);
+      if (candidateManifestPath) {
+        attachCandidateTaskManifest(result, candidateManifestPath);
+      }
       resolvePromise({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, promptMeta });
     });
 
@@ -2044,6 +2130,9 @@ async function runClaude(
       cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
+      if (candidateManifestPath) {
+        attachCandidateTaskManifest(result, candidateManifestPath);
+      }
       resolvePromise({ exitCode: 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, promptMeta });
     });
   });
