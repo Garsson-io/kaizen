@@ -68,6 +68,7 @@ describe('cli-dimensions against real prompts', () => {
     expect(output).toContain('correctness');
     expect(output).toContain('security');
     expect(output).toContain('tooling-fitness');
+    expect(output).toContain('impact-proof');
     expect(output).toContain('multi-pr-spiral');
     expect(output).toContain('reflection-quality');
     expect(output).toContain('test-quality');
@@ -110,6 +111,20 @@ describe('cli-dimensions against real prompts', () => {
     const output = formatValidation(v);
     expect(output).toContain('All dimensions valid.');
     expect(output).not.toContain('FAIL');
+  });
+
+  it('impact-proof prompt covers Closes-only and incomparable before/after failures', () => {
+    const projectRoot = resolveProjectRoot(import.meta.dirname);
+    const prompt = readFileSync(resolve(projectRoot, 'prompts/review-impact-proof.md'), 'utf8');
+
+    expect(prompt).toContain('Find the PR\'s `## Impact (goal -> before/after -> match)` section');
+    expect(prompt).toContain('Comparable BEFORE/AFTER evidence');
+    expect(prompt).toContain('Fail when BEFORE is absent');
+    expect(prompt).toContain('incomparable to AFTER');
+    expect(prompt).toContain('Fail if the PR says yes while the delta only proves internal correctness');
+    expect(prompt).toContain('does not replace');
+    expect(prompt).toContain('requirements');
+    expect(prompt).toContain('test-plan');
   });
 });
 
