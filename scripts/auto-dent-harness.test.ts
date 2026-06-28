@@ -151,6 +151,17 @@ describe('replay: edge cases', () => {
     expect(replaySection).toContain('parseJsonLines');
     expect(replaySection).not.toContain('JSON.parse(line)');
   });
+
+  it('uses the shared JSON object parser for live probe stream lines', () => {
+    const source = readFileSync(new URL('./auto-dent-harness.ts', import.meta.url), 'utf8');
+    const liveSection = source.slice(
+      source.indexOf('export async function runLiveProbe'),
+      source.indexOf('// Assertion helpers'),
+    );
+
+    expect(liveSection).toContain('parseJsonObject');
+    expect(liveSection).not.toContain('JSON.parse(line)');
+  });
 });
 
 // Synthetic stream tests — verify phase marker extraction
