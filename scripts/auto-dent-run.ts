@@ -57,6 +57,7 @@ import {
   type RunProgressStep,
 } from './auto-dent-progress.js';
 import { truncateAtWordBoundary } from './auto-dent-display.js';
+import { parseJsonObject } from '../src/lib/json-value.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -1832,8 +1833,10 @@ async function runClaude(
       appendFileSync(logFile, line + '\n');
       lastOutputTime = Date.now();
 
+      const msg = parseJsonObject(line);
+      if (!msg) return;
+
       try {
-        const msg = JSON.parse(line);
         processStreamMessage(msg, result, runStart, ctx);
 
         // Start post-result kill timer when result is received
@@ -1859,9 +1862,7 @@ async function runClaude(
             }
           }, POST_RESULT_GRACE_MS);
         }
-      } catch {
-        // Non-JSON line
-      }
+      } catch { /* skip malformed stream messages */ }
     });
 
     child.stderr?.on('data', (data: Buffer) => {
