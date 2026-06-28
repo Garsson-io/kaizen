@@ -32,6 +32,7 @@ import {
   modeSuccess,
   deriveRunOutcome,
   buildRunMetrics,
+  buildRunCompleteEvent,
   weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
@@ -2800,6 +2801,45 @@ describe('buildRunMetrics', () => {
       status: 'not_expected',
     });
   });
+
+  it('builds run.complete telemetry from normalized run metrics (#1501)', () => {
+    const result = makeRunResult();
+    const metrics = buildRunMetrics({
+      runNum: 8,
+      runStartEpoch: 1742681300,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result,
+      provider: 'claude',
+    });
+
+    const event = buildRunCompleteEvent({
+      runId: 'batch/run-8',
+      batchId: 'batch',
+      runNum: 8,
+      duration: 8,
+      exitCode: 0,
+      result,
+      runMode: 'exploit',
+      outcome: 'empty_success',
+      runMetricsForOutcome: metrics,
+      lifecycleViolationCount: 0,
+    });
+
+    expect(event).toMatchObject({
+      type: 'run.complete',
+      run_id: 'batch/run-8',
+      mode: 'exploit',
+      outcome: 'empty_success',
+    });
+    expect(event.hook_activation).toBe(metrics.hook_activation);
+    expect(event.hook_activation).toMatchObject({
+      provider: 'claude',
+      status: 'unknown',
+      degraded: true,
+    });
+  });
 });
 
 describe('weightedModeSelect', () => {
@@ -3649,13 +3689,14 @@ describe('auto-merge verdict binding wiring (#1220)', () => {
   it('emits hook_activation on run.complete from the normalized run metrics (#1501)', () => {
     const runCompleteBlock = AUTO_DENT_RUN_SOURCE.slice(
       AUTO_DENT_RUN_SOURCE.indexOf('const runMetricsForOutcome = buildRunMetrics({'),
-      AUTO_DENT_RUN_SOURCE.indexOf("type: 'run.complete'") + 1400,
+      AUTO_DENT_RUN_SOURCE.indexOf('events.emit(buildRunCompleteEvent({') + 900,
     );
 
     expect(runCompleteBlock).toContain("provider: state.provider ?? 'claude'");
     expect(runCompleteBlock).toContain('const outcome = deriveRunOutcome({');
-    expect(runCompleteBlock).toContain("type: 'run.complete'");
-    expect(runCompleteBlock).toContain('hook_activation: runMetricsForOutcome.hook_activation');
+    expect(runCompleteBlock).toContain('events.emit(buildRunCompleteEvent({');
+    expect(runCompleteBlock).toContain('runMetricsForOutcome,');
+    expect(AUTO_DENT_RUN_SOURCE).toContain('hook_activation: runMetricsForOutcome.hook_activation');
   });
 
   it('stream → verdict → gate: a degraded claude run is blocked from auto-merge end-to-end', () => {

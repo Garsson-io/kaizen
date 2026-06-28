@@ -36,7 +36,7 @@ import {
   resolvePromptsDir,
   renderTemplate,
 } from '../src/review-battery.js';
-import { EventEmitter, makeRunId, type AutoDentEvent } from './auto-dent-events.js';
+import { EventEmitter, makeRunId, type AutoDentEvent, type RunCompleteEvent } from './auto-dent-events.js';
 import { defaultReviewFixProviders, runFixLoop } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
@@ -835,6 +835,89 @@ export function deriveRunOutcome(signals: RunOutcomeSignals): RunOutcome {
   if (signals.exitCode !== 0) return 'failure';
   if (hasHardQualityFailure(signals)) return 'failure';
   return signals.artifactCount > 0 ? 'success' : 'empty_success';
+}
+
+export interface BuildRunCompleteEventInput {
+  runId: string;
+  batchId: string;
+  runNum: number;
+  duration: number;
+  exitCode: number;
+  result: RunResult;
+  runMode?: string;
+  outcome: RunOutcome;
+  runMetricsForOutcome: RunMetrics;
+  lifecycleViolationCount: number;
+  lifecycleHealth?: LifecycleHealth;
+  lifecycleCriticalCount?: number;
+  processVerdict?: ProcessVerdict;
+  processIssueCount?: number;
+  processSummary?: string;
+  workflowGateStates?: Partial<Record<WorkflowGateId, WorkflowGateState>>;
+  workflowRepairGates?: WorkflowGateId[];
+  workflowRepairState?: RunCompleteEvent['workflow_repair_state'];
+  workflowRepairPrompt?: string;
+  reviewVerdict?: RunCompleteEvent['review_verdict'];
+  reviewCostUsd?: number;
+  phaseProviders?: PhaseProviderRecord;
+}
+
+export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCompleteEvent {
+  const {
+    runId,
+    batchId,
+    runNum,
+    duration,
+    exitCode,
+    result,
+    runMode,
+    outcome,
+    runMetricsForOutcome,
+    lifecycleViolationCount,
+    lifecycleHealth,
+    lifecycleCriticalCount,
+    processVerdict,
+    processIssueCount,
+    processSummary,
+    workflowGateStates,
+    workflowRepairGates,
+    workflowRepairState,
+    workflowRepairPrompt,
+    reviewVerdict,
+    reviewCostUsd,
+    phaseProviders,
+  } = input;
+  return {
+    type: 'run.complete',
+    run_id: runId,
+    batch_id: batchId,
+    run_num: runNum,
+    duration_ms: duration * 1000,
+    exit_code: exitCode,
+    cost_usd: result.cost,
+    tool_calls: result.toolCalls,
+    prs_created: result.prs.length,
+    issues_filed: result.issuesFiled.length,
+    issues_closed: result.issuesClosed.length,
+    stop_requested: result.stopRequested,
+    failure_class: result.failureClass,
+    lifecycle_violations: lifecycleViolationCount,
+    lifecycle_health: lifecycleHealth,
+    lifecycle_critical: lifecycleCriticalCount,
+    process_verdict: processVerdict,
+    process_issue_count: processIssueCount,
+    process_summary: processSummary,
+    workflow_gate_states: workflowGateStates,
+    workflow_repair_gates: workflowRepairGates,
+    workflow_repair_state: workflowRepairState,
+    workflow_repair_prompt: workflowRepairPrompt,
+    review_verdict: reviewVerdict,
+    review_cost_usd: reviewCostUsd,
+    phase_providers: phaseProviders,
+    hook_activation: runMetricsForOutcome.hook_activation,
+    outcome,
+    mode: runMode,
+  };
 }
 
 function processCheckState(status: ProcessValidation['checks'][number]['status']): WorkflowGateState {
@@ -2695,37 +2778,30 @@ async function main(): Promise<void> {
       processVerdict,
       lifecycleHealth,
     });
-    events.emit({
-      type: 'run.complete',
-      run_id: runId,
-      batch_id: state.batch_id,
-      run_num: runNum,
-      duration_ms: duration * 1000,
-      exit_code: exitCode,
-      cost_usd: result.cost,
-      tool_calls: result.toolCalls,
-      prs_created: result.prs.length,
-      issues_filed: result.issuesFiled.length,
-      issues_closed: result.issuesClosed.length,
-      stop_requested: result.stopRequested,
-      failure_class: result.failureClass,
-      lifecycle_violations: lifecycleViolationCount,
-      lifecycle_health: lifecycleHealth,
-      lifecycle_critical: lifecycleCriticalCount,
-      process_verdict: processVerdict,
-      process_issue_count: processIssueCount,
-      process_summary: processSummary,
-      workflow_gate_states: workflowGateStates,
-      workflow_repair_gates: workflowRepairGates,
-      workflow_repair_state: workflowRepairState,
-      workflow_repair_prompt: workflowRepairPrompt,
-      review_verdict: reviewVerdict,
-      review_cost_usd: reviewCostUsd,
-      phase_providers: phaseProvidersForState(state),
-      hook_activation: runMetricsForOutcome.hook_activation,
+    events.emit(buildRunCompleteEvent({
+      runId,
+      batchId: state.batch_id,
+      runNum,
+      duration,
+      exitCode,
+      result,
+      runMode,
       outcome,
-      mode: runMode,
-    });
+      runMetricsForOutcome,
+      lifecycleViolationCount,
+      lifecycleHealth,
+      lifecycleCriticalCount,
+      processVerdict,
+      processIssueCount,
+      processSummary,
+      workflowGateStates,
+      workflowRepairGates,
+      workflowRepairState,
+      workflowRepairPrompt,
+      reviewVerdict,
+      reviewCostUsd,
+      phaseProviders: phaseProvidersForState(state),
+    }));
   }
 
   // Write run artifact manifest and bundle (#916)

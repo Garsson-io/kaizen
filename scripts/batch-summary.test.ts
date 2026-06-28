@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { execFileSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import type { EventEnvelope } from './auto-dent-events.js';
 import { parseEventsFile, summarizeEvents, formatPlainLanguage } from './batch-summary.js';
 
@@ -488,11 +488,18 @@ describe('process verdict distribution (#1149)', () => {
     ];
     writeFileSync(join(tmpDir, 'events.jsonl'), events.map(e => JSON.stringify(e)).join('\n'));
 
-    const output = execFileSync('npx', ['tsx', 'scripts/batch-summary.ts', tmpDir], {
+    const result = spawnSync('npx', ['tsx', 'scripts/batch-summary.ts', tmpDir], {
       cwd: process.cwd(),
       encoding: 'utf8',
       timeout: 10_000,
     });
+    expect({
+      status: result.status,
+      signal: result.signal,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }).toMatchObject({ status: 0, signal: null });
+    const output = result.stdout;
 
     expect(output).toContain('### Hook Activation');
     expect(output).toContain('unknown: 1 run');
