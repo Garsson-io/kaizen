@@ -1014,6 +1014,10 @@ describe('readAggregate', () => {
       source.indexOf('export interface AggregateStats'),
     );
 
+    expect(source).toContain('appendJsonLine');
+    expect(source).toContain("from '../src/lib/json-lines.js'");
+    expect(aggregateSource).not.toContain('appendFileSync');
+    expect(aggregateSource).not.toContain("JSON.stringify(record) + '\\n'");
     expect(aggregateSource).not.toMatch(/JSON\.parse\(line\)/);
     expect(aggregateSource).not.toMatch(/\.split\(['"]\\n['"]\)/);
   });
