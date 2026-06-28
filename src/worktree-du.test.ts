@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   classifyLock,
   lockAge,
@@ -16,9 +18,25 @@ import type { ProjectPaths } from "./lib/resolve-project-root.js";
 
 // ── Test helpers ──
 
+function formatGitCommand(args: readonly string[]): string {
+  const parts = ["git"];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-C" && i + 1 < args.length) {
+      parts.push("-C", `"${args[i + 1]}"`);
+      i++;
+      continue;
+    }
+    parts.push(args[i]);
+  }
+  return parts.join(" ");
+}
+
 function makeDeps(overrides: Partial<Deps> = {}): Deps {
+  const exec = overrides.exec ?? (() => "");
+  const git = overrides.git ?? ((args: readonly string[]) => exec(formatGitCommand(args)));
   return {
-    exec: () => "",
+    exec,
+    git,
     gh: () => "",
     pidAlive: () => false,
     now: () => Date.now(),
@@ -98,6 +116,32 @@ function makePaths(root = "/project"): ProjectPaths {
 function lockJson(lock: LockFile): string {
   return JSON.stringify(lock);
 }
+
+describe("worktree-du Git execution invariants", () => {
+  it("routes Git operations through argv-shaped deps.git, not shell exec strings", () => {
+    const source = readFileSync(fileURLToPath(new URL("./worktree-du.ts", import.meta.url)), "utf8");
+
+    expect(source).not.toContain("deps.exec(`git ");
+    expect(source).not.toContain("git -C");
+    expect(source).toContain("git: (args: readonly string[]) => string");
+    expect(source).toContain("deps.git([");
+  });
+
+  it("passes project root Git arguments as argv elements", () => {
+    const calls: string[][] = [];
+    const deps = makeDeps({
+      git: (args) => {
+        calls.push([...args]);
+        return "* main\n  feature-a";
+      },
+    });
+
+    expect(getMergedBranches("/repo with spaces", deps)).toEqual(new Set(["main", "feature-a"]));
+    expect(calls).toEqual([
+      ["-C", "/repo with spaces", "branch", "--merged", "main"],
+    ]);
+  });
+});
 
 // ── Lock classification ──
 
@@ -275,7 +319,7 @@ describe("analyzeBranches", () => {
   it("counts branches correctly", () => {
     const deps = makeDeps({
       exec: (cmd) => {
-        if (cmd.includes("config \"branch.")) throw new Error("no remote");
+        if (cmd.includes("config branch.")) throw new Error("no remote");
         if (cmd.includes("--merged")) return "* main\n  feat-a\n  feat-b";
         if (cmd.includes("--no-merged")) return "  feat-c";
         if (cmd.includes("branch")) return "* main\n  feat-a\n  feat-b\n  feat-c";

@@ -6,7 +6,7 @@
  *   npx tsx src/worktree-du.ts [analyze|cleanup] [--fast] [--dry-run]
  */
 
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { gh as runGh } from "./lib/gh-exec.js";
@@ -56,6 +56,7 @@ interface BranchSummary {
 
 export interface Deps {
   exec: (cmd: string) => string;
+  git: (args: readonly string[]) => string;
   gh: (args: string[], timeoutMs?: number) => string;
   pidAlive: (pid: number) => boolean;
   now: () => number;
@@ -71,6 +72,16 @@ export interface Deps {
 export function defaultDeps(): Deps {
   return {
     exec: (cmd) => execSync(cmd, { encoding: "utf8" }).trim(),
+    git: (args) => {
+      const result = spawnSync("git", [...args], {
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      if (result.status !== 0) {
+        throw new Error(result.stderr || "git command failed");
+      }
+      return (result.stdout || "").trim();
+    },
     gh: (args, timeoutMs) => runGh(args, timeoutMs),
     pidAlive: (pid) => {
       try { process.kill(pid, 0); return true; } catch { return false; }
@@ -154,7 +165,7 @@ function safeBranch(branch: string): string {
 
 export function getMergedBranches(projectRoot: string, deps: Deps): Set<string> {
   try {
-    const raw = deps.exec(`git -C "${projectRoot}" branch --merged main`);
+    const raw = deps.git(["-C", projectRoot, "branch", "--merged", "main"]);
     return new Set(
       raw.split("\n").map((b) => b.replace(/^[* +]*/, "").trim()).filter(Boolean),
     );
@@ -173,7 +184,7 @@ export function branchMergeStatus(
   if (mergedBranches.has(branch)) {
     try {
       const ahead = parseInt(
-        deps.exec(`git -C "${projectRoot}" rev-list --count "main..${safe}"`),
+        deps.git(["-C", projectRoot, "rev-list", "--count", `main..${safe}`]),
         10,
       );
       return ahead === 0 ? "at-main" : "merged";
@@ -184,7 +195,7 @@ export function branchMergeStatus(
 
   // Squash-merge detection
   try {
-    const diffStat = deps.exec(`git -C "${projectRoot}" diff --stat "main..${safe}"`);
+    const diffStat = deps.git(["-C", projectRoot, "diff", "--stat", `main..${safe}`]);
     if (!diffStat) return "squash-merged";
   } catch {
     // diff failed — treat as unmerged
@@ -197,7 +208,7 @@ export function branchMergeStatus(
 
 function getWorktreeBranch(wtPath: string, deps: Deps): string {
   try {
-    return deps.exec(`git -C "${wtPath}" rev-parse --abbrev-ref HEAD`);
+    return deps.git(["-C", wtPath, "rev-parse", "--abbrev-ref", "HEAD"]);
   } catch {
     return "?";
   }
@@ -205,7 +216,7 @@ function getWorktreeBranch(wtPath: string, deps: Deps): string {
 
 function getDirtyFileCount(wtPath: string, deps: Deps): number {
   try {
-    const lines = deps.exec(`git -C "${wtPath}" status --porcelain`);
+    const lines = deps.git(["-C", wtPath, "status", "--porcelain"]);
     if (!lines) return 0;
     return lines.split("\n").filter((l) => !l.includes(".worktree-lock.json")).length;
   } catch {
@@ -215,7 +226,7 @@ function getDirtyFileCount(wtPath: string, deps: Deps): number {
 
 function getUnpushedCount(wtPath: string, deps: Deps): number {
   try {
-    const lines = deps.exec(`git -C "${wtPath}" log --oneline @{u}..HEAD`);
+    const lines = deps.git(["-C", wtPath, "log", "--oneline", "@{u}..HEAD"]);
     return lines ? lines.split("\n").length : 0;
   } catch {
     return 0;
@@ -296,7 +307,7 @@ export function analyzeBranches(
 
   let unmerged = 0;
   try {
-    const raw = deps.exec(`git -C "${projectRoot}" branch --no-merged main`);
+    const raw = deps.git(["-C", projectRoot, "branch", "--no-merged", "main"]);
     unmerged = raw ? raw.split("\n").filter(Boolean).length : 0;
   } catch {
     // no unmerged branches
@@ -304,12 +315,12 @@ export function analyzeBranches(
 
   let localOnly = 0;
   try {
-    const allBranches = deps.exec(`git -C "${projectRoot}" branch`);
+    const allBranches = deps.git(["-C", projectRoot, "branch"]);
     for (const line of allBranches.split("\n")) {
       const branch = line.replace(/^[* +]*/, "").trim();
       if (!branch || branch === "main") continue;
       try {
-        deps.exec(`git -C "${projectRoot}" config "branch.${branch}.remote"`);
+        deps.git(["-C", projectRoot, "config", `branch.${branch}.remote`]);
       } catch {
         localOnly++;
       }
@@ -420,7 +431,7 @@ export function cleanupWorktrees(
       // worktree a chance to detect imminent deletion (Fix B for #934, #939).
       try { deps.writeFile(join(wtPath, ".worktree-will-delete"), new Date().toISOString()); } catch { /* ignore */ }
       try {
-        deps.exec(`git -C "${paths.projectRoot}" worktree remove "${wtPath}" --force`);
+        deps.git(["-C", paths.projectRoot, "worktree", "remove", wtPath, "--force"]);
         result.actions.push({ type: "remove", target: name, reason: ms });
       } catch {
         result.actions.push({ type: "fail", target: name, reason: ms });
@@ -433,10 +444,10 @@ export function cleanupWorktrees(
 
   // Phase 2: Merged branches with no worktree
   try {
-    const allBranches = deps.exec(`git -C "${paths.projectRoot}" branch`);
+    const allBranches = deps.git(["-C", paths.projectRoot, "branch"]);
     let wtList: string;
     try {
-      wtList = deps.exec(`git -C "${paths.projectRoot}" worktree list`);
+      wtList = deps.git(["-C", paths.projectRoot, "worktree", "list"]);
     } catch {
       wtList = "";
     }
@@ -455,7 +466,7 @@ export function cleanupWorktrees(
       if (ms === "merged" || ms === "at-main" || ms === "squash-merged") {
         if (!dryRun) {
           try {
-            deps.exec(`git -C "${paths.projectRoot}" branch ${deleteFlag} "${safe}"`);
+            deps.git(["-C", paths.projectRoot, "branch", deleteFlag, safe]);
             result.actions.push({ type: "remove", target: branch, reason: ms });
           } catch { /* skip */ }
         } else {
@@ -663,8 +674,10 @@ Flags:
     console.log("");
     console.log(`  ${BOLD}Git worktree prune${NC}`);
     try {
-      const flag = opts.dryRun ? "--dry-run -v" : "-v";
-      const out = deps.exec(`git -C "${paths.projectRoot}" worktree prune ${flag}`);
+      const pruneArgs = opts.dryRun
+        ? ["-C", paths.projectRoot, "worktree", "prune", "--dry-run", "-v"]
+        : ["-C", paths.projectRoot, "worktree", "prune", "-v"];
+      const out = deps.git(pruneArgs);
       if (out) console.log("    " + out.split("\n").join("\n    "));
     } catch { /* nothing to prune */ }
   }
@@ -686,7 +699,7 @@ export function listOpenPullRequests(paths: ProjectPaths, deps: Deps): string {
   try {
     repo = JSON.parse(deps.readFile(join(paths.projectRoot, "kaizen.config.json"))).host?.repo ?? "";
   } catch {
-    repo = deps.exec(`git -C "${paths.projectRoot}" remote get-url origin`)
+    repo = deps.git(["-C", paths.projectRoot, "remote", "get-url", "origin"])
       .replace(/.*github\.com[:/]/, "").replace(/\.git$/, "");
   }
 
