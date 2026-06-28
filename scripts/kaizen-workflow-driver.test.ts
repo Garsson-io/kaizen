@@ -112,12 +112,12 @@ describe('kaizen workflow forcing driver', () => {
     const status = buildWorkflowStatus({
       mode: 'manual',
       evidence: {
-        meetReality: 'done: a | b\n<script>alert(1)</script> & more',
+        meetReality: 'done: a \\| b\n<script>alert(1)</script> & more',
       },
     });
 
     const markdown = renderWorkflowStatusMarkdown(status);
-    expect(markdown).toContain('a \\| b<br>&lt;script&gt;alert(1)&lt;/script&gt; &amp; more');
+    expect(markdown).toContain('a \\\\\\| b<br>&lt;script&gt;alert(1)&lt;/script&gt; &amp; more');
     expect(markdown).not.toContain('<script>');
   });
 

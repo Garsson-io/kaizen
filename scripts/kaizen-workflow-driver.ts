@@ -191,6 +191,7 @@ export function mergeWorkflowEvidence(
 
 function escapeMarkdownTableCell(value: string): string {
   return value
+    .replace(/\\/g, '\\\\')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
