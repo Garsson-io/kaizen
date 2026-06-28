@@ -15,46 +15,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { runLiveAgent } from "./live-agent.js";
 import { SyntheticProject } from "./synthetic-project.js";
 
-const KAIZEN_ROOT = resolve(__dirname, "../..");
 const isLive = process.env.KAIZEN_LIVE_TEST === "1";
 
 const KAIZEN_REPO = "Garsson-io/kaizen";
 const HOST_FIXTURE_REPO = "Garsson-io/kaizen-test-fixture";
-
-function claude(
-  prompt: string,
-  opts: { cwd: string; maxTurns?: number; maxBudget?: number; timeout?: number },
-): { result: string; is_error: boolean; num_turns: number; total_cost_usd: number } {
-  const args = [
-    "claude", "-p",
-    "--output-format", "json",
-    "--model", "haiku",
-    "--dangerously-skip-permissions",
-    "--max-turns", String(opts.maxTurns ?? 8),
-    "--max-budget-usd", String(opts.maxBudget ?? 0.50),
-    "--plugin-dir", KAIZEN_ROOT,
-    prompt,
-  ];
-
-  const proc = spawnSync(args[0], args.slice(1), {
-    encoding: "utf-8",
-    cwd: opts.cwd,
-    timeout: opts.timeout ?? 120000,
-    env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "cli" },
-  });
-
-  if (proc.error) throw new Error(`claude failed: ${proc.error.message}`);
-
-  try {
-    return JSON.parse(proc.stdout.trim());
-  } catch {
-    throw new Error(
-      `claude output not JSON:\nstdout: ${proc.stdout?.slice(0, 500)}\nstderr: ${proc.stderr?.slice(0, 500)}`,
-    );
-  }
-}
 
 describe("Issue Routing E2E — skill queries host repo in synthetic project", () => {
   if (!isLive) {
@@ -90,20 +57,28 @@ describe("Issue Routing E2E — skill queries host repo in synthetic project", (
   it(
     "kaizen-pick step 1 queries the host repo, not the kaizen repo",
     { timeout: 180000 },
-    () => {
+    async () => {
       // This is the real test: invoke the actual skill and check which
       // repo the agent queries. We tell it to run /kaizen-pick step 1
       // which reads kaizen.config.json and lists open issues.
-      const result = claude(
+      const result = await runLiveAgent(
         [
           "Run /kaizen-pick. Only do step 1 (gather the landscape).",
           "After listing issues, STOP. Do not continue to step 2.",
           "Show which repo you queried for issues.",
         ].join(" "),
-        { cwd: project.projectRoot, maxTurns: 15, maxBudget: 1.00, timeout: 180000 },
+        {
+          cwd: project.projectRoot,
+          maxTurns: 15,
+          maxBudgetUsd: 1.00,
+          timeoutMs: 180000,
+          artifactName: "issue-routing-kaizen-pick",
+          resultsDir: resolve(project.projectRoot, ".kaizen-live-agent-results"),
+          expectedSignals: [HOST_FIXTURE_REPO],
+        },
       );
 
-      const text = result.result ?? "";
+      const text = result.text;
       console.log("--- kaizen-pick output ---");
       console.log(text.slice(0, 1200));
       console.log("--- end ---");

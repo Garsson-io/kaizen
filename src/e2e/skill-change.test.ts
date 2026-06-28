@@ -11,129 +11,31 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
-const KAIZEN_ROOT = resolve(__dirname, "../..");
+import { runLiveAgent } from "./live-agent.js";
+import { KAIZEN_ROOT } from "./test-runtime.js";
+
 const isLive = process.env.KAIZEN_SKILL_TEST === "1";
-const RAW_PREVIEW_CHARS = 300;
 
 /** Read a SKILL.md file from the plugin directory. */
 function loadSkill(name: string): string {
   return readFileSync(resolve(KAIZEN_ROOT, ".claude/skills", name, "SKILL.md"), "utf-8");
 }
 
-/**
- * Run claude -p with the local plugin dir loaded.
- * Returns the text result or throws on error (including non-zero exit).
- */
-type SkillRunProcess = {
-  stdout?: string | null;
-  stderr?: string | null;
-  status?: number | null;
-  signal?: NodeJS.Signals | null;
-  error?: Error;
-};
-
-type SkillRunCheckpoint = {
-  rawPath: string;
-  rawStdout: string;
-  rawStderr: string;
-};
-
-function previewRaw(rawStdout: string, rawStderr: string): string {
-  return (rawStdout || rawStderr).slice(0, RAW_PREVIEW_CHARS);
-}
-
-function persistSkillRunCheckpoint(
-  proc: SkillRunProcess,
-  opts: { artifactName?: string; resultsDir?: string },
-  startedAt: number,
-  durationMs: number,
-): SkillRunCheckpoint {
-  const rawDir = opts.resultsDir ?? resolve(KAIZEN_ROOT, "artifacts", "skill-smoke");
-  mkdirSync(rawDir, { recursive: true });
-  const artifactBase = (opts.artifactName ?? `skill-run-${startedAt}`)
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  const rawPath = resolve(rawDir, `${artifactBase || "skill-run"}.json`);
-  const rawStdout = proc.stdout ?? "";
-  const rawStderr = proc.stderr ?? "";
-  let costUsd: number | null = null;
-  try {
-    const parsed = JSON.parse(rawStdout);
-    costUsd = typeof parsed.total_cost_usd === "number" ? parsed.total_cost_usd : null;
-  } catch {
-    costUsd = null;
-  }
-  writeFileSync(
-    rawPath,
-    JSON.stringify({
-      command: "claude -p",
-      model: "claude-haiku-4-5-20251001",
-      durationMs,
-      costUsd,
-      status: proc.status,
-      signal: proc.signal,
-      stdout: rawStdout,
-      stderr: rawStderr,
-    }, null, 2),
-    "utf-8",
-  );
-  return { rawPath, rawStdout, rawStderr };
-}
-
-function parseSkillRunResult(proc: SkillRunProcess, checkpoint: SkillRunCheckpoint): string {
-  const { rawPath, rawStdout, rawStderr } = checkpoint;
-  const preview = previewRaw(rawStdout, rawStderr);
-
-  if (proc.error) throw new Error(`claude spawn error: ${proc.error.message}; raw output: ${rawPath}\n${preview}`);
-  if (proc.status !== 0) throw new Error(`claude exited ${proc.status}; raw output: ${rawPath}\n${preview}`);
-
-  const raw = rawStdout.trim();
-  if (!raw) throw new Error(`claude produced empty output (possible timeout or silent crash); raw output: ${rawPath}\n${preview}`);
-
-  let parsed: { result?: string; is_error?: boolean };
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`claude output not JSON; raw output: ${rawPath}\n${preview}`);
-  }
-
-  if (parsed.is_error) throw new Error(`claude returned error; raw output: ${rawPath}\n${preview}`);
-  if (!parsed.result) throw new Error(`claude returned empty result; raw output: ${rawPath}\n${preview}`);
-  return parsed.result;
-}
-
-function runSkill(
+async function runSkill(
   prompt: string,
   opts: { maxBudget?: number; timeout?: number; artifactName?: string; resultsDir?: string } = {},
-): string {
-  const startedAt = Date.now();
-  const proc = spawnSync(
-    "claude",
-    [
-      "-p",
-      "--output-format", "json",
-      "--model", "claude-haiku-4-5-20251001",
-      "--dangerously-skip-permissions",
-      "--max-turns", "3",
-      "--max-budget-usd", String(opts.maxBudget ?? 0.10),
-      "--plugin-dir", KAIZEN_ROOT,
-      prompt,
-    ],
-    {
-      encoding: "utf-8",
-      cwd: KAIZEN_ROOT,
-      timeout: opts.timeout ?? 120_000,
-      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "cli" },
-    },
-  );
-  const durationMs = Date.now() - startedAt;
-  const checkpoint = persistSkillRunCheckpoint(proc, opts, startedAt, durationMs);
-  return parseSkillRunResult(proc, checkpoint);
+): Promise<string> {
+  return (await runLiveAgent(prompt, {
+    model: "claude-haiku-4-5-20251001",
+    maxTurns: 3,
+    maxBudgetUsd: opts.maxBudget ?? 0.10,
+    timeoutMs: opts.timeout ?? 120_000,
+    artifactName: opts.artifactName,
+    resultsDir: opts.resultsDir ?? resolve(KAIZEN_ROOT, "artifacts", "skill-smoke"),
+  })).text;
 }
 
 
@@ -185,7 +87,7 @@ describe("kaizen-gaps — Phase 1.7: Hypothesis Validation", () => {
         "your response with a single line containing exactly [PROVEN] or [HYPOTHESIS].",
       ].join("\n");
 
-      const output = runSkill(prompt, { maxBudget: 0.05 });
+      const output = await runSkill(prompt, { maxBudget: 0.05 });
       expect(output).toMatch(/\[PROVEN\]|\[HYPOTHESIS\]/);
     },
     90_000,
@@ -230,7 +132,7 @@ describe("kaizen-evaluate — Phase 0.7: Problem Validation", () => {
         "Your response MUST include either 'Problem confirmed' or 'Problem NOT confirmed'.",
       ].join("\n");
 
-      const output = runSkill(prompt, { maxBudget: 0.10 });
+      const output = await runSkill(prompt, { maxBudget: 0.10 });
       // The plan-vs-delivery check EXISTS in kaizen-reflect at line 98.
       // Phase 0.7 MUST detect this and output "Problem NOT confirmed".
       // This assertion intentionally requires the NOT form — accepting
@@ -419,7 +321,7 @@ describe("kaizen-write-plan — test-plan discipline (#1014)", () => {
         "line: 'DEFERRAL: <acceptable|circular>'.",
       ].join("\n");
 
-      const output = runSkill(prompt, { maxBudget: 0.1 });
+      const output = await runSkill(prompt, { maxBudget: 0.1 });
       // New guidance must drive both decisions: System level, circular deferral.
       expect(output).toMatch(/LEVEL:\s*System/i);
       expect(output).toMatch(/DEFERRAL:\s*circular/i);
@@ -489,14 +391,14 @@ describe("kaizen workflow — Impact proof discipline (#1505)", () => {
 
   it.skipIf(!isLive)(
     "live smoke: planning prompt emits Impact Baseline fields",
-    () => {
+    async () => {
       const prompt = [
         "You are applying kaizen-write-plan Phase 4.5 to an issue about PRs lacking goal-impact proof.",
         "Use the new Impact Baseline discipline.",
         "Return only the Impact Baseline block with fields for Goal, Acceptance signal, BEFORE, AFTER capture method, and Residual scan.",
       ].join("\n");
 
-      const output = runSkill(prompt, {
+      const output = await runSkill(prompt, {
         maxBudget: 0.10,
         timeout: 90_000,
         artifactName: "impact-baseline-live-smoke",
@@ -507,63 +409,66 @@ describe("kaizen workflow — Impact proof discipline (#1505)", () => {
     },
   );
 
-  it("live skill smoke harness persists raw output checkpoints before parsing", () => {
-    const dir = mkdtempSync(join(tmpdir(), "skill-smoke-"));
-    try {
-      const checkpoint = persistSkillRunCheckpoint(
-        {
-          status: 0,
-          stdout: JSON.stringify({ result: "ok", total_cost_usd: 0.03 }),
-          stderr: "",
+  it("live skill smoke uses the shared live-agent checkpoint contract", async () => {
+    const result = await runLiveAgent("impact proof smoke", {
+      resultsDir: resolve(KAIZEN_ROOT, ".claude", "e2e-results", "skill-change-unit"),
+      artifactName: "impact-baseline-live-smoke",
+      spawn: async () => ({
+        text: "ok",
+        costUsd: 0.03,
+        durationMs: 250,
+        exitCode: 0,
+        signal: null,
+        rawStdout: JSON.stringify({ result: "ok", total_cost_usd: 0.03 }),
+        rawStderr: "",
+        args: ["-p", "--plugin-dir", KAIZEN_ROOT],
+        numTurns: null,
+      }),
+    });
+    const saved = JSON.parse(readFileSync(result.rawPath, "utf-8"));
+
+    expect(result.text).toBe("ok");
+    expect(saved.command).toBe("claude -p");
+    expect(saved.costUsd).toBe(0.03);
+    expect(saved.stdout).toContain('"result":"ok"');
+  });
+
+  it("live skill smoke failures include shared checkpoint path and raw preview", async () => {
+    await expect(
+      runLiveAgent("impact proof smoke", {
+        resultsDir: resolve(KAIZEN_ROOT, ".claude", "e2e-results", "skill-change-unit"),
+        artifactName: "provider-error",
+        spawn: async () => ({
+          text: "",
+          costUsd: null,
+          durationMs: 250,
+          exitCode: 1,
           signal: null,
-        },
-        { artifactName: "impact-baseline-live-smoke", resultsDir: dir },
-        1_000,
-        250,
-      );
-      const saved = JSON.parse(readFileSync(checkpoint.rawPath, "utf-8"));
+          rawStdout: "",
+          rawStderr: "monthly spend limit reached by provider",
+          args: ["-p", "--plugin-dir", KAIZEN_ROOT],
+          numTurns: null,
+        }),
+      }),
+    ).rejects.toThrow(/provider-error\.json[\s\S]*monthly spend limit reached/);
 
-      expect(saved.durationMs).toBe(250);
-      expect(saved.costUsd).toBe(0.03);
-      expect(saved.stdout).toContain('"result":"ok"');
-      expect(parseSkillRunResult({ status: 0, stdout: saved.stdout, stderr: "" }, checkpoint)).toBe("ok");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("live skill smoke failures include checkpoint path and raw preview", () => {
-    const dir = mkdtempSync(join(tmpdir(), "skill-smoke-"));
-    try {
-      const checkpoint = persistSkillRunCheckpoint(
-        { status: 1, stdout: "", stderr: "monthly spend limit reached by provider" },
-        { artifactName: "provider-error", resultsDir: dir },
-        1_000,
-        250,
-      );
-
-      expect(() => parseSkillRunResult({ status: 1, stdout: "", stderr: checkpoint.rawStderr }, checkpoint))
-        .toThrow(/provider-error\.json[\s\S]*monthly spend limit reached/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("live skill smoke malformed JSON failures include raw preview", () => {
-    const dir = mkdtempSync(join(tmpdir(), "skill-smoke-"));
-    try {
-      const checkpoint = persistSkillRunCheckpoint(
-        { status: 0, stdout: "not json from provider", stderr: "" },
-        { artifactName: "malformed-provider-json", resultsDir: dir },
-        1_000,
-        250,
-      );
-
-      expect(() => parseSkillRunResult({ status: 0, stdout: checkpoint.rawStdout, stderr: "" }, checkpoint))
-        .toThrow(/malformed-provider-json\.json[\s\S]*not json from provider/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    await expect(
+      runLiveAgent("impact proof smoke", {
+        resultsDir: resolve(KAIZEN_ROOT, ".claude", "e2e-results", "skill-change-unit"),
+        artifactName: "malformed-provider-json",
+        spawn: async () => ({
+          text: "",
+          costUsd: null,
+          durationMs: 250,
+          exitCode: 0,
+          signal: null,
+          rawStdout: "not json from provider",
+          rawStderr: "",
+          args: ["-p", "--plugin-dir", KAIZEN_ROOT],
+          numTurns: null,
+        }),
+      }),
+    ).rejects.toThrow(/malformed-provider-json\.json[\s\S]*not json from provider/);
   });
 });
 
@@ -574,7 +479,7 @@ describe("kaizen workflow — Impact proof discipline (#1505)", () => {
 describe("Behavioral: dry dimension detects copy-paste in kaizen-test-fixture#24", () => {
   it.skipIf(!isLive)(
     "INVARIANT: dry dimension returns MISSING/PARTIAL for pad() copy-paste across 3 functions",
-    () => {
+    async () => {
       // Fixture: Garsson-io/kaizen-test-fixture PR #24 contains formatters.ts
       // with pad() helper copy-pasted identically into formatDate, formatPrice,
       // and formatDuration — a classic 3-copy DRY violation.
@@ -626,7 +531,7 @@ ${fixtureDiff}
 
 Review this diff for DRY violations. Output JSON only.`;
 
-      const output = runSkill(prompt, { maxBudget: 0.15, timeout: 90_000 });
+      const output = await runSkill(prompt, { maxBudget: 0.15, timeout: 90_000 });
 
       // Parse the JSON findings block from the output
       const jsonMatch = output.match(/```json\s*([\s\S]+?)\s*```/);
@@ -643,6 +548,55 @@ Review this diff for DRY violations. Output JSON only.`;
         "dry dimension must detect the pad() copy-paste across 3 functions",
       ).toBe(true);
     },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// #944 — real skill-chain behavioral smoke via claude -p + local plugin
+// ---------------------------------------------------------------------------
+
+describe("Behavioral: #944 live skill-chain proof uses local plugin + fixture PR", () => {
+  it.skipIf(!isLive)(
+    "INVARIANT: /kaizen-review-pr smoke reports the known DRY fixture signal",
+    async () => {
+      const prompt = [
+        "Run /kaizen-review-pr for https://github.com/Garsson-io/kaizen-test-fixture/pull/24.",
+        "This is a #944 behavioral smoke test. Keep it bounded: do not edit files, do not push, and do not run a fix loop.",
+        "The review skill may store its normal structured review finding marker; do not add unrelated prose comments.",
+        "You must execute the review workflow far enough to run the dry dimension against the fixture diff. Do not answer from the PR body or fixture comments alone.",
+        "It is acceptable to run only the dry dimension for this smoke test, but the answer must distinguish an actual dry-review verdict from a manual inspection.",
+        "Your final answer must include these exact labels with values:",
+        "BEHAVIORAL_PROOF:",
+        "FIXTURE_PR:",
+        "DIMENSION:",
+        "DRY_REVIEW_RAN:",
+        "DRY_VERDICT:",
+        "FINDING_SIGNAL:",
+        "STATUS:",
+      ].join("\n");
+
+      const result = await runLiveAgent(prompt, {
+        model: "claude-haiku-4-5-20251001",
+        maxTurns: 12,
+        maxBudgetUsd: 0.75,
+        timeoutMs: 180_000,
+        artifactName: "k944-review-pr-dry-fixture",
+        resultsDir: resolve(KAIZEN_ROOT, "artifacts", "skill-smoke"),
+        expectedSignals: [
+          "BEHAVIORAL_PROOF:",
+          "kaizen-test-fixture/pull/24",
+          { name: "dry dimension", pattern: /\bdry\b/i },
+          "DRY_REVIEW_RAN:",
+          { name: "dry verdict", pattern: /DRY_VERDICT:[\s\S]{0,80}\b(fail|failed)\b/i },
+          { name: "pad duplication", pattern: /\bpad\b/i },
+          { name: "gap status", pattern: /\b(MISSING|PARTIAL)\b/i },
+        ],
+      });
+
+      expect(result.args).toContain("--plugin-dir");
+      expect(result.rawPath).toContain("k944-review-pr-dry-fixture.json");
+    },
+    210_000,
   );
 });
 
@@ -704,7 +658,7 @@ describe("Behavioral: simplification-impact dimension detects additive-only work
 
   it.skipIf(!isLive)(
     "INVARIANT: simplification-impact returns MISSING/PARTIAL when a plan adds a parallel PR workflow with no related-area sweep",
-    () => {
+    async () => {
       const fixturePlan = `## Success Criteria
 GOAL: PRs must include an Architecture section.
 DONE WHEN: Agents add a new PR checklist item.
@@ -755,7 +709,7 @@ ${fixtureDiff}
 
 Review this plan and diff for simplification impact. Output JSON only.`;
 
-      const output = runSkill(prompt, { maxBudget: 0.15, timeout: 90_000 });
+      const output = await runSkill(prompt, { maxBudget: 0.15, timeout: 90_000 });
       const rawDir = resolve(KAIZEN_ROOT, "artifacts", "skill-smoke");
       mkdirSync(rawDir, { recursive: true });
       const rawPath = resolve(rawDir, "simplification-impact-additive-only-output.txt");
@@ -781,7 +735,7 @@ Review this plan and diff for simplification impact. Output JSON only.`;
 describe("Behavioral: kaizen-evaluate Phase 4.5 produces structured plan (Policy 10)", () => {
   it.skipIf(!isLive)(
     "INVARIANT: agent using Phase 4.5 steps produces GOAL: and DONE WHEN fields",
-    () => {
+    async () => {
       // Policy 10 requires behavioral proof for SKILL.md changes.
       // Before Phase 4.5: agents wrote plans as unstructured task lists with
       // no GOAL/DONE WHEN fields — the plan was a list of actions, not a
@@ -804,7 +758,7 @@ Issue: "When the CLI tool crashes, the error message shows 'undefined' instead o
 
 Complete Steps 1 and 2 (success criteria extraction and existing tools survey) and output the plan in the schema shown above.`;
 
-      const output = runSkill(prompt, { maxBudget: 0.20, timeout: 120_000 });
+      const output = await runSkill(prompt, { maxBudget: 0.20, timeout: 120_000 });
 
       // Phase 4.5 Step 1 requires GOAL: and DONE WHEN: fields in the plan output
       expect(output).toContain("GOAL:");

@@ -24,15 +24,15 @@ import {
   existsSync,
   rmSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
+import { runLiveAgent } from "./live-agent.js";
 
-const KAIZEN_ROOT = resolve(__dirname, "../..");
 const isLive = process.env.KAIZEN_LIVE_TEST === "1";
 
 // Run claude -p in a project directory. No --plugin-dir — uses whatever
 // plugins are installed in the user's environment (the real path).
-function claude(
+async function runInstalledPluginAgent(
   prompt: string,
   opts: {
     cwd: string;
@@ -42,43 +42,27 @@ function claude(
     pluginDir?: string;
     model?: string;
   },
-): {
+): Promise<{
   result: string;
   is_error: boolean;
   num_turns: number;
   total_cost_usd: number;
-} {
-  const args = [
-    "claude", "-p",
-    "--output-format", "json",
-    "--model", opts.model ?? "sonnet",
-    "--dangerously-skip-permissions",
-    "--max-turns", String(opts.maxTurns ?? 5),
-    "--max-budget-usd", String(opts.maxBudget ?? 0.50),
-  ];
-
-  if (opts.pluginDir) {
-    args.push("--plugin-dir", opts.pluginDir);
-  }
-
-  args.push(prompt);
-
-  const proc = spawnSync(args[0], args.slice(1), {
-    encoding: "utf-8",
+}> {
+  const result = await runLiveAgent(prompt, {
     cwd: opts.cwd,
-    timeout: opts.timeout ?? 120000,
-    env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "cli" },
+    model: opts.model ?? "sonnet",
+    maxTurns: opts.maxTurns ?? 5,
+    maxBudgetUsd: opts.maxBudget ?? 0.50,
+    timeoutMs: opts.timeout ?? 120000,
+    pluginDir: opts.pluginDir ?? null,
+    resultsDir: join(opts.cwd, ".kaizen-live-agent-results"),
   });
-
-  if (proc.error) {
-    throw new Error(`claude failed: ${proc.error.message}`);
-  }
-
-  try {
-    return JSON.parse(proc.stdout.trim());
-  } catch {
-    throw new Error(`claude output not JSON:\nstdout: ${proc.stdout?.slice(0, 500)}\nstderr: ${proc.stderr?.slice(0, 500)}`);
-  }
+  return {
+    result: result.text,
+    is_error: false,
+    num_turns: result.numTurns ?? 0,
+    total_cost_usd: result.costUsd ?? 0,
+  };
 }
 
 // Run a claude CLI command (not -p mode)
@@ -148,9 +132,9 @@ describe("Live E2E: Full Installation Flow", () => {
       rmSync(projectDir, { recursive: true, force: true });
     });
 
-    it("kaizen-zen skill works (proves skills loaded from installed plugin)", { timeout: 60000 }, () => {
+    it("kaizen-zen skill works (proves skills loaded from installed plugin)", { timeout: 60000 }, async () => {
       // NO --plugin-dir here — uses the marketplace-installed plugin
-      const result = claude(
+      const result = await runInstalledPluginAgent(
         "Run /kaizen-zen to print the Zen of Kaizen. Just print it, nothing else.",
         { cwd: projectDir, maxTurns: 5, maxBudget: 0.30 },
       );
@@ -162,9 +146,9 @@ describe("Live E2E: Full Installation Flow", () => {
       ).toBe(true);
     });
 
-    it("kaizen-setup skill is available", { timeout: 60000 }, () => {
+    it("kaizen-setup skill is available", { timeout: 60000 }, async () => {
       // Verify /kaizen-setup is recognized (not "Unknown skill")
-      const result = claude(
+      const result = await runInstalledPluginAgent(
         'What does the /kaizen-setup skill do? Just describe it in one sentence.',
         { cwd: projectDir, maxTurns: 2, maxBudget: 0.20 },
       );
@@ -192,11 +176,11 @@ describe("Live E2E: Full Installation Flow", () => {
       rmSync(projectDir, { recursive: true, force: true });
     });
 
-    it("kaizen-setup creates config files", { timeout: 180000 }, () => {
+    it("kaizen-setup creates config files", { timeout: 180000 }, async () => {
       // The plugin is already installed (from earlier tests).
       // In a real flow the user would restart or /reload-plugins.
       // We simulate "second session" by just running /kaizen-setup directly.
-      const result = claude(
+      const result = await runInstalledPluginAgent(
         "Run /kaizen-setup to configure kaizen for this project. Use these values: name=test-python-app, repo=testorg/test-python-app, description=A test Python CLI, channel=none. Do not ask questions.",
         { cwd: projectDir, maxTurns: 15, maxBudget: 2.00 },
       );
@@ -243,9 +227,9 @@ describe("Live E2E: Full Installation Flow", () => {
       rmSync(projectDir, { recursive: true, force: true });
     });
 
-    it("blocks git rebase commands", { timeout: 30000 }, () => {
+    it("blocks git rebase commands", { timeout: 30000 }, async () => {
       // NO --plugin-dir — uses installed plugin
-      const result = claude(
+      const result = await runInstalledPluginAgent(
         "Run this exact command: git rebase -i HEAD~3",
         { cwd: projectDir, maxTurns: 3, maxBudget: 0.20 },
       );

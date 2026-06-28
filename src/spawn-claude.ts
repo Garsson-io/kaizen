@@ -10,7 +10,7 @@
  * stream-json JSONL parsing + cost extraction + timeout live in exactly one place.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { parseJsonLines } from './lib/json-lines.js';
 
 interface StreamJsonContentBlock {
@@ -31,6 +31,9 @@ export interface SpawnClaudeResult {
   costUsd: number;
   durationMs: number;
   exitCode: number;
+  rawStdout: string;
+  rawStderr: string;
+  args: string[];
 }
 
 export interface SpawnClaudeOptions {
@@ -38,6 +41,23 @@ export interface SpawnClaudeOptions {
   timeoutMs?: number;
   /** Model override. Defaults to REVIEW_MODEL env var, then 'sonnet'. */
   model?: string;
+  /** Optional local plugin dir for live plugin/skill tests. */
+  pluginDir?: string | null;
+  /** Optional max-turn guard for bounded live skill runs. */
+  maxTurns?: number;
+  /** Optional cost guard for bounded live skill runs. */
+  maxBudgetUsd?: number;
+  /** Extra env vars for the spawned Claude process. */
+  env?: NodeJS.ProcessEnv;
+}
+
+export interface SpawnClaudeArgsOptions extends SpawnClaudeOptions {
+  /** Defaults to stream-json for the review/judge primitive. */
+  outputFormat?: 'stream-json' | 'json';
+  /** Defaults to true for stream-json, false for json. */
+  verbose?: boolean;
+  /** Append prompt as argv instead of stdin. Used by JSON-mode live skill tests. */
+  promptArg?: string;
 }
 
 /**
@@ -49,6 +69,104 @@ export type SpawnClaudeFn = (
   opts: SpawnClaudeOptions,
 ) => Promise<SpawnClaudeResult>;
 
+export interface SpawnClaudeJsonResult {
+  text: string;
+  costUsd: number | null;
+  durationMs: number;
+  exitCode: number | null | undefined;
+  signal: NodeJS.Signals | null | undefined;
+  rawStdout: string;
+  rawStderr: string;
+  args: string[];
+  error?: Error;
+  numTurns: number | null;
+}
+
+export interface SpawnClaudeJsonOptions extends SpawnClaudeOptions {
+  promptArg?: boolean;
+}
+
+export type SpawnClaudeJsonFn = (
+  prompt: string,
+  opts: SpawnClaudeJsonOptions,
+) => Promise<SpawnClaudeJsonResult>;
+
+export function buildSpawnClaudeArgs(opts: SpawnClaudeArgsOptions = {}): string[] {
+  const model = opts.model ?? process.env.REVIEW_MODEL ?? 'sonnet';
+  const outputFormat = opts.outputFormat ?? 'stream-json';
+  const verbose = opts.verbose ?? outputFormat === 'stream-json';
+  const args = [
+    '-p',
+    '--output-format', outputFormat,
+  ];
+
+  if (verbose) args.push('--verbose');
+  args.push('--dangerously-skip-permissions', '--model', model);
+  if (opts.maxTurns !== undefined) {
+    args.push('--max-turns', String(opts.maxTurns));
+  }
+  if (opts.maxBudgetUsd !== undefined) {
+    args.push('--max-budget-usd', String(opts.maxBudgetUsd));
+  }
+  if (opts.pluginDir !== undefined && opts.pluginDir !== null) {
+    args.push('--plugin-dir', opts.pluginDir);
+  }
+  if (opts.promptArg !== undefined) args.push(opts.promptArg);
+
+  return args;
+}
+
+export const spawnClaudeJson: SpawnClaudeJsonFn = async (prompt, opts) => {
+  const startedAt = Date.now();
+  const args = buildSpawnClaudeArgs({
+    ...opts,
+    outputFormat: 'json',
+    verbose: false,
+    promptArg: opts.promptArg === false ? undefined : prompt,
+  });
+  const proc = spawnSync('claude', args, {
+    cwd: opts.cwd,
+    timeout: opts.timeoutMs ?? 120_000,
+    encoding: 'utf-8',
+    env: opts.env ? { ...process.env, ...opts.env } : process.env,
+  });
+  const durationMs = Date.now() - startedAt;
+  const rawStdout = proc.stdout ?? '';
+  const rawStderr = proc.stderr ?? '';
+
+  let text = '';
+  let costUsd: number | null = null;
+  let numTurns: number | null = null;
+  try {
+    const parsed = JSON.parse(rawStdout) as {
+      result?: unknown;
+      is_error?: unknown;
+      num_turns?: unknown;
+      total_cost_usd?: unknown;
+    };
+    if (parsed.is_error !== true && typeof parsed.result === 'string') {
+      text = parsed.result;
+    }
+    costUsd = typeof parsed.total_cost_usd === 'number' ? parsed.total_cost_usd : null;
+    numTurns = typeof parsed.num_turns === 'number' ? parsed.num_turns : null;
+  } catch {
+    // Leave parse failures to callers; raw stdout is preserved.
+  }
+
+  return {
+    text,
+    costUsd,
+    durationMs,
+    exitCode: proc.status,
+    signal: proc.signal,
+    rawStdout,
+    rawStderr,
+    args,
+    error: proc.error,
+    numTurns,
+  };
+};
+
 /**
  * Run a single `claude -p` call with the given prompt.
  * Each call is a fresh process — no shared context with the caller, by construction.
@@ -56,18 +174,13 @@ export type SpawnClaudeFn = (
  * Returns parsed text, cost, duration, and exit code.
  */
 export const spawnClaude: SpawnClaudeFn = (prompt, opts) => {
-  const model = opts.model ?? process.env.REVIEW_MODEL ?? 'sonnet';
+  const args = buildSpawnClaudeArgs(opts);
   const start = Date.now();
 
   return new Promise((resolve) => {
-    const child = spawn('claude', [
-      '-p',
-      '--output-format', 'stream-json',
-      '--verbose',
-      '--dangerously-skip-permissions',
-      '--model', model,
-    ], {
+    const child = spawn('claude', args, {
       cwd: opts.cwd,
+      env: opts.env ? { ...process.env, ...opts.env } : process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -75,8 +188,9 @@ export const spawnClaude: SpawnClaudeFn = (prompt, opts) => {
     child.stdin.end();
 
     let stdout = '';
+    let stderr = '';
     child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
-    child.stderr.on('data', () => {}); // drain to prevent blocking
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
 
     const timer = setTimeout(() => { child.kill(); }, opts.timeoutMs ?? 120_000);
 
@@ -104,7 +218,7 @@ export const spawnClaude: SpawnClaudeFn = (prompt, opts) => {
         }
       }
 
-      resolve({ text, costUsd, durationMs, exitCode: code ?? -1 });
+      resolve({ text, costUsd, durationMs, exitCode: code ?? -1, rawStdout: stdout, rawStderr: stderr, args });
     });
   });
 };

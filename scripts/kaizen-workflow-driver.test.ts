@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { resolve } from 'node:path';
 
+import { resolveTsxBin } from '../src/e2e/test-runtime.js';
 import {
   FULL_KAIZEN_GATE_LABELS,
   buildManualGoalDirective,
@@ -12,11 +13,11 @@ import {
   renderAutoDentGoalContract,
 } from './kaizen-workflow-driver.js';
 
-const TSX_CLI = resolve('node_modules/tsx/dist/cli.mjs');
+const TSX_BIN = resolveTsxBin() ?? 'tsx';
 const WORKFLOW_DRIVER = 'scripts/kaizen-workflow-driver.ts';
 
 function runWorkflowDriver(args: string[], options: { cwd?: string; script?: string } = {}): SpawnSyncReturns<string> {
-  return spawnSync(process.execPath, [TSX_CLI, options.script ?? WORKFLOW_DRIVER, ...args], {
+  return spawnSync(TSX_BIN, [options.script ?? WORKFLOW_DRIVER, ...args], {
     cwd: options.cwd,
     encoding: 'utf8',
   });
