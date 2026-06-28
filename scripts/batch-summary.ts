@@ -18,6 +18,10 @@ import { resolve } from 'path';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 import type { EventEnvelope, RunCompleteEvent, RunIssuePickedEvent, RunPrCreatedEvent } from './auto-dent-events.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
+import {
+  hookActivationStatus,
+  type HookActivationStatus,
+} from './auto-dent-hook-activation.js';
 import { PHASES, safeParsePhaseProviderRecord } from './auto-dent-provider.js';
 import type { WorkflowGateId } from './workflow-gate-ledger.js';
 
@@ -66,6 +70,10 @@ export interface BatchSummary {
   workflow_repair_gate_distribution: Partial<Record<WorkflowGateId, number>>;
   /** Evidence repair loop states across completed runs (#1533). */
   workflow_repair_state_distribution: Record<string, number>;
+  /** Hook activation distribution across completed runs with recorded verdicts (#1501). */
+  hook_activation_distribution?: Partial<Record<HookActivationStatus, number>>;
+  /** Runs whose hook activation was degraded or unknown (#1501). */
+  hook_activation_degraded_count?: number;
 }
 
 export interface ModeOutcome {
@@ -182,9 +190,14 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
   const processVerdictDistribution: Partial<Record<ProcessVerdict, number>> = {};
   const workflowRepairGateDistribution: Partial<Record<WorkflowGateId, number>> = {};
   const workflowRepairStateDistribution: Record<string, number> = {};
+  const hookActivationDistribution: Partial<Record<HookActivationStatus, number>> = {};
   for (const e of completeEvents) {
     const verdict = e.event.process_verdict;
     if (verdict) processVerdictDistribution[verdict] = (processVerdictDistribution[verdict] ?? 0) + 1;
+    const hookStatus = hookActivationStatus(e.event.hook_activation);
+    if (hookStatus) {
+      hookActivationDistribution[hookStatus] = (hookActivationDistribution[hookStatus] ?? 0) + 1;
+    }
     for (const gate of e.event.workflow_repair_gates ?? []) {
       workflowRepairGateDistribution[gate] = (workflowRepairGateDistribution[gate] ?? 0) + 1;
     }
@@ -196,6 +209,9 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
 
   const runCount = completeEvents.length || 1;
   const totalDurationMinutes = Math.round(totalDurationMs / 60000 * 10) / 10;
+  const hasHookActivationDistribution = Object.keys(hookActivationDistribution).length > 0;
+  const hookActivationDegradedCount =
+    (hookActivationDistribution.degraded ?? 0) + (hookActivationDistribution.unknown ?? 0);
 
   return {
     batch_id: batchId,
@@ -226,6 +242,8 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     process_verdict_distribution: processVerdictDistribution,
     workflow_repair_gate_distribution: workflowRepairGateDistribution,
     workflow_repair_state_distribution: workflowRepairStateDistribution,
+    hook_activation_distribution: hasHookActivationDistribution ? hookActivationDistribution : undefined,
+    hook_activation_degraded_count: hasHookActivationDistribution ? hookActivationDegradedCount : undefined,
   };
 }
 
@@ -356,6 +374,19 @@ export function formatPlainLanguage(summary: BatchSummary): string {
     }
     if (repairGates.length > 0) {
       lines.push(`- Gates needing repair: ${repairGates.map(([gate, count]) => `${gate} (${count})`).join(', ')}`);
+    }
+  }
+
+  const hookEntries = Object.entries(summary.hook_activation_distribution ?? {});
+  if (hookEntries.length > 0) {
+    lines.push('');
+    lines.push('### Hook Activation');
+    for (const [status, count] of hookEntries.sort((a, b) => b[1] - a[1])) {
+      lines.push(`- ${status}: ${count} run${count > 1 ? 's' : ''}`);
+    }
+    if ((summary.hook_activation_degraded_count ?? 0) > 0) {
+      const count = summary.hook_activation_degraded_count ?? 0;
+      lines.push(`- Degraded/unknown hook activation: ${count} run${count === 1 ? '' : 's'}`);
     }
   }
 

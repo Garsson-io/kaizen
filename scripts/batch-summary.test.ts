@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { execFileSync } from 'child_process';
 import type { EventEnvelope } from './auto-dent-events.js';
 import { parseEventsFile, summarizeEvents, formatPlainLanguage } from './batch-summary.js';
 
@@ -437,6 +438,64 @@ describe('process verdict distribution (#1149)', () => {
     expect(text).toContain('### Process Verdicts');
     expect(text).toContain('pass: 1 run');
     expect(text).toContain('process-incomplete: 1 run');
+  });
+
+  it('aggregates and displays hook activation distribution from run.complete events', () => {
+    const hook = (status: string, degraded: boolean) => ({
+      provider: 'claude',
+      expected: true,
+      active: status === 'active',
+      degraded,
+      status,
+      observedPlugins: status === 'active' ? ['kaizen'] : [],
+      message: status,
+    });
+    const summary = summarizeEvents([
+      makeCompleteEvent({ run_num: 1, hook_activation: hook('active', false) } as any),
+      makeCompleteEvent({ run_num: 2, hook_activation: hook('degraded', true) } as any),
+      makeCompleteEvent({ run_num: 3, hook_activation: hook('unknown', true) } as any),
+    ]);
+
+    expect(summary.hook_activation_distribution).toEqual({
+      active: 1,
+      degraded: 1,
+      unknown: 1,
+    });
+    expect(summary.hook_activation_degraded_count).toBe(2);
+
+    const text = formatPlainLanguage(summary);
+    expect(text).toContain('### Hook Activation');
+    expect(text).toContain('active: 1 run');
+    expect(text).toContain('degraded: 1 run');
+    expect(text).toContain('unknown: 1 run');
+    expect(text).toContain('Degraded/unknown hook activation: 2 runs');
+  });
+
+  it('CLI output includes hook activation health for a synthetic batch', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'batch-summary-cli-'));
+    const hook = (status: string, degraded: boolean) => ({
+      provider: 'claude',
+      expected: true,
+      active: status === 'active',
+      degraded,
+      status,
+      observedPlugins: status === 'active' ? ['kaizen'] : [],
+      message: status,
+    });
+    const events = [
+      makeCompleteEvent({ run_num: 1, hook_activation: hook('active', false) } as any),
+      makeCompleteEvent({ run_num: 2, hook_activation: hook('unknown', true) } as any),
+    ];
+    writeFileSync(join(tmpDir, 'events.jsonl'), events.map(e => JSON.stringify(e)).join('\n'));
+
+    const output = execFileSync('npx', ['tsx', 'scripts/batch-summary.ts', tmpDir], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+
+    expect(output).toContain('### Hook Activation');
+    expect(output).toContain('unknown: 1 run');
+    expect(output).toContain('Degraded/unknown hook activation: 1 run');
   });
 
   it('aggregates workflow gate ledger repair states from run.complete events (#1533)', () => {

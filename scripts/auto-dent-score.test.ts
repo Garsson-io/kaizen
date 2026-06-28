@@ -300,6 +300,32 @@ describe('scoreBatch', () => {
     expect(score.review_fail_rate).toBe(0);
     expect(score.review_total_cost_usd).toBe(0);
   });
+
+  it('aggregates hook activation status counts from run history', () => {
+    const hook = (status: string, degraded: boolean, expected = true) => ({
+      provider: expected ? 'claude' : 'codex',
+      expected,
+      active: status === 'active',
+      degraded,
+      status,
+      observedPlugins: status === 'active' ? ['kaizen'] : [],
+      message: status,
+    }) as any;
+    const score = scoreBatch([
+      makeRunMetrics({ run: 1, hook_activation: hook('active', false) }),
+      makeRunMetrics({ run: 2, hook_activation: hook('degraded', true) }),
+      makeRunMetrics({ run: 3, hook_activation: hook('unknown', true) }),
+      makeRunMetrics({ run: 4, hook_activation: hook('not_expected', false, false) }),
+    ]);
+
+    expect(score.hook_activation_distribution).toEqual({
+      active: 1,
+      degraded: 1,
+      unknown: 1,
+      not_expected: 1,
+    });
+    expect(score.hook_activation_degraded_count).toBe(2);
+  });
 });
 
 describe('formatRunScoreLine', () => {
@@ -1014,6 +1040,51 @@ describe('cost_vs_avg in scoring', () => {
     };
     const table = formatBatchScoreTable(score);
     expect(table).not.toContain('Cost anomalies');
+  });
+
+  it('formatBatchScoreTable shows degraded and unknown hook activation counts', () => {
+    const score = scoreBatch([
+      makeRunMetrics({
+        run: 1,
+        hook_activation: {
+          provider: 'claude',
+          expected: true,
+          active: true,
+          degraded: false,
+          status: 'active',
+          observedPlugins: ['kaizen'],
+          message: 'active',
+        } as any,
+      }),
+      makeRunMetrics({
+        run: 2,
+        hook_activation: {
+          provider: 'claude',
+          expected: true,
+          active: false,
+          degraded: true,
+          status: 'degraded',
+          observedPlugins: [],
+          message: 'degraded',
+        } as any,
+      }),
+      makeRunMetrics({
+        run: 3,
+        hook_activation: {
+          provider: 'claude',
+          expected: true,
+          active: false,
+          degraded: true,
+          status: 'unknown',
+          observedPlugins: [],
+          message: 'unknown',
+        } as any,
+      }),
+    ]);
+
+    const table = formatBatchScoreTable(score);
+
+    expect(table).toContain('| **Hook activation** | active:1, degraded:1, unknown:1 (2 degraded/unknown) |');
   });
 });
 

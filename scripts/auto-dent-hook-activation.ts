@@ -70,8 +70,12 @@ export function pluginsIncludeKaizen(plugins: InitPluginEntry[]): boolean {
   );
 }
 
+export type HookActivationStatus = 'active' | 'degraded' | 'unknown' | 'not_expected';
+
 export interface HookActivationVerdict {
   provider: Provider;
+  /** Canonical batch/reporting status for hook activation. */
+  status: HookActivationStatus;
   /** Provider claims a Claude Code hook runtime (so kaizen hooks are expected). */
   expected: boolean;
   /** The kaizen plugin was observed in the session's loaded plugins. */
@@ -97,6 +101,7 @@ export function evaluateHookActivation(args: {
   const expected = providerClaimsHookSupport(provider);
   const active = pluginsIncludeKaizen(plugins);
   const degraded = expected && !active;
+  const status: HookActivationStatus = !expected ? 'not_expected' : active ? 'active' : 'degraded';
   const observedPlugins = plugins
     .map(p => p.name ?? p.source)
     .filter((n): n is string => typeof n === 'string');
@@ -112,15 +117,70 @@ export function evaluateHookActivation(args: {
     }) — NO kaizen hooks fired this session.`;
   }
 
-  return { provider, expected, active, degraded, observedPlugins, message };
+  return { provider, status, expected, active, degraded, observedPlugins, message };
 }
 
 /**
- * Render a verdict for the run log/console. A degraded verdict produces a loud,
- * unmissable banner referencing #843; an active verdict produces a single
- * confirmation line; an unexpected-but-absent case stays quiet.
+ * Fail-closed verdict for absent or invalid init evidence. This keeps the
+ * durable run metric explicit: "unknown" is data, not an omitted field.
+ */
+export function unknownHookActivationVerdict(provider: Provider, reason: string): HookActivationVerdict {
+  const expected = providerClaimsHookSupport(provider);
+  if (!expected) {
+    return {
+      provider,
+      status: 'not_expected',
+      expected: false,
+      active: false,
+      degraded: false,
+      observedPlugins: [],
+      message: `${provider} has no Claude Code hook runtime; ${reason}.`,
+    };
+  }
+  return {
+    provider,
+    status: 'unknown',
+    expected: true,
+    active: false,
+    degraded: true,
+    observedPlugins: [],
+    message: `${reason}; hook activation unknown for hook-expecting provider.`,
+  };
+}
+
+export function hookActivationStatus(verdict: HookActivationVerdict | undefined): HookActivationStatus | undefined {
+  if (!verdict) return undefined;
+  if (verdict.status) return verdict.status;
+  if (!verdict.expected) return 'not_expected';
+  if (verdict.degraded) return 'degraded';
+  return verdict.active ? 'active' : 'unknown';
+}
+
+export function formatHookActivationDistribution(distribution: Partial<Record<HookActivationStatus, number>>): string {
+  const order: HookActivationStatus[] = ['active', 'degraded', 'unknown', 'not_expected'];
+  return order
+    .filter(status => (distribution[status] ?? 0) > 0)
+    .map(status => `${status}:${distribution[status]}`)
+    .join(', ');
+}
+
+/**
+ * Render a verdict for the run log/console. Degraded/unknown verdicts produce
+ * loud, unmissable banners; active verdicts produce a single confirmation line;
+ * an unexpected-but-absent case stays quiet.
  */
 export function formatHookActivationBanner(verdict: HookActivationVerdict): string {
+  if (verdict.status === 'unknown') {
+    const bar = '!'.repeat(64);
+    return [
+      bar,
+      '!! HOOK ENFORCEMENT UNKNOWN — system.init evidence invalid (#1501)',
+      `!! ${verdict.message}`,
+      '!! This session may have run WITHOUT review/dirty-file/stop gates. Its',
+      '!! PR was NOT proven to be gated by kaizen enforcement.',
+      bar,
+    ].join('\n');
+  }
   if (verdict.degraded) {
     const bar = '!'.repeat(64);
     return [

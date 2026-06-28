@@ -8,6 +8,11 @@
  */
 
 import type { RunMetrics, RunResult, MergeStatus } from './auto-dent-run.js';
+import {
+  formatHookActivationDistribution,
+  hookActivationStatus,
+  type HookActivationStatus,
+} from './auto-dent-hook-activation.js';
 import { hasHookRejection } from './hook-signals.js';
 
 /**
@@ -174,6 +179,8 @@ export interface RunScore {
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Cost of the requirements review for this run in USD */
   review_cost_usd?: number;
+  /** Hook activation status for this run, when recorded. */
+  hook_activation_status?: HookActivationStatus;
 }
 
 export interface BatchScore {
@@ -226,6 +233,10 @@ export interface BatchScore {
   review_fail_rate: number;
   /** Total cost of all requirements reviews across the batch */
   review_total_cost_usd: number;
+  /** Hook activation distribution across runs with a recorded verdict (#1501). */
+  hook_activation_distribution?: Partial<Record<HookActivationStatus, number>>;
+  /** Runs whose hook activation was degraded or unknown (#1501). */
+  hook_activation_degraded_count?: number;
 }
 
 export interface ModeStats {
@@ -325,6 +336,7 @@ export function scoreRunMetrics(
     failure_class: fc,
     review_verdict: metrics.review_verdict,
     review_cost_usd: metrics.review_cost_usd,
+    hook_activation_status: hookActivationStatus(metrics.hook_activation),
   };
 }
 
@@ -373,6 +385,7 @@ export function scoreRunResult(
     failure_class: fc,
     review_verdict: result.reviewVerdict,
     review_cost_usd: result.reviewCostUsd,
+    hook_activation_status: hookActivationStatus(result.hookActivation),
   };
 }
 
@@ -408,6 +421,14 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
   const reviewFailCount = reviewedRuns.filter(r => r.review_verdict === 'fail').length;
   const reviewFailRate = reviewedRuns.length > 0 ? reviewFailCount / reviewedRuns.length : 0;
   const reviewTotalCost = runs.reduce((s, r) => s + (r.review_cost_usd ?? 0), 0);
+  const hookActivationDistribution: Partial<Record<HookActivationStatus, number>> = {};
+  for (const run of runs) {
+    if (!run.hook_activation_status) continue;
+    hookActivationDistribution[run.hook_activation_status] = (hookActivationDistribution[run.hook_activation_status] ?? 0) + 1;
+  }
+  const hasHookActivationDistribution = Object.keys(hookActivationDistribution).length > 0;
+  const hookActivationDegradedCount =
+    (hookActivationDistribution.degraded ?? 0) + (hookActivationDistribution.unknown ?? 0);
 
   return {
     total_runs: runs.length,
@@ -434,6 +455,8 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     review_fail_count: reviewFailCount,
     review_fail_rate: reviewFailRate,
     review_total_cost_usd: reviewTotalCost,
+    hook_activation_distribution: hasHookActivationDistribution ? hookActivationDistribution : undefined,
+    hook_activation_degraded_count: hasHookActivationDistribution ? hookActivationDegradedCount : undefined,
   };
 }
 
@@ -575,6 +598,11 @@ export function formatBatchScoreTable(score: BatchScore): string {
       ? ` ⚠ ${score.review_fail_count} fail (${(score.review_fail_rate * 100).toFixed(0)}%)`
       : ' ✓ all pass';
     lines.push(`| **Requirements review** | ${reviewedCount} PRs reviewed, $${score.review_total_cost_usd.toFixed(2)} total${failLabel} |`);
+  }
+  if (score.hook_activation_distribution) {
+    const degradedCount = score.hook_activation_degraded_count ?? 0;
+    const suffix = degradedCount > 0 ? ` (${degradedCount} degraded/unknown)` : '';
+    lines.push(`| **Hook activation** | ${formatHookActivationDistribution(score.hook_activation_distribution)}${suffix} |`);
   }
   if (score.post_hoc) {
     const ph = score.post_hoc;

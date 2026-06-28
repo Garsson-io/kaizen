@@ -2762,7 +2762,7 @@ describe('buildRunMetrics', () => {
     expect(metrics.hook_activation).toMatchObject({ degraded: true, expected: true, active: false });
   });
 
-  it('leaves hook_activation undefined when the run produced no verdict', () => {
+  it('normalizes a claude run with no init verdict to explicit unknown hook activation', () => {
     const metrics = buildRunMetrics({
       runNum: 6,
       runStartEpoch: 1742681100,
@@ -2770,8 +2770,35 @@ describe('buildRunMetrics', () => {
       exitCode: 0,
       runMode: 'exploit',
       result: makeRunResult(),
+      provider: 'claude',
+    } as any);
+    expect(metrics.hook_activation).toMatchObject({
+      provider: 'claude',
+      expected: true,
+      active: false,
+      degraded: true,
+      status: 'unknown',
     });
-    expect(metrics.hook_activation).toBeUndefined();
+    expect(metrics.hook_activation?.message).toMatch(/no system\.init observed/i);
+  });
+
+  it('does not degrade a codex run when no init verdict exists', () => {
+    const metrics = buildRunMetrics({
+      runNum: 7,
+      runStartEpoch: 1742681200,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result: makeRunResult(),
+      provider: 'codex',
+    } as any);
+    expect(metrics.hook_activation).toMatchObject({
+      provider: 'codex',
+      expected: false,
+      active: false,
+      degraded: false,
+      status: 'not_expected',
+    });
   });
 });
 

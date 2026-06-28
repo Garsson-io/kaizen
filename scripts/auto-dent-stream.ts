@@ -28,6 +28,7 @@ import {
   evaluateHookActivation,
   extractInitPlugins,
   formatHookActivationBanner,
+  unknownHookActivationVerdict,
   type HookActivationVerdict,
 } from './auto-dent-hook-activation.js';
 
@@ -418,6 +419,8 @@ export interface StreamContext {
   lastActivity?: string;
   /** Provider running this session — decides whether hooks are expected (#843). */
   provider?: Provider;
+  /** Count of system.init events observed in this run (#1501). */
+  initEventsSeen?: number;
   /** Hook-activation verdict computed from the session's `system.init` event (#843). */
   hookActivation?: HookActivationVerdict;
   /**
@@ -599,6 +602,7 @@ export function processStreamMessage(
   switch (msg.type) {
     case 'system':
       if (msg.subtype === 'init') {
+        if (ctx) ctx.initEventsSeen = (ctx.initEventsSeen ?? 0) + 1;
         console.log(
           `  ${color.dim(`[${elapsed}]`)}  ${color.bold('Session')} ${(msg.session_id || '').slice(0, 8)}... | model: ${msg.model || 'default'}`,
         );
@@ -609,10 +613,15 @@ export function processStreamMessage(
         // set ctx.provider). Replay/test callers that pass no ctx opt out, so a
         // replayed codex log is never misclassified as a degraded claude run.
         if (ctx?.provider) {
-          const verdict = evaluateHookActivation({
-            provider: ctx.provider,
-            plugins: extractInitPlugins(msg),
-          });
+          const verdict = (ctx.initEventsSeen ?? 0) > 1
+            ? unknownHookActivationVerdict(
+              ctx.provider,
+              `expected exactly one system.init event, saw ${ctx.initEventsSeen}`,
+            )
+            : evaluateHookActivation({
+              provider: ctx.provider,
+              plugins: extractInitPlugins(msg),
+            });
           ctx.hookActivation = verdict;
           result.hookActivation = verdict;
           const banner = formatHookActivationBanner(verdict);
