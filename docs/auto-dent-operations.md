@@ -39,6 +39,8 @@ npx tsx scripts/auto-dent.ts --resume logs/auto-dent/<batch-id>/state.json
 
 The old process exits before cleanup, reflection, the next run, or final batch summary. The resumed process reads the same durable `state.json`, keeps the same halt file and progress issue, and continues with the current run count, budget, failure, and cooldown state. `auto-dent.sh` remains only as the stable operator entrypoint.
 
+The source of truth for reload-critical files is `OUTER_HARNESS_RELOAD_PATHS` in `scripts/auto-dent.ts`. When batch control, state persistence, command routing, progress/finalization, summary, or artifact logic moves into a new support file, add that file to the registry and cover it in `scripts/auto-dent.test.ts`.
+
 ### Cross-Run State
 
 All cross-run state lives in `logs/auto-dent/<batch-id>/state.json`. Key fields:

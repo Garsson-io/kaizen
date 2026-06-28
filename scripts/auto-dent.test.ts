@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { EventEmitter } from 'events';
 import {
   parseAutoDentArgs,
   createInitialState,
@@ -11,7 +12,11 @@ import {
   updateStateKey,
   loadResumeBatch,
   isOuterHarnessReloadPath,
+  listChangedFilesBetween,
+  maybeHotReloadOuterHarness,
+  pullMainForSelfUpdate,
   shouldHotReloadOuterHarness,
+  startAutoDentResume,
   checkHaltFile,
   checkBudget,
   stopDecision,
@@ -79,6 +84,12 @@ function tempState(state: BatchState = makeState()): { dir: string; stateFile: s
   const stateFile = join(dir, 'state.json');
   writeState(stateFile, state);
   return { dir, stateFile };
+}
+
+function fakeChild(): EventEmitter & { unref: ReturnType<typeof vi.fn> } {
+  const child = new EventEmitter() as EventEmitter & { unref: ReturnType<typeof vi.fn> };
+  child.unref = vi.fn();
+  return child;
 }
 
 describe('parseAutoDentArgs', () => {
@@ -263,6 +274,7 @@ describe('outer harness hot reload', () => {
     expect(isOuterHarnessReloadPath('scripts/auto-dent.ts')).toBe(true);
     expect(isOuterHarnessReloadPath('scripts/auto-dent-run.ts')).toBe(true);
     expect(isOuterHarnessReloadPath('src/lib/json-file.ts')).toBe(true);
+    expect(isOuterHarnessReloadPath('scripts\\auto-dent.ts')).toBe(true);
     expect(isOuterHarnessReloadPath('docs/auto-dent-operations.md')).toBe(false);
     expect(isOuterHarnessReloadPath('src/hooks/pre-push.ts')).toBe(false);
   });
@@ -295,10 +307,108 @@ describe('outer harness hot reload', () => {
       afterHead: 'aaa',
       changedFiles: ['scripts/auto-dent.ts'],
     })).toBe(false);
+
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'unknown',
+      afterHead: 'bbb',
+      changedFiles: ['scripts/auto-dent.ts'],
+    })).toBe(false);
+
+    expect(shouldHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: [],
+      changedFilesKnown: false,
+    })).toBe(true);
+  });
+
+  it('propagates changed-file detection failures instead of hiding them as no-op pulls', () => {
+    let headReads = 0;
+    const update = pullMainForSelfUpdate('/repo', {
+      captureCommand: () => (++headReads === 1 ? 'aaa' : 'bbb'),
+      pullMain: () => ({ status: 0, stdout: 'updated' }),
+      listChangedFiles: () => ({ ok: false, files: [], error: 'diff failed' }),
+    });
+
+    expect(update).toMatchObject({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: [],
+      changedFilesKnown: false,
+      changeDetectionError: 'diff failed',
+    });
+  });
+
+  it('returns an explicit changed-file failure when git diff cannot list files', () => {
+    const result = listChangedFilesBetween('/not/a/repo', 'aaa', 'bbb');
+    expect(result.ok).toBe(false);
+    expect(result.files).toEqual([]);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('waits for a spawned replacement before reporting handoff success', async () => {
+    const child = fakeChild();
+    const result = startAutoDentResume('/repo/scripts', '/tmp/state.json', {
+      scriptExists: () => true,
+      spawnProcess: () => {
+        process.nextTick(() => child.emit('spawn'));
+        return child as never;
+      },
+      log: () => {},
+    });
+
+    await expect(result).resolves.toBe(true);
+    expect(child.unref).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the old process alive when replacement spawn fails asynchronously', async () => {
+    const child = fakeChild();
+    const lines: string[] = [];
+    const result = startAutoDentResume('/repo/scripts', '/tmp/state.json', {
+      scriptExists: () => true,
+      spawnProcess: () => {
+        process.nextTick(() => child.emit('error', new Error('ENOENT')));
+        return child as never;
+      },
+      log: (line) => lines.push(line),
+    });
+
+    await expect(result).resolves.toBe(false);
+    expect(child.unref).not.toHaveBeenCalled();
+    expect(lines.join('\n')).toContain('ENOENT');
+  });
+
+  it('hot-reloads conservatively when changed-file detection fails after a moved HEAD', async () => {
+    const child = fakeChild();
+    const lines: string[] = [];
+
+    const result = await maybeHotReloadOuterHarness({
+      pullStatus: 0,
+      beforeHead: 'aaa',
+      afterHead: 'bbb',
+      changedFiles: [],
+      changedFilesKnown: false,
+      changeDetectionError: 'diff failed',
+      stdout: '',
+    }, '/repo/scripts', '/tmp/state.json', {
+      scriptExists: () => true,
+      spawnProcess: () => {
+        process.nextTick(() => child.emit('spawn'));
+        return child as never;
+      },
+      log: (line) => lines.push(line),
+    });
+
+    expect(result).toBe(true);
+    expect(lines.join('\n')).toContain('hot-reloading conservatively');
+    expect(lines.join('\n')).toContain('unknown files');
   });
 
   it('returns from the old process immediately after hot reload handoff succeeds', () => {
-    const handoff = AUTO_DENT_SOURCE.indexOf('if (startAutoDentResume(scriptDir, stateFile)) return;');
+    const handoff = AUTO_DENT_SOURCE.indexOf('if (await maybeHotReloadOuterHarness(update, scriptDir, stateFile))');
     const nextRun = AUTO_DENT_SOURCE.indexOf("runCommand('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-run.ts', stateFile))");
     const finalization = AUTO_DENT_SOURCE.indexOf('const summaryPath = writeBatchSummary(stateFile)');
 

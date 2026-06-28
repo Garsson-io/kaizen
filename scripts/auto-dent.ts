@@ -7,7 +7,7 @@
  * testable and does not drift between Bash and TypeScript implementations.
  */
 
-import { execFileSync, spawn, spawnSync } from 'child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'child_process';
 import {
   existsSync,
   mkdirSync,
@@ -68,7 +68,29 @@ export interface OuterHarnessUpdate {
   beforeHead: string;
   afterHead: string;
   changedFiles: string[];
+  changedFilesKnown: boolean;
+  changeDetectionError?: string;
   stdout: string;
+}
+
+export interface ChangedFilesResult {
+  ok: boolean;
+  files: string[];
+  error?: string;
+}
+
+export interface PullMainDeps {
+  captureCommand?: (command: string, args: string[], cwd?: string) => string;
+  pullMain?: (repoRoot: string) => { status: number | null; stdout?: string };
+  listChangedFiles?: (repoRoot: string, beforeHead: string, afterHead: string) => ChangedFilesResult;
+}
+
+type SpawnResume = (command: string, args: string[], options: { stdio: 'inherit' }) => ChildProcess;
+
+export interface StartResumeDeps {
+  spawnProcess?: SpawnResume;
+  scriptExists?: (path: string) => boolean;
+  log?: (line: string) => void;
 }
 
 export interface PostStructuredSummaryDeps {
@@ -286,14 +308,15 @@ export function isOuterHarnessReloadPath(file: string): boolean {
   return OUTER_HARNESS_RELOAD_PATHS.has(file.replace(/\\/g, '/'));
 }
 
-export function shouldHotReloadOuterHarness(update: Pick<OuterHarnessUpdate, 'pullStatus' | 'beforeHead' | 'afterHead' | 'changedFiles'>): boolean {
-  return update.pullStatus === 0
-    && update.beforeHead !== ''
+export function shouldHotReloadOuterHarness(update: Pick<OuterHarnessUpdate, 'pullStatus' | 'beforeHead' | 'afterHead' | 'changedFiles'> & Partial<Pick<OuterHarnessUpdate, 'changedFilesKnown'>>): boolean {
+  const headChanged = update.beforeHead !== ''
     && update.afterHead !== ''
     && update.beforeHead !== 'unknown'
     && update.afterHead !== 'unknown'
-    && update.beforeHead !== update.afterHead
-    && update.changedFiles.some(isOuterHarnessReloadPath);
+    && update.beforeHead !== update.afterHead;
+  return update.pullStatus === 0
+    && headChanged
+    && (update.changedFilesKnown === false || update.changedFiles.some(isOuterHarnessReloadPath));
 }
 
 export function createInitialState(
@@ -527,50 +550,109 @@ function captureCommand(command: string, args: string[], cwd?: string): string {
   }
 }
 
-function changedFilesBetween(repoRoot: string, beforeHead: string, afterHead: string): string[] {
+export function listChangedFilesBetween(repoRoot: string, beforeHead: string, afterHead: string): ChangedFilesResult {
   if (!beforeHead || !afterHead || beforeHead === afterHead || beforeHead === 'unknown' || afterHead === 'unknown') {
-    return [];
+    return { ok: true, files: [] };
   }
   try {
-    return execFileSync('git', ['-C', repoRoot, 'diff', '--name-only', `${beforeHead}..${afterHead}`], {
+    const files = execFileSync('git', ['-C', repoRoot, 'diff', '--name-only', `${beforeHead}..${afterHead}`], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     })
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean);
-  } catch {
-    return [];
+    return { ok: true, files };
+  } catch (err) {
+    return { ok: false, files: [], error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-function pullMainForSelfUpdate(repoRoot: string): OuterHarnessUpdate {
-  const beforeHead = captureCommand('git', ['-C', repoRoot, 'rev-parse', 'HEAD']);
-  const pull = spawnSync('git', ['-C', repoRoot, 'pull', '--ff-only', 'origin', 'main'], {
+export function pullMainForSelfUpdate(repoRoot: string, deps: PullMainDeps = {}): OuterHarnessUpdate {
+  const capture = deps.captureCommand ?? captureCommand;
+  const pullMain = deps.pullMain ?? ((root: string) => spawnSync('git', ['-C', root, 'pull', '--ff-only', 'origin', 'main'], {
     stdio: ['ignore', 'pipe', 'ignore'],
     encoding: 'utf8',
-  });
-  const afterHead = captureCommand('git', ['-C', repoRoot, 'rev-parse', 'HEAD']);
+  }));
+  const listChangedFiles = deps.listChangedFiles ?? listChangedFilesBetween;
+
+  const beforeHead = capture('git', ['-C', repoRoot, 'rev-parse', 'HEAD']);
+  const pull = pullMain(repoRoot);
+  const afterHead = capture('git', ['-C', repoRoot, 'rev-parse', 'HEAD']);
   const pullStatus = pull.status ?? 1;
+  const changed = pullStatus === 0
+    ? listChangedFiles(repoRoot, beforeHead, afterHead)
+    : { ok: true, files: [] };
+
   return {
     pullStatus,
     beforeHead,
     afterHead,
     stdout: pull.stdout || '',
-    changedFiles: pullStatus === 0 ? changedFilesBetween(repoRoot, beforeHead, afterHead) : [],
+    changedFiles: changed.files,
+    changedFilesKnown: changed.ok,
+    changeDetectionError: changed.error,
   };
 }
 
-function startAutoDentResume(scriptDir: string, stateFile: string): boolean {
-  const { command, args } = buildAutoDentResumeCommand(scriptDir, stateFile);
-  try {
-    const child = spawn(command, args, { stdio: 'inherit' });
-    child.unref();
-    return true;
-  } catch (err) {
-    console.log(`>>> Hot reload handoff failed: ${err instanceof Error ? err.message : String(err)}`);
+export async function startAutoDentResume(
+  scriptDir: string,
+  stateFile: string,
+  deps: StartResumeDeps = {},
+): Promise<boolean> {
+  const log = deps.log ?? console.log;
+  const scriptPath = join(scriptDir, 'auto-dent.ts');
+  if (!(deps.scriptExists ?? existsSync)(scriptPath)) {
+    log(`>>> Hot reload handoff failed: runner not found: ${scriptPath}`);
     return false;
   }
+
+  const { command, args } = buildAutoDentResumeCommand(scriptDir, stateFile);
+  return await new Promise((resolve) => {
+    let settled = false;
+    const settle = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+
+    let child: ChildProcess;
+    try {
+      child = (deps.spawnProcess ?? spawn)(command, args, { stdio: 'inherit' });
+    } catch {
+      log('>>> Hot reload handoff failed: unable to spawn replacement process');
+      settle(false);
+      return;
+    }
+
+    child.once('error', (err) => {
+      log(`>>> Hot reload handoff failed: ${err instanceof Error ? err.message : String(err)}`);
+      settle(false);
+    });
+    child.once('spawn', () => {
+      child.unref();
+      settle(true);
+    });
+  });
+}
+
+export async function maybeHotReloadOuterHarness(
+  update: OuterHarnessUpdate,
+  scriptDir: string,
+  stateFile: string,
+  deps: StartResumeDeps = {},
+): Promise<boolean> {
+  if (update.changeDetectionError) {
+    (deps.log ?? console.log)(`>>> Changed-file detection failed after pull; hot-reloading conservatively: ${update.changeDetectionError}`);
+  }
+  if (!shouldHotReloadOuterHarness(update)) return false;
+  const changedHarnessFiles = update.changedFiles.filter(isOuterHarnessReloadPath);
+  const label = changedHarnessFiles.length > 0
+    ? changedHarnessFiles.join(', ')
+    : 'unknown files (changed-file detection failed)';
+  (deps.log ?? console.log)(`>>> Outer harness changed: ${label}`);
+  (deps.log ?? console.log)(`>>> Restarting auto-dent from ${stateFile}...`);
+  return startAutoDentResume(scriptDir, stateFile, deps);
 }
 
 function runPlanningPrepass(scriptDir: string, stateFile: string, logDir: string): void {
@@ -779,11 +861,10 @@ async function main(): Promise<void> {
         console.log(`>>> [experiment] changed files: ${update.changedFiles.join(', ')}`);
       }
     }
+    if (await maybeHotReloadOuterHarness(update, scriptDir, stateFile)) {
+      return;
+    }
     if (shouldHotReloadOuterHarness(update)) {
-      const changedHarnessFiles = update.changedFiles.filter(isOuterHarnessReloadPath);
-      console.log(`>>> Outer harness changed: ${changedHarnessFiles.join(', ')}`);
-      console.log(`>>> Restarting auto-dent from ${stateFile}...`);
-      if (startAutoDentResume(scriptDir, stateFile)) return;
       console.log('>>> Hot reload handoff skipped; continuing current process.');
     }
 
