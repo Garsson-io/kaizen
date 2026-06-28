@@ -38,6 +38,10 @@ export function parseLeadingDelimitedYamlBlock<
   return { data, raw: match[1], body: match[3] ?? '' };
 }
 
+export function hasLeadingDelimitedYamlBlock(content: string): boolean {
+  return LEADING_DELIMITED_YAML_BLOCK_RE.test(content);
+}
+
 export function parseFirstDelimitedYamlBlock<
   T extends Record<string, unknown> = Record<string, unknown>,
 >(text: string): DelimitedYamlBlock<T> | null {

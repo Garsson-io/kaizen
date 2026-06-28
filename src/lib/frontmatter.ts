@@ -1,4 +1,4 @@
-import { parseLeadingDelimitedYamlBlock } from './yaml-block.js';
+import { hasLeadingDelimitedYamlBlock, parseLeadingDelimitedYamlBlock } from './yaml-block.js';
 
 export interface YamlFrontmatter<T extends Record<string, unknown> = Record<string, unknown>> {
   data: T;
@@ -16,6 +16,10 @@ export function readYamlFrontmatter<T extends Record<string, unknown> = Record<s
   content: string,
 ): T | null {
   return parseYamlFrontmatter<T>(content)?.data ?? null;
+}
+
+export function hasYamlFrontmatterBlock(content: string): boolean {
+  return hasLeadingDelimitedYamlBlock(content);
 }
 
 export function stripYamlFrontmatter(content: string): string {
