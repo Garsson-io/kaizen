@@ -22,7 +22,7 @@
 
 import { spawn, execFileSync, execSync } from 'child_process';
 import { createHash } from 'crypto';
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, join, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
@@ -258,6 +258,8 @@ export interface BatchState {
    * so observable cloud data biases this batch's choices.
    */
   cross_batch_steering?: string[];
+  /** Manifest-forced issue targets already consumed in this batch (#1213). */
+  manifest_forced_targets_consumed?: string[];
 }
 
 export interface RunMetrics {
@@ -507,6 +509,138 @@ function attachCandidateTaskManifest(result: RunResult, path: string): void {
   result.candidateManifestCount = parsed.count;
   result.candidateManifestWarnings = parsed.warnings;
 }
+
+export interface ManifestForcedTarget {
+  issue: string;
+  manifestPath: string;
+  observations: number;
+}
+
+export interface ManifestForcedTargetOptions {
+  repeatThreshold?: number;
+}
+
+function normalizeIssueRef(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) return `#${value}`;
+  if (typeof value !== 'string') return null;
+  const match = value.match(/(?:issues\/|#)?(\d+)\b/);
+  return match ? `#${match[1]}` : null;
+}
+
+function firstIssueRef(values: unknown): string | null {
+  if (!Array.isArray(values)) return normalizeIssueRef(values);
+  for (const value of values) {
+    const ref = normalizeIssueRef(value);
+    if (ref) return ref;
+  }
+  return null;
+}
+
+function extractManifestTarget(parsed: Record<string, unknown>): string | null {
+  const topBundle = parsed.top_bundle;
+  if (topBundle && typeof topBundle === 'object' && !Array.isArray(topBundle)) {
+    const top = topBundle as Record<string, unknown>;
+    return normalizeIssueRef(top.umbrella) || firstIssueRef(top.issues);
+  }
+
+  const candidates = parsed.candidates;
+  if (Array.isArray(candidates) && candidates.length > 0) {
+    const first = candidates[0];
+    if (first && typeof first === 'object' && !Array.isArray(first)) {
+      const candidate = first as Record<string, unknown>;
+      return firstIssueRef(candidate.refs) || normalizeIssueRef(candidate.issue);
+    }
+  }
+
+  const bundles = parsed.bundles;
+  if (Array.isArray(bundles) && bundles.length > 0) {
+    const first = bundles[0];
+    if (first && typeof first === 'object' && !Array.isArray(first)) {
+      return firstIssueRef((first as Record<string, unknown>).issues);
+    }
+  }
+
+  return null;
+}
+
+function aggregateManifestObservationCount(parsed: Record<string, unknown>): number | null {
+  const topBundle = parsed.top_bundle;
+  if (!topBundle || typeof topBundle !== 'object' || Array.isArray(topBundle)) return null;
+  const evidence = (topBundle as Record<string, unknown>).evidence;
+  if (typeof evidence !== 'string') return 1;
+  const match = evidence.match(/(\d+)\s+explore runs?/i);
+  return match ? Number(match[1]) : 1;
+}
+
+function isCandidateManifestFile(name: string): boolean {
+  return name === 'candidate-tasks-manifest.json'
+    || /^run-\d+-(candidate-tasks-manifest|candidate-manifest)\.json$/.test(name);
+}
+
+function consumedManifestTarget(state: BatchState, issue: string): boolean {
+  const consumed = state.manifest_forced_targets_consumed || [];
+  return consumed.some((ref) => normalizeIssueRef(ref) === issue);
+}
+
+function closedInBatch(state: BatchState, issue: string): boolean {
+  return state.issues_closed.some((ref) => normalizeIssueRef(ref) === issue);
+}
+
+export function findManifestForcedTarget(
+  state: BatchState,
+  logDir?: string,
+  options: ManifestForcedTargetOptions = {},
+): ManifestForcedTarget | null {
+  if (!logDir || !existsSync(logDir)) return null;
+  const repeatThreshold = options.repeatThreshold ?? 3;
+
+  const observations: ManifestForcedTarget[] = [];
+  for (const name of readdirSync(logDir)) {
+    if (!isCandidateManifestFile(name)) continue;
+    const path = join(logDir, name);
+    const parsed = parseJsonObject(readFileSync(path, 'utf8'));
+    if (!parsed) continue;
+    const target = extractManifestTarget(parsed as Record<string, unknown>);
+    if (!target || consumedManifestTarget(state, target) || closedInBatch(state, target)) continue;
+
+    const aggregateCount = aggregateManifestObservationCount(parsed as Record<string, unknown>);
+    if (aggregateCount && aggregateCount >= repeatThreshold) {
+      return { issue: target, manifestPath: path, observations: aggregateCount };
+    }
+
+    observations.push({
+      issue: target,
+      manifestPath: path,
+      observations: 1,
+    });
+  }
+
+  observations.sort((a, b) =>
+    statSync(b.manifestPath).mtimeMs - statSync(a.manifestPath).mtimeMs
+    || b.manifestPath.localeCompare(a.manifestPath),
+  );
+  const latest = observations[0];
+  if (!latest) return null;
+
+  let consecutive = 0;
+  for (const observation of observations) {
+    if (observation.issue !== latest.issue) break;
+    consecutive += observation.observations;
+  }
+
+  return consecutive >= repeatThreshold
+    ? { ...latest, observations: consecutive }
+    : null;
+}
+
+export function recordManifestForcedTargetConsumed(state: BatchState, issue: string): void {
+  const normalized = normalizeIssueRef(issue);
+  if (!normalized) return;
+  const consumed = state.manifest_forced_targets_consumed || [];
+  if (!consumed.some((ref) => normalizeIssueRef(ref) === normalized)) {
+    state.manifest_forced_targets_consumed = [...consumed, normalized];
+  }
+}
 export { extractPlanText };
 
 // State I/O
@@ -606,7 +740,7 @@ export function buildTemplateVars(
   state: BatchState,
   runNum: number,
   logDir?: string,
-  options: { claimPlanItem?: boolean } = {},
+  options: { claimPlanItem?: boolean; targetIssue?: string } = {},
 ): Record<string, string> {
   const runTag = `${state.batch_id}/run-${runNum}`;
   const hostRepo = state.host_repo || state.kaizen_repo || 'unknown';
@@ -619,7 +753,7 @@ export function buildTemplateVars(
   let reflectionInsights = '';
   let priorReflections = '';
   if (logDir) {
-    const planItem = shouldClaimPlanItem ? claimNextItem(logDir) : null;
+    const planItem = shouldClaimPlanItem ? claimNextItem(logDir, { targetIssue: options.targetIssue }) : null;
     if (planItem) {
       claimedPlanIssue = planItem.issue;
       const lines = [
@@ -719,7 +853,7 @@ export function buildTemplateVars(
   const crossBatchSteeringText = crossBatchSteering.length > 0
     ? crossBatchSteering.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
-  const modeSelection = selectMode(state, runNum);
+  const modeSelection = selectMode(state, runNum, { logDir });
   const manifestPath = logDir
     ? candidateTaskManifestPath(logDir, runNum)
     : `run-${runNum}-candidate-tasks-manifest.json`;
@@ -786,6 +920,8 @@ export interface ModeSelection {
   reason: string;
   /** Full bandit breakdown when the selection came from the UCB1 policy (reason === 'bandit') */
   bandit?: BanditResult;
+  /** Concrete issue forced by a repeated candidate manifest (#1213). */
+  target_issue?: string;
 }
 
 const MODE_TEMPLATES: Record<string, string> = {
@@ -1302,7 +1438,12 @@ export function weightedModeSelect(
  *   5. Bandit selection: UCB1 explore/exploit weighting from run history
  *   6. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
  */
-export function selectMode(state: BatchState, runNum: number): ModeSelection {
+export interface SelectModeOptions {
+  logDir?: string;
+  manifestRepeatThreshold?: number;
+}
+
+export function selectMode(state: BatchState, runNum: number, options: SelectModeOptions = {}): ModeSelection {
   // Force mode from guidance (e.g., "mode:explore")
   const modeOverride = state.guidance.match(/\bmode:(\w+)/i);
   if (modeOverride) {
@@ -1317,6 +1458,18 @@ export function selectMode(state: BatchState, runNum: number): ModeSelection {
   // Test task always uses test template
   if (state.test_task) {
     return { mode: 'exploit', template: 'test-task.md', reason: 'test-task' };
+  }
+
+  const forcedTarget = findManifestForcedTarget(state, options.logDir, {
+    repeatThreshold: options.manifestRepeatThreshold,
+  });
+  if (forcedTarget) {
+    return {
+      mode: 'exploit',
+      template: MODE_TEMPLATES.exploit,
+      reason: 'manifest-forced',
+      target_issue: forcedTarget.issue,
+    };
   }
 
   // Signal-driven overrides (reactive to batch state)
@@ -1365,6 +1518,10 @@ export interface PromptMetadata {
   hash: string;
   /** Issue ref of the plan item claimed for this run (e.g., "#302"), if any */
   claimedPlanIssue?: string;
+}
+
+export interface BuildPromptWithMetadataOptions {
+  modeSelection?: ModeSelection;
 }
 
 export function buildPrompt(state: BatchState, runNum: number, logDir?: string): string {
@@ -1426,10 +1583,18 @@ export function populateCrossBatchSteering(
   return steering;
 }
 
-export function buildPromptWithMetadata(state: BatchState, runNum: number, logDir?: string): PromptMetadata {
-  const modeSelection = selectMode(state, runNum);
+export function buildPromptWithMetadata(
+  state: BatchState,
+  runNum: number,
+  logDir?: string,
+  options: BuildPromptWithMetadataOptions = {},
+): PromptMetadata {
+  const modeSelection = options.modeSelection ?? selectMode(state, runNum, { logDir });
   const shouldClaimPlanItem = modeSelection.mode === 'exploit' && !state.test_task;
-  const vars = buildTemplateVars(state, runNum, logDir, { claimPlanItem: shouldClaimPlanItem });
+  const vars = buildTemplateVars(state, runNum, logDir, {
+    claimPlanItem: shouldClaimPlanItem,
+    targetIssue: modeSelection.target_issue,
+  });
   const claimedPlanIssue = vars.claimed_plan_issue || undefined;
 
   const templateFile = modeSelection.template;
@@ -1985,7 +2150,14 @@ async function runClaude(
       .join('  ');
     console.log(`  [bandit] N=${b.totalPlays} c=${b.explorationC.toFixed(2)}  ${breakdown}`);
   }
-  const promptMeta = buildPromptWithMetadata(state, runNum, logDir);
+  const promptMeta = buildPromptWithMetadata(state, runNum, logDir, { modeSelection });
+  if (
+    modeSelection.target_issue
+    && normalizeIssueRef(promptMeta.claimedPlanIssue) === normalizeIssueRef(modeSelection.target_issue)
+  ) {
+    recordManifestForcedTargetConsumed(state, modeSelection.target_issue);
+    writeState(stateFile, state);
+  }
   const prompt = promptMeta.prompt;
   if (state.test_task && !result.pickedIssue) {
     result.pickedIssue = 'not applicable';
