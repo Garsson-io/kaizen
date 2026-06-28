@@ -14,7 +14,7 @@
 
 import { describe, it, expect } from "vitest";
 import { buildHookRegistryFromManifest, SessionSimulator, type PluginManifest } from "./session-simulator.js";
-import { resolveTsxBin } from "./test-runtime.js";
+import { resolveTypeScriptHookRunner } from "./test-runtime.js";
 
 type HookRegistry = SessionSimulator["hooks"];
 type HookProfile = "full" | "scope-guard" | "representative";
@@ -65,8 +65,11 @@ function expectStateFilesContaining(session: SessionSimulator, content: string, 
   expect(files, `Expected ${count} state file(s) containing ${content}\n${session.stateSummary()}`).toHaveLength(count);
 }
 
-function expectTsxAvailable(): void {
-  expect(resolveTsxBin(), "tsx is required for PR workflow outcome E2E tests").toBeTruthy();
+function expectTypeScriptRunnerAvailable(): void {
+  expect(
+    resolveTypeScriptHookRunner(),
+    "Bun or tsx is required for PR workflow outcome E2E tests",
+  ).toBeTruthy();
 }
 
 describe("Synthetic Workflow E2E", () => {
@@ -211,7 +214,7 @@ describe("Synthetic Workflow E2E", () => {
     });
 
     it("does not set PR workflow gates for failed PR creation outcomes", () => withSession("full", (session) => {
-      expectTsxAvailable();
+      expectTypeScriptRunnerAvailable();
       session.setHome("clean");
 
       session.fireBashPost("gh pr create --title test", "", {
@@ -223,7 +226,7 @@ describe("Synthetic Workflow E2E", () => {
     }));
 
     it("sets persisted PR workflow gates for successful PR creation outcomes", () => withSession("full", (session) => {
-      expectTsxAvailable();
+      expectTypeScriptRunnerAvailable();
       session.setHome("clean");
 
       session.fireBashPost(
@@ -241,7 +244,7 @@ describe("Synthetic Workflow E2E", () => {
     }));
 
     it("full hook registry completes with no timeouts", () => {
-      expectTsxAvailable();
+      expectTypeScriptRunnerAvailable();
       withSession("full", (session) => {
         session.setHome("clean");
 
