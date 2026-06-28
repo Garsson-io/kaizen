@@ -33,7 +33,7 @@
  *   npx tsx src/cli-structured-data.ts retrieve-iteration --pr 903 --repo R
  */
 
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import YAML from 'yaml';
 import {
   prTarget,
@@ -61,10 +61,8 @@ import {
   type ReviewFindingData,
 } from './structured-data.js';
 import {
-  buildReviewSentinelRecord,
-  serializeReviewSentinel,
   expectedPrReviewDimensions,
-  reviewSentinelPath,
+  writeReviewSentinelFile,
 } from './review-sentinel.js';
 import {
   normalizeReviewFindingData,
@@ -146,9 +144,10 @@ interface SentinelTotals {
 
 /**
  * Single low-level sentinel writer — the SSOT shared by the production
- * `store-review-*` path and the test-only emitter. Builds the signed record
- * via `buildReviewSentinelRecord` and writes it to the state dir. Returns the
- * path. Throws on failure (callers that want best-effort wrap it in try/catch).
+ * `store-review-*` path and the test-only emitter. Delegates the actual
+ * owner-only file write to review-sentinel.ts so schema, path, and security
+ * posture stay in one module. Returns the path. Throws on failure (callers that
+ * want best-effort wrap it in try/catch).
  */
 function writeSentinelRecord(
   repo: string,
@@ -159,21 +158,13 @@ function writeSentinelRecord(
 ): string {
   const stateDir = process.env.STATE_DIR ?? '/tmp/.pr-review-state';
   const prUrl = `https://github.com/${repo}/pull/${pr}`;
-  const record = buildReviewSentinelRecord({
+  return writeReviewSentinelFile({
+    stateDir,
     prUrl,
     round,
     dimensionsReviewed,
     ...totals,
   });
-  // Owner-only dir + file (0o700/0o600): the sentinel gates merges, so it must
-  // not be readable/tamperable by other users of a shared /tmp — matching the
-  // hook path's `ensureStateDir` posture and closing CWE-377/378 (insecure temp
-  // file). The deterministic name is required by the reader/writer contract.
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  // Shared path SSOT so the writer can never drift from the hook reader (#1481).
-  const path = reviewSentinelPath(stateDir, prUrl, round);
-  writeFileSync(path, serializeReviewSentinel(record), { mode: 0o600 });
-  return path;
 }
 
 function writeReviewSentinel(repo: string, pr: string | undefined, round: number): void {

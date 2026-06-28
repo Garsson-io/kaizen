@@ -42,41 +42,15 @@ for artifact in node_modules dist; do
   fi
 done
 
-# Per-worktree kaizen.issue provisioning (#1111 advisory → #1113 mechanism).
-# `kaizen.issue` is per-worktree state, but raw `git config kaizen.issue <N>` writes
-# to the SHARED .git/config, so a fresh worktree starts with no binding of its own
-# and inherits the previous run's value. This is the provisioning choke point.
-#
-# On a canonical case branch (`case/<date>-k<N>-*`) the branch token IS the
-# authoritative issue, so we self-heal: bind it mechanically — no manual step,
-# before the first edit. Writing --worktree scope only is concurrency-safe (it
-# cannot clobber a sibling). On a tokenless branch (e.g. a `worktree-*` run
-# worktree) there is nothing authoritative to derive from, so we fall back to the
-# advisory warning when a leaked shared value would be inherited.
-# Canonical logic + tests live in src/issue-binding.ts (selfHealBinding) — this is
-# a fast bash mirror that avoids a node startup on every SessionStart.
-WT_ISSUE=$(git config --worktree --get kaizen.issue 2>/dev/null || true)
-if [ -z "$WT_ISSUE" ]; then
-  CUR_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-  BRANCH_TOKEN=$(printf '%s' "$CUR_BRANCH" | sed -n 's#^case/[0-9]\{6,\}-k\([0-9]\+\).*#\1#p')
-  if [ -n "$BRANCH_TOKEN" ]; then
-    # Authoritative source present — bind mechanically (L3 self-heal). The
-    # worktree-scoped value wins the merged read, so this also overrides any
-    # inherited (leaked) shared value.
-    git config extensions.worktreeConfig true 2>/dev/null
-    if git config --worktree kaizen.issue "$BRANCH_TOKEN" 2>/dev/null; then
-      echo "kaizen-worktree-setup: 🔗 Auto-bound this worktree to #$BRANCH_TOKEN from its case branch (no manual step needed)." >&2
-    else
-      echo "kaizen-worktree-setup: ⚠️  Could not auto-bind kaizen.issue to #$BRANCH_TOKEN — bind manually: npx tsx src/cli-issue-binding.ts bind --issue $BRANCH_TOKEN" >&2
-    fi
-  else
-    # Tokenless branch — nothing authoritative to bind to. Warn if a shared value
-    # would leak in.
-    MERGED_ISSUE=$(git config --get kaizen.issue 2>/dev/null || true)
-    if [ -n "$MERGED_ISSUE" ]; then
-      echo "kaizen-worktree-setup: ⚠️  Leaked kaizen.issue — this worktree inherits #$MERGED_ISSUE from shared config with no binding of its own." >&2
-      echo "kaizen-worktree-setup:    Bind this worktree to its real issue: npx tsx src/cli-issue-binding.ts bind --issue <N>" >&2
-    fi
+# Branch normalization + per-worktree kaizen.issue provisioning live in
+# TypeScript (`src/hooks/worktree-integrity.ts`) so the canonical case-branch
+# and binding contracts stay shared with the plan gate and issue-binding CLI.
+source "$(dirname "$0")/lib/resolve-kaizen-dir.sh" 2>/dev/null || true
+if [ -n "${KAIZEN_DIR:-}" ] && [ -f "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" ]; then
+  if [ -x "$KAIZEN_DIR/node_modules/.bin/tsx" ]; then
+    "$KAIZEN_DIR/node_modules/.bin/tsx" "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" session-setup >/dev/null || true
+  elif command -v npx >/dev/null 2>&1; then
+    npx --prefix "$KAIZEN_DIR" tsx "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" session-setup >/dev/null || true
   fi
 fi
 
