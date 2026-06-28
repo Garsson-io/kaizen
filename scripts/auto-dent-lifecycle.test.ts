@@ -472,6 +472,44 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
   });
 
+  it('treats an intentional STOP/no-op before implementation as process-complete', () => {
+    const result = validateProcessEvidence(
+      validationWith(['PICK', 'EVALUATE', 'STOP']),
+      fullEvidence({
+        planEvidence: false,
+        implementationEvidence: false,
+        prEvidence: false,
+        testEvidence: false,
+        reviewEvidence: false,
+        reflectionEvidence: false,
+        mergeReadiness: 'not-applicable',
+        intentionalNoOp: true,
+      }),
+    );
+    expect(result.verdict).toBe('pass');
+    expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
+  });
+
+  it('does not let a no-op hint mask a claimed implementation without evidence', () => {
+    const result = validateProcessEvidence(
+      validationWith(['PICK', 'EVALUATE', 'IMPLEMENT', 'STOP']),
+      fullEvidence({
+        implementationEvidence: false,
+        prEvidence: false,
+        testEvidence: false,
+        reviewEvidence: false,
+        reflectionEvidence: false,
+        mergeReadiness: 'not-applicable',
+        intentionalNoOp: true,
+      }),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'implementation',
+      status: 'fail',
+    }));
+  });
+
   it('treats provider review fail as completed review evidence, not missing evidence', () => {
     const result = validateProcessEvidence(
       validationWith(['IMPLEMENT', 'TEST', 'PR']),
