@@ -37,6 +37,7 @@ import {
   scoreRunResult,
   type RunScore,
 } from './auto-dent-score.js';
+import { parseJsonLines } from '../src/lib/json-lines.js';
 
 // Result types
 
@@ -168,17 +169,7 @@ export function runStream(
 // Layer 3: Log replay
 
 export function replayLog(logPath: string, opts: RunStreamOpts = {}): StreamCapture {
-  const lines = readFileSync(logPath, 'utf8').split('\n').filter(Boolean);
-  const messages: Record<string, any>[] = [];
-
-  for (const line of lines) {
-    try {
-      messages.push(JSON.parse(line));
-    } catch {
-      // Non-JSON line (e.g. stderr, metadata) — skip
-    }
-  }
-
+  const messages = parseJsonLines<Record<string, any>>(readFileSync(logPath, 'utf8'));
   return runStream(messages, opts);
 }
 
