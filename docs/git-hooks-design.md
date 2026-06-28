@@ -106,7 +106,7 @@ The detection order in `src/setup-git-hooks.ts`:
 
 ### Framework-specific injection
 
-For pre-commit hosts, kaizen registers a remote repo hook and writes no host-side kaizen wrapper. For husky, lefthook, raw, and standalone installs, kaizen writes `.kaizen-hooks/pre-push` (a **thin wrapper** that execs the plugin-resident entry — see below) to the host project root, then registers that wrapper with the host framework.
+For pre-commit and lefthook hosts, kaizen registers a remote repo/provider config and writes no host-side kaizen wrapper. For husky, raw, and standalone installs, kaizen writes `.kaizen-hooks/pre-push` (a **thin wrapper** that execs the plugin-resident entry — see below) to the host project root, then registers that wrapper with the host framework.
 
 **pre-commit** (PRIMARY):
 
@@ -139,11 +139,14 @@ fi
 **lefthook**:
 
 ```yaml
-pre-push:
-  commands:
-    kaizen-pre-push:
-      run: ./.kaizen-hooks/pre-push
+remotes:
+  - git_url: https://github.com/Garsson-io/kaizen
+    ref: main
+    configs:
+      - lefthook-kaizen.yml
 ```
+
+The hook provider contract lives in kaizen's root `lefthook-kaizen.yml`. Lefthook merges that remote config into the host config, syncs the remote checkout under `.git/info/lefthook-remotes`, and runs the provider command from the host root. Because Lefthook's `ref` is a branch or tag name, kaizen uses the matching plugin version tag when present and otherwise falls back to the current branch (usually `main` after release), not a commit SHA.
 
 **raw** `.git/hooks/pre-push` — appends a `KAIZEN_CHAIN_START`-marked block that execs `.kaizen-hooks/pre-push`.
 
@@ -153,7 +156,7 @@ All injection is **idempotent**: running `/kaizen-setup install-git-hooks` twice
 
 ### The `.kaizen-hooks/pre-push` thin wrapper (#1086)
 
-For husky, lefthook, raw, and standalone installs, `/kaizen-setup install-git-hooks` writes a **thin wrapper** (~25–35 lines) into the host repo at `.kaizen-hooks/pre-push`. It is NOT a copy of the gate logic — it only:
+For husky, raw, and standalone installs, `/kaizen-setup install-git-hooks` writes a **thin wrapper** (~25–35 lines) into the host repo at `.kaizen-hooks/pre-push`. It is NOT a copy of the gate logic — it only:
 
 1. Resolves the kaizen plugin root: `$CLAUDE_PLUGIN_ROOT` → baked-in install path → `$HOME/.claude/plugins/cache` search → fail-open.
 2. Exports the resolved root as `$CLAUDE_PLUGIN_ROOT`.
@@ -165,11 +168,11 @@ For husky, lefthook, raw, and standalone installs, `/kaizen-setup install-git-ho
 
 **No agent-env gate in the wrapper — deliberate.** `kaizen-host-entry.sh` already gates on the agent-env vars as its first action, and `src/hooks/agent-env-agreement.test.ts` pins that var list against `pre-push.ts` so it can't drift. Adding the gate to the wrapper would create a *third* copy of that list to keep in sync — the exact drift hazard the agreement test exists to prevent. In the common case the baked-in path resolves without a cache scan, so a human push still exits fast once it reaches the entry's gate.
 
-**Migration is automatic.** For pre-commit hosts, the next `/kaizen-setup` removes the legacy local `kaizen-pre-push` hook, removes kaizen-owned `.kaizen-hooks/` when safe, and injects the remote repo block. For other frameworks, `writeEntryScript` overwrites `.kaizen-hooks/pre-push` on every setup run, so an existing host swaps the stale copy for the wrapper.
+**Migration is automatic.** For pre-commit hosts, the next `/kaizen-setup` removes the legacy local `kaizen-pre-push` hook, removes kaizen-owned `.kaizen-hooks/` when safe, and injects the remote repo block. Lefthook follows the same model: the legacy local `pre-push.commands.kaizen-pre-push` command is removed, kaizen-owned `.kaizen-hooks/` is cleaned when safe, and the `remotes:` block is injected. For husky/raw/standalone, `writeEntryScript` overwrites `.kaizen-hooks/pre-push` on every setup run, so an existing host swaps the stale copy for the wrapper.
 
 Builder: `buildThinWrapper(pluginRoot)` in `src/setup-git-hooks.ts`. The dispatch target template lives at `src/hooks/kaizen-host-entry.sh` in the kaizen plugin.
 
-Remote-repo hook references for lefthook remain tracked in #1089. Husky has no equivalent remote-repo provider model, so it continues to use the thin wrapper path.
+Husky has no equivalent remote-repo provider model, so it continues to use the thin wrapper path.
 
 ## Worktree semantics
 

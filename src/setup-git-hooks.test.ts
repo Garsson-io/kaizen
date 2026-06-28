@@ -25,7 +25,9 @@ import {
   KAIZEN_ENTRY_PATH,
   writeEntryScript,
   KAIZEN_PRE_COMMIT_REPO,
+  KAIZEN_LEFTHOOK_CONFIG,
   resolveKaizenPreCommitRev,
+  resolveKaizenLefthookRef,
 } from './setup-git-hooks.js';
 import { AGENT_ENV_VARS } from './hooks/pre-push.js';
 
@@ -308,6 +310,37 @@ describe('resolveKaizenPreCommitRev', () => {
   });
 });
 
+describe('resolveKaizenLefthookRef', () => {
+  it('uses plugin version only when the matching local git tag exists', () => {
+    write('.claude-plugin/plugin.json', JSON.stringify({ version: '1.2.3' }));
+    write('marker.txt', 'tagged\n');
+    commitFixtureRepo();
+    execSync('git tag v1.2.3', { cwd: tmpDir });
+
+    expect(resolveKaizenLefthookRef(tmpDir)).toBe('v1.2.3');
+  });
+
+  it('falls back to the current branch, not a commit SHA, when the version tag is absent', () => {
+    write('.claude-plugin/plugin.json', JSON.stringify({ version: '1.2.3' }));
+    write('marker.txt', 'untagged\n');
+    commitFixtureRepo();
+
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: tmpDir, encoding: 'utf-8' }).trim();
+    expect(resolveKaizenLefthookRef(tmpDir)).toBe(branch);
+    expect(resolveKaizenLefthookRef(tmpDir)).not.toBe('v1.2.3');
+    expect(resolveKaizenLefthookRef(tmpDir)).not.toMatch(/^[0-9a-f]{7,40}$/);
+  });
+
+  it('falls back to main for slash-containing case branches', () => {
+    write('.claude-plugin/plugin.json', JSON.stringify({ version: '1.2.3' }));
+    write('marker.txt', 'case branch\n');
+    commitFixtureRepo();
+    execSync('git checkout -b case/test-lefthook-ref --quiet', { cwd: tmpDir });
+
+    expect(resolveKaizenLefthookRef(tmpDir)).toBe('main');
+  });
+});
+
 // ── injectIntoHusky ───────────────────────────────────────────────────
 
 describe('injectIntoHusky', () => {
@@ -352,11 +385,16 @@ describe('injectIntoLefthook', () => {
     write('lefthook.yml', 'pre-push:\n  commands:\n    existing:\n      run: echo hi\n');
   });
 
-  it('adds pre-push.commands.kaizen-pre-push entry', () => {
+  it('adds remotes entry for the kaizen provider config', () => {
     const result = injectIntoLefthook(tmpDir);
     expect(result.action).toBe('installed');
     const parsed = YAML.parse(read('lefthook.yml'));
-    expect(parsed['pre-push'].commands[KAIZEN_HOOK_ID].run).toBe(`./${KAIZEN_ENTRY_PATH}`);
+    const remote = parsed.remotes.find((r: { git_url: string }) => r.git_url === KAIZEN_PRE_COMMIT_REPO);
+    expect(remote).toBeDefined();
+    expect(remote.ref).toMatch(/^[^\s]+$/);
+    expect(remote.ref).not.toMatch(/^[0-9a-f]{7,40}$/);
+    expect(remote.configs).toContain(KAIZEN_LEFTHOOK_CONFIG);
+    expect(parsed['pre-push'].commands[KAIZEN_HOOK_ID]).toBeUndefined();
   });
 
   it('preserves existing commands', () => {
@@ -369,13 +407,71 @@ describe('injectIntoLefthook', () => {
     injectIntoLefthook(tmpDir);
     const result2 = injectIntoLefthook(tmpDir);
     expect(result2.action).toBe('already_installed');
+    const parsed = YAML.parse(read('lefthook.yml'));
+    expect(parsed.remotes.filter((r: { git_url: string }) => r.git_url === KAIZEN_PRE_COMMIT_REPO)).toHaveLength(1);
   });
 
-  it('creates pre-push section when absent', () => {
+  it('creates remotes section when absent', () => {
     write('lefthook.yml', '# empty\n');
     injectIntoLefthook(tmpDir);
     const parsed = YAML.parse(read('lefthook.yml'));
-    expect(parsed['pre-push'].commands[KAIZEN_HOOK_ID]).toBeDefined();
+    expect(parsed.remotes[0]).toMatchObject({
+      git_url: KAIZEN_PRE_COMMIT_REPO,
+      configs: [KAIZEN_LEFTHOOK_CONFIG],
+    });
+  });
+
+  it('preserves existing remotes and adds missing kaizen config to an existing kaizen remote', () => {
+    write('lefthook.yml', `remotes:
+  - git_url: https://github.com/example/hooks
+    ref: main
+    configs:
+      - lefthook.yml
+  - git_url: ${KAIZEN_PRE_COMMIT_REPO}
+    ref: main
+    configs:
+      - other.yml
+`);
+    injectIntoLefthook(tmpDir);
+    const parsed = YAML.parse(read('lefthook.yml'));
+    expect(parsed.remotes.find((r: { git_url: string }) => r.git_url === 'https://github.com/example/hooks')).toBeDefined();
+    const remote = parsed.remotes.find((r: { git_url: string }) => r.git_url === KAIZEN_PRE_COMMIT_REPO);
+    expect(remote.configs).toEqual(['other.yml', KAIZEN_LEFTHOOK_CONFIG]);
+  });
+
+  it('migrates legacy local command and removes kaizen-owned hook directory', () => {
+    write('lefthook.yml', `pre-push:
+  commands:
+    existing:
+      run: echo hi
+    ${KAIZEN_HOOK_ID}:
+      run: ./${KAIZEN_ENTRY_PATH}
+`);
+    writeEntryScript(tmpDir, stubEntryContent);
+
+    const result = injectIntoLefthook(tmpDir);
+    expect(result.action).toBe('updated');
+    expect(exists('.kaizen-hooks')).toBe(false);
+
+    const parsed = YAML.parse(read('lefthook.yml'));
+    expect(parsed['pre-push'].commands.existing).toBeDefined();
+    expect(parsed['pre-push'].commands[KAIZEN_HOOK_ID]).toBeUndefined();
+    expect(parsed.remotes.find((r: { git_url: string }) => r.git_url === KAIZEN_PRE_COMMIT_REPO)).toBeDefined();
+  });
+
+  it('migration preserves non-kaizen files in .kaizen-hooks', () => {
+    write('lefthook.yml', `pre-push:
+  commands:
+    ${KAIZEN_HOOK_ID}:
+      run: ./${KAIZEN_ENTRY_PATH}
+`);
+    writeEntryScript(tmpDir, stubEntryContent);
+    write('.kaizen-hooks/custom', 'keep\n');
+
+    injectIntoLefthook(tmpDir);
+    expect(exists('.kaizen-hooks')).toBe(true);
+    expect(exists('.kaizen-hooks/pre-push')).toBe(false);
+    expect(read('.kaizen-hooks/custom')).toBe('keep\n');
   });
 });
 
@@ -452,6 +548,16 @@ describe('installGitHooks — end-to-end', () => {
     expect(exists('.husky/pre-push')).toBe(true);
   });
 
+  it('lefthook path: injects remote config without writing host entry script', () => {
+    write('lefthook.yml', 'pre-push:\n  commands: {}\n');
+    const result = installGitHooks({ cwd: tmpDir, entryScriptContent: stubEntryContent });
+    expect(result.framework).toBe('lefthook');
+    expect(exists('.kaizen-hooks/pre-push')).toBe(false);
+    expect(result.postInstallCommands).toContain('lefthook install');
+    const parsed = YAML.parse(read('lefthook.yml'));
+    expect(parsed.remotes.find((r: { git_url: string }) => r.git_url === KAIZEN_PRE_COMMIT_REPO)).toBeDefined();
+  });
+
   it('none path → standalone', () => {
     const result = installGitHooks({ cwd: tmpDir, entryScriptContent: stubEntryContent });
     expect(result.framework).toBe('none');
@@ -519,5 +625,17 @@ describe('pre-commit provider manifest', () => {
     expect(entry).toContain('while [ -L "$SOURCE" ]; do');
     expect(entry).toContain('SELF_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)');
     expect(entry.indexOf('SELF_ROOT=')).toBeLessThan(entry.indexOf('__KAIZEN_PLUGIN_ROOT__'));
+  });
+});
+
+describe('lefthook provider config', () => {
+  it('declares kaizen-pre-push and resolves the synced remote checkout at runtime', () => {
+    const configPath = path.resolve(__dirname, '..', KAIZEN_LEFTHOOK_CONFIG);
+    const config = YAML.parse(fs.readFileSync(configPath, 'utf-8'));
+    const command = config['pre-push'].commands[KAIZEN_HOOK_ID];
+    expect(command.run).toContain('lefthook-remotes');
+    expect(command.run).toContain('src/hooks/kaizen-host-entry.sh');
+    expect(command.run).toContain('exec bash "$KAIZEN_ENTRY"');
+    expect(command.run).not.toContain(KAIZEN_ENTRY_PATH);
   });
 });

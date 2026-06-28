@@ -85,7 +85,7 @@ Result reports the detected framework, modified files, and any post-install comm
 - Framework-specific injection (one of):
   - pre-commit: adds a remote `https://github.com/Garsson-io/kaizen` repo hook `kaizen-pre-push` with a pinned `rev`; no `.kaizen-hooks/` host wrapper is written
   - husky: writes `.kaizen-hooks/pre-push` and appends a chain block to `.husky/pre-push`
-  - lefthook: writes `.kaizen-hooks/pre-push` and adds `pre-push.commands.kaizen-pre-push` to `lefthook.yml`
+  - lefthook: adds a remote `https://github.com/Garsson-io/kaizen` config `lefthook-kaizen.yml` with a branch/tag `ref`; no `.kaizen-hooks/` host wrapper is written
   - raw `.git/hooks/pre-push`: writes `.kaizen-hooks/pre-push` and appends a chain block
   - none: writes `.kaizen-hooks/pre-push`, creates `.githooks/pre-push`, and sets `git config core.hooksPath .githooks`
 
