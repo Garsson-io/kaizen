@@ -459,18 +459,6 @@ export function retrieveMetadata(target: AttachmentTarget & SectionTarget): Reco
 }
 
 /**
- * Store connected issues in metadata.
- */
-export function storeConnectedIssues(target: AttachmentTarget & SectionTarget, issues: ConnectedIssue[], extra?: Record<string, unknown>): string {
-  const existing = retrieveMetadata(target) ?? {};
-  const deepDive = (existing.deep_dive as Record<string, unknown>) ?? {};
-  deepDive.connected_issues = issues;
-  if (extra) Object.assign(deepDive, extra);
-  existing.deep_dive = deepDive;
-  return storeMetadata(target, existing);
-}
-
-/**
  * Query connected issues from metadata.
  */
 export function queryConnectedIssues(target: AttachmentTarget & SectionTarget): ConnectedIssue[] {
