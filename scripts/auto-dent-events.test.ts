@@ -9,6 +9,8 @@ import {
   type EventEnvelope,
 } from './auto-dent-events.js';
 
+const AUTO_DENT_EVENTS_SOURCE = readFileSync(new URL('./auto-dent-events.ts', import.meta.url), 'utf8');
+
 function readEvents(filePath: string): EventEnvelope[] {
   const content = readFileSync(filePath, 'utf8');
   return content
@@ -36,6 +38,13 @@ describe('EventEmitter', () => {
 
   it('writes events.jsonl to the log directory', () => {
     expect(emitter.getFilePath()).toBe(join(tmpDir, 'events.jsonl'));
+  });
+
+  it('routes event JSONL appends through appendJsonLine', () => {
+    expect(AUTO_DENT_EVENTS_SOURCE).toContain('appendJsonLine');
+    expect(AUTO_DENT_EVENTS_SOURCE).toContain("from '../src/lib/json-lines.js'");
+    expect(AUTO_DENT_EVENTS_SOURCE).not.toContain('appendFileSync');
+    expect(AUTO_DENT_EVENTS_SOURCE).not.toContain("JSON.stringify(envelope) + '\\n'");
   });
 
   it('creates the file on first emit', () => {
@@ -385,7 +394,7 @@ describe('EventEmitter', () => {
   });
 
   it('silently handles write errors without throwing', () => {
-    // Point at a non-existent deep path — appendFileSync will fail
+    // Point at a non-existent deep path so the best-effort append fails.
     const badEmitter = new EventEmitter('/nonexistent/deeply/nested/path');
     expect(() =>
       badEmitter.emit({
