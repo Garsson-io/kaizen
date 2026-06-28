@@ -1,0 +1,7 @@
+pre-push:
+  commands:
+    kaizen-pre-push:
+      run: |
+        KAIZEN_ENTRY=$(find "$(git rev-parse --path-format=absolute --git-path info)/lefthook-remotes" -maxdepth 5 -path "*/src/hooks/kaizen-host-entry.sh" -print -quit 2>/dev/null || true)
+        [ -n "$KAIZEN_ENTRY" ] || exit 0
+        exec bash "$KAIZEN_ENTRY"

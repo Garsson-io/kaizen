@@ -86,13 +86,22 @@ export interface InstallOptions {
 
 export const KAIZEN_ENTRY_PATH = '.kaizen-hooks/pre-push';
 export const KAIZEN_HOOK_ID = 'kaizen-pre-push';
-export const KAIZEN_PRE_COMMIT_REPO = 'https://github.com/Garsson-io/kaizen';
+export const KAIZEN_REMOTE_REPO = 'https://github.com/Garsson-io/kaizen';
+export const KAIZEN_PRE_COMMIT_REPO = KAIZEN_REMOTE_REPO;
+export const KAIZEN_LEFTHOOK_CONFIG = 'lefthook-kaizen.yml';
 export const KAIZEN_CHAIN_MARKER = '# KAIZEN_CHAIN_START';
 export const KAIZEN_CHAIN_END_MARKER = '# KAIZEN_CHAIN_END';
 
 type PreCommitHook = { id: string; [k: string]: unknown };
 type PreCommitRepo = { repo: string; rev?: string; hooks?: PreCommitHook[]; [k: string]: unknown };
 type PreCommitConfig = { repos?: PreCommitRepo[]; [k: string]: unknown };
+type LefthookRemote = { git_url: string; ref?: string; configs?: string[]; [k: string]: unknown };
+type LefthookCommand = { run?: string; [k: string]: unknown };
+type LefthookConfig = {
+  remotes?: LefthookRemote[];
+  'pre-push'?: { commands?: Record<string, LefthookCommand>; [k: string]: unknown };
+  [k: string]: unknown;
+};
 
 function moduleRepoRoot(): string {
   return dirname(dirname(fileURLToPath(import.meta.url)));
@@ -113,6 +122,32 @@ function resolveKaizenRoot(pluginRoot?: string): string {
 
 export function resolveKaizenPreCommitRev(pluginRoot?: string): string {
   const root = resolveKaizenRoot(pluginRoot);
+  const tag = resolveKaizenVersionTag(root);
+  if (tag) return tag;
+
+  try {
+    return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: root, encoding: 'utf-8', stdio: 'pipe' }).trim();
+  } catch {
+    return 'main';
+  }
+}
+
+export function resolveKaizenLefthookRef(pluginRoot?: string): string {
+  const root = resolveKaizenRoot(pluginRoot);
+  const tag = resolveKaizenVersionTag(root);
+  if (tag) return tag;
+
+  try {
+    const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root, encoding: 'utf-8', stdio: 'pipe' }).trim();
+    if (branch && branch !== 'HEAD' && !branch.includes('/')) return branch;
+  } catch {
+    // Fall through to stable default.
+  }
+
+  return 'main';
+}
+
+function resolveKaizenVersionTag(root: string): string | null {
   const pluginJson = tryReadFileSync(join(root, '.claude-plugin', 'plugin.json'));
   if (pluginJson) {
     const parsed = JSON.parse(pluginJson) as { version?: unknown };
@@ -127,17 +162,12 @@ export function resolveKaizenPreCommitRev(pluginRoot?: string): string {
         });
         return tag;
       } catch {
-        // Do not emit an unfetchable provider rev. The plugin version is only
-        // a valid pre-commit rev once the corresponding git tag exists.
+        // Do not emit an unfetchable provider ref. The plugin version is only
+        // a valid remote-provider ref once the corresponding git tag exists.
       }
     }
   }
-
-  try {
-    return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: root, encoding: 'utf-8', stdio: 'pipe' }).trim();
-  } catch {
-    return 'main';
-  }
+  return null;
 }
 
 function kaizenPreCommitRepo(pluginRoot?: string): PreCommitRepo {
@@ -150,6 +180,14 @@ function kaizenPreCommitRepo(pluginRoot?: string): PreCommitRepo {
         stages: ['pre-push'],
       },
     ],
+  };
+}
+
+function kaizenLefthookRemote(pluginRoot?: string): LefthookRemote {
+  return {
+    git_url: KAIZEN_PRE_COMMIT_REPO,
+    ref: resolveKaizenLefthookRef(pluginRoot),
+    configs: [KAIZEN_LEFTHOOK_CONFIG],
   };
 }
 
@@ -445,38 +483,66 @@ export function injectIntoHusky(cwd: string): InstallResult {
 /**
  * Inject into lefthook.yml.
  */
-export function injectIntoLefthook(cwd: string): InstallResult {
+export function injectIntoLefthook(cwd: string, opts: { pluginRoot?: string } = {}): InstallResult {
   const configPath = join(cwd, 'lefthook.yml');
   const raw = readFileSync(configPath, 'utf-8');
-  const parsed = (YAML.parse(raw) ?? {}) as {
-    'pre-push'?: { commands?: Record<string, { run: string; [k: string]: unknown }> };
-  };
+  const parsed = (YAML.parse(raw) ?? {}) as LefthookConfig;
 
-  if (!parsed['pre-push']) parsed['pre-push'] = {};
-  if (!parsed['pre-push'].commands) parsed['pre-push'].commands = {};
+  let changed = false;
+  let removedLegacyCommand = false;
 
-  if (parsed['pre-push'].commands[KAIZEN_HOOK_ID]) {
+  const commands = parsed['pre-push']?.commands;
+  if (commands?.[KAIZEN_HOOK_ID]) {
+    delete commands[KAIZEN_HOOK_ID];
+    removedLegacyCommand = true;
+    changed = true;
+    if (Object.keys(commands).length === 0 && parsed['pre-push']) {
+      delete parsed['pre-push'].commands;
+    }
+  }
+
+  const cleanedHookDir = removedLegacyCommand ? cleanupLegacyKaizenHookDir(cwd) : false;
+  changed = changed || cleanedHookDir;
+
+  if (!Array.isArray(parsed.remotes)) parsed.remotes = [];
+  let remote = parsed.remotes.find((r) => r.git_url === KAIZEN_PRE_COMMIT_REPO);
+  if (!remote) {
+    remote = kaizenLefthookRemote(opts.pluginRoot);
+    parsed.remotes.push(remote);
+    changed = true;
+  } else {
+    if (!remote.ref) {
+      remote.ref = resolveKaizenLefthookRef(opts.pluginRoot);
+      changed = true;
+    }
+    if (!Array.isArray(remote.configs)) {
+      remote.configs = [];
+      changed = true;
+    }
+    if (!remote.configs.includes(KAIZEN_LEFTHOOK_CONFIG)) {
+      remote.configs.push(KAIZEN_LEFTHOOK_CONFIG);
+      changed = true;
+    }
+  }
+
+  if (!changed) {
     return {
       framework: 'lefthook',
       action: 'already_installed',
       filesModified: [],
       postInstallCommands: [],
-      logMessage: `lefthook: command '${KAIZEN_HOOK_ID}' already present — no change`,
+      logMessage: `lefthook: remote config '${KAIZEN_LEFTHOOK_CONFIG}' already present in ${configPath} — no change`,
     };
   }
-
-  parsed['pre-push'].commands[KAIZEN_HOOK_ID] = {
-    run: `./${KAIZEN_ENTRY_PATH}`,
-  };
 
   writeFileSync(configPath, YAML.stringify(parsed));
 
   return {
     framework: 'lefthook',
-    action: 'installed',
-    filesModified: [configPath],
+    action: removedLegacyCommand || cleanedHookDir ? 'updated' : 'installed',
+    filesModified: cleanedHookDir ? [configPath, join(cwd, '.kaizen-hooks')] : [configPath],
     postInstallCommands: ['lefthook install'],
-    logMessage: `lefthook: added command '${KAIZEN_HOOK_ID}' to ${configPath}`,
+    logMessage: `lefthook: added remote config '${KAIZEN_LEFTHOOK_CONFIG}' to ${configPath}. Run 'lefthook install' to activate.`,
   };
 }
 
@@ -585,11 +651,11 @@ export function installStandalone(cwd: string): InstallResult {
 export function installGitHooks(options: InstallOptions): InstallResult {
   const { cwd, entryScriptContent } = options;
 
-  // 1. Detect framework before writing host files. The pre-commit remote-repo
-  // path intentionally writes no host-side kaizen wrapper.
+  // 1. Detect framework before writing host files. Framework-native remote
+  // paths intentionally write no host-side kaizen wrapper.
   const detection = detectHostFramework(cwd);
 
-  if (detection.framework !== 'pre-commit') {
+  if (detection.framework !== 'pre-commit' && detection.framework !== 'lefthook') {
     writeEntryScript(cwd, entryScriptContent);
   }
 
@@ -603,7 +669,7 @@ export function installGitHooks(options: InstallOptions): InstallResult {
       result = injectIntoHusky(cwd);
       break;
     case 'lefthook':
-      result = injectIntoLefthook(cwd);
+      result = injectIntoLefthook(cwd, { pluginRoot: options.pluginRoot });
       break;
     case 'raw':
       result = injectIntoRaw(cwd);
