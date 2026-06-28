@@ -699,6 +699,18 @@ describe('spawnReview', () => {
     const { costUsd } = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
     expect(costUsd).toBeCloseTo(0.05);
   });
+
+  it('delegates stream-json row parsing to the shared JSONL helper', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/review-battery.ts'), 'utf8');
+    const parsingBlock = source.slice(
+      source.indexOf('// Parse text and cost from stream-json JSONL output.'),
+      source.indexOf('resolve({ text, costUsd, durationMs, exitCode: code ?? -1 });'),
+    );
+
+    expect(parsingBlock).toContain('parseJsonLines');
+    expect(parsingBlock).not.toContain("stdout.split('\\n')");
+    expect(parsingBlock).not.toContain('JSON.parse(line)');
+  });
 });
 
 // Tier 1: reviewBattery (mocked spawnReview)
