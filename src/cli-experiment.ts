@@ -64,6 +64,9 @@ export interface ExperimentDeps {
 
 const defaultDeps: ExperimentDeps = {
   resolveExperimentsDir: () => {
+    // Worktree-aware: resolveProjectRoot() runs `git -C <cwd> rev-parse
+    // --show-toplevel` through the shared no-shell argv runner, returning the
+    // current working tree's root — correct for git-tracked files (#1334).
     const root = resolveProjectRoot(process.cwd());
     return path.join(root, '.claude', 'kaizen', 'experiments');
   },
