@@ -3541,6 +3541,17 @@ describe('test-task lifecycle evidence regression guard', () => {
   it('does not treat skipped review as process-incomplete for synthetic test tasks', () => {
     expect(source).toContain("reviewVerdict: state.test_task ? 'pass' : result.reviewVerdict");
   });
+
+  it('passes clean artifactless STOP runs as intentional no-ops to process validation (#1216)', () => {
+    expect(source).toContain('const intentionalNoOp =');
+    expect(source).toContain('exitCode === 0');
+    expect(source).toContain('result.stopRequested');
+    expect(source).toContain('result.prs.length === 0');
+    expect(source).toContain('result.issuesFiled.length === 0');
+    expect(source).toContain('result.issuesClosed.length === 0');
+    expect(source).toContain('result.cases.length === 0');
+    expect(source).toContain('intentionalNoOp,');
+  });
 });
 
 describe('auto-merge verdict binding wiring (#1220)', () => {

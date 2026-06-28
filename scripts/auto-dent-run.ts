@@ -2420,7 +2420,15 @@ async function main(): Promise<void> {
           : mergeStatuses.some((status) => status === 'closed') ? 'not-ready'
             : mergeStatuses.every((status) => status === 'merged' || status === 'auto_queued') ? 'ready'
               : 'unknown';
+    const intentionalNoOp =
+      exitCode === 0 &&
+      result.stopRequested &&
+      result.prs.length === 0 &&
+      result.issuesFiled.length === 0 &&
+      result.issuesClosed.length === 0 &&
+      result.cases.length === 0;
     const processEvidence: ProcessEvidence = {
+      intentionalNoOp,
       planEvidence: Boolean(state.test_task) || Boolean(promptMeta.claimedPlanIssue),
       implementationEvidence: Boolean(state.test_task) ? result.prs.length > 0 : result.cases.length > 0,
       prEvidence: result.prs.length > 0,

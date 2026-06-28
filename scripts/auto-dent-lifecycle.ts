@@ -171,6 +171,8 @@ export type MergeReadinessEvidence = 'ready' | 'not-ready' | 'unknown' | 'not-ap
 export type ProviderReviewEvidenceStatus = 'pass' | 'fail' | 'skipped' | 'missing' | 'pending';
 
 export interface ProcessEvidence {
+  /** The run intentionally stopped/skipped before producing work artifacts. */
+  intentionalNoOp?: boolean;
   /** Durable plan or claimed-plan assignment evidence exists. */
   planEvidence?: boolean;
   /** Durable implementation evidence exists (case/worktree or equivalent). */
@@ -252,15 +254,26 @@ export function validateProcessEvidence(
 ): ProcessValidation {
   const present = new Set(validation.phasesPresent);
   const checks: ProcessCheck[] = [];
-  const hasWorkClaim =
-    present.has('EVALUATE') ||
+  const hasProducingClaim =
     present.has('IMPLEMENT') ||
     present.has('TEST') ||
     present.has('PR') ||
     present.has('MERGE') ||
-    present.has('REFLECT') ||
+    present.has('REFLECT');
+  const hasDurableArtifact =
     evidence.implementationEvidence === true ||
-    evidence.prEvidence === true;
+    evidence.prEvidence === true ||
+    evidence.reflectionEvidence === true;
+  const intentionalNoOp =
+    evidence.intentionalNoOp === true &&
+    !hasProducingClaim &&
+    !hasDurableArtifact;
+  const hasWorkClaim =
+    !intentionalNoOp &&
+    (present.has('EVALUATE') ||
+      hasProducingClaim ||
+      evidence.implementationEvidence === true ||
+      evidence.prEvidence === true);
 
   const needsImplementation =
     present.has('IMPLEMENT') || present.has('TEST') || present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
