@@ -15,7 +15,9 @@ import {
   listChangedFilesBetween,
   maybeHotReloadOuterHarness,
   pullMainForSelfUpdate,
+  runPreRunSelfUpdate,
   shouldHotReloadOuterHarness,
+  shouldRunPlanningPrepass,
   startAutoDentResume,
   checkHaltFile,
   checkBudget,
@@ -250,7 +252,10 @@ describe('state helpers', () => {
   });
 
   it('does not rerun planning when bootstrapping from resume state', () => {
-    expect(AUTO_DENT_SOURCE).toContain('if (!opts.resumeStateFile && !opts.testTask && !opts.noPlan)');
+    expect(shouldRunPlanningPrepass({ resumeStateFile: '/tmp/state.json', testTask: false, noPlan: false })).toBe(false);
+    expect(shouldRunPlanningPrepass({ resumeStateFile: '', testTask: true, noPlan: false })).toBe(false);
+    expect(shouldRunPlanningPrepass({ resumeStateFile: '', testTask: false, noPlan: true })).toBe(false);
+    expect(shouldRunPlanningPrepass({ resumeStateFile: '', testTask: false, noPlan: false })).toBe(true);
   });
 });
 
@@ -407,14 +412,60 @@ describe('outer harness hot reload', () => {
     expect(lines.join('\n')).toContain('unknown files');
   });
 
-  it('returns from the old process immediately after hot reload handoff succeeds', () => {
-    const handoff = AUTO_DENT_SOURCE.indexOf('if (await maybeHotReloadOuterHarness(update, scriptDir, stateFile))');
-    const nextRun = AUTO_DENT_SOURCE.indexOf("runCommand('npx', buildTsxScriptArgs(scriptDir, 'auto-dent-run.ts', stateFile))");
-    const finalization = AUTO_DENT_SOURCE.indexOf('const summaryPath = writeBatchSummary(stateFile)');
+  it('tells the outer loop to return before next-run work after a successful hot reload handoff', async () => {
+    const child = fakeChild();
+    const events: string[] = [];
 
-    expect(handoff).toBeGreaterThan(-1);
-    expect(nextRun).toBeGreaterThan(handoff);
-    expect(finalization).toBeGreaterThan(handoff);
+    const handedOff = await runPreRunSelfUpdate('/repo', '/repo/scripts', '/tmp/state.json', true, {
+      pullSelfUpdate: () => ({
+        pullStatus: 0,
+        beforeHead: 'aaa111',
+        afterHead: 'bbb222',
+        changedFiles: ['scripts/auto-dent.ts'],
+        changedFilesKnown: true,
+        stdout: 'updated\n',
+      }),
+      scriptExists: () => true,
+      spawnProcess: () => {
+        process.nextTick(() => child.emit('spawn'));
+        return child as never;
+      },
+      writeStdout: (text) => events.push(`stdout:${text.trim()}`),
+      log: (line) => events.push(line),
+    });
+    if (handedOff) {
+      events.push('old-loop-returned');
+    } else {
+      events.push('next-run-work');
+    }
+
+    expect(handedOff).toBe(true);
+    expect(events).toContain('old-loop-returned');
+    expect(events).not.toContain('next-run-work');
+    expect(events.join('\n')).toContain('Outer harness changed: scripts/auto-dent.ts');
+  });
+
+  it('continues old-loop work when hot reload handoff fails', async () => {
+    const child = fakeChild();
+    const handedOff = await runPreRunSelfUpdate('/repo', '/repo/scripts', '/tmp/state.json', false, {
+      pullSelfUpdate: () => ({
+        pullStatus: 0,
+        beforeHead: 'aaa',
+        afterHead: 'bbb',
+        changedFiles: ['scripts/auto-dent.ts'],
+        changedFilesKnown: true,
+        stdout: '',
+      }),
+      scriptExists: () => true,
+      spawnProcess: () => {
+        process.nextTick(() => child.emit('error', new Error('ENOENT')));
+        return child as never;
+      },
+      writeStdout: () => {},
+      log: () => {},
+    });
+
+    expect(handedOff).toBe(false);
   });
 });
 

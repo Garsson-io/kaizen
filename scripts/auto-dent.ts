@@ -93,6 +93,11 @@ export interface StartResumeDeps {
   log?: (line: string) => void;
 }
 
+export interface PreRunSelfUpdateDeps extends StartResumeDeps {
+  pullSelfUpdate?: (repoRoot: string) => OuterHarnessUpdate;
+  writeStdout?: (text: string) => void;
+}
+
 export interface PostStructuredSummaryDeps {
   generateSummary?: (scriptDir: string, logDir: string) => string;
   postIssueComment?: (args: string[]) => GhResult;
@@ -317,6 +322,10 @@ export function shouldHotReloadOuterHarness(update: Pick<OuterHarnessUpdate, 'pu
   return update.pullStatus === 0
     && headChanged
     && (update.changedFilesKnown === false || update.changedFiles.some(isOuterHarnessReloadPath));
+}
+
+export function shouldRunPlanningPrepass(opts: Pick<AutoDentOptions, 'resumeStateFile' | 'testTask' | 'noPlan'>): boolean {
+  return !opts.resumeStateFile && !opts.testTask && !opts.noPlan;
 }
 
 export function createInitialState(
@@ -655,6 +664,42 @@ export async function maybeHotReloadOuterHarness(
   return startAutoDentResume(scriptDir, stateFile, deps);
 }
 
+export async function runPreRunSelfUpdate(
+  repoRoot: string,
+  scriptDir: string,
+  stateFile: string,
+  experiment: boolean,
+  deps: PreRunSelfUpdateDeps = {},
+): Promise<boolean> {
+  const log = deps.log ?? console.log;
+  const writeStdout = deps.writeStdout ?? ((text: string) => process.stdout.write(text));
+
+  log('>>> Pulling main for self-update...');
+  const update = (deps.pullSelfUpdate ?? pullMainForSelfUpdate)(repoRoot);
+  if (experiment) {
+    log(`>>> [experiment] main HEAD before pull: ${update.beforeHead.slice(0, 8)}`);
+  }
+  if (update.pullStatus === 0) {
+    writeStdout(update.stdout);
+    log('>>> Main updated.');
+  } else {
+    log('>>> Main already up-to-date (or pull failed, continuing with current).');
+  }
+  if (experiment) {
+    log(`>>> [experiment] main HEAD after pull: ${update.afterHead.slice(0, 8)}`);
+    if (update.changedFiles.length > 0) {
+      log(`>>> [experiment] changed files: ${update.changedFiles.join(', ')}`);
+    }
+  }
+  if (await maybeHotReloadOuterHarness(update, scriptDir, stateFile, deps)) {
+    return true;
+  }
+  if (shouldHotReloadOuterHarness(update)) {
+    log('>>> Hot reload handoff skipped; continuing current process.');
+  }
+  return false;
+}
+
 function runPlanningPrepass(scriptDir: string, stateFile: string, logDir: string): void {
   const planScript = join(scriptDir, 'auto-dent-plan.ts');
   if (!existsSync(planScript)) return;
@@ -820,7 +865,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!opts.resumeStateFile && !opts.testTask && !opts.noPlan) {
+  if (shouldRunPlanningPrepass(opts)) {
     runPlanningPrepass(scriptDir, stateFile, logDir);
   }
 
@@ -844,28 +889,8 @@ async function main(): Promise<void> {
       );
     }
 
-    console.log('>>> Pulling main for self-update...');
-    const update = pullMainForSelfUpdate(repoRoot);
-    if (current.experiment) {
-      console.log(`>>> [experiment] main HEAD before pull: ${update.beforeHead.slice(0, 8)}`);
-    }
-    if (update.pullStatus === 0) {
-      process.stdout.write(update.stdout);
-      console.log('>>> Main updated.');
-    } else {
-      console.log('>>> Main already up-to-date (or pull failed, continuing with current).');
-    }
-    if (current.experiment) {
-      console.log(`>>> [experiment] main HEAD after pull: ${update.afterHead.slice(0, 8)}`);
-      if (update.changedFiles.length > 0) {
-        console.log(`>>> [experiment] changed files: ${update.changedFiles.join(', ')}`);
-      }
-    }
-    if (await maybeHotReloadOuterHarness(update, scriptDir, stateFile)) {
+    if (await runPreRunSelfUpdate(repoRoot, scriptDir, stateFile, Boolean(current.experiment))) {
       return;
-    }
-    if (shouldHotReloadOuterHarness(update)) {
-      console.log('>>> Hot reload handoff skipped; continuing current process.');
     }
 
     if (nextRun > 1) {
