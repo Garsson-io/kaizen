@@ -16,10 +16,10 @@
 import fs from 'fs';
 import path from 'path';
 
-import { execSync } from 'child_process';
 import YAML from 'yaml';
 
 import { parseExperimentSpec } from './experiment-spec-parser.js';
+import { resolveProjectRoot } from './lib/resolve-project-root.js';
 
 // --- Types ---
 
@@ -62,20 +62,9 @@ export interface ExperimentDeps {
   resolveExperimentsDir: () => string;
 }
 
-/**
- * Resolve the current git repo root (worktree-aware).
- * Unlike resolveProjectRoot() which returns the main checkout,
- * this returns the working tree root — correct for git-tracked files.
- */
-function resolveCurrentRepoRoot(): string {
-  return execSync('git rev-parse --show-toplevel', {
-    encoding: 'utf-8',
-  }).trim();
-}
-
 const defaultDeps: ExperimentDeps = {
   resolveExperimentsDir: () => {
-    const root = resolveCurrentRepoRoot();
+    const root = resolveProjectRoot(process.cwd());
     return path.join(root, '.claude', 'kaizen', 'experiments');
   },
 };
