@@ -15,6 +15,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
+import { parseJsonLines } from '../src/lib/json-lines.js';
 import type { EventEnvelope, RunCompleteEvent, RunIssuePickedEvent, RunPrCreatedEvent } from './auto-dent-events.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 
@@ -80,14 +81,7 @@ export function parseEventsFile(eventsPath: string): EventEnvelope[] {
   const content = readFileSync(eventsPath, 'utf8').trim();
   if (!content) return [];
 
-  return content.split('\n').reduce<EventEnvelope[]>((acc, line) => {
-    try {
-      acc.push(JSON.parse(line));
-    } catch {
-      // Skip malformed lines
-    }
-    return acc;
-  }, []);
+  return parseJsonLines<EventEnvelope>(content);
 }
 
 /**
