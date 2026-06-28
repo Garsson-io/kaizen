@@ -60,6 +60,14 @@ Use the reusable status CLI whenever you need to know what remains:
 npx tsx scripts/kaizen-workflow-driver.ts status --issue <N> --repo "$ISSUES_REPO" --mode manual
 ```
 
+When a skill, `/goal`, or auto-dent has evidence the CLI cannot infer from git/GitHub state, pass it through the same command:
+
+```bash
+npx tsx scripts/kaizen-workflow-driver.ts status --issue <N> --repo "$ISSUES_REPO" --mode manual \
+  --dry-refactor "done: shared workflow driver reused" \
+  --meet-reality "done: status output inspected"
+```
+
 Use this for progress updates, `/goal` status checks, auto-dent prompts, and review evidence. Do not hand-roll a second checklist in the skill or PR body.
 
 ## Refactor/DRY Rule

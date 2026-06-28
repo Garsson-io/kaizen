@@ -5,6 +5,8 @@ import {
   FULL_KAIZEN_GATE_LABELS,
   buildManualGoalDirective,
   buildWorkflowStatus,
+  mergeWorkflowEvidence,
+  parseCliEvidenceOverrides,
   renderWorkflowStatusMarkdown,
   renderAutoDentGoalContract,
 } from './kaizen-workflow-driver.js';
@@ -105,14 +107,53 @@ describe('kaizen workflow forcing driver', () => {
     expect(markdown).toContain('pending');
   });
 
-  it('CLI exposes workflow status for operators and agents', () => {
-    const result = spawnSync('npx', ['tsx', 'scripts/kaizen-workflow-driver.ts', 'status', '--mode', 'exploit'], {
+  it('merges explicit stage evidence over collected evidence for reusable status calls', () => {
+    const evidence = mergeWorkflowEvidence(
+      { implementation: 'branch has commits ahead of origin/main', meetReality: 'pending dogfood run' },
+      { meetReality: 'done: CLI output inspected', dryRefactor: 'done: shared workflow schema reused' },
+    );
+    const status = buildWorkflowStatus({ mode: 'manual', evidence });
+
+    expect(status.stages.find((stage) => stage.id === 'implementation-tests')?.state).toBe('done');
+    expect(status.stages.find((stage) => stage.id === 'meet-reality')?.state).toBe('done');
+    expect(status.stages.find((stage) => stage.id === 'dry-refactor')?.state).toBe('done');
+  });
+
+  it('parses CLI evidence flags into the same reusable evidence schema', () => {
+    const evidence = parseCliEvidenceOverrides({
+      'dry-refactor': 'done: duplicate schemas removed',
+      'meet-reality': 'done: status output inspected',
+      review: 'blocked: waiting on PR review',
+    });
+
+    expect(evidence).toEqual({
+      dryRefactor: 'done: duplicate schemas removed',
+      meetReality: 'done: status output inspected',
+      review: 'blocked: waiting on PR review',
+    });
+  });
+
+  it('CLI exposes workflow status for operators and agents with explicit gate evidence', () => {
+    const result = spawnSync('npx', [
+      'tsx',
+      'scripts/kaizen-workflow-driver.ts',
+      'status',
+      '--mode',
+      'exploit',
+      '--dry-refactor',
+      'done: shared workflow driver reused',
+      '--meet-reality',
+      'done: CLI output inspected',
+    ], {
       encoding: 'utf8',
     });
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('## Kaizen Workflow Status');
     expect(result.stdout).toContain('plan/test-plan gate');
+    expect(result.stdout).toContain('shared workflow driver reused');
+    expect(result.stdout).toContain('CLI output inspected');
+    expect(result.stdout).toContain('| meet reality | done |');
     expect(result.stdout).toContain('pending');
   });
 });

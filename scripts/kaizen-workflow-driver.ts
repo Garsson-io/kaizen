@@ -28,6 +28,8 @@ export interface WorkflowEvidenceInput {
   prCiMergeCleanup?: string;
 }
 
+type ParsedArgs = Record<string, string | boolean | string[]>;
+
 export interface WorkflowStatusInput {
   mode: WorkflowMode;
   issue?: WorkflowIssueIdentity;
@@ -77,6 +79,18 @@ const STAGES = [
   ['reflection', 'reflection gate', 'reflection'],
   ['pr-ci-merge-cleanup', 'PR/CI/merge/cleanup', 'prCiMergeCleanup'],
 ] as const;
+
+const CLI_EVIDENCE_KEYS: Record<string, keyof WorkflowEvidenceInput> = {
+  'issue-identity': 'issueIdentity',
+  plan: 'plan',
+  'worktree-case': 'worktreeCase',
+  implementation: 'implementation',
+  'dry-refactor': 'dryRefactor',
+  'meet-reality': 'meetReality',
+  review: 'review',
+  reflection: 'reflection',
+  'pr-ci-merge-cleanup': 'prCiMergeCleanup',
+};
 
 const MODE_TERMINAL_EVIDENCE: Record<string, string> = {
   manual: 'ticket URL, PR URL, tests, review verdict, meet-reality output, reflection, and cleanup evidence',
@@ -135,6 +149,8 @@ export function renderAutoDentGoalContract(mode: WorkflowMode): string {
     '',
     'For status, use the reusable workflow status call:',
     '  npx tsx scripts/kaizen-workflow-driver.ts status --mode <mode> --issue <N> --repo <owner/repo>',
+    'Pass explicit stage evidence when automation or skills have proof the CLI cannot infer, for example:',
+    '  --dry-refactor "done: duplicated workflow schema removed" --meet-reality "done: CLI output inspected"',
   ].join('\n');
 }
 
@@ -150,6 +166,13 @@ export function buildWorkflowStatus(input: WorkflowStatusInput): WorkflowStatus 
     };
   });
   return { mode: input.mode, issue: input.issue, stages };
+}
+
+export function mergeWorkflowEvidence(
+  collected: WorkflowEvidenceInput,
+  overrides: WorkflowEvidenceInput,
+): WorkflowEvidenceInput {
+  return { ...collected, ...overrides };
 }
 
 export function renderWorkflowStatusMarkdown(status: WorkflowStatus): string {
@@ -169,21 +192,47 @@ export function renderWorkflowStatusMarkdown(status: WorkflowStatus): string {
   return lines.join('\n');
 }
 
-function parseArgs(argv: string[]): Record<string, string | boolean> {
-  const parsed: Record<string, string | boolean> = {};
+function setParsedArg(parsed: ParsedArgs, key: string, value: string | boolean): void {
+  const existing = parsed[key];
+  if (existing === undefined) {
+    parsed[key] = value;
+  } else if (Array.isArray(existing)) {
+    existing.push(String(value));
+  } else {
+    parsed[key] = [String(existing), String(value)];
+  }
+}
+
+function parseArgs(argv: string[]): ParsedArgs {
+  const parsed: ParsedArgs = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (!arg.startsWith('--')) continue;
     const key = arg.slice(2);
     const next = argv[i + 1];
     if (!next || next.startsWith('--')) {
-      parsed[key] = true;
+      setParsedArg(parsed, key, true);
     } else {
-      parsed[key] = next;
+      setParsedArg(parsed, key, next);
       i++;
     }
   }
   return parsed;
+}
+
+function firstString(value: string | boolean | string[] | undefined): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.find((entry) => entry.trim() !== '');
+  return undefined;
+}
+
+export function parseCliEvidenceOverrides(args: ParsedArgs): WorkflowEvidenceInput {
+  const evidence: WorkflowEvidenceInput = {};
+  for (const [argKey, evidenceKey] of Object.entries(CLI_EVIDENCE_KEYS)) {
+    const value = firstString(args[argKey]);
+    if (value && value.trim()) evidence[evidenceKey] = value.trim();
+  }
+  return evidence;
 }
 
 function fetchIssueIdentity(repo: string, issue: string): WorkflowIssueIdentity | undefined {
@@ -256,25 +305,27 @@ export function collectWorkflowEvidence(input: WorkflowEvidenceLookupInput): Wor
 export function runCli(argv: string[]): number {
   const command = argv[0];
   const args = parseArgs(argv.slice(1));
-  const mode = typeof args.mode === 'string' ? args.mode : 'exploit';
+  const mode = firstString(args.mode) ?? 'exploit';
 
   if (command === 'goal') {
-    const task = typeof args.task === 'string' ? args.task : 'complete the requested kaizen work';
-    const repo = typeof args.repo === 'string' ? args.repo : '';
-    const issueNum = typeof args.issue === 'string' ? args.issue : '';
+    const task = firstString(args.task) ?? 'complete the requested kaizen work';
+    const repo = firstString(args.repo) ?? '';
+    const issueNum = firstString(args.issue) ?? '';
     const issue = repo && issueNum ? fetchIssueIdentity(repo, issueNum) : undefined;
     process.stdout.write(buildManualGoalDirective({ task, issue }) + '\n');
     return 0;
   }
 
   if (command === 'status') {
-    const repo = typeof args.repo === 'string' ? args.repo : '';
-    const issueNum = typeof args.issue === 'string' ? args.issue : '';
+    const repo = firstString(args.repo) ?? '';
+    const issueNum = firstString(args.issue) ?? '';
     const issue = repo && issueNum ? fetchIssueIdentity(repo, issueNum) : undefined;
+    const collected = collectWorkflowEvidence({ mode, repo, issue, issueNumber: issueNum });
+    const overrides = parseCliEvidenceOverrides(args);
     const status = buildWorkflowStatus({
       mode,
       issue,
-      evidence: collectWorkflowEvidence({ mode, repo, issue, issueNumber: issueNum }),
+      evidence: mergeWorkflowEvidence(collected, overrides),
     });
     process.stdout.write(renderWorkflowStatusMarkdown(status) + '\n');
     return 0;
@@ -285,7 +336,7 @@ export function runCli(argv: string[]): number {
     return 0;
   }
 
-  process.stderr.write('Usage: kaizen-workflow-driver.ts <goal|status|contract> [--mode M] [--issue N] [--repo owner/repo] [--task text]\n');
+  process.stderr.write('Usage: kaizen-workflow-driver.ts <goal|status|contract> [--mode M] [--issue N] [--repo owner/repo] [--task text] [--dry-refactor evidence] [--meet-reality evidence]\n');
   return 1;
 }
 

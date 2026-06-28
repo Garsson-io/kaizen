@@ -78,6 +78,15 @@ Status for a run or issue uses the same shared model:
 npx tsx scripts/kaizen-workflow-driver.ts status --mode exploit --issue <N> --repo <owner/repo>
 ```
 
+When the run has gate evidence that cannot be inferred from git/GitHub state,
+pass it as stage evidence flags instead of creating a separate checklist:
+
+```bash
+npx tsx scripts/kaizen-workflow-driver.ts status --mode exploit --issue <N> --repo <owner/repo> \
+  --review "done: review verdict passed" \
+  --meet-reality "done: rendered prompt inspected"
+```
+
 ## Running a Batch
 
 ### Basic usage
