@@ -711,4 +711,50 @@ describe('processPrePush — integrated flow with injected query', () => {
     expect(result.decision.reason).toBe('merged_branch_push');
     expect(result.decision.context?.branch).toBe('feature/merged');
   });
+
+  it('allows a deletion-only push by evaluating the current-branch fallback, not the deleted target (#1536)', () => {
+    const queriedBranches: string[] = [];
+    const rawStdin = [
+      'delete',
+      '0000000000000000000000000000000000000000',
+      'refs/heads/worktree-kz-1508-1502-transcripts',
+      'abc123',
+    ].join(' ');
+
+    const result = processPrePush(
+      rawStdin,
+      { CLAUDECODE: '1' },
+      {
+        currentBranch: 'case/current-work',
+        queryPrState: (_repo, branch) => {
+          queriedBranches.push(branch);
+          return emptyQuery();
+        },
+      },
+    );
+
+    expect(queriedBranches).toEqual(['case/current-work']);
+    expect(result.decision.action).toBe('allow_silent');
+    expect(result.decision.reason).toBe('no_pr_history');
+    expect(result.decision.context?.branch).toBe('case/current-work');
+  });
+
+  it('allows silently without querying PR state when no pushed target or current branch exists (#1536)', () => {
+    let queryCalled = false;
+    const result = processPrePush(
+      '',
+      { CLAUDECODE: '1' },
+      {
+        currentBranch: '',
+        queryPrState: () => {
+          queryCalled = true;
+          return emptyQuery();
+        },
+      },
+    );
+
+    expect(queryCalled).toBe(false);
+    expect(result.decision.action).toBe('allow_silent');
+    expect(result.decision.reason).toBe('no_push_targets');
+  });
 });
