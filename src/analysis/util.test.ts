@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { truncate, isTestFile } from './util.js';
+import { truncate, truncateAfterPrefix, isTestFile } from './util.js';
 
 describe('truncate', () => {
   it('returns string unchanged when under maxLen', () => {
@@ -16,6 +16,20 @@ describe('truncate', () => {
 
   it('handles empty string', () => {
     expect(truncate('', 5)).toBe('');
+  });
+});
+
+describe('truncateAfterPrefix', () => {
+  it('returns string unchanged when under prefix length', () => {
+    expect(truncateAfterPrefix('hello', 10)).toBe('hello');
+  });
+
+  it('returns string unchanged when exactly prefix length', () => {
+    expect(truncateAfterPrefix('12345', 5)).toBe('12345');
+  });
+
+  it('appends ellipsis after the visible prefix when over prefix length', () => {
+    expect(truncateAfterPrefix('123456', 5)).toBe('12345...');
   });
 });
 
