@@ -276,8 +276,12 @@ describe('pr-review-loop: git push', () => {
       BRANCH: branch,
     });
 
-    const output = runHook(gitPushInput());
-    expect(output).toContain('ROUND');
+    const decision = processHookInput(gitPushInput(), {
+      stateDir: testStateDir,
+      branch,
+      isMergeFromMainPush: () => false,
+    });
+    expect(decision.message).toContain('ROUND');
 
     const state = readState('Garsson-io_kaizen_80');
     expect(state.STATUS).toBe('needs_review');
@@ -600,9 +604,13 @@ describe('pr-review-loop: escalation', () => {
       BRANCH: branch,
     });
 
-    const output = runHook(gitPushInput());
-    expect(output).toContain('REVIEW ROUND 4/4');
-    expect(output).toContain('escalate');
+    const decision = processHookInput(gitPushInput(), {
+      stateDir: testStateDir,
+      branch,
+      isMergeFromMainPush: () => false,
+    });
+    expect(decision.message).toContain('REVIEW ROUND 4/4');
+    expect(decision.message).toContain('escalate');
 
     const state = readState('Garsson-io_kaizen_60');
     expect(state.STATUS).toBe('escalated');

@@ -237,6 +237,8 @@ export interface ProcessOptions {
   checkShaExists?: (sha: string) => boolean;
   /** Override review sentinel check for testing (#920) */
   checkReviewSentinel?: (prUrl: string, round: string, stateDir: string) => boolean;
+  /** Override merge-from-main detection for testing regular pushes from merge commits. */
+  isMergeFromMainPush?: () => boolean;
   /** Fallback: look up PR URL for branch when stdout/stderr are empty (#973).
    *  Default uses the shared open-PR branch lookup helper. */
   lookupPrUrlForBranch?: (branch: string) => string | undefined;
@@ -371,12 +373,14 @@ export function processHookInput(
     }
 
     // Skip merge-from-main pushes (kaizen #85)
-    const parents = gitStdout(['log', '-1', '--format=%P', 'HEAD']).split(/\s+/).filter(Boolean);
-    if (parents.length >= 2) {
+    const isMergeFromMainPush = options.isMergeFromMainPush ?? (() => {
+      const parents = gitStdout(['log', '-1', '--format=%P', 'HEAD']).split(/\s+/).filter(Boolean);
+      if (parents.length < 2) return false;
       const mainHead = gitStdout(['rev-parse', 'origin/main']);
-      if (mainHead && parents.includes(mainHead)) {
-        return decide('ignore', 'merge_from_main', null, { parents });
-      }
+      return !!mainHead && parents.includes(mainHead);
+    });
+    if (isMergeFromMainPush()) {
+      return decide('ignore', 'merge_from_main', null);
     }
 
     const round = parseInt(found.round, 10) || 1;
