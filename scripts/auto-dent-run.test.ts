@@ -2205,6 +2205,64 @@ describe('formatPlanAsMarkdown', () => {
 });
 
 describe('selectMode', () => {
+  const cleanupDirs: string[] = [];
+  afterEach(() => {
+    for (const dir of cleanupDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    cleanupDirs.length = 0;
+  });
+
+  it('forces exploit with a target issue when repeated candidate manifests name the same top candidate', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-mode-'));
+    cleanupDirs.push(tmpDir);
+    for (const run of [1, 2, 3]) {
+      writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
+        version: 1,
+        runTag: `batch/run-${run}`,
+        candidates: [
+          {
+            id: 'self-steering',
+            title: 'Self-steering bundle',
+            rationale: 'Repeated top candidate',
+            refs: ['#1213', '#1189'],
+            suggested_mode: 'exploit',
+          },
+        ],
+      }));
+    }
+
+    const result = selectMode(makeBatchState(), 7, { logDir: tmpDir });
+
+    expect(result).toMatchObject({
+      mode: 'exploit',
+      template: 'deep-dive-default.md',
+      reason: 'manifest-forced',
+      target_issue: '#1213',
+    });
+  });
+
+  it('does not force a consumed manifest target again', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-consumed-'));
+    cleanupDirs.push(tmpDir);
+    for (const run of [1, 2, 3]) {
+      writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
+        version: 1,
+        runTag: `batch/run-${run}`,
+        candidates: [{ id: 'self-steering', title: 'Self-steering bundle', refs: ['#1213'] }],
+      }));
+    }
+
+    const result = selectMode(
+      makeBatchState({ manifest_forced_targets_consumed: ['#1213'] }),
+      7,
+      { logDir: tmpDir },
+    );
+
+    expect(result.reason).not.toBe('manifest-forced');
+    expect(result.target_issue).toBeUndefined();
+  });
+
   it('selects exploit for runs 0-6 (mod 10)', () => {
     for (const run of [1, 2, 3, 4, 5, 6, 10, 11, 16]) {
       const { mode, template } = selectMode(makeBatchState(), run);
@@ -3373,8 +3431,9 @@ describe('buildPromptWithMetadata', () => {
     const end = AUTO_DENT_RUN_SOURCE.indexOf('function buildPromptInline');
     const source = AUTO_DENT_RUN_SOURCE.slice(start, end);
 
-    expect(source.match(/selectMode\(state, runNum\)/g)).toHaveLength(1);
-    expect(source).toContain('buildTemplateVars(state, runNum, logDir, { claimPlanItem: shouldClaimPlanItem })');
+    expect(source.match(/selectMode\(state, runNum, \{ logDir \}\)/g)).toHaveLength(1);
+    expect(source).toContain('buildTemplateVars(state, runNum, logDir, {');
+    expect(source).toContain('targetIssue: modeSelection.target_issue');
     expect(source).toContain("modeSelection.mode === 'exploit' && !state.test_task");
   });
 

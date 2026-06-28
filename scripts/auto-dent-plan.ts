@@ -44,6 +44,10 @@ export interface PlanItem {
   theme?: string;
 }
 
+export interface ClaimNextItemOptions {
+  targetIssue?: string;
+}
+
 /**
  * A coordinated cluster of related work items — the unit of "bunching" that
  * lets a batch drive 3-5 related PRs to completion before switching topics,
@@ -626,16 +630,41 @@ export function selectNextItem(plan: BatchPlan): PlanItem | null {
   return pending[0];
 }
 
+function normalizeIssueRef(ref: string): string {
+  const match = ref.match(/(?:issues\/|#)?(\d+)\b/);
+  return match ? `#${match[1]}` : ref;
+}
+
+function syntheticForcedPlanItem(targetIssue: string): PlanItem {
+  return {
+    issue: targetIssue,
+    title: `manifest-forced target ${targetIssue}`,
+    score: 10,
+    approach: `Work the manifest-forced target ${targetIssue}; this assignment was inserted because a repeated explore candidate manifest selected it.`,
+    status: 'assigned',
+    item_type: 'leaf',
+  };
+}
+
 /**
  * Get the next item to work from a plan and mark it 'assigned' in the file.
  */
-export function claimNextItem(logDir: string): PlanItem | null {
+export function claimNextItem(logDir: string, options: ClaimNextItemOptions = {}): PlanItem | null {
   const plan = readPlan(logDir);
   if (!plan) return null;
 
-  const next = selectNextItem(plan);
+  const targetIssue = options.targetIssue ? normalizeIssueRef(options.targetIssue) : undefined;
+  const existingTarget = targetIssue
+    ? plan.items.find((i) => normalizeIssueRef(i.issue) === targetIssue)
+    : undefined;
+  const next = existingTarget
+    ? existingTarget.status === 'pending' ? existingTarget : null
+    : targetIssue ? syntheticForcedPlanItem(targetIssue) : selectNextItem(plan);
   if (!next) return null;
 
+  if (targetIssue && !existingTarget) {
+    plan.items.unshift(next);
+  }
   next.status = 'assigned';
   const planFile = resolve(logDir, 'plan.json');
   writeFileSync(planFile, JSON.stringify(plan, null, 2) + '\n');
