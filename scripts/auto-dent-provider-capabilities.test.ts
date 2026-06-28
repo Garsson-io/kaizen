@@ -81,6 +81,20 @@ describe('auto-dent provider capability inventory', () => {
     );
   });
 
+  it('rejects runtime capabilities that the descriptive matrix does not accept (#1580)', () => {
+    const driftedRuntime = RUNTIME_PROVIDER_CAPABILITIES.map((cap) =>
+      cap.provider === 'codex' && cap.phase === 'review' && cap.billingMode === 'subscription-cli'
+        ? { ...cap, acceptedForUnattended: true as const }
+        : cap,
+    );
+
+    expect(validateProviderCapabilityRuntimeAlignment(PROVIDER_CAPABILITIES, driftedRuntime)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('runtime codex/review/subscription-cli'),
+      ]),
+    );
+  });
+
   it('renders a stable matrix naming every phase and provider class', () => {
     const rendered = renderProviderCapabilityMatrix(buildProviderCapabilityMatrix());
     expect(rendered).toContain('| Capability | Provider | Billing | Unattended | Planning | Implementation | Review | Fix | Reflection | Validation | Notes |');

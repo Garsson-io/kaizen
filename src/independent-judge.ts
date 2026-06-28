@@ -24,7 +24,7 @@ import {
   type CharterName,
   isCharterName,
 } from './judge-charters.js';
-import { spawnClaude, type SpawnAgentProvider, type SpawnClaudeFn } from './spawn-claude.js';
+import { spawnAgent, type SpawnAgentProvider, type SpawnClaudeFn } from './spawn-claude.js';
 
 // ── Verdict schema (I29 — Zod + YAML, no hand-rolled parsing) ─────────
 
@@ -232,7 +232,7 @@ export async function independentJudge(req: JudgeRequest): Promise<JudgePanelRes
   for (const name of plan) {
     if (!isCharterName(name)) throw new Error(`independentJudge: unknown charter "${name}"`);
   }
-  const spawn = req.spawn ?? spawnClaude;
+  const spawn = req.spawn ?? spawnAgent;
   const aggregate = req.aggregate ?? 'any-blocks';
 
   const votes = await Promise.all(

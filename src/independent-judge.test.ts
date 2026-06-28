@@ -238,9 +238,11 @@ describe('DRY guard — one spawn loop in the repo', () => {
     expect(src).not.toContain("spawn('claude'");
   });
 
-  it('independent-judge imports the shared spawnClaude and defines no spawn loop', () => {
+  it('independent-judge defaults to the shared provider-aware spawn adapter', () => {
     const src = readFileSync(resolve(__dirname, 'independent-judge.ts'), 'utf8');
-    expect(src).toContain("from './spawn-claude.js'");
+    expect(src).toContain("import { spawnAgent, type SpawnAgentProvider, type SpawnClaudeFn } from './spawn-claude.js'");
+    expect(src).toContain('const spawn = req.spawn ?? spawnAgent');
+    expect(src).not.toContain('const spawn = req.spawn ?? spawnClaude');
     expect(src).not.toContain("spawn('claude'");
   });
 });

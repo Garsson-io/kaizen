@@ -217,12 +217,12 @@ function parseClaudeStreamResult(stdout: string): { text: string; costUsd: numbe
   return { text, costUsd };
 }
 
-function parseAgentResult(provider: SpawnAgentProvider['provider'], stdout: string): { text: string; costUsd: number } {
+function parseAgentResult(provider: SpawnAgentProvider['provider'], stdout: string): { text: string; costUsd: number; malformedLines: string[] } {
   if (provider === 'codex') {
     const parsed = parseCodexJsonl(stdout);
-    return { text: parsed.finalText || parsed.text, costUsd: 0 };
+    return { text: parsed.finalText || parsed.text, costUsd: 0, malformedLines: parsed.malformedLines };
   }
-  return parseClaudeStreamResult(stdout);
+  return { ...parseClaudeStreamResult(stdout), malformedLines: [] };
 }
 
 /**
@@ -252,13 +252,36 @@ export const spawnAgent: SpawnClaudeFn = (prompt, opts) => {
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
 
     const timer = setTimeout(() => { child.kill(); }, opts.timeoutMs ?? 120_000);
+    let settled = false;
 
-    child.on('close', (code) => {
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       const durationMs = Date.now() - start;
-      const { text, costUsd } = parseAgentResult(provider, stdout);
+      resolve({
+        text: '',
+        costUsd: 0,
+        durationMs,
+        exitCode: -1,
+        rawStdout: stdout,
+        rawStderr: `${stderr}${stderr ? '\n' : ''}${err.message}`,
+        args,
+      });
+    });
 
-      resolve({ text, costUsd, durationMs, exitCode: code ?? -1, rawStdout: stdout, rawStderr: stderr, args });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const durationMs = Date.now() - start;
+      const { text, costUsd, malformedLines } = parseAgentResult(provider, stdout);
+      const malformedStderr = malformedLines.length > 0
+        ? `${stderr}${stderr ? '\n' : ''}malformed codex jsonl lines: ${malformedLines.length}`
+        : stderr;
+      const exitCode = malformedLines.length > 0 ? -1 : (code ?? -1);
+
+      resolve({ text, costUsd, durationMs, exitCode, rawStdout: stdout, rawStderr: malformedStderr, args });
     });
   });
 };

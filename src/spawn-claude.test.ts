@@ -40,6 +40,20 @@ function mockClaude(stdout: string, stderr = '', exitCode = 0): void {
   });
 }
 
+function mockSpawnError(message: string): void {
+  vi.mocked(spawn).mockImplementation(() => {
+    const proc = new EventEmitter() as any;
+    proc.stdin = { write: vi.fn(), end: vi.fn() };
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.kill = vi.fn();
+    setImmediate(() => {
+      proc.emit('error', new Error(message));
+    });
+    return proc;
+  });
+}
+
 describe('buildSpawnClaudeArgs', () => {
   it('adds bounded live skill-test options without changing the stream-json contract', () => {
     expect(buildSpawnClaudeArgs({
@@ -198,5 +212,38 @@ describe('spawnAgent provider adapter', () => {
         stdio: ['pipe', 'pipe', 'pipe'],
       }),
     );
+  });
+
+  it('resolves spawn errors as failed agent results instead of hanging', async () => {
+    mockSpawnError('spawn codex ENOENT');
+
+    const result = await spawnAgent('review this', {
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      cwd: '/repo/kaizen',
+      timeoutMs: 1_000,
+    });
+
+    expect(result.exitCode).toBe(-1);
+    expect(result.text).toBe('');
+    expect(result.rawStderr).toContain('spawn codex ENOENT');
+  });
+
+  it('fails malformed Codex JSONL even when a later line contains agent text', async () => {
+    const reviewJson = JSON.stringify({
+      dimension: 'requirements',
+      summary: 'ok',
+      findings: [],
+    });
+    const raw = `not json\n${codexJsonlPayload(reviewJson)}`;
+    mockClaude(raw);
+
+    const result = await spawnAgent('review this', {
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      cwd: '/repo/kaizen',
+    });
+
+    expect(result.text).toBe(reviewJson);
+    expect(result.exitCode).toBe(-1);
+    expect(result.rawStderr).toContain('malformed codex jsonl lines: 1');
   });
 });

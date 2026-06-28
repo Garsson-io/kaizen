@@ -87,8 +87,9 @@ export const PROVIDER_CAPABILITIES: ProviderCapability[] = [
       review: 'supported',
       fix: 'partial',
       reflection: 'supported',
+      validation: 'partial',
     }),
-    notes: 'Existing batch path uses claude stream-json and max-budget-usd.',
+    notes: 'Existing batch path uses claude stream-json and max-budget-usd; validation is possible but provider-independent evidence is authoritative.',
   },
   {
     id: 'codex-structured-exec',
@@ -189,6 +190,15 @@ export function validateProviderCapabilityRuntimeAlignment(
   runtimeCapabilities: readonly RuntimeProviderCapability[],
 ): string[] {
   const errors: string[] = [];
+  const describesRuntimeCapability = (runtime: RuntimeProviderCapability): boolean =>
+    capabilities.some((cap) =>
+      cap.provider === runtime.provider &&
+      cap.billingMode === runtime.billingMode &&
+      cap.acceptedForUnattended &&
+      cap.phaseFit[runtime.phase] !== 'not-applicable' &&
+      cap.phaseFit[runtime.phase] !== 'avoid'
+    );
+
   for (const cap of capabilities) {
     if (!cap.acceptedForUnattended) continue;
     for (const phase of AUTO_DENT_PHASES) {
@@ -204,6 +214,12 @@ export function validateProviderCapabilityRuntimeAlignment(
       if (!runtime) {
         errors.push(`${cap.id}: ${cap.provider}/${phase}/${cap.billingMode} is not accepted by the runtime provider inventory`);
       }
+    }
+  }
+  for (const runtime of runtimeCapabilities) {
+    if (!runtime.acceptedForUnattended || !SUBSCRIPTION_COMPATIBLE_BILLING.includes(runtime.billingMode)) continue;
+    if (!describesRuntimeCapability(runtime)) {
+      errors.push(`runtime ${runtime.provider}/${runtime.phase}/${runtime.billingMode} is accepted but missing from the descriptive provider matrix`);
     }
   }
   return errors;
