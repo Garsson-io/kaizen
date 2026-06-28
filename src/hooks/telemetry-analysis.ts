@@ -13,6 +13,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { parseJsonLines } from '../lib/json-lines.js';
 
 export interface HookTelemetryRecord {
   hook: string;
@@ -51,27 +52,20 @@ const HIGH_FAILURE_RATE = 0.05;
  */
 export function parseHooksJsonl(content: string): HookTelemetryRecord[] {
   const records: HookTelemetryRecord[] = [];
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      if (
-        typeof parsed.hook === 'string' &&
-        typeof parsed.duration_ms === 'number' &&
-        typeof parsed.timestamp === 'string'
-      ) {
-        records.push({
-          hook: parsed.hook,
-          timestamp: parsed.timestamp,
-          duration_ms: parsed.duration_ms,
-          exit_code: typeof parsed.exit_code === 'number' ? parsed.exit_code : 0,
-          branch: typeof parsed.branch === 'string' ? parsed.branch : '',
-          case_id: typeof parsed.case_id === 'string' ? parsed.case_id : '',
-        });
-      }
-    } catch {
-      // Skip malformed lines
+  for (const parsed of parseJsonLines<Record<string, unknown>>(content)) {
+    if (
+      typeof parsed.hook === 'string' &&
+      typeof parsed.duration_ms === 'number' &&
+      typeof parsed.timestamp === 'string'
+    ) {
+      records.push({
+        hook: parsed.hook,
+        timestamp: parsed.timestamp,
+        duration_ms: parsed.duration_ms,
+        exit_code: typeof parsed.exit_code === 'number' ? parsed.exit_code : 0,
+        branch: typeof parsed.branch === 'string' ? parsed.branch : '',
+        case_id: typeof parsed.case_id === 'string' ? parsed.case_id : '',
+      });
     }
   }
   return records;

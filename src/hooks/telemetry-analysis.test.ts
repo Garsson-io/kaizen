@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -51,6 +51,37 @@ describe('parseHooksJsonl', () => {
     expect(records[1].hook).toBe('also-valid');
   });
 
+  it('parses CRLF JSONL while skipping blank, malformed, and invalid telemetry rows', () => {
+    const content = [
+      '{"hook":"valid","timestamp":"2026-03-23T08:00:00Z","duration_ms":50}',
+      '',
+      'not json',
+      '{"hook":"missing-duration","timestamp":"2026-03-23T08:00:01Z"}',
+      '{"hook":"also-valid","timestamp":"2026-03-23T08:00:02Z","duration_ms":20,"exit_code":1}',
+    ].join('\r\n');
+
+    const records = parseHooksJsonl(content);
+
+    expect(records).toEqual([
+      {
+        hook: 'valid',
+        timestamp: '2026-03-23T08:00:00Z',
+        duration_ms: 50,
+        exit_code: 0,
+        branch: '',
+        case_id: '',
+      },
+      {
+        hook: 'also-valid',
+        timestamp: '2026-03-23T08:00:02Z',
+        duration_ms: 20,
+        exit_code: 1,
+        branch: '',
+        case_id: '',
+      },
+    ]);
+  });
+
   it('handles empty content', () => {
     expect(parseHooksJsonl('')).toHaveLength(0);
     expect(parseHooksJsonl('\n\n\n')).toHaveLength(0);
@@ -60,6 +91,13 @@ describe('parseHooksJsonl', () => {
     const content = '{"hook":"test","timestamp":"2026-03-23T08:00:00Z","duration_ms":10}';
     const records = parseHooksJsonl(content);
     expect(records[0].exit_code).toBe(0);
+  });
+
+  it('delegates tolerant JSONL decoding to the shared parser', () => {
+    const source = readFileSync(new URL('./telemetry-analysis.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toMatch(/JSON\.parse\(trimmed\)/);
+    expect(source).not.toContain("content.split('\\n')");
   });
 });
 
