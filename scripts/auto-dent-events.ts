@@ -19,6 +19,7 @@ import { resolve } from 'path';
 import { appendJsonLine } from '../src/lib/json-lines.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 import type { PhaseProviderRecord } from './auto-dent-provider.js';
+import type { WorkflowGateId, WorkflowGateState } from './workflow-gate-ledger.js';
 
 // Event type definitions
 
@@ -73,6 +74,14 @@ export interface RunCompleteEvent extends BaseEvent {
   process_issue_count?: number;
   /** Compact human-readable process evidence summary (#1149) */
   process_summary?: string;
+  /** Canonical workflow gate states (#1533). */
+  workflow_gate_states?: Partial<Record<WorkflowGateId, WorkflowGateState>>;
+  /** Canonical workflow gates that need repair before success/merge readiness (#1533). */
+  workflow_repair_gates?: WorkflowGateId[];
+  /** Evidence repair loop state for PR-producing incomplete runs (#1533). */
+  workflow_repair_state?: 'not_required' | 'repair_scheduled' | 'merge_ready' | 'blocked_with_reason' | 'repair_budget_exhausted';
+  /** Targeted repair instruction for the next attempt against the same PR (#1533). */
+  workflow_repair_prompt?: string;
   outcome: 'success' | 'empty_success' | 'failure' | 'stop';
   /** Cognitive mode used, for context in analysis */
   mode?: string;

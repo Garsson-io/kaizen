@@ -19,6 +19,7 @@ import { parseJsonLines } from '../src/lib/json-lines.js';
 import type { EventEnvelope, RunCompleteEvent, RunIssuePickedEvent, RunPrCreatedEvent } from './auto-dent-events.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 import { PHASES, safeParsePhaseProviderRecord } from './auto-dent-provider.js';
+import type { WorkflowGateId } from './workflow-gate-ledger.js';
 
 export interface BatchSummary {
   batch_id: string;
@@ -61,6 +62,10 @@ export interface BatchSummary {
    * Empty for legacy events that do not record process verdicts.
    */
   process_verdict_distribution: Partial<Record<ProcessVerdict, number>>;
+  /** Canonical workflow gates that needed repair across completed runs (#1533). */
+  workflow_repair_gate_distribution: Partial<Record<WorkflowGateId, number>>;
+  /** Evidence repair loop states across completed runs (#1533). */
+  workflow_repair_state_distribution: Record<string, number>;
 }
 
 export interface ModeOutcome {
@@ -175,10 +180,18 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
   }
 
   const processVerdictDistribution: Partial<Record<ProcessVerdict, number>> = {};
+  const workflowRepairGateDistribution: Partial<Record<WorkflowGateId, number>> = {};
+  const workflowRepairStateDistribution: Record<string, number> = {};
   for (const e of completeEvents) {
     const verdict = e.event.process_verdict;
-    if (!verdict) continue;
-    processVerdictDistribution[verdict] = (processVerdictDistribution[verdict] ?? 0) + 1;
+    if (verdict) processVerdictDistribution[verdict] = (processVerdictDistribution[verdict] ?? 0) + 1;
+    for (const gate of e.event.workflow_repair_gates ?? []) {
+      workflowRepairGateDistribution[gate] = (workflowRepairGateDistribution[gate] ?? 0) + 1;
+    }
+    const repairState = e.event.workflow_repair_state;
+    if (repairState) {
+      workflowRepairStateDistribution[repairState] = (workflowRepairStateDistribution[repairState] ?? 0) + 1;
+    }
   }
 
   const runCount = completeEvents.length || 1;
@@ -211,6 +224,8 @@ export function summarizeEvents(envelopes: EventEnvelope[]): BatchSummary {
     mode_outcomes: modeOutcomes,
     phase_provider_distribution: phaseProviderDistribution,
     process_verdict_distribution: processVerdictDistribution,
+    workflow_repair_gate_distribution: workflowRepairGateDistribution,
+    workflow_repair_state_distribution: workflowRepairStateDistribution,
   };
 }
 
@@ -328,6 +343,19 @@ export function formatPlainLanguage(summary: BatchSummary): string {
     lines.push('### Process Verdicts');
     for (const [verdict, count] of processEntries.sort((a, b) => b[1] - a[1])) {
       lines.push(`- ${verdict}: ${count} run${count > 1 ? 's' : ''}`);
+    }
+  }
+
+  const repairStates = Object.entries(summary.workflow_repair_state_distribution ?? {});
+  const repairGates = Object.entries(summary.workflow_repair_gate_distribution ?? {});
+  if (repairStates.length > 0 || repairGates.length > 0) {
+    lines.push('');
+    lines.push('### Workflow Gate Ledger');
+    for (const [state, count] of repairStates.sort((a, b) => b[1] - a[1])) {
+      lines.push(`- Repair state ${state}: ${count} run${count > 1 ? 's' : ''}`);
+    }
+    if (repairGates.length > 0) {
+      lines.push(`- Gates needing repair: ${repairGates.map(([gate, count]) => `${gate} (${count})`).join(', ')}`);
     }
   }
 
