@@ -3,8 +3,11 @@
   "version": "0.1.0",
   "description": "Kaizen — continuous improvement plugin for Claude Code",
   "type": "module",
+  "bin": {
+    "kaizen-pre-push": "src/hooks/kaizen-host-entry.sh"
+  },
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
+    "postinstall": "git config core.hooksPath .githooks 2>/dev/null || true",
     "build": "tsc",
     "check:fast": "npm run typecheck && npm run test:fast",
     "test": "timeout --kill-after=10 120 vitest run",
@@ -22,11 +25,11 @@
     "@dallay/agentsync": "^1.42.3",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.1.9",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.0"
   },
   "dependencies": {
+    "tsx": "^4.19.0",
     "unique-names-generator": "^4.7.1",
     "yaml": "^2.8.3",
     "zod": "^4.3.6"

@@ -511,10 +511,11 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       // Epic #1059: install kaizen's pre-push hook into host project.
       // Option C: detect host framework; inject into theirs; raw fallback if none.
       const pluginRoot = values["plugin-root"] ?? process.env.CLAUDE_PLUGIN_ROOT;
-      // The host's `.kaizen-hooks/pre-push` is a THIN WRAPPER (#1086) that execs
-      // the plugin-resident canonical entry — it does not copy the entry's logic.
-      // Verify the entry exists in the plugin so a broken/missing install fails
-      // fast here rather than silently fail-opening at push time.
+      // Pre-commit hosts invoke the plugin entry through kaizen's remote provider
+      // manifest; other frameworks use a THIN `.kaizen-hooks/pre-push` wrapper
+      // (#1086) that execs the plugin-resident canonical entry. Verify the entry
+      // exists so a broken/missing install fails fast here rather than silently
+      // fail-opening at push time.
       const entryPath = pluginRoot
         ? join(pluginRoot, "src/hooks/kaizen-host-entry.sh")
         : null;
@@ -534,7 +535,7 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       const entryContent = buildThinWrapper(pluginRoot ?? "");
       const runPostInstall = values["run-post-install"] === "true";
 
-      const result: InstallResult = installGitHooks({ cwd, entryScriptContent: entryContent, runPostInstall });
+      const result: InstallResult = installGitHooks({ cwd, entryScriptContent: entryContent, pluginRoot, runPostInstall });
       console.log(JSON.stringify({ step: "install-git-hooks", status: "ok", ...result }));
       break;
     }

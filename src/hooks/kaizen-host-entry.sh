@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Kaizen host-project pre-push entry (installed by /kaizen-setup, epic #1059).
 #
-# This script is written to the host project at .kaizen-hooks/pre-push
-# and invoked by whichever hook framework the host uses (pre-commit, husky,
-# lefthook, raw .git/hooks/pre-push, or kaizen's standalone .githooks/).
+# This script lives in the kaizen repo/plugin. pre-commit hosts invoke it as a
+# remote-repo hook; husky/lefthook/raw/standalone hosts invoke it through the
+# thin `.kaizen-hooks/pre-push` wrapper written by /kaizen-setup.
 #
-# At install time, ${CLAUDE_PLUGIN_ROOT} is substituted for the captured
-# plugin path. If that path becomes invalid (kaizen updated or removed),
-# the fallback searches the Claude plugin cache.
+# Wrapper installs may pass CLAUDE_PLUGIN_ROOT or substitute a captured plugin
+# path. Remote pre-commit installs run this file from pre-commit's own clone, so
+# the entry also resolves the kaizen root relative to itself before falling back
+# to the Claude plugin cache.
 
 set -eu
 
@@ -21,10 +22,29 @@ if [ -z "${CLAUDECODE:-}" ] && [ -z "${CLAUDE_PROJECT_DIR:-}" ] \
 fi
 
 # ── Resolve kaizen plugin root ─────────────────────────────────────────
-# Primary: env var at invocation time (Claude Code sets this).
+# Primary: env var at invocation time (Claude Code or the thin wrapper sets this).
 KAIZEN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 
-# Secondary: baked-in path from install time.
+# Secondary: this script's repo checkout (remote pre-commit provider path).
+# npm/pre-commit may invoke this through a bin symlink, so resolve symlinks
+# before walking back to the package root.
+SOURCE="${BASH_SOURCE[0]:-$0}"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$SOURCE")" && pwd)
+  TARGET=$(readlink "$SOURCE")
+  case "$TARGET" in
+    /*) SOURCE="$TARGET" ;;
+    *) SOURCE="$SOURCE_DIR/$TARGET" ;;
+  esac
+done
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SOURCE")" && pwd)
+SELF_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+if [ ! -d "$KAIZEN_ROOT" ] && [ -f "$SELF_ROOT/.claude-plugin/plugin.json" ]; then
+  KAIZEN_ROOT="$SELF_ROOT"
+fi
+
+# Tertiary: baked-in path from wrapper install time.
 # kaizen-setup.ts substitutes __KAIZEN_PLUGIN_ROOT__ with the absolute path.
 if [ ! -d "$KAIZEN_ROOT" ]; then
   KAIZEN_ROOT="__KAIZEN_PLUGIN_ROOT__"

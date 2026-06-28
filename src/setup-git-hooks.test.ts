@@ -24,6 +24,8 @@ import {
   KAIZEN_HOOK_ID,
   KAIZEN_ENTRY_PATH,
   writeEntryScript,
+  KAIZEN_PRE_COMMIT_REPO,
+  resolveKaizenPreCommitRev,
 } from './setup-git-hooks.js';
 import { AGENT_ENV_VARS } from './hooks/pre-push.js';
 
@@ -52,6 +54,11 @@ const read = (relPath: string): string => fs.readFileSync(path.join(tmpDir, relP
 const exists = (relPath: string): boolean => fs.existsSync(path.join(tmpDir, relPath));
 
 const stubEntryContent = '#!/usr/bin/env bash\necho kaizen-entry\n';
+
+const commitFixtureRepo = () => {
+  execSync('git add .', { cwd: tmpDir });
+  execSync('git -c user.name=Test -c user.email=test@example.com commit -m init --quiet', { cwd: tmpDir });
+};
 
 // ── detectHostFramework ───────────────────────────────────────────────
 
@@ -180,26 +187,24 @@ describe('injectIntoPreCommit — PRIMARY host framework', () => {
     write('.pre-commit-config.yaml', 'repos:\n  - repo: https://github.com/foo/bar\n    rev: v1\n    hooks:\n      - id: foo\n');
   });
 
-  it('adds local repo + kaizen hook entry', () => {
+  it('adds remote kaizen repo + hook entry', () => {
     const result = injectIntoPreCommit(tmpDir);
     expect(result.action).toBe('installed');
     expect(result.framework).toBe('pre-commit');
 
     const parsed = YAML.parse(read('.pre-commit-config.yaml'));
-    const localRepo = parsed.repos.find((r: { repo: string }) => r.repo === 'local');
-    expect(localRepo).toBeDefined();
-    expect(localRepo.hooks).toEqual(
+    const kaizenRepo = parsed.repos.find((r: { repo: string }) => r.repo === KAIZEN_PRE_COMMIT_REPO);
+    expect(kaizenRepo).toBeDefined();
+    expect(kaizenRepo.rev).toMatch(/^v?\d+\.\d+\.\d+|^[0-9a-f]{7,40}$/);
+    expect(kaizenRepo.hooks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: KAIZEN_HOOK_ID,
-          language: 'script',
           stages: ['pre-push'],
-          entry: KAIZEN_ENTRY_PATH,
-          always_run: true,
-          pass_filenames: false,
         }),
       ]),
     );
+    expect(JSON.stringify(parsed)).not.toContain(KAIZEN_ENTRY_PATH);
   });
 
   it('preserves existing repos entries', () => {
@@ -225,19 +230,19 @@ describe('injectIntoPreCommit — PRIMARY host framework', () => {
     injectIntoPreCommit(tmpDir);
     injectIntoPreCommit(tmpDir);
     const parsed = YAML.parse(read('.pre-commit-config.yaml'));
-    const localRepo = parsed.repos.find((r: { repo: string }) => r.repo === 'local');
-    const kaizenHooks = localRepo.hooks.filter((h: { id: string }) => h.id === KAIZEN_HOOK_ID);
-    expect(kaizenHooks).toHaveLength(1);
+    const kaizenRepos = parsed.repos.filter((r: { repo: string }) => r.repo === KAIZEN_PRE_COMMIT_REPO);
+    expect(kaizenRepos).toHaveLength(1);
+    expect(kaizenRepos[0].hooks.filter((h: { id: string }) => h.id === KAIZEN_HOOK_ID)).toHaveLength(1);
   });
 
-  it('creates local repo when absent', () => {
+  it('creates remote repo when absent', () => {
     write('.pre-commit-config.yaml', 'repos: []\n');
     injectIntoPreCommit(tmpDir);
     const parsed = YAML.parse(read('.pre-commit-config.yaml'));
-    expect(parsed.repos.find((r: { repo: string }) => r.repo === 'local')).toBeDefined();
+    expect(parsed.repos.find((r: { repo: string }) => r.repo === KAIZEN_PRE_COMMIT_REPO)).toBeDefined();
   });
 
-  it('handles reuse of existing local repo', () => {
+  it('preserves existing local repos without adding kaizen to them', () => {
     write('.pre-commit-config.yaml', `repos:
   - repo: local
     hooks:
@@ -250,9 +255,56 @@ describe('injectIntoPreCommit — PRIMARY host framework', () => {
     const parsed = YAML.parse(read('.pre-commit-config.yaml'));
     const localRepos = parsed.repos.filter((r: { repo: string }) => r.repo === 'local');
     expect(localRepos).toHaveLength(1);
-    expect(localRepos[0].hooks.map((h: { id: string }) => h.id)).toEqual(
-      expect.arrayContaining(['existing-local-hook', KAIZEN_HOOK_ID]),
-    );
+    expect(localRepos[0].hooks.map((h: { id: string }) => h.id)).toEqual(['existing-local-hook']);
+    expect(parsed.repos.find((r: { repo: string }) => r.repo === KAIZEN_PRE_COMMIT_REPO)).toBeDefined();
+  });
+
+  it('migrates legacy local kaizen hook and removes kaizen-owned hook directory', () => {
+    write('.pre-commit-config.yaml', `repos:
+  - repo: local
+    hooks:
+      - id: existing-local-hook
+        name: Existing
+        entry: echo hello
+        language: system
+      - id: ${KAIZEN_HOOK_ID}
+        name: Kaizen pre-push gate
+        entry: ${KAIZEN_ENTRY_PATH}
+        language: script
+        stages: [pre-push]
+`);
+    writeEntryScript(tmpDir, stubEntryContent);
+
+    const result = injectIntoPreCommit(tmpDir);
+    expect(result.action).toBe('updated');
+    expect(exists('.kaizen-hooks')).toBe(false);
+
+    const parsed = YAML.parse(read('.pre-commit-config.yaml'));
+    const localRepo = parsed.repos.find((r: { repo: string }) => r.repo === 'local');
+    expect(localRepo.hooks.map((h: { id: string }) => h.id)).toEqual(['existing-local-hook']);
+    const kaizenRepo = parsed.repos.find((r: { repo: string }) => r.repo === KAIZEN_PRE_COMMIT_REPO);
+    expect(kaizenRepo.hooks.map((h: { id: string }) => h.id)).toEqual([KAIZEN_HOOK_ID]);
+  });
+});
+
+describe('resolveKaizenPreCommitRev', () => {
+  it('uses plugin version only when the matching local git tag exists', () => {
+    write('.claude-plugin/plugin.json', JSON.stringify({ version: '1.2.3' }));
+    write('marker.txt', 'tagged\n');
+    commitFixtureRepo();
+    execSync('git tag v1.2.3', { cwd: tmpDir });
+
+    expect(resolveKaizenPreCommitRev(tmpDir)).toBe('v1.2.3');
+  });
+
+  it('falls back to the current commit when plugin version tag is absent', () => {
+    write('.claude-plugin/plugin.json', JSON.stringify({ version: '1.2.3' }));
+    write('marker.txt', 'untagged\n');
+    commitFixtureRepo();
+
+    const expected = execSync('git rev-parse --short=12 HEAD', { cwd: tmpDir, encoding: 'utf-8' }).trim();
+    expect(resolveKaizenPreCommitRev(tmpDir)).toBe(expected);
+    expect(resolveKaizenPreCommitRev(tmpDir)).not.toBe('v1.2.3');
   });
 });
 
@@ -382,12 +434,14 @@ describe('installStandalone — no framework detected', () => {
 // ── installGitHooks (end-to-end orchestration) ────────────────────────
 
 describe('installGitHooks — end-to-end', () => {
-  it('pre-commit path: writes entry script + injects + returns pre-commit install command', () => {
+  it('pre-commit path: injects remote repo without writing host entry script', () => {
     write('.pre-commit-config.yaml', 'repos: []\n');
     const result = installGitHooks({ cwd: tmpDir, entryScriptContent: stubEntryContent });
     expect(result.framework).toBe('pre-commit');
-    expect(exists('.kaizen-hooks/pre-push')).toBe(true);
+    expect(exists('.kaizen-hooks/pre-push')).toBe(false);
     expect(result.postInstallCommands).toContain('pre-commit install --hook-type pre-push');
+    const parsed = YAML.parse(read('.pre-commit-config.yaml'));
+    expect(parsed.repos.find((r: { repo: string }) => r.repo === KAIZEN_PRE_COMMIT_REPO)).toBeDefined();
   });
 
   it('husky path', () => {
@@ -408,16 +462,15 @@ describe('installGitHooks — end-to-end', () => {
     write('.pre-commit-config.yaml', 'repos: []\n');
     installGitHooks({ cwd: tmpDir, entryScriptContent: stubEntryContent });
     const firstConfig = read('.pre-commit-config.yaml');
-    const firstEntry = read('.kaizen-hooks/pre-push');
 
     const result2 = installGitHooks({ cwd: tmpDir, entryScriptContent: stubEntryContent });
     expect(result2.action).toBe('already_installed');
     expect(read('.pre-commit-config.yaml')).toBe(firstConfig);
-    expect(read('.kaizen-hooks/pre-push')).toBe(firstEntry);
+    expect(exists('.kaizen-hooks/pre-push')).toBe(false);
   });
 
-  it('install with the thin wrapper writes a wrapper, not a copy of entry logic (#1086)', () => {
-    write('.pre-commit-config.yaml', 'repos: []\n');
+  it('husky install with the thin wrapper writes a wrapper, not a copy of entry logic (#1086)', () => {
+    fs.mkdirSync(path.join(tmpDir, '.husky'));
     const wrapper = buildThinWrapper('/plugins/cache/kaizen');
     installGitHooks({ cwd: tmpDir, entryScriptContent: wrapper });
     const installed = read('.kaizen-hooks/pre-push');
@@ -426,7 +479,7 @@ describe('installGitHooks — end-to-end', () => {
   });
 
   it('migration: re-install overwrites a stale 66-line copy with the thin wrapper (#1086)', () => {
-    write('.pre-commit-config.yaml', 'repos: []\n');
+    fs.mkdirSync(path.join(tmpDir, '.husky'));
     // Simulate a host that previously installed the old full COPY of the entry.
     const stale = '#!/usr/bin/env bash\n# stale copy\n' +
       'HOOK_TS="$KAIZEN_ROOT/src/hooks/pre-push.ts"\n' +
@@ -441,5 +494,30 @@ describe('installGitHooks — end-to-end', () => {
     const migrated = read('.kaizen-hooks/pre-push');
     expect(migrated).toContain('exec bash "$ENTRY" "$@"');
     expect(migrated).not.toContain('pre-push.ts'); // stale dispatch logic gone
+  });
+});
+
+describe('pre-commit provider manifest', () => {
+  it('declares an executable kaizen-pre-push hook', () => {
+    const manifestPath = path.resolve(__dirname, '..', '.pre-commit-hooks.yaml');
+    const manifest = YAML.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    const hook = manifest.find((h: { id: string }) => h.id === KAIZEN_HOOK_ID);
+    expect(hook).toMatchObject({
+      id: KAIZEN_HOOK_ID,
+      name: 'Kaizen pre-push gate',
+      entry: 'kaizen-pre-push',
+      language: 'node',
+      always_run: true,
+      pass_filenames: false,
+    });
+    expect(hook.stages).toContain('pre-push');
+    const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf-8'));
+    expect(packageJson.bin[hook.entry]).toBe('src/hooks/kaizen-host-entry.sh');
+    const entryPath = path.resolve(__dirname, '..', packageJson.bin[hook.entry]);
+    const entry = fs.readFileSync(entryPath, 'utf-8');
+    expect(fs.statSync(entryPath).mode & 0o100).toBe(0o100);
+    expect(entry).toContain('while [ -L "$SOURCE" ]; do');
+    expect(entry).toContain('SELF_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)');
+    expect(entry.indexOf('SELF_ROOT=')).toBeLessThan(entry.indexOf('__KAIZEN_PLUGIN_ROOT__'));
   });
 });
