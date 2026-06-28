@@ -6,6 +6,7 @@ import {
   triageOpenPrs,
   applyTriage,
   parseCliArgs,
+  runStalePrTriageMaintenance,
   type StalePrInput,
   type TriageRow,
 } from './stale-pr-triage.js';
@@ -337,5 +338,124 @@ describe('parseCliArgs', () => {
     expect(parseCliArgs(['--repo', 'o/r', '--stale-days', '-3']).staleDays).toBe(21);
     expect(parseCliArgs(['--repo', 'o/r', '--stale-days', 'nope']).staleDays).toBe(21);
     expect(parseCliArgs(['--repo', 'o/r', '--limit', '0']).limit).toBe(100);
+  });
+});
+
+describe('runStalePrTriageMaintenance — batch-finalize wiring (#1365)', () => {
+  // 60 days ago (well past the 21d threshold) given nowMs below.
+  const NOW = 1_700_000_000_000;
+  const STALE_ISO = new Date(NOW - 60 * 86_400_000).toISOString();
+
+  /**
+   * Build a stub GhRunner that answers the three gh shapes the maintenance pass
+   * issues — `pr list` (returns `prs`), `issue view` (per-issue state from
+   * `issueStates`), `issue comment`, and `pr close` — recording every call so the
+   * test can assert argv shape. `fail` lets a test force a specific verb to throw.
+   */
+  function makeGh(opts: {
+    prs: object[];
+    issueStates?: Record<number, 'OPEN' | 'CLOSED'>;
+    fail?: (args: string[]) => boolean;
+  }) {
+    const calls: string[][] = [];
+    const gh = (args: string[]): string => {
+      calls.push(args);
+      if (opts.fail?.(args)) throw new Error('gh boom');
+      if (args[0] === 'pr' && args[1] === 'list') return JSON.stringify(opts.prs);
+      if (args[0] === 'issue' && args[1] === 'view') {
+        const n = parseInt(args[2], 10);
+        return JSON.stringify({ state: opts.issueStates?.[n] ?? 'OPEN' });
+      }
+      return '';
+    };
+    return { gh, calls };
+  }
+
+  const supersededPr = {
+    number: 1,
+    title: 'superseded',
+    updatedAt: STALE_ISO,
+    isDraft: false,
+    mergeable: 'MERGEABLE',
+    body: 'Closes #10',
+    url: 'u1',
+  };
+  const reviewPr = {
+    number: 2,
+    title: 'still open',
+    updatedAt: STALE_ISO,
+    isDraft: true,
+    mergeable: 'UNKNOWN',
+    body: 'no closing keyword',
+    url: 'u2',
+  };
+
+  const baseDeps = { nowMs: NOW, repo: 'o/r', staleDays: 21, limit: 100 };
+
+  it('runs triage, returns rows and a formatted report', () => {
+    const { gh, calls } = makeGh({ prs: [supersededPr, reviewPr], issueStates: { 10: 'CLOSED' } });
+    const res = runStalePrTriageMaintenance({ ...baseDeps, gh, apply: false });
+    expect(calls.some((c) => c[0] === 'pr' && c[1] === 'list')).toBe(true);
+    expect(res.rows).toHaveLength(2);
+    expect(res.report).toContain('close-superseded');
+  });
+
+  it('posts the grouped report as a comment on the progress issue', () => {
+    const { gh, calls } = makeGh({ prs: [supersededPr], issueStates: { 10: 'CLOSED' } });
+    const res = runStalePrTriageMaintenance({ ...baseDeps, gh, apply: false, progressIssue: '999' });
+    expect(res.commentPosted).toBe(true);
+    const comment = calls.find((c) => c[0] === 'issue' && c[1] === 'comment');
+    expect(comment).toBeDefined();
+    expect(comment).toEqual(
+      expect.arrayContaining(['issue', 'comment', '999', '--repo', 'o/r', '--body']),
+    );
+    expect(comment!.join('\n')).toContain('Stale-PR triage');
+  });
+
+  it('does NOT attempt a comment when no progressIssue is given', () => {
+    const { gh, calls } = makeGh({ prs: [supersededPr], issueStates: { 10: 'CLOSED' } });
+    const res = runStalePrTriageMaintenance({ ...baseDeps, gh, apply: false });
+    expect(res.commentPosted).toBe(false);
+    expect(calls.some((c) => c[0] === 'issue' && c[1] === 'comment')).toBe(false);
+  });
+
+  it('apply=true closes ONLY the close-superseded set; report still posts', () => {
+    const { gh, calls } = makeGh({
+      prs: [supersededPr, reviewPr],
+      issueStates: { 10: 'CLOSED' },
+    });
+    const res = runStalePrTriageMaintenance({ ...baseDeps, gh, apply: true, progressIssue: '999' });
+    expect(res.applied?.closed).toEqual([1]);
+    const closes = calls.filter((c) => c[0] === 'pr' && c[1] === 'close');
+    expect(closes).toHaveLength(1);
+    expect(closes[0][2]).toBe('1');
+    expect(res.commentPosted).toBe(true);
+  });
+
+  it('apply=false closes nothing', () => {
+    const { gh, calls } = makeGh({ prs: [supersededPr], issueStates: { 10: 'CLOSED' } });
+    const res = runStalePrTriageMaintenance({ ...baseDeps, gh, apply: false });
+    expect(res.applied).toBeNull();
+    expect(calls.some((c) => c[0] === 'pr' && c[1] === 'close')).toBe(false);
+  });
+
+  it('never throws when the comment gh call fails — apply still runs', () => {
+    const { gh } = makeGh({
+      prs: [supersededPr],
+      issueStates: { 10: 'CLOSED' },
+      fail: (args) => args[0] === 'issue' && args[1] === 'comment',
+    });
+    const res = runStalePrTriageMaintenance({ ...baseDeps, gh, apply: true, progressIssue: '999' });
+    expect(res.commentPosted).toBe(false);
+    expect(res.applied?.closed).toEqual([1]); // apply still proceeds after the failed comment
+  });
+
+  it('never throws when the triage scan itself fails — returns an empty result', () => {
+    const { gh } = makeGh({
+      prs: [],
+      fail: (args) => args[0] === 'pr' && args[1] === 'list',
+    });
+    const res = runStalePrTriageMaintenance({ ...baseDeps, gh, apply: true, progressIssue: '999' });
+    expect(res).toEqual({ rows: [], report: '', applied: null, commentPosted: false });
   });
 });

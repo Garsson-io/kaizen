@@ -311,6 +311,87 @@ export function applyTriage(rows: TriageRow[], deps: ApplyDeps): ApplyResult {
   return result;
 }
 
+export interface MaintenanceDeps {
+  gh: GhRunner;
+  nowMs: number;
+  repo: string;
+  staleDays: number;
+  limit: number;
+  /**
+   * When true, close the `close-superseded` set via {@link applyTriage} (the only
+   * safely-automatable action). When false, the pass is report-only.
+   */
+  apply: boolean;
+  /**
+   * Progress-issue number to post the grouped report to as a batch artifact. When
+   * omitted, no comment is attempted (triage + apply still run).
+   */
+  progressIssue?: string;
+  log?: (msg: string) => void;
+  err?: (msg: string) => void;
+}
+
+export interface MaintenanceResult {
+  rows: TriageRow[];
+  report: string;
+  applied: ApplyResult | null;
+  commentPosted: boolean;
+}
+
+/**
+ * Once-per-batch maintenance pass for the *pre-existing-PR* graveyard (#1365):
+ * run {@link triageOpenPrs} read-only, post the grouped report as a batch-artifact
+ * comment on the progress issue, and — when `apply` is set — close the
+ * `close-superseded` set via {@link applyTriage}. The current-run-strand sibling
+ * is the rescue finalizer (#1255); this covers the PRs that predate the batch.
+ *
+ * Fully dependency-injected and NEVER throws: every gh interaction is guarded so a
+ * failure is logged but can never block the batch-finalize step that calls it.
+ */
+export function runStalePrTriageMaintenance(deps: MaintenanceDeps): MaintenanceResult {
+  const log = deps.log ?? (() => {});
+  const err = deps.err ?? (() => {});
+
+  let rows: TriageRow[] = [];
+  try {
+    rows = triageOpenPrs({
+      gh: deps.gh,
+      nowMs: deps.nowMs,
+      repo: deps.repo,
+      staleDays: deps.staleDays,
+      limit: deps.limit,
+    });
+  } catch (e) {
+    err(`stale-pr triage scan failed: ${(e as Error).message}`);
+    return { rows: [], report: '', applied: null, commentPosted: false };
+  }
+
+  const report = formatReport(rows);
+
+  let commentPosted = false;
+  if (deps.progressIssue) {
+    const header =
+      `### Stale-PR triage (#1159/#1365)\n\n` +
+      `Pre-existing open-PR graveyard maintenance — ${rows.length} open PRs, ` +
+      `threshold ${deps.staleDays}d.`;
+    const body = `${header}\n${report || '\n_No stale PRs to triage._'}`;
+    try {
+      deps.gh(['issue', 'comment', deps.progressIssue, '--repo', deps.repo, '--body', body]);
+      commentPosted = true;
+      log(`posted stale-PR triage report to #${deps.progressIssue}`);
+    } catch (e) {
+      err(`failed to post stale-pr triage report: ${(e as Error).message}`);
+    }
+  }
+
+  let applied: ApplyResult | null = null;
+  if (deps.apply) {
+    applied = applyTriage(rows, { gh: deps.gh, repo: deps.repo, log, err });
+  }
+
+  return { rows, report, applied, commentPosted };
+}
+
 function main(argv: string[]): void {
   const opts = parseCliArgs(argv);
   const gh: GhRunner = (args) => defaultGh(args);
