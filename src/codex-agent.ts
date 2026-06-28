@@ -50,7 +50,12 @@ function collectText(value: unknown, out: string[]): void {
 export function isCodexTerminalEvent(event: unknown): boolean {
   if (!event || typeof event !== 'object') return false;
   const type = String((event as Record<string, unknown>).type ?? '').toLowerCase();
-  return type.includes('final') || type === 'result';
+  return (
+    type.includes('final') ||
+    type === 'result' ||
+    type === 'turn.completed' ||
+    type === 'turn.failed'
+  );
 }
 
 export function hasCodexTerminalEvent(parsed: ParsedCodexJsonl): boolean {

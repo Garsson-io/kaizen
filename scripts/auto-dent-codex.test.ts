@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   buildCodexExecArgs,
+  hasCodexTerminalEvent,
+  isCodexTerminalEvent,
   parseCodexJsonl,
   extractCodexPhaseMarkers,
   normalizeCodexEventToStreamMessages,
@@ -104,6 +106,13 @@ describe('parseCodexJsonl (#1144)', () => {
     expect(parsed.text).toContain('https://github.com/Garsson-io/kaizen/pull/1194');
     expect(parsed.finalText).toContain('Completed all requested steps.');
     expect(parsed.finalText).toContain('pull/1194');
+    expect(hasCodexTerminalEvent(parsed)).toBe(true);
+  });
+
+  it('recognizes real Codex turn lifecycle rows as terminal events', () => {
+    expect(isCodexTerminalEvent({ type: 'turn.completed' })).toBe(true);
+    expect(isCodexTerminalEvent({ type: 'turn.failed', error: { message: 'usage limit' } })).toBe(true);
+    expect(isCodexTerminalEvent({ type: 'item.completed', item: { type: 'agent_message', text: 'working' } })).toBe(false);
   });
 
   it('recovers AUTO_DENT_PHASE markers from parsed Codex text', () => {
