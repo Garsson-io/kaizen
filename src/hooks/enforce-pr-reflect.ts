@@ -69,7 +69,7 @@ async function main(): Promise<void> {
   if (!input) { traceNullInput("enforce-pr-reflect"); process.exit(0); }
 
   const command = input.tool_input?.command ?? '';
-  const branch = getCurrentBranch();
+  const branch = getCurrentBranch(command);
 
   const result = processPreToolUse(command, branch);
 

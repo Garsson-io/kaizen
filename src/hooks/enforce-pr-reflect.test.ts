@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeStateFile } from './state-utils.js';
 import { processPreToolUse } from './enforce-pr-reflect.js';
 
 const TEST_STATE_DIR = '/tmp/.test-enforce-pr-reflect';
 const TEST_BRANCH = 'worktree-reflect-test';
+const REFLECT_SOURCE = readFileSync(new URL('./enforce-pr-reflect.ts', import.meta.url), 'utf-8');
 
 function createReflectionGate(prUrl: string) {
   writeStateFile(TEST_STATE_DIR, `kaizen-${Date.now()}`, {
@@ -21,6 +22,13 @@ beforeEach(() => {
 
 afterEach(() => {
   if (existsSync(TEST_STATE_DIR)) rmSync(TEST_STATE_DIR, { recursive: true });
+});
+
+describe('branch helper source invariant', () => {
+  it('passes the Bash command into command-target branch resolution', () => {
+    expect(REFLECT_SOURCE).toContain('const branch = getCurrentBranch(command);');
+    expect(REFLECT_SOURCE).not.toContain('const branch = getCurrentBranch();');
+  });
 });
 
 describe('enforce-pr-reflect PreToolUse', () => {
