@@ -49,11 +49,13 @@ function trackingGitRaw(mainPluginJson: string) {
 const mockGit = (mainVersion: string) => trackingGit(mainVersion).exec;
 
 describe('JSON helper source invariant', () => {
-  it('uses shared JSON helpers for plugin manifest parsing', () => {
+  it('uses shared JSON helpers for plugin manifest parsing and writing', () => {
     expect(BUMP_PLUGIN_VERSION_SOURCE).toContain('parseJsonObject');
     expect(BUMP_PLUGIN_VERSION_SOURCE).toContain('readJsonObjectFile');
+    expect(BUMP_PLUGIN_VERSION_SOURCE).toContain('writeJsonObjectFile');
     expect(BUMP_PLUGIN_VERSION_SOURCE).not.toContain('JSON.parse(raw)');
     expect(BUMP_PLUGIN_VERSION_SOURCE).not.toContain('JSON.parse(readFileSync(pluginJson');
+    expect(BUMP_PLUGIN_VERSION_SOURCE).not.toContain('JSON.stringify(content, null, 2)');
   });
 });
 
@@ -80,8 +82,10 @@ describe('bumpPluginVersion', () => {
       projectRoot: TEST_DIR,
     });
     expect(result).toContain('1.0.5 -> 1.0.6');
-    const updated = JSON.parse(readFileSync(PLUGIN_JSON, 'utf-8'));
+    const content = readFileSync(PLUGIN_JSON, 'utf-8');
+    const updated = JSON.parse(content);
     expect(updated.version).toBe('1.0.6');
+    expect(content).toMatch(/\n$/);
   });
 
   it('skips when already bumped (different from main)', () => {

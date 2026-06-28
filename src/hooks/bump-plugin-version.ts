@@ -12,12 +12,12 @@
  * Part of kAIzen Agent Control Flow — kaizen #775
  */
 
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { isGhPrCommand, stripHeredocBody } from './parse-command.js';
 import { createDefaultGitExec, resolveTargetWorktree, type GitExec } from './lib/git-state.js';
-import { readJsonObjectFile } from '../lib/json-file.js';
+import { readJsonObjectFile, writeJsonObjectFile } from '../lib/json-file.js';
 import { parseJsonObject } from '../lib/json-value.js';
 
 export function bumpPluginVersion(
@@ -80,7 +80,7 @@ export function bumpPluginVersion(
   const parts = currentVersion.split('.');
   const newVersion = `${parts[0]}.${parts[1]}.${Number(parts[2]) + 1}`;
   content.version = newVersion;
-  writeFileSync(pluginJson, JSON.stringify(content, null, 2) + '\n');
+  writeJsonObjectFile(pluginJson, content);
 
   // Stage, commit, and push (#919: push so gh pr create doesn't fail).
   // argv form — the filename is a discrete array element, never interpolated

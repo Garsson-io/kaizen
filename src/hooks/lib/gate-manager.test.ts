@@ -55,9 +55,11 @@ describe('state file read helper source invariant', () => {
 });
 
 describe('deferred items JSON helper source invariant', () => {
-  it('uses the shared JSON file helper for deferred items reads', () => {
+  it('uses the shared JSON file helper for deferred items reads and writes', () => {
     expect(GATE_MANAGER_SOURCE).toContain('readJsonValueFile');
+    expect(GATE_MANAGER_SOURCE).toContain('writeJsonValueFile');
     expect(GATE_MANAGER_SOURCE).not.toContain('JSON.parse(readFileSync');
+    expect(GATE_MANAGER_SOURCE).not.toContain('JSON.stringify(deferred, null, 2)');
   });
 });
 
@@ -221,6 +223,7 @@ describe('handleUnfinishedEscape', () => {
     expect(deferred!.branch).toBe(TEST_BRANCH);
     expect(deferred!.items).toHaveLength(1);
     expect(deferred!.items[0].type).toBe('review');
+    expect(readFileSync(join(TEST_STATE_DIR, '.kaizen-deferred-items.json'), 'utf-8')).not.toMatch(/\n$/);
   });
 
   it('does not write deferred file when no gates exist', () => {

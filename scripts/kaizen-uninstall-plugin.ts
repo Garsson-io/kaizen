@@ -21,7 +21,6 @@
 
 import {
   existsSync,
-  writeFileSync,
   rmSync,
   realpathSync,
   statSync,
@@ -29,7 +28,7 @@ import {
 import { join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { readJsonObjectFile } from '../src/lib/json-file.js';
+import { readJsonObjectFile, writeJsonObjectFile } from '../src/lib/json-file.js';
 
 export interface UninstallOpts {
   plugin: string;
@@ -62,10 +61,6 @@ function shortNameOf(plugin: string): string {
   return idx < 0 ? plugin : plugin.slice(0, idx);
 }
 
-function writeJson(path: string, data: unknown): void {
-  writeFileSync(path, JSON.stringify(data, null, 2));
-}
-
 function safeRealpath(p: string): string {
   try { return realpathSync(p); } catch { return resolve(p); }
 }
@@ -91,7 +86,7 @@ export function stepRemoveEnabledPlugin(
   delete enabled[plugin];
   if (Object.keys(enabled).length === 0) delete (data as Record<string, unknown>).enabledPlugins;
   else (data as Record<string, unknown>).enabledPlugins = enabled;
-  writeJson(path, data);
+  writeJsonObjectFile(path, data, { trailingNewline: false });
   return { changed: true, detail: `removed enabledPlugins[${plugin}]` };
 }
 
@@ -107,7 +102,7 @@ export function stepRemoveInstalledRecord(
   if (!(plugin in plugins)) return { changed: false, detail: `record for ${plugin} already absent` };
   delete plugins[plugin];
   (data as Record<string, unknown>).plugins = plugins;
-  writeJson(path, data);
+  writeJsonObjectFile(path, data, { trailingNewline: false });
   return { changed: true, detail: `removed installed_plugins record for ${plugin}` };
 }
 

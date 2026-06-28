@@ -20,7 +20,7 @@ import { join } from "path";
 import { parseArgs } from "util";
 import { loadAllSkillMetadata, validateSkillDependencies, validateSkillVersions } from "./skill-metadata.js";
 import { installGitHooks, buildThinWrapper, type InstallResult } from "./setup-git-hooks.js";
-import { readJsonObjectFile } from "./lib/json-file.js";
+import { readJsonObjectFile, writeJsonObjectFile } from "./lib/json-file.js";
 
 // ── Types ──
 
@@ -146,7 +146,7 @@ export function generateConfig(input: ConfigInput, cwd: string): ConfigResult {
   };
 
   const path = join(cwd, "kaizen.config.json");
-  writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+  writeJsonObjectFile(path, config);
   return { step: "config", status: "ok", path };
 }
 
@@ -182,7 +182,7 @@ export function enablePlugin(cwd: string, pluginName = "kaizen@kaizen"): EnableR
   }
   enabled[pluginName] = true;
   data.enabledPlugins = enabled;
-  writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
+  writeJsonObjectFile(path, data);
   return { step: "enable", status: "ok", path, changed: true };
 }
 

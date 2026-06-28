@@ -25,13 +25,16 @@ afterEach(() => {
 });
 
 describe("setup JSON file parsing", () => {
-  it("delegates runtime JSON object file reads to the shared file helper", () => {
+  it("delegates runtime JSON object file reads and writes to the shared file helper", () => {
     const source = readFileSync(new URL("./kaizen-setup.ts", import.meta.url), "utf-8");
 
-    expect(source).toContain("./lib/json-file.js");
+    expect(source).toContain("readJsonObjectFile");
+    expect(source).toContain("writeJsonObjectFile");
     expect(source).not.toContain("JSON.parse(readFileSync");
     expect(source).not.toContain("function readJsonObjectFile");
     expect(source).not.toContain("parseJsonObject(readFileSync");
+    expect(source).not.toContain("JSON.stringify(config, null, 2)");
+    expect(source).not.toContain("JSON.stringify(data, null, 2)");
   });
 });
 
@@ -64,6 +67,7 @@ describe("generateConfig", () => {
     expect(config.host.repo).toBe("org/my-project");
     expect(config.kaizen.repo).toBe("Garsson-io/kaizen");
     expect(config.notifications.channel).toBe("none");
+    expect(readFileSync(join(tempDir, "kaizen.config.json"), "utf-8")).toMatch(/\n$/);
   });
 
   it("handles special characters in name", () => {
@@ -473,6 +477,7 @@ describe("enablePlugin (#1063 — --step enable)", () => {
     expect(r).toEqual({ step: "enable", status: "ok", path: join(tempDir, ".claude/settings.json"), changed: true });
     const parsed = JSON.parse(readFileSync(r.path!, "utf-8"));
     expect(parsed.enabledPlugins["kaizen@kaizen"]).toBe(true);
+    expect(readFileSync(r.path!, "utf-8")).toMatch(/\n$/);
   });
 
   it("adds enabledPlugins to an existing settings.json without clobbering other keys", () => {

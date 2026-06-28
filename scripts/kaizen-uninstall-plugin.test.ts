@@ -57,14 +57,18 @@ describe('runUninstall — TS implementation', () => {
 
   it('removes enabledPlugins entry', () => {
     runUninstall({ plugin: 'kaizen@kaizen', homeDir: home, projectRoot: proj, skipNpmInstall: true });
-    const settings = JSON.parse(readFileSync(join(proj, '.claude/settings.json'), 'utf-8'));
+    const content = readFileSync(join(proj, '.claude/settings.json'), 'utf-8');
+    const settings = JSON.parse(content);
     expect(settings.enabledPlugins).toBeUndefined();
+    expect(content).not.toMatch(/\n$/);
   });
 
   it('removes installed_plugins record', () => {
     runUninstall({ plugin: 'kaizen@kaizen', homeDir: home, projectRoot: proj, skipNpmInstall: true });
-    const data = JSON.parse(readFileSync(join(home, '.claude/plugins/installed_plugins.json'), 'utf-8'));
+    const content = readFileSync(join(home, '.claude/plugins/installed_plugins.json'), 'utf-8');
+    const data = JSON.parse(content);
     expect(data.plugins['kaizen@kaizen']).toBeUndefined();
+    expect(content).not.toMatch(/\n$/);
   });
 
   it('removes cache dir', () => {
@@ -155,14 +159,17 @@ describe('stepRemove* return values — idempotency surface for the test-quality
   });
 });
 
-describe('JSON object parsing', () => {
-  it('delegates JSON object file reads to the shared file helper', () => {
+describe('JSON object file persistence', () => {
+  it('delegates JSON object file reads and writes to the shared file helper', () => {
     const source = readFileSync(new URL('./kaizen-uninstall-plugin.ts', import.meta.url), 'utf-8');
 
-    expect(source).toContain('../src/lib/json-file.js');
+    expect(source).toContain('readJsonObjectFile');
+    expect(source).toContain('writeJsonObjectFile');
     expect(source).not.toContain('function readJsonOrNull');
+    expect(source).not.toContain('function writeJson');
     expect(source).not.toContain('parseJsonObject(readFileSync');
     expect(source).not.toContain('JSON.parse(raw)');
+    expect(source).not.toContain('JSON.stringify(data, null, 2)');
   });
 });
 

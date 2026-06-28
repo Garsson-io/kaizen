@@ -18,7 +18,6 @@ import {
   readFileSync,
   statSync,
   unlinkSync,
-  writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -28,7 +27,7 @@ import {
   parseStateFile,
   readStateFile,
 } from '../state-utils.js';
-import { readJsonValueFile } from '../../lib/json-file.js';
+import { readJsonValueFile, writeJsonValueFile } from '../../lib/json-file.js';
 
 export interface PendingGate {
   type: 'review' | 'reflection' | 'post_merge';
@@ -171,7 +170,7 @@ export function handleUnfinishedEscape(
     };
     const targetDir = deferredDir || stateDir;
     const filepath = join(targetDir, DEFERRED_ITEMS_FILE);
-    writeFileSync(filepath, JSON.stringify(deferred, null, 2));
+    writeJsonValueFile(filepath, deferred, { trailingNewline: false });
   }
 
   return report.gates;
