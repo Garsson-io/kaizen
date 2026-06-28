@@ -11,6 +11,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  degradedRunLogBanner,
   evaluateHookActivation,
   extractInitPlugins,
   formatHookActivationBanner,
@@ -146,5 +147,25 @@ describe('formatHookActivationBanner', () => {
     const banner = formatHookActivationBanner(v);
     expect(banner).not.toMatch(/DEGRADED/);
     expect(banner).toMatch(/active/i);
+  });
+});
+
+describe('degradedRunLogBanner (durable per-run-log surface, #843)', () => {
+  it('returns the loud banner for a degraded run (must be durable in the log)', () => {
+    const v = evaluateHookActivation({ provider: 'claude', plugins: [] });
+    const line = degradedRunLogBanner(v);
+    expect(line).toMatch(/HOOK ENFORCEMENT DEGRADED/);
+  });
+
+  it('returns null for an active run (no log clutter)', () => {
+    const v = evaluateHookActivation({
+      provider: 'claude',
+      plugins: extractInitPlugins(INIT_PLUGINS_KAIZEN),
+    });
+    expect(degradedRunLogBanner(v)).toBeNull();
+  });
+
+  it('returns null when no verdict was produced', () => {
+    expect(degradedRunLogBanner(undefined)).toBeNull();
   });
 });

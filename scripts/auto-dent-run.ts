@@ -158,7 +158,7 @@ import {
   IN_FLIGHT_UPDATE_INTERVAL_MS,
   type StreamContext,
 } from './auto-dent-stream.js';
-import { formatHookActivationBanner, type HookActivationVerdict } from './auto-dent-hook-activation.js';
+import { degradedRunLogBanner, type HookActivationVerdict } from './auto-dent-hook-activation.js';
 import {
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
@@ -2389,8 +2389,9 @@ async function main(): Promise<void> {
   // controller's stderr banner is not captured here, so without this the only
   // durable per-run record would be the state.json metric; write it next to the
   // run it describes so a `plugins:[]` session is never silent in the logs.
-  if (result.hookActivation?.degraded) {
-    appendFileSync(logFile, `\n${formatHookActivationBanner(result.hookActivation)}\n`);
+  const hookLogBanner = degradedRunLogBanner(result.hookActivation);
+  if (hookLogBanner) {
+    appendFileSync(logFile, `\n${hookLogBanner}\n`);
   }
 
   // Lifecycle validation (#639, #1103) — observability + steering, never a hard

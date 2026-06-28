@@ -132,8 +132,15 @@ export function formatHookActivationBanner(verdict: HookActivationVerdict): stri
       bar,
     ].join('\n');
   }
-  if (verdict.active) {
-    return `[hooks] ${verdict.message}`;
-  }
   return `[hooks] ${verdict.message}`;
+}
+
+/**
+ * The line to append to the per-run log for a verdict: the loud banner when the
+ * run is degraded, else `null` (active / hooks-not-expected runs don't clutter
+ * the log). Extracted so the "degraded → durable in the run log" guarantee is
+ * unit-testable rather than buried in `main()` (#843).
+ */
+export function degradedRunLogBanner(verdict: HookActivationVerdict | undefined): string | null {
+  return verdict?.degraded ? formatHookActivationBanner(verdict) : null;
 }
