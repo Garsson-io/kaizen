@@ -17,6 +17,8 @@ import {
 } from './auto-dent.js';
 import { readState, writeState, type BatchState } from './auto-dent-run.js';
 
+const AUTO_DENT_SOURCE = readFileSync(new URL('./auto-dent.ts', import.meta.url), 'utf8');
+
 const baseOpts: AutoDentOptions = {
   maxRuns: 0,
   cooldown: 30,
@@ -167,6 +169,11 @@ describe('createInitialState', () => {
 });
 
 describe('state helpers', () => {
+  it('creates initial batch state through the canonical durable state writer', () => {
+    expect(AUTO_DENT_SOURCE).toContain('writeState(stateFile, state)');
+    expect(AUTO_DENT_SOURCE).not.toContain("writeFileSync(stateFile, JSON.stringify(state, null, 2) + '\\n')");
+  });
+
   it('reads and updates state atomically with backups', () => {
     const { dir, stateFile } = tempState();
     try {

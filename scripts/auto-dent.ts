@@ -572,7 +572,7 @@ async function main(): Promise<void> {
   const haltFile = join(logDir, 'HALT');
   const stateFile = join(logDir, 'state.json');
   const state = createInitialState(batchId, opts.guidance, batchStart, opts, repos);
-  writeFileSync(stateFile, JSON.stringify(state, null, 2) + '\n');
+  writeState(stateFile, state);
 
   let shuttingDown = false;
   const handleShutdown = () => {

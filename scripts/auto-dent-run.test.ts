@@ -58,6 +58,8 @@ import {
 import * as github from './auto-dent-github.js';
 import { makeBatchState, makeRunResult } from './auto-dent-test-utils.js';
 
+const AUTO_DENT_RUN_SOURCE = readFileSync(new URL('./auto-dent-run.ts', import.meta.url), 'utf8');
+
 describe('buildPrompt', () => {
   it('includes run tag with batch id and run number', () => {
     const state = makeBatchState();
@@ -206,6 +208,17 @@ describe('buildTemplateVars', () => {
 // Reflection feedback loop (#603)
 
 describe('loadReflectionInsights', () => {
+  it('routes reflection JSON reads through the shared JSON file contract', () => {
+    const reflectionSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function loadReflectionInsights'),
+      AUTO_DENT_RUN_SOURCE.indexOf('/**\n * Build template variables'),
+    );
+
+    expect(reflectionSection).toContain('readJsonValueFile');
+    expect(reflectionSection).not.toContain("JSON.parse(readFileSync(summaryPath, 'utf8'))");
+    expect(reflectionSection).not.toContain("JSON.parse(readFileSync(historyPath, 'utf8'))");
+  });
+
   it('returns empty when no reflection-summary.json exists', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'no-reflect-'));
     const result = loadReflectionInsights(tmpDir);
@@ -2968,6 +2981,21 @@ describe('atomic state I/O', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'state-io-'));
     stateFile = join(dir, 'state.json');
+  });
+
+  it('routes state persistence through the shared durable JSON contract', () => {
+    const stateSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('// State I/O'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Resolve repo root'),
+    );
+
+    expect(stateSection).toContain('readDurableJsonValueFile');
+    expect(stateSection).toContain('writeDurableJsonValueFile');
+    expect(stateSection).not.toContain("JSON.parse(readFileSync(stateFile, 'utf8'))");
+    expect(stateSection).not.toContain("JSON.parse(readFileSync(bak, 'utf8'))");
+    expect(stateSection).not.toContain("const tmp = stateFile + '.tmp'");
+    expect(stateSection).not.toContain("copyFileSync(stateFile, stateFile + '.bak')");
+    expect(stateSection).not.toContain('renameSync(tmp, stateFile)');
   });
 
   it('writeState creates atomic temp-then-rename', () => {
