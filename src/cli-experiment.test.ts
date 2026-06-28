@@ -135,6 +135,21 @@ Some body text.
     );
   });
 
+  test('throws the missing-frontmatter error when delimiters wrap invalid YAML', () => {
+    // Behavior pinned after #1368: the shared helper catches a YAML parse
+    // failure (or a non-object scalar/array body) and returns null, so
+    // parseFrontmatter surfaces the same missing-frontmatter error rather
+    // than leaking a raw YAMLParseError or spreading a junk scalar.
+    const malformed = '---\nfoo: [unclosed\n---\n\n## Body\n';
+    expect(() => parseFrontmatter(malformed)).toThrow(
+      'Invalid experiment file: no YAML frontmatter found',
+    );
+    const scalarOnly = '---\njust-a-scalar\n---\n\n## Body\n';
+    expect(() => parseFrontmatter(scalarOnly)).toThrow(
+      'Invalid experiment file: no YAML frontmatter found',
+    );
+  });
+
   test('roundtrips through serialize → parse', () => {
     const fm: ExperimentFrontmatter = {
       id: 'EXP-042',

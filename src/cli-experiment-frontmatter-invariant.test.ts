@@ -23,15 +23,26 @@ function stripComments(content: string): string {
 }
 
 /**
- * True when source (comments stripped) contains a local YAML-frontmatter
- * delimiter regex — an anchored `/^---\n` or `/^---\r` regex literal.
+ * True when source (comments stripped) contains local YAML-frontmatter
+ * delimiter split/parse logic. Two shapes are caught:
+ *   (a) a regex literal frontmatter delimiter — `/^---\n`, `/---\n`,
+ *       `/^---\r`, `/---\r` (the `^` anchor is optional);
+ *   (b) a `.split`/`.match`/`.exec`/`.replace` call whose first argument
+ *       opens with `---` (string or regex) — e.g. `content.split('---\n')`.
+ * The shared template-string serializer (`` `---\n${yaml}\n---` ``) is NOT a
+ * regex literal and is NOT a split/match/exec/replace argument, so it stays
+ * clean. Broader than the canonical #1368 shape so a non-anchored or
+ * string-split reintroduction can't slip past (tooling-fitness, PR #1371).
  */
 export function hasLocalFrontmatterRegex(content: string): boolean {
   const code = stripComments(content);
-  // `/` `^` `---` then an escaped \r or \n — the shape every local
-  // frontmatter splitter shares. The shared template-string serializer
-  // (`---\n${yaml}\n---`) has no leading `/`, so it is not matched.
-  return /\/\^-{3}\\[rn]/.test(code);
+  // (a) frontmatter regex literal: `/` then optional `^`, `---`, escaped \r|\n.
+  if (/\/\^?-{3}\\[rn]/.test(code)) return true;
+  // (b) split/match/exec/replace on a `---`-leading string or regex arg.
+  if (/\.(?:split|match|exec|replace)\s*\(\s*[/'"`]\^?-{3}/.test(code)) {
+    return true;
+  }
+  return false;
 }
 
 /** True when source imports the shared frontmatter helper. */
@@ -54,8 +65,23 @@ describe('cli-experiment frontmatter-parsing invariant', () => {
     ).toBe(true);
   });
 
+  it('detects non-anchored and string-split frontmatter forms', () => {
+    // Non-anchored regex literal (no `^`).
+    expect(
+      hasLocalFrontmatterRegex('const RE = /---\\n([\\s\\S]*?)\\n---/;'),
+    ).toBe(true);
+    // String-split on the `---` delimiter.
+    expect(
+      hasLocalFrontmatterRegex("const parts = content.split('---\\n');"),
+    ).toBe(true);
+    expect(
+      hasLocalFrontmatterRegex('const parts = content.split(/^---$/m);'),
+    ).toBe(true);
+  });
+
   it('does not flag the shared template-string serializer', () => {
-    // serializeFrontmatter builds `---\n${yaml}\n---` — no leading `/`.
+    // serializeFrontmatter builds `---\n${yaml}\n---` — not a regex literal
+    // and not a split/match/exec/replace argument.
     expect(
       hasLocalFrontmatterRegex('return `---\\n${yaml}\\n---`;'),
     ).toBe(false);
