@@ -80,6 +80,7 @@ export {
   syncEpicChecklists,
   verifyIssuesClosed,
   reconcileBatchClosedIssues,
+  closedIssueRefsFromVerifyCloseResults,
   type MergeStatus,
   type DriveStatus,
   type DriveReason,
@@ -155,7 +156,9 @@ import {
   fetchIssueLabels,
   verifyIssuesClosed,
   reconcileBatchClosedIssues,
+  closedIssueRefsFromVerifyCloseResults,
   syncEpicChecklists,
+  type VerifyCloseResult,
 } from './auto-dent-github.js';
 import {
   color,
@@ -538,6 +541,25 @@ function firstIssueRef(values: unknown): string | null {
     if (ref) return ref;
   }
   return null;
+}
+
+export function mergeVerifiedClosedIssuesIntoRunResult(
+  result: RunResult,
+  verifyResults: VerifyCloseResult[],
+): string[] {
+  const currentRunPrs = new Set(result.prs);
+  const currentRunResults = verifyResults.filter((entry) => currentRunPrs.has(entry.pr));
+  const closedRefs = closedIssueRefsFromVerifyCloseResults(currentRunResults);
+  const existing = new Set(result.issuesClosed.map((ref) => normalizeIssueRef(ref)).filter(Boolean));
+  const added: string[] = [];
+  for (const ref of closedRefs) {
+    const normalized = normalizeIssueRef(ref);
+    if (!normalized || existing.has(normalized)) continue;
+    result.issuesClosed.push(normalized);
+    existing.add(normalized);
+    added.push(normalized);
+  }
+  return added;
 }
 
 function extractManifestTarget(parsed: Record<string, unknown>): string | null {
@@ -3347,19 +3369,19 @@ async function main(): Promise<void> {
   // Verify issues claimed by merged PRs are actually closed (#730, Gap 2)
   // Must run before epic sync so force-closed issues are included
   const allBatchPRsForVerify = [...new Set([...state.prs, ...result.prs])];
+  let verifiedClosedThisBatch: string[] = [];
   if (allBatchPRsForVerify.length > 0) {
     const verifyResults = verifyIssuesClosed(allBatchPRsForVerify, state.kaizen_repo);
+    verifiedClosedThisBatch = closedIssueRefsFromVerifyCloseResults(verifyResults);
+    const currentRunClosed = mergeVerifiedClosedIssuesIntoRunResult(result, verifyResults);
+    if (currentRunClosed.length > 0) {
+      console.log(
+        `  [verify-close] current run closed ${currentRunClosed.length} issue(s) via merged PR body: ${currentRunClosed.join(', ')}`,
+      );
+    }
     const forceClosed = verifyResults.flatMap((r) => r.forceClosed);
     if (forceClosed.length > 0) {
       console.log(`  [verify-close] force-closed ${forceClosed.length} issue(s): ${forceClosed.join(', ')}`);
-      // Add force-closed issues to the result so they're tracked in state
-      for (const issue of forceClosed) {
-        const num = issue.replace('#', '');
-        const url = `https://github.com/${state.kaizen_repo}/issues/${num}`;
-        if (!result.issuesClosed.includes(url) && !result.issuesClosed.includes(issue)) {
-          result.issuesClosed.push(url);
-        }
-      }
     }
   }
 
@@ -3367,6 +3389,7 @@ async function main(): Promise<void> {
   const allClosedNums = [...new Set([
     ...state.issues_closed,
     ...result.issuesClosed,
+    ...verifiedClosedThisBatch,
   ])].map((ref) => {
     const m = ref.match(/(\d+)/);
     return m ? m[1] : '';
@@ -3438,6 +3461,10 @@ async function main(): Promise<void> {
       freshState.issues_filed.push(issue);
   }
   for (const closed of result.issuesClosed) {
+    if (!freshState.issues_closed.includes(closed))
+      freshState.issues_closed.push(closed);
+  }
+  for (const closed of verifiedClosedThisBatch) {
     if (!freshState.issues_closed.includes(closed))
       freshState.issues_closed.push(closed);
   }

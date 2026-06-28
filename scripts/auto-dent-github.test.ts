@@ -18,6 +18,7 @@ import {
   syncEpicChecklists,
   verifyIssuesClosed,
   reconcileBatchClosedIssues,
+  closedIssueRefsFromVerifyCloseResults,
 } from './auto-dent-github.js';
 import { makeRunResult } from './auto-dent-test-helpers.js';
 
@@ -1094,5 +1095,24 @@ describe('reconcileBatchClosedIssues (#1173)', () => {
       'owner/repo',
     );
     expect(closed).toEqual(['#4', '#12', '#30']);
+  });
+});
+
+describe('closedIssueRefsFromVerifyCloseResults (#1210)', () => {
+  it('dedupes and sorts verified plus force-closed refs', () => {
+    const refs = closedIssueRefsFromVerifyCloseResults([
+      {
+        pr: 'https://github.com/owner/repo/pull/1',
+        verified: ['#20', '#5'],
+        forceClosed: ['#7'],
+      },
+      {
+        pr: 'https://github.com/owner/repo/pull/2',
+        verified: ['#5'],
+        forceClosed: ['#12'],
+      },
+    ]);
+
+    expect(refs).toEqual(['#5', '#7', '#12', '#20']);
   });
 });
