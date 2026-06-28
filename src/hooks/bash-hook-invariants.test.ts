@@ -21,4 +21,21 @@ describe('bash hook source invariants', () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it('keeps deny JSON emission behind hook-output (#828)', () => {
+    const offenders = readdirSync(HOOKS_DIR)
+      .filter((name) => name.endsWith('.sh'))
+      .flatMap((name) => {
+        const content = readFileSync(join(HOOKS_DIR, name), 'utf-8');
+        const emitsDenyJson =
+          content.includes('hookSpecificOutput') &&
+          content.includes('permissionDecision');
+        const usesSharedOutput = content.includes('lib/hook-output.sh');
+
+        return emitsDenyJson && !usesSharedOutput ? [name] : [];
+      })
+      .sort();
+
+    expect(offenders).toEqual([]);
+  });
 });

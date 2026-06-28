@@ -22,6 +22,7 @@
 
 source "$(dirname "$0")/lib/allowlist.sh" 2>/dev/null || { exit 0; }
 source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/hook-output.sh" 2>/dev/null || { exit 0; }
 
 read_hook_input
 get_file_path
@@ -71,15 +72,5 @@ if [ "$MAIN_BRANCH" != "main" ]; then
 fi
 
 # Block the write — source code on main branch
-jq -n \
-  --arg file "$FILE_PATH" \
-  --arg main_root "$MAIN_ROOT" \
-  --arg reason "Cannot write to '$FILE_PATH' — it's source code in the main checkout ($MAIN_ROOT) on main branch. Use a worktree for code changes. Runtime dirs (groups/, data/, store/, logs/) and .claude/ are allowed." \
-  '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: $reason
-    }
-  }'
-exit 0
+REASON="Cannot write to '$FILE_PATH' — it's source code in the main checkout ($MAIN_ROOT) on main branch. Use a worktree for code changes. Runtime dirs (groups/, data/, store/, logs/) and .claude/ are allowed."
+emit_deny "$REASON"

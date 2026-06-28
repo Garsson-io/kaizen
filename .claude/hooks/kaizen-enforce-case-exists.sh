@@ -20,6 +20,7 @@
 source "$(dirname "$0")/lib/allowlist.sh" 2>/dev/null || { exit 0; }
 source "$(dirname "$0")/lib/read-config.sh" 2>/dev/null || { exit 0; }
 source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/hook-output.sh" 2>/dev/null || { exit 0; }
 
 read_hook_input
 get_file_path
@@ -91,11 +92,7 @@ fi
 
 # No case found — block the edit with helpful guidance (kaizen #146)
 WORKTREE_PATH="$WORKTREE_ROOT"
-jq -n \
-  --arg branch "$BRANCH" \
-  --arg file "$FILE_PATH" \
-  --arg cli "$KAIZEN_CASE_CLI" \
-  --arg reason "No case record found for branch '$BRANCH'. All dev work must have a case before writing code.
+REASON="No case record found for branch '$BRANCH'. All dev work must have a case before writing code.
 
 Create a case first:
   $KAIZEN_CASE_CLI case-create --description \"your description\" --type dev --github-issue N
@@ -106,12 +103,5 @@ This ensures:
   - /kaizen-pick filters out this work (prevents duplicate effort)
   - Kaizen reflection fires on completion
 
-If this is exploratory work (not implementation), use the main checkout with .claude/ paths instead." \
-  '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: $reason
-    }
-  }'
-exit 0
+If this is exploratory work (not implementation), use the main checkout with .claude/ paths instead."
+emit_deny "$REASON"
