@@ -140,7 +140,7 @@ Example:
   AUTO_DENT_PHASE: IMPLEMENT | case=260323-1200-k472 | branch=case/260323-1200-k472
   AUTO_DENT_PHASE: TEST | result=pass | count=15
   AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/500
-  AUTO_DENT_PHASE: MERGE | url=https://github.com/Garsson-io/kaizen/pull/500 | status=observed
+  AUTO_DENT_PHASE: MERGE | url=https://github.com/Garsson-io/kaizen/pull/500 | status=queued
   AUTO_DENT_PHASE: REFLECT | issues_filed=1 | lessons=shared helpers reduce test boilerplate
 
 Emit these naturally as you complete each phase. Missing keys are fine — emit what you have.

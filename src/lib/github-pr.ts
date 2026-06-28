@@ -30,6 +30,11 @@ export interface GithubPrUrl {
   number: number;
 }
 
+export interface GithubIssueUrl {
+  repo: string;
+  number: number;
+}
+
 export interface QueryBranchPrStateOptions {
   repo: string;
   branch: string;
@@ -44,6 +49,15 @@ export function emptyBranchPrQueryResult(): BranchPrQueryResult {
 export function parseGithubPrUrl(prUrl: string | undefined | null): GithubPrUrl | null {
   if (!prUrl) return null;
   const match = prUrl.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/);
+  if (!match) return null;
+  const number = Number(match[2]);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  return { repo: match[1], number };
+}
+
+export function parseGithubIssueUrl(issueUrl: string | undefined | null): GithubIssueUrl | null {
+  if (!issueUrl) return null;
+  const match = issueUrl.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)$/);
   if (!match) return null;
   const number = Number(match[2]);
   if (!Number.isInteger(number) || number <= 0) return null;

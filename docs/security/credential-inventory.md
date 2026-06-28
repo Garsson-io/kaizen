@@ -24,7 +24,7 @@ Kaizen is a Claude Code plugin — it runs inside the user's Claude Code session
 | **Read** | `gh pr view`, `gh issue view`, `gh pr diff`, `gh pr list`, `gh api repos/*/check-runs` | Most hooks and scripts |
 | **Write (issues)** | `gh issue create`, `gh issue comment`, `gh issue close`, `gh issue edit --add-label` | `auto-dent-run.ts`, `auto-dent-github.ts`, `pr-kaizen-clear.ts` |
 | **Write (PRs)** | `gh pr create`, `gh pr comment`, `gh pr edit --add-label`, `gh pr close` | `auto-dent-run.ts`, `auto-dent-github.ts` |
-| **Write (merge)** | `gh pr merge --squash --delete-branch --auto` | `auto-dent-run.ts`, `auto-dent-github.ts` |
+| **Write (merge)** | `gh pr merge --squash --delete-branch --auto`, `gh pr merge --disable-auto` | `auto-dent-run.ts`, `auto-dent-github.ts` |
 | **Write (branch)** | `gh api repos/{repo}/pulls/{n}/update-branch -X PUT` | `auto-dent-github.ts` |
 
 **Over-privilege assessment:** The token scope is controlled by the user's `gh auth` configuration, not by kaizen. Kaizen uses whatever scope is available. In auto-dent batch mode, the token needs full `repo` write access. For interactive sessions, read-only would suffice for most hooks but write is needed for reflection (filing issues, commenting on PRs).

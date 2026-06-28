@@ -16,7 +16,7 @@ auto-dent.sh (compatibility wrapper)
               ├── spawns claude with --output-format stream-json
               ├── parses real-time milestones (PRs, issues, costs)
               ├── posts per-run comments to batch progress issue
-              ├── queues auto-merge as safety net
+              ├── queues or blocks auto-merge based on review/process verdicts
               └── writes results back to state.json
 
 auto-dent-ctl.ts (control plane)
@@ -47,7 +47,7 @@ All cross-run state lives in `logs/auto-dent/<batch-id>/state.json`. Key fields:
 | `stop_reason` | string | Why the batch stopped (empty while running) |
 | `progress_issue` | string | GitHub issue URL for batch progress tracking |
 | `run_history` | RunMetrics[] | Per-run duration, cost, tool calls, exit code |
-| `review_verdict` | `"pass"\|"fail"\|"error"\|"skipped"` per run | Advisory requirements review verdict for the PR produced by this run |
+| `review_verdict` | `"pass"\|"fail"\|"error"\|"skipped"` per run | Requirements review verdict for the PR produced by this run; `"fail"` blocks auto-merge |
 | `review_cost_usd` | number per run | Cost of the requirements review for this run (typically $0.10–0.20) |
 
 ### Prompt Templates
@@ -185,9 +185,9 @@ jq '.run_history[] | {run, exit_code, duration_seconds, cost_usd, prs}' logs/aut
 jq '.run_history[] | {run, review_verdict, review_cost_usd}' logs/auto-dent/<batch-id>/state.json
 ```
 
-`review_verdict` is advisory — a `"fail"` does not stop the run. But a high fail rate (>30% across a batch) signals that PRs are closing issues in name only. Investigate the specific runs where verdict is `"fail"` to find systemic gaps.
+`review_verdict="fail"` blocks auto-merge for the run's PRs and disables any existing auto-merge request. A high fail rate (>30% across a batch) still signals that PRs are closing issues in name only. Investigate the specific runs where verdict is `"fail"` to find systemic gaps.
 
-If `review_verdict` is `"error"` or `"skipped"`, the review could not complete (rate limit, timeout, or no PR in that run). These are expected for runs that produce no PR.
+If `review_verdict` is `"error"` or `"skipped"`, the review could not complete (rate limit, timeout, or no PR in that run). These are expected for runs that produce no PR. For PR-producing normal runs, skipped or missing required review also blocks auto-merge.
 
 ### 4. Read the failing run's log
 ```bash
@@ -206,16 +206,22 @@ less logs/auto-dent/<batch-id>/run-N.log
 | Same issue retry | Consecutive failures on same issue | Issue is blocked or broken | Add to exclusion list |
 | OOM / timeout | Run exits with signal 9 or timeout | Agent spawned heavy subprocess | Check for vitest/tsc in hooks (#474) |
 | Hook deadlock | Run hangs indefinitely | Merge conflict markers in hooks | Check `.claude/hooks/` for conflict markers |
-| Auto-merge failure | PRs created but not merged | Branch protection rules | Check repo settings, CI status |
+| Auto-merge blocked | PRs created but not merged | Review/process/lifecycle verdict did not pass | Fix findings, re-run review, or use explicit human override |
+| Auto-merge failure | PRs created but not merged | Branch protection rules or failed `gh pr merge --auto/--disable-auto` | Check repo settings, CI status, and `auto_merge_*_failed` log lines |
 
 ## Post-Batch Hygiene
 
 After a batch completes:
 
-1. **PRs** — The harness queues auto-merge. Check for any stuck PRs:
+1. **PRs** — The harness queues auto-merge only after the review/process/lifecycle gates allow it. Check for any stuck or blocked PRs:
    ```bash
    gh pr list --repo Garsson-io/kaizen --label auto-dent --state open
    ```
+
+   Repositories that want a non-Claude backstop should mark the GitHub Actions
+   check `Review verdict gate / Review verdict gate` as required in branch
+   protection. That check reads the same stored review verdict as the merge hook
+   and fails when the latest round derives `FAIL`.
 
 2. **Worktrees** — Runs create worktrees that should be cleaned up on merge. Check for stale ones:
    ```bash

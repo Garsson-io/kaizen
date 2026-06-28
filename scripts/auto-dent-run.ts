@@ -1250,7 +1250,7 @@ Example:
   AUTO_DENT_PHASE: IMPLEMENT | case=260323-1200-k472 | branch=case/260323-1200-k472
   AUTO_DENT_PHASE: TEST | result=pass | count=15
   AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/500
-  AUTO_DENT_PHASE: MERGE | url=https://github.com/Garsson-io/kaizen/pull/500 | status=observed
+  AUTO_DENT_PHASE: MERGE | url=https://github.com/Garsson-io/kaizen/pull/500 | status=queued
   AUTO_DENT_PHASE: REFLECT | issues_filed=1 | lessons=shared helpers reduce test boilerplate
 
 Emit these naturally as you complete each phase. Missing keys are fine — emit what you have.`;
@@ -2627,9 +2627,14 @@ async function main(): Promise<void> {
     processVerdict,
     lifecycleHealth,
   });
-  queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);
+  const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);
   if (!autoMergeDecision.allow) {
     appendFileSync(logFile, `auto_merge_blocked=${autoMergeDecision.reasons.join('; ')}\n`);
+    if (autoMergeQueue.cancelFailed.length > 0) {
+      appendFileSync(logFile, `auto_merge_cancel_failed=${autoMergeQueue.cancelFailed.join(',')}\n`);
+    }
+  } else if (autoMergeQueue.queueFailed.length > 0) {
+    appendFileSync(logFile, `auto_merge_queue_failed=${autoMergeQueue.queueFailed.join(',')}\n`);
   }
 
   for (const pr of result.prs) {
@@ -2650,7 +2655,10 @@ async function main(): Promise<void> {
   // full batch, so PRs continue to be driven across the trampoline without any
   // single run blocking for long. `--auto` stays queued, so GitHub may still
   // merge a "timed_out" PR server-side after the batch ends.
-  const unsafeCurrentPRs = autoMergeDecision.allow ? new Set<string>() : new Set(result.prs);
+  const cancelFailed = new Set(autoMergeQueue.cancelFailed);
+  const unsafeCurrentPRs = autoMergeDecision.allow
+    ? new Set<string>()
+    : new Set(result.prs.filter((pr) => !cancelFailed.has(pr)));
   const allBatchPRs = [...new Set([...state.prs, ...result.prs])].filter((pr) => !unsafeCurrentPRs.has(pr));
   if (allBatchPRs.length > 0) {
     const driveResults = driveBatchToMerge(allBatchPRs, {

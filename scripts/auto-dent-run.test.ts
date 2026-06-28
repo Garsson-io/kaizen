@@ -3482,14 +3482,16 @@ describe('test-task lifecycle evidence regression guard', () => {
 describe('auto-merge verdict binding wiring (#1220)', () => {
   it('routes post-review safety decisions into queueing and merge babysitting', () => {
     const decisionIndex = AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeDecision = decideAutoMergeSafety({');
-    const queueIndex = AUTO_DENT_RUN_SOURCE.indexOf('queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);');
-    const unsafeSetIndex = AUTO_DENT_RUN_SOURCE.indexOf('new Set(result.prs)');
+    const queueIndex = AUTO_DENT_RUN_SOURCE.indexOf('const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);');
+    const cancelFailedIndex = AUTO_DENT_RUN_SOURCE.indexOf('const cancelFailed = new Set(autoMergeQueue.cancelFailed);');
+    const unsafeSetIndex = AUTO_DENT_RUN_SOURCE.indexOf('result.prs.filter((pr) => !cancelFailed.has(pr))');
     const filterIndex = AUTO_DENT_RUN_SOURCE.indexOf('filter((pr) => !unsafeCurrentPRs.has(pr))');
     const driveIndex = AUTO_DENT_RUN_SOURCE.indexOf('driveBatchToMerge(allBatchPRs');
 
     expect(decisionIndex).toBeGreaterThan(-1);
     expect(queueIndex).toBeGreaterThan(decisionIndex);
-    expect(unsafeSetIndex).toBeGreaterThan(queueIndex);
+    expect(cancelFailedIndex).toBeGreaterThan(queueIndex);
+    expect(unsafeSetIndex).toBeGreaterThan(cancelFailedIndex);
     expect(filterIndex).toBeGreaterThan(unsafeSetIndex);
     expect(driveIndex).toBeGreaterThan(filterIndex);
   });
