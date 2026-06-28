@@ -17,6 +17,7 @@ import {
   extractInitPlugins,
   formatHookActivationBanner,
   formatHookActivationDistribution,
+  hookActivationDistributionEntries,
   hookActivationStatus,
   pluginsIncludeKaizen,
   providerClaimsHookSupport,
@@ -204,6 +205,14 @@ describe('hook activation status helpers (#1501)', () => {
       observedPlugins: [],
       message: 'legacy not expected',
     } as any)).toBe('not_expected');
+    expect(hookActivationStatus({
+      provider: 'claude',
+      expected: true,
+      active: false,
+      degraded: false,
+      observedPlugins: [],
+      message: 'legacy ambiguous',
+    } as any)).toBe('unknown');
   });
 
   it('computes and formats distribution counts once for all batch consumers', () => {
@@ -218,6 +227,12 @@ describe('hook activation status helpers (#1501)', () => {
       },
       degradedCount: 2,
     });
+    expect(hookActivationDistributionEntries(counts.distribution!)).toEqual([
+      ['active', 1],
+      ['degraded', 1],
+      ['unknown', 1],
+      ['not_expected', 1],
+    ]);
     expect(formatHookActivationDistribution(counts.distribution!)).toBe('active:1, degraded:1, unknown:1, not_expected:1');
     expect(computeHookActivationCounts([undefined])).toEqual({});
   });

@@ -156,11 +156,18 @@ export function hookActivationStatus(verdict: HookActivationVerdict | undefined)
   return verdict.active ? 'active' : 'unknown';
 }
 
-export function formatHookActivationDistribution(distribution: Partial<Record<HookActivationStatus, number>>): string {
+export function hookActivationDistributionEntries(
+  distribution: Partial<Record<HookActivationStatus, number>>,
+): Array<[HookActivationStatus, number]> {
   const order: HookActivationStatus[] = ['active', 'degraded', 'unknown', 'not_expected'];
   return order
     .filter(status => (distribution[status] ?? 0) > 0)
-    .map(status => `${status}:${distribution[status]}`)
+    .map(status => [status, distribution[status] ?? 0]);
+}
+
+export function formatHookActivationDistribution(distribution: Partial<Record<HookActivationStatus, number>>): string {
+  return hookActivationDistributionEntries(distribution)
+    .map(([status, count]) => `${status}:${count}`)
     .join(', ');
 }
 

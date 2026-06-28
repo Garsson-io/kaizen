@@ -471,7 +471,7 @@ describe('process verdict distribution (#1149)', () => {
     expect(text).toContain('Degraded/unknown hook activation: 2 runs');
   });
 
-  it('CLI output includes hook activation health for a synthetic batch', () => {
+  it('CLI output includes hook activation health for a synthetic batch with bounded subprocess cost', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'batch-summary-cli-'));
     const hook = (status: string, degraded: boolean) => ({
       provider: 'claude',
@@ -491,6 +491,7 @@ describe('process verdict distribution (#1149)', () => {
     const output = execFileSync('npx', ['tsx', 'scripts/batch-summary.ts', tmpDir], {
       cwd: process.cwd(),
       encoding: 'utf8',
+      timeout: 10_000,
     });
 
     expect(output).toContain('### Hook Activation');

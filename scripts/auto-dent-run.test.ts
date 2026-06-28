@@ -3648,10 +3648,13 @@ describe('auto-merge verdict binding wiring (#1220)', () => {
 
   it('emits hook_activation on run.complete from the normalized run metrics (#1501)', () => {
     const runCompleteBlock = AUTO_DENT_RUN_SOURCE.slice(
-      AUTO_DENT_RUN_SOURCE.indexOf("type: 'run.complete'"),
+      AUTO_DENT_RUN_SOURCE.indexOf('const runMetricsForOutcome = buildRunMetrics({'),
       AUTO_DENT_RUN_SOURCE.indexOf("type: 'run.complete'") + 1400,
     );
 
+    expect(runCompleteBlock).toContain("provider: state.provider ?? 'claude'");
+    expect(runCompleteBlock).toContain('const outcome = deriveRunOutcome({');
+    expect(runCompleteBlock).toContain("type: 'run.complete'");
     expect(runCompleteBlock).toContain('hook_activation: runMetricsForOutcome.hook_activation');
   });
 

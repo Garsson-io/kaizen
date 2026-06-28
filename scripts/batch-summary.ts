@@ -20,6 +20,7 @@ import type { EventEnvelope, RunCompleteEvent, RunIssuePickedEvent, RunPrCreated
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 import {
   computeHookActivationCounts,
+  hookActivationDistributionEntries,
   hookActivationStatus,
   type HookActivationStatus,
 } from './auto-dent-hook-activation.js';
@@ -373,11 +374,11 @@ export function formatPlainLanguage(summary: BatchSummary): string {
     }
   }
 
-  const hookEntries = Object.entries(summary.hook_activation_distribution ?? {});
+  const hookEntries = hookActivationDistributionEntries(summary.hook_activation_distribution ?? {});
   if (hookEntries.length > 0) {
     lines.push('');
     lines.push('### Hook Activation');
-    for (const [status, count] of hookEntries.sort((a, b) => b[1] - a[1])) {
+    for (const [status, count] of hookEntries) {
       lines.push(`- ${status}: ${count} run${count > 1 ? 's' : ''}`);
     }
     if ((summary.hook_activation_degraded_count ?? 0) > 0) {
