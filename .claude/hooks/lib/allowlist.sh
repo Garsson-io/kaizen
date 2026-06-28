@@ -26,13 +26,11 @@
 is_readonly_monitoring_command() {
   local cmd="$1"
   # gh api — read-only API calls (CI monitoring, PR status checks)
-  if echo "$cmd" | sed 's/[|;&]\{1,\}/\n/g' | sed 's/^[[:space:]]*//' | \
-    grep -qE '^gh[[:space:]]+api[[:space:]]'; then
+  if split_command_segments "$cmd" | grep -qE '^gh[[:space:]]+api[[:space:]]'; then
     return 0
   fi
   # gh run view/list/watch — CI run monitoring
-  if echo "$cmd" | sed 's/[|;&]\{1,\}/\n/g' | sed 's/^[[:space:]]*//' | \
-    grep -qE '^gh[[:space:]]+run[[:space:]]+(view|list|watch)'; then
+  if split_command_segments "$cmd" | grep -qE '^gh[[:space:]]+run[[:space:]]+(view|list|watch)'; then
     return 0
   fi
   # git diff/log/show/status/branch/fetch — read-only git commands

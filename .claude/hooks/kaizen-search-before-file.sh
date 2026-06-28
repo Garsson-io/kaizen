@@ -32,8 +32,7 @@ CMD_LINE=$(strip_heredoc_body "$COMMAND")
 # Use segment splitting to avoid matching gh issue create inside strings
 is_issue_create() {
   local cmd="$1"
-  echo "$cmd" | sed 's/[|;&]\{1,\}/\n/g' | sed 's/^[[:space:]]*//' | \
-    grep -qE '^gh[[:space:]]+issue[[:space:]]+create'
+  split_command_segments "$cmd" | grep -qE '^gh[[:space:]]+issue[[:space:]]+create'
 }
 
 if ! is_issue_create "$CMD_LINE"; then

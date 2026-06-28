@@ -40,8 +40,6 @@ is_rebase_command() {
   local cmd="$1"
   # Split by pipe/chain operators and check each segment
   while IFS= read -r segment; do
-    # Trim leading whitespace
-    segment=$(echo "$segment" | sed 's/^[[:space:]]*//')
     # Skip empty segments, comments, and echo/printf commands
     [ -z "$segment" ] && continue
     echo "$segment" | grep -qE '^(#|echo |printf )' && continue
@@ -53,7 +51,7 @@ is_rebase_command() {
       fi
       return 0
     fi
-  done < <(echo "$cmd" | sed 's/[|;&]\{1,\}/\n/g')
+  done < <(split_command_segments "$cmd")
   return 1
 }
 

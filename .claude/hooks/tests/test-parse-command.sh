@@ -70,6 +70,21 @@ EOF
 )"')"
 
 echo ""
+echo "=== split_command_segments ==="
+
+assert_eq "splits bare newlines" \
+  "a|b|c" \
+  "$(split_command_segments $'a\nb\nc' | paste -sd '|' -)"
+
+assert_eq "splits command operators" \
+  "npm run build|gh pr create|git push" \
+  "$(split_command_segments "npm run build && gh pr create ; git push" | paste -sd '|' -)"
+
+assert_eq "collapses operator plus newline run" \
+  "npm run build|gh pr create" \
+  "$(split_command_segments $'npm run build &&\ngh pr create' | paste -sd '|' -)"
+
+echo ""
 echo "=== is_gh_pr_command ==="
 
 # Direct commands — should match

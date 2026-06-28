@@ -22,10 +22,6 @@ const HOOKS_TS_DIR = __dirname;
 // Functions intentionally present in only one version.
 // Each entry must have a comment explaining WHY it's excluded.
 const EXCLUSIONS: Record<string, string> = {
-  // TS internal utility for splitting compound commands; bash uses IFS/sed inline
-  splitCommandSegments:
-    'ts-only: internal helper, bash splits on operators inline',
-
   // TS splits extractPrUrl from reconstructPrUrl; bash inlines the grep
   extractPrUrl:
     'ts-only: extracted helper, bash inlines grep in reconstruct_pr_url',

@@ -24,8 +24,7 @@ read_hook_input
 get_command
 
 CMD_LINE=$(strip_heredoc_body "$COMMAND")
-if ! printf '%s\n' "$CMD_LINE" | sed 's/[|;&]\{1,\}/\n/g' | sed 's/^[[:space:]]*//' | \
-     grep -qE '^git[[:space:]]+(-[A-Za-z][^[:space:]]*[[:space:]]+)*commit([[:space:]]|$)'; then
+if ! split_command_segments "$CMD_LINE" | grep -qE '^git[[:space:]]+(-[A-Za-z][^[:space:]]*[[:space:]]+)*commit([[:space:]]|$)'; then
   exit 0
 fi
 
