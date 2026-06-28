@@ -12,11 +12,13 @@
 
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 const KAIZEN_ROOT = resolve(__dirname, "../..");
 const isLive = process.env.KAIZEN_SKILL_TEST === "1";
+const RAW_PREVIEW_CHARS = 300;
 
 /** Read a SKILL.md file from the plugin directory. */
 function loadSkill(name: string): string {
@@ -27,7 +29,89 @@ function loadSkill(name: string): string {
  * Run claude -p with the local plugin dir loaded.
  * Returns the text result or throws on error (including non-zero exit).
  */
-function runSkill(prompt: string, opts: { maxBudget?: number; timeout?: number } = {}): string {
+type SkillRunProcess = {
+  stdout?: string | null;
+  stderr?: string | null;
+  status?: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: Error;
+};
+
+type SkillRunCheckpoint = {
+  rawPath: string;
+  rawStdout: string;
+  rawStderr: string;
+};
+
+function previewRaw(rawStdout: string, rawStderr: string): string {
+  return (rawStdout || rawStderr).slice(0, RAW_PREVIEW_CHARS);
+}
+
+function persistSkillRunCheckpoint(
+  proc: SkillRunProcess,
+  opts: { artifactName?: string; resultsDir?: string },
+  startedAt: number,
+  durationMs: number,
+): SkillRunCheckpoint {
+  const rawDir = opts.resultsDir ?? resolve(KAIZEN_ROOT, "artifacts", "skill-smoke");
+  mkdirSync(rawDir, { recursive: true });
+  const artifactBase = (opts.artifactName ?? `skill-run-${startedAt}`)
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const rawPath = resolve(rawDir, `${artifactBase || "skill-run"}.json`);
+  const rawStdout = proc.stdout ?? "";
+  const rawStderr = proc.stderr ?? "";
+  let costUsd: number | null = null;
+  try {
+    const parsed = JSON.parse(rawStdout);
+    costUsd = typeof parsed.total_cost_usd === "number" ? parsed.total_cost_usd : null;
+  } catch {
+    costUsd = null;
+  }
+  writeFileSync(
+    rawPath,
+    JSON.stringify({
+      command: "claude -p",
+      model: "claude-haiku-4-5-20251001",
+      durationMs,
+      costUsd,
+      status: proc.status,
+      signal: proc.signal,
+      stdout: rawStdout,
+      stderr: rawStderr,
+    }, null, 2),
+    "utf-8",
+  );
+  return { rawPath, rawStdout, rawStderr };
+}
+
+function parseSkillRunResult(proc: SkillRunProcess, checkpoint: SkillRunCheckpoint): string {
+  const { rawPath, rawStdout, rawStderr } = checkpoint;
+  const preview = previewRaw(rawStdout, rawStderr);
+
+  if (proc.error) throw new Error(`claude spawn error: ${proc.error.message}; raw output: ${rawPath}\n${preview}`);
+  if (proc.status !== 0) throw new Error(`claude exited ${proc.status}; raw output: ${rawPath}\n${preview}`);
+
+  const raw = rawStdout.trim();
+  if (!raw) throw new Error(`claude produced empty output (possible timeout or silent crash); raw output: ${rawPath}\n${preview}`);
+
+  let parsed: { result?: string; is_error?: boolean };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`claude output not JSON; raw output: ${rawPath}\n${preview}`);
+  }
+
+  if (parsed.is_error) throw new Error(`claude returned error; raw output: ${rawPath}\n${preview}`);
+  if (!parsed.result) throw new Error(`claude returned empty result; raw output: ${rawPath}\n${preview}`);
+  return parsed.result;
+}
+
+function runSkill(
+  prompt: string,
+  opts: { maxBudget?: number; timeout?: number; artifactName?: string; resultsDir?: string } = {},
+): string {
+  const startedAt = Date.now();
   const proc = spawnSync(
     "claude",
     [
@@ -47,29 +131,11 @@ function runSkill(prompt: string, opts: { maxBudget?: number; timeout?: number }
       env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "cli" },
     },
   );
-
-  // System-level spawn failure (e.g., claude not on PATH)
-  if (proc.error) throw new Error(`claude spawn error: ${proc.error.message}`);
-
-  // Non-zero exit: API error, auth failure, budget exceeded, etc.
-  if (proc.status !== 0) {
-    throw new Error(`claude exited ${proc.status}:\nstdout: ${(proc.stdout ?? "").slice(0, 400)}\nstderr: ${(proc.stderr ?? "").slice(0, 400)}`);
-  }
-
-  const raw = (proc.stdout ?? "").trim();
-  if (!raw) throw new Error("claude produced empty output (possible timeout or silent crash)");
-
-  let parsed: { result?: string; is_error?: boolean };
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`claude output not JSON:\nstdout: ${raw.slice(0, 800)}\nstderr: ${(proc.stderr ?? "").slice(0, 400)}`);
-  }
-
-  if (parsed.is_error) throw new Error(`claude returned error: ${(proc.stdout ?? "").slice(0, 500)}`);
-  if (!parsed.result) throw new Error(`claude returned empty result: ${(proc.stdout ?? "").slice(0, 300)}`);
-  return parsed.result;
+  const durationMs = Date.now() - startedAt;
+  const checkpoint = persistSkillRunCheckpoint(proc, opts, startedAt, durationMs);
+  return parseSkillRunResult(proc, checkpoint);
 }
+
 
 type SimplificationFinding = {
   status: string;
@@ -332,6 +398,135 @@ describe("kaizen-evaluate — test-plan discipline (#1014)", () => {
     expect(skill).toContain("SessionSimulator");
     expect(skill).toContain("No circular deferral");
     expect(skill).toContain("symptom");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Impact proof discipline — goal -> before/after -> match (kaizen #1505)
+// ---------------------------------------------------------------------------
+
+describe("kaizen workflow — Impact proof discipline (#1505)", () => {
+  it("kaizen-write-plan requires plan-time Impact Baseline capture", () => {
+    const skill = loadSkill("kaizen-write-plan");
+    expect(skill).toContain("Impact Baseline");
+    expect(skill).toContain("Acceptance signal");
+    expect(skill).toContain("BEFORE");
+  });
+
+  it("kaizen-evaluate mirrors the plan-time Impact Baseline requirement", () => {
+    const skill = loadSkill("kaizen-evaluate");
+    expect(skill).toContain("Impact Baseline");
+    expect(skill).toContain("Acceptance signal");
+    expect(skill).toContain("BEFORE");
+  });
+
+  it("kaizen-write-pr retrieves the stored plan and requires the Impact rubric", () => {
+    const skill = loadSkill("kaizen-write-pr");
+    expect(skill).toContain("retrieve-plan");
+    expect(skill).toContain("## Impact (goal");
+    expect(skill).toContain("Goal met?");
+    expect(skill).toContain("Residual scan");
+  });
+
+  it("artifact lifecycle documents Impact proof as a PR artifact sourced from the plan", () => {
+    const doc = readFileSync(resolve(KAIZEN_ROOT, "docs/artifact-lifecycle.md"), "utf-8");
+    expect(doc).toContain("Impact proof");
+    expect(doc).toContain("plan-time");
+    expect(doc).toContain("PR description");
+  });
+
+  it("verification discipline codifies meet-reality before declaring done", () => {
+    const doc = readFileSync(resolve(KAIZEN_ROOT, ".agents/kaizen/verification.md"), "utf-8");
+    expect(doc).toContain("Meet Reality Before Declaring Done");
+    expect(doc).toContain("BEFORE");
+    expect(doc).toContain("AFTER");
+  });
+
+  it("skill-changes review accepts documented provider fallback only after Claude is attempted", () => {
+    const prompt = readFileSync(resolve(KAIZEN_ROOT, "prompts/review-skill-changes.md"), "utf-8");
+    expect(prompt).toContain("If `claude -p` is unavailable");
+    expect(prompt).toContain("exact attempted `claude -p` command");
+    expect(prompt).toContain("actual old-vs-new output excerpts from the configured agent provider");
+    expect(prompt).toContain("Do not accept fallback evidence when Claude was merely skipped");
+  });
+
+  it.skipIf(!isLive)(
+    "live smoke: planning prompt emits Impact Baseline fields",
+    () => {
+      const prompt = [
+        "You are applying kaizen-write-plan Phase 4.5 to an issue about PRs lacking goal-impact proof.",
+        "Use the new Impact Baseline discipline.",
+        "Return only the Impact Baseline block with fields for Goal, Acceptance signal, BEFORE, AFTER capture method, and Residual scan.",
+      ].join("\n");
+
+      const output = runSkill(prompt, {
+        maxBudget: 0.10,
+        timeout: 90_000,
+        artifactName: "impact-baseline-live-smoke",
+      });
+      expect(output).toMatch(/Impact Baseline/i);
+      expect(output).toMatch(/Acceptance signal/i);
+      expect(output).toMatch(/BEFORE/i);
+    },
+  );
+
+  it("live skill smoke harness persists raw output checkpoints before parsing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skill-smoke-"));
+    try {
+      const checkpoint = persistSkillRunCheckpoint(
+        {
+          status: 0,
+          stdout: JSON.stringify({ result: "ok", total_cost_usd: 0.03 }),
+          stderr: "",
+          signal: null,
+        },
+        { artifactName: "impact-baseline-live-smoke", resultsDir: dir },
+        1_000,
+        250,
+      );
+      const saved = JSON.parse(readFileSync(checkpoint.rawPath, "utf-8"));
+
+      expect(saved.durationMs).toBe(250);
+      expect(saved.costUsd).toBe(0.03);
+      expect(saved.stdout).toContain('"result":"ok"');
+      expect(parseSkillRunResult({ status: 0, stdout: saved.stdout, stderr: "" }, checkpoint)).toBe("ok");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("live skill smoke failures include checkpoint path and raw preview", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skill-smoke-"));
+    try {
+      const checkpoint = persistSkillRunCheckpoint(
+        { status: 1, stdout: "", stderr: "monthly spend limit reached by provider" },
+        { artifactName: "provider-error", resultsDir: dir },
+        1_000,
+        250,
+      );
+
+      expect(() => parseSkillRunResult({ status: 1, stdout: "", stderr: checkpoint.rawStderr }, checkpoint))
+        .toThrow(/provider-error\.json[\s\S]*monthly spend limit reached/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("live skill smoke malformed JSON failures include raw preview", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skill-smoke-"));
+    try {
+      const checkpoint = persistSkillRunCheckpoint(
+        { status: 0, stdout: "not json from provider", stderr: "" },
+        { artifactName: "malformed-provider-json", resultsDir: dir },
+        1_000,
+        250,
+      );
+
+      expect(() => parseSkillRunResult({ status: 0, stdout: checkpoint.rawStdout, stderr: "" }, checkpoint))
+        .toThrow(/malformed-provider-json\.json[\s\S]*not json from provider/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

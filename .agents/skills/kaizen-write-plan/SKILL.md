@@ -214,6 +214,19 @@ DONE WHEN: [the specific verifiable outcome that means it's fixed]
 
 Verifiable means: an external observer can check it without reading the implementation. Write this before looking at any code. Every plan step must connect back to DONE WHEN.
 
+Also capture the **Impact Baseline** while the pre-fix reality is still available. This is the source of truth for PR-time impact proof; do not leave BEFORE reconstruction to `/kaizen-write-pr`.
+
+```
+## Impact Baseline
+- Goal (#N): <observable outcome + direction the issue wants>
+- Acceptance signal: <what would prove it; selected at plan time>
+- BEFORE: <baseline sample, failing repro, metric, hook decision, or structural state>
+- AFTER capture method: <how the same scenario will be rerun after implementation>
+- Residual scan target: <what adjacent frictions/low-hanging fruit to check before done>
+```
+
+For pure refactors/no-behavior changes, the baseline is structural: duplicated paths, competing mechanisms, or drift vectors before the change. Do not dress structural proof up as behavior output.
+
 ### Step 2: Survey what already exists
 
 Read CLAUDE.md's Key Files table. Then grep:
@@ -342,6 +355,13 @@ DONE WHEN: [from step 1]
 
 ## Information Retrieved
 - [source]: [what you found] — [how it changes or confirms the plan]
+
+## Impact Baseline
+- Goal (#N): ...
+- Acceptance signal: ...
+- BEFORE: ...
+- AFTER capture method: ...
+- Residual scan target: ...
 
 ## Design Alternatives Considered
 ### Option A: [description] — SELECTED

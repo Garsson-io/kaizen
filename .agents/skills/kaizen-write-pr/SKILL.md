@@ -51,11 +51,28 @@ Follow the story with structured sections:
 5. **Find the inciting incident**: What specific failure, discovery, or user request triggered this work? If you can't name it, the PR may be solving a theoretical problem.
 6. **Gather evidence**: Test results, cost data, performance numbers, real output. The "Because of that" beats need concrete data, not assertions.
 7. **Write the narrative first**, then the structured sections. The story is the skeleton — the sections are the flesh.
-8. **Retrieve the test plan from the linked issue** and include the behaviors × levels table in the PR body:
+8. **Retrieve the stored plan and test plan from the linked issue**. Use the plan's `## Impact Baseline` as the source for goal, acceptance signal, and BEFORE evidence; use the test plan for the behaviors × levels table:
+   ```bash
+   npx tsx src/cli-structured-data.ts retrieve-plan --issue <N> --repo "$ISSUES_REPO"
+   ```
    ```bash
    npx tsx src/cli-structured-data.ts retrieve-testplan --issue <N> --repo "$ISSUES_REPO"
    ```
    Copy the behaviors × levels table into the PR body under a "Test Plan (Behaviors × Levels)" section, with coverage status (✅ tested / ⏳ deferred) per behavior. Cite which behaviors are in-scope, which are deferred, and which issue tracks each deferred behavior. Reviewers retrieve this same plan to check the PR against it (`review-plan-coverage`, `review-test-plan`, `review-requirements`).
+
+9. **Add the Impact proof section** before creating the PR. It must be populated, not a placeholder, because the PR-create hook checks it structurally and the `impact-proof` review dimension checks it adversarially:
+   ```markdown
+   ## Impact (goal -> before/after -> match)
+   - Goal (#N):        <observable outcome + direction the issue wanted>
+   - Acceptance signal: <what would prove it; selected at plan time>
+   - BEFORE:           <captured baseline sample from the stored plan>
+   - AFTER:            <same scenario, metric, hook decision, repro, or structural comparison after implementation>
+   - Delta:            <eyeballable difference + quantitative data where possible>
+   - Goal met?:        yes | partial (deferred #M) | no
+   - Residual scan:    <frictions / low-hanging fruit -> done-in-PR | filed #K | none>
+   ```
+
+   For renderable output, show stdout/console/report before vs after. For metrics, show numbers. For bug fixes, the red failing repro is BEFORE and the green result is AFTER. For hook/gate decisions, show allow/block plus reason before vs after. For pure refactors/no behavior change, use honest structural proof such as duplicated paths consolidated or drift vector removed.
 
    If `retrieve-testplan` returns nothing, the issue has no plan — run `/kaizen-write-plan` against the issue first.
 
