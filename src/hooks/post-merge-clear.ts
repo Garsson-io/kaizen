@@ -15,9 +15,9 @@
  * Bash predecessor deleted in #790.
  */
 
-import { execSync } from 'node:child_process';
 import { getCurrentBranch, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
+import { gitStdout } from './lib/git-state.js';
 import { isGhPrCommand, stripHeredocBody } from './parse-command.js';
 import {
   DEFAULT_STATE_DIR,
@@ -29,16 +29,9 @@ import {
 } from './state-utils.js';
 
 function resolveMainCheckout(): string {
-  try {
-    const output = execSync('git worktree list --porcelain', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    const match = output.match(/^worktree (.+)/m);
-    return match?.[1] ?? '.';
-  } catch {
-    return '.';
-  }
+  const output = gitStdout(['worktree', 'list', '--porcelain']);
+  const match = output.match(/^worktree (.+)/m);
+  return match?.[1] ?? '.';
 }
 
 export function processPostMergeClear(
