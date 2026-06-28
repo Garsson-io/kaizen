@@ -15,7 +15,7 @@
  * Part of kaizen #1055.
  */
 
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { currentHookBranch } from './lib/current-branch.js';
 import { gitStdout } from './lib/git-state.js';
@@ -23,6 +23,7 @@ import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-comman
 import { CaseSystem } from '../case-system.js';
 import { extractCaseIssueFromBranch } from './lib/case-branch.js';
 import { queryIssueState, type IssueState } from '../lib/github-pr.js';
+import { parseSections } from '../section-editor.js';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -213,17 +214,8 @@ const IMPACT_FIELDS: ImpactField[] = [
 
 const PLACEHOLDER_VALUE = /^(?:tbd|todo|pending|placeholder|n\/a|na|<[^>]+>|\.\.\.)$/i;
 
-function extractImpactSection(text: string): string | null {
-  const lines = text.split('\n');
-  const start = lines.findIndex((line) => /^##\s+Impact\b/i.test(line.trim()));
-  if (start < 0) return null;
-  const rest = lines.slice(start + 1);
-  const nextSection = rest.findIndex((line) => /^##\s+\S+/i.test(line.trim()));
-  return [lines[start], ...(nextSection < 0 ? rest : rest.slice(0, nextSection))].join('\n');
-}
-
 export function checkImpactProofSubstance(prBodyText: string): string[] {
-  const section = extractImpactSection(prBodyText);
+  const section = parseSections(prBodyText).find(s => /^Impact\b/i.test(s.name))?.content ?? null;
   if (!section) return ['Missing ## Impact (goal -> before/after -> match) section'];
 
   const failures: string[] = [];
@@ -239,8 +231,26 @@ export function checkImpactProofSubstance(prBodyText: string): string[] {
   return failures;
 }
 
-function checkImpactProofBeforePr(fullCommand: string): PlanCheckResult | null {
-  const failures = checkImpactProofSubstance(fullCommand);
+function extractBodyFilePath(cmdLine: string): string | null {
+  const match = cmdLine.match(/(?:--body-file|-F)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+}
+
+function readPrBodyText(fullCommand: string, cmdLine: string): string {
+  const bodyFile = extractBodyFilePath(cmdLine);
+  if (!bodyFile || bodyFile === '-') return fullCommand;
+
+  try {
+    return readFileSync(bodyFile, 'utf-8');
+  } catch {
+    // Fall back to the raw command so the caller fails closed with the normal
+    // missing-impact guidance instead of making file IO errors a new hook mode.
+    return fullCommand;
+  }
+}
+
+function checkImpactProofBeforePr(prBodyText: string): PlanCheckResult | null {
+  const failures = checkImpactProofSubstance(prBodyText);
   if (failures.length === 0) return null;
   return {
     allowed: false,
@@ -478,9 +488,11 @@ export function checkPlanBeforePr(
   const changedFiles = deps.getChangedFiles();
   if (isDocsOnly(changedFiles)) return { allowed: true };
 
+  const prBodyText = readPrBodyText(fullCommand, cmdLine);
+
   // Priority: declared issue > PR body "Closes #N" (canonical GitHub syntax).
   // Arbitrary branch names are not a primary source — too fragile.
-  const issueNum = deps.getDeclaredIssue() ?? extractIssueNumber(fullCommand);
+  const issueNum = deps.getDeclaredIssue() ?? extractIssueNumber(prBodyText) ?? extractIssueNumber(fullCommand);
   if (!issueNum) {
     return {
       allowed: false,
@@ -531,7 +543,7 @@ Run /kaizen-write-plan — the skill knows how to create and store the plan corr
   const substanceResult = checkSubstance(issueNum, gate.planText, gate.testPlanText);
   if (substanceResult) return substanceResult;
 
-  const impactProofResult = checkImpactProofBeforePr(fullCommand);
+  const impactProofResult = checkImpactProofBeforePr(prBodyText);
   if (impactProofResult) return impactProofResult;
 
   return { allowed: true };

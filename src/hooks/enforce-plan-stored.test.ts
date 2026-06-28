@@ -5,7 +5,9 @@
  * No GitHub or git calls are made.
  */
 
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
 import {
   checkPlanBeforePr,
@@ -87,6 +89,16 @@ function ghPrCreate(body: string): string {
   return `gh pr create --title "feat: test" --body "$(cat <<'EOF'\n${body}\nEOF\n)"`;
 }
 
+function ghPrCreateWithBodyFile(body: string): { command: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'kaizen-pr-body-'));
+  const path = join(dir, 'body.md');
+  writeFileSync(path, body);
+  return {
+    command: `gh pr create --title "feat: test" --body-file "${path}"`,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
 afterEach(() => { delete process.env.KAIZEN_SKIP_PLAN_CHECK; });
 
 // ── Extractors ──────────────────────────────────────────────────────
@@ -139,6 +151,19 @@ describe('branch helper source invariant', () => {
     expect(source).toContain("from './lib/current-branch.js'");
     expect(source).toContain("fallback: ''");
     expect(source).not.toContain("gitStdout(['rev-parse', '--abbrev-ref', 'HEAD']");
+  });
+});
+
+describe('Impact proof parser invariant', () => {
+  it('reuses the structured section parser instead of hand-rolled markdown slicing', () => {
+    const source = readFileSync(
+      new URL('./enforce-plan-stored.ts', import.meta.url),
+      'utf-8',
+    );
+
+    expect(source).toContain("from '../section-editor.js'");
+    expect(source).toContain('parseSections(prBodyText)');
+    expect(source).not.toContain('findIndex((line) => /^##');
   });
 });
 
@@ -345,6 +370,36 @@ describe('checkPlanBeforePr', () => {
 
   it('allows when plan + testplan exist and PR body contains populated Impact proof', () => {
     expect(checkPlanBeforePr(ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`), makeDeps()).allowed).toBe(true);
+  });
+
+  it('allows populated Impact proof supplied through --body-file', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`);
+    try {
+      expect(checkPlanBeforePr(command, makeDeps()).allowed).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('extracts the issue link from --body-file when no issue is declared', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`);
+    try {
+      const result = checkPlanBeforePr(command, makeDeps({}, { getDeclaredIssue: () => null }));
+      expect(result.allowed).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('DENIES --body-file PRs when the file lacks Impact proof', () => {
+    const { command, cleanup } = ghPrCreateWithBodyFile('Closes #1055');
+    try {
+      const result = checkPlanBeforePr(command, makeDeps());
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toContain('impact-proof');
+    } finally {
+      cleanup();
+    }
   });
 
   it('allows non-pr-create commands', () => {
