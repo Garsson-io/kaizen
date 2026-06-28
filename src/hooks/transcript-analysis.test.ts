@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
@@ -49,6 +49,13 @@ describe('parseTranscript', () => {
       '{"type":"user"}\nnot-json\n{"type":"assistant"}';
     const entries = parseTranscript(jsonl);
     expect(entries).toHaveLength(2);
+  });
+});
+
+describe('truncation ownership (#1351)', () => {
+  it('does not keep a private generic truncate helper in transcript analysis', () => {
+    const source = readFileSync('src/hooks/transcript-analysis.ts', 'utf8');
+    expect(source).not.toMatch(/function\s+truncate\s*\(/);
   });
 });
 

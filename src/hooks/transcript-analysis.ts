@@ -13,6 +13,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { truncateAfterPrefix } from '../analysis/util.js';
 
 // ── Types ──
 
@@ -119,7 +120,7 @@ function detectRetries(
       signals.push({
         type: 'retry',
         description: `Retried ${curr.name} after failure`,
-        evidence: `Previous: ${truncate(prev.input, 100)} | Current: ${truncate(curr.input, 100)}`,
+        evidence: `Previous: ${truncateAfterPrefix(prev.input, 100)} | Current: ${truncateAfterPrefix(curr.input, 100)}`,
       });
     }
   }
@@ -131,10 +132,6 @@ function similarCommands(a: string, b: string): boolean {
   const baseA = a.split(/\s+/).slice(0, 2).join(' ');
   const baseB = b.split(/\s+/).slice(0, 2).join(' ');
   return baseA === baseB;
-}
-
-function truncate(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max) + '...';
 }
 
 // ── Repeated request detection ──
@@ -151,7 +148,7 @@ function detectRepeatedRequests(userMessages: string[]): Signal[] {
       signals.push({
         type: 'repeated_request',
         description: 'User referenced a previous request that was not addressed',
-        evidence: truncate(msg, 200),
+        evidence: truncateAfterPrefix(msg, 200),
       });
     }
   }
@@ -211,7 +208,7 @@ export function analyzeTranscript(entries: TranscriptEntry[]): TranscriptAnalysi
             signals.push({
               type: 'user_correction',
               description: 'User corrected or pushed back on agent approach',
-              evidence: truncate(block.text, 200),
+              evidence: truncateAfterPrefix(block.text, 200),
             });
           }
         }
@@ -224,7 +221,7 @@ export function analyzeTranscript(entries: TranscriptEntry[]): TranscriptAnalysi
             signals.push({
               type: 'failed_tool_call',
               description: 'Tool call failed',
-              evidence: truncate(resultContent, 200),
+              evidence: truncateAfterPrefix(resultContent, 200),
             });
 
             // Only check for hook denials on error results — successful tool
@@ -235,7 +232,7 @@ export function analyzeTranscript(entries: TranscriptEntry[]): TranscriptAnalysi
               signals.push({
                 type: 'hook_denial',
                 description: 'Hook blocked an action (near-miss caught by L2)',
-                evidence: truncate(resultContent, 200),
+                evidence: truncateAfterPrefix(resultContent, 200),
               });
             }
           }
