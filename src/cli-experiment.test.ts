@@ -63,12 +63,10 @@ describe('cli-experiment argument parsing', () => {
 });
 
 describe('parseFrontmatter', () => {
-  test('uses the shared YAML frontmatter parser', () => {
-    const source = fs.readFileSync(CLI_SOURCE, 'utf8');
-
-    expect(source).not.toContain('content.match(/^---\\n');
-    expect(source).not.toContain('YAML.parse(match[1])');
-  });
+  // NOTE: the source-text invariant that #1369 inlined here (a two-substring
+  // `not.toContain` check) is superseded by the dedicated, categorical ratchet
+  // in cli-experiment-frontmatter-invariant.test.ts (#1368), which also catches
+  // non-anchored and `.split('---')` reintroductions. Kept DRY — one owner.
 
   test('parses experiment file with measurements', () => {
     const content = `---
@@ -131,6 +129,28 @@ Some body text.
     expect(frontmatter.id).toBe('EXP-002');
     expect(frontmatter.measurements).toEqual([]);
     expect(body).toBe('## Body\r\n');
+  });
+
+  test('throws the missing-frontmatter error when no frontmatter is present', () => {
+    expect(() => parseFrontmatter('just a body, no frontmatter\n')).toThrow(
+      'Invalid experiment file: no YAML frontmatter found',
+    );
+  });
+
+  test('throws the missing-frontmatter error when delimiters wrap invalid YAML', () => {
+    // Behavior pinned after #1368/#1369: the shared helper catches a YAML
+    // parse failure (or a non-object scalar/array body) and returns null, so
+    // parseFrontmatter surfaces the same missing-frontmatter error rather
+    // than leaking a raw YAMLParseError or spreading a junk scalar. #1369
+    // introduced this behavior change but shipped no test for it.
+    const malformed = '---\nfoo: [unclosed\n---\n\n## Body\n';
+    expect(() => parseFrontmatter(malformed)).toThrow(
+      'Invalid experiment file: no YAML frontmatter found',
+    );
+    const scalarOnly = '---\njust-a-scalar\n---\n\n## Body\n';
+    expect(() => parseFrontmatter(scalarOnly)).toThrow(
+      'Invalid experiment file: no YAML frontmatter found',
+    );
   });
 
   test('roundtrips through serialize → parse', () => {
