@@ -437,6 +437,13 @@ describe('checkPlanBeforePr', () => {
     expect(result.missing).toContain('impact-proof');
   });
 
+  it('DENIES rejected body-file paths even when earlier command text has Impact proof', () => {
+    const compound = `${ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`)}; gh pr create --title "feat: test" --body-file /dev/zero`;
+    const result = checkPlanBeforePr(compound, makeDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('impact-proof');
+  });
+
   it('DENIES oversized body files without reading them', () => {
     const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\n${'x'.repeat(128 * 1024)}`);
     try {

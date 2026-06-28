@@ -318,17 +318,17 @@ function readPrBodyText(fullCommand: string, cmdLine: string): string {
 
   try {
     const cwdForCreate = effectiveCwdForPrCreate(cmdLine);
-    if (!cwdForCreate) return fullCommand;
+    if (!cwdForCreate) return prCreateSegment;
     const effectiveCwd = realpathSync(cwdForCreate);
     const requestedPath = isAbsolute(bodyFile) ? bodyFile : resolve(effectiveCwd, bodyFile);
     const realPath = realpathSync(requestedPath);
-    if (!isWithinDirectory(realPath, effectiveCwd)) return fullCommand;
+    if (!isWithinDirectory(realPath, effectiveCwd)) return prCreateSegment;
 
-    return readSmallRegularFile(realPath) ?? fullCommand;
+    return readSmallRegularFile(realPath) ?? prCreateSegment;
   } catch {
-    // Fall back to the raw command so the caller fails closed with the normal
-    // missing-impact guidance instead of making file IO errors a new hook mode.
-    return fullCommand;
+    // Fail closed against the actual create segment. The full compound command
+    // may contain unrelated Impact text from earlier commands.
+    return prCreateSegment;
   }
 }
 
