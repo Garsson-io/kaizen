@@ -50,6 +50,33 @@ describe('parseTranscript', () => {
     const entries = parseTranscript(jsonl);
     expect(entries).toHaveLength(2);
   });
+
+  it('parses CRLF JSONL while skipping blank and malformed rows', () => {
+    const jsonl = [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: [] } }),
+      '',
+      'not-json',
+      JSON.stringify({
+        type: 'assistant',
+        message: { role: 'assistant', content: [] },
+      }),
+    ].join('\r\n');
+
+    const entries = parseTranscript(jsonl);
+
+    expect(entries.map((entry) => entry.type)).toEqual(['user', 'assistant']);
+  });
+
+  it('delegates tolerant JSONL decoding to the shared parser', () => {
+    const source = readFileSync('src/hooks/transcript-analysis.ts', 'utf8');
+    const parserSource = source.slice(
+      source.indexOf('export function parseTranscript'),
+      source.indexOf('/** Read and parse a transcript file. */'),
+    );
+
+    expect(parserSource).not.toMatch(/\.split\(['"]\\n['"]\)/);
+    expect(parserSource).not.toMatch(/JSON\.parse\(line\)/);
+  });
 });
 
 describe('truncation ownership (#1351)', () => {

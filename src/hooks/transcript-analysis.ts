@@ -14,6 +14,7 @@
 
 import { readFileSync } from 'node:fs';
 import { truncateAfterPrefix } from '../analysis/util.js';
+import { parseJsonLines } from '../lib/json-lines.js';
 
 // ── Types ──
 
@@ -159,18 +160,7 @@ function detectRepeatedRequests(userMessages: string[]): Signal[] {
 
 /** Parse a JSONL transcript into entries. */
 export function parseTranscript(content: string): TranscriptEntry[] {
-  return content
-    .trim()
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => {
-      try {
-        return JSON.parse(line) as TranscriptEntry;
-      } catch {
-        return null;
-      }
-    })
-    .filter((e): e is TranscriptEntry => e !== null);
+  return parseJsonLines<TranscriptEntry>(content);
 }
 
 /** Read and parse a transcript file. */
