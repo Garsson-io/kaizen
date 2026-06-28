@@ -514,9 +514,8 @@ describe('pre-commit provider manifest', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf-8'));
     expect(packageJson.bin[hook.entry]).toBe('src/hooks/kaizen-host-entry.sh');
     const entryPath = path.resolve(__dirname, '..', packageJson.bin[hook.entry]);
-    expect(fs.existsSync(entryPath)).toBe(true);
-    expect(fs.statSync(entryPath).mode & 0o100).toBe(0o100);
     const entry = fs.readFileSync(entryPath, 'utf-8');
+    expect(fs.statSync(entryPath).mode & 0o100).toBe(0o100);
     expect(entry).toContain('while [ -L "$SOURCE" ]; do');
     expect(entry).toContain('SELF_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)');
     expect(entry.indexOf('SELF_ROOT=')).toBeLessThan(entry.indexOf('__KAIZEN_PLUGIN_ROOT__'));
