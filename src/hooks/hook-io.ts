@@ -8,7 +8,12 @@
 import { appendFileSync } from 'node:fs';
 import { createDefaultGitExec, resolveTargetWorktree, type GitExec } from './lib/git-state.js';
 
-const getTraceFile = (): string => process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
+export interface HookTraceOptions {
+  traceFile?: string;
+}
+
+const getTraceFile = (options: HookTraceOptions = {}): string =>
+  options.traceFile ?? process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
 const isTraceEnabled = (): boolean => process.env.KAIZEN_HOOK_TRACE !== '0';
 
 export interface HookInput {
@@ -34,19 +39,10 @@ export async function readHookInput(): Promise<HookInput | null> {
   try {
     return JSON.parse(raw) as HookInput;
   } catch {
-    if (isTraceEnabled()) {
-      try {
-        appendFileSync(
-          getTraceFile(),
-          JSON.stringify({
-            ts: new Date().toISOString(),
-            hook: 'hook-io',
-            error: 'json_parse_failed',
-            raw_length: raw.length,
-          }) + '\n',
-        );
-      } catch { /* never fail on trace */ }
-    }
+    traceHookEvent('hook-io', {
+      error: 'json_parse_failed',
+      raw_length: raw.length,
+    });
     return null;
   }
 }
@@ -56,11 +52,15 @@ export async function readHookInput(): Promise<HookInput | null> {
  * The shared primitive behind hook observability — use it to leave a durable
  * signal when a hook takes (or skips) an action that would otherwise be silent.
  */
-export function traceHookEvent(hook: string, fields: Record<string, unknown>): void {
+export function traceHookEvent(
+  hook: string,
+  fields: Record<string, unknown>,
+  options: HookTraceOptions = {},
+): void {
   if (!isTraceEnabled()) return;
   try {
     appendFileSync(
-      getTraceFile(),
+      getTraceFile(options),
       JSON.stringify({ ts: new Date().toISOString(), hook, ...fields }) + '\n',
     );
   } catch { /* never fail on trace */ }

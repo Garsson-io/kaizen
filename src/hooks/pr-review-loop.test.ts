@@ -76,6 +76,15 @@ describe('state file read helper source invariant', () => {
   });
 });
 
+describe('trace helper source invariant', () => {
+  it('routes trace writes through hook-io traceHookEvent', () => {
+    expect(PR_REVIEW_LOOP_SOURCE).toContain('traceHookEvent');
+    expect(PR_REVIEW_LOOP_SOURCE).not.toContain('const getTraceFile');
+    expect(PR_REVIEW_LOOP_SOURCE).not.toContain('const isTraceEnabled');
+    expect(PR_REVIEW_LOOP_SOURCE).not.toContain('appendFileSync(getTraceFile');
+  });
+});
+
 /** Run the hook with JSON input and return stdout. */
 function runHook(input: object): string {
   const json = JSON.stringify(input);

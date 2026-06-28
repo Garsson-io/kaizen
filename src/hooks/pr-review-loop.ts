@@ -30,7 +30,7 @@ import {
   type ReviewSentinelValidation,
 } from '../review-sentinel.js';
 import { findOpenPrUrlForBranch } from '../lib/github-pr.js';
-import { type HookInput, readHookInput, writeHookOutput } from './hook-io.js';
+import { type HookInput, readHookInput, traceHookEvent, writeHookOutput } from './hook-io.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
 import {
@@ -67,22 +67,13 @@ export interface HookDecision {
   gateSignal?: GateSignal;
 }
 
-const getTraceFile = (): string => process.env.KAIZEN_HOOK_TRACE ?? '/tmp/.kaizen-hook-trace.jsonl';
-const isTraceEnabled = (): boolean => process.env.KAIZEN_HOOK_TRACE !== '0';
-
 function trace(decision: HookDecision, trigger: string): void {
-  if (!isTraceEnabled()) return;
-  try {
-    const entry = JSON.stringify({
-      ts: new Date().toISOString(),
-      hook: 'pr-review-loop',
-      trigger,
-      action: decision.action,
-      reason: decision.reason,
-      ...decision.context,
-    });
-    appendFileSync(getTraceFile(), entry + '\n');
-  } catch { /* never fail on trace */ }
+  traceHookEvent('pr-review-loop', {
+    trigger,
+    action: decision.action,
+    reason: decision.reason,
+    ...decision.context,
+  });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
