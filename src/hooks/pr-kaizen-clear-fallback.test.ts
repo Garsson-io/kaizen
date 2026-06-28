@@ -15,12 +15,15 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { buildTypeScriptSubprocess } from '../../scripts/test-typescript-runner.js';
 
 const HOOK_PATH = path.resolve(
   __dirname,
   'pr-kaizen-clear-fallback.ts',
 );
-const TSX_CLI = findAncestorFile(__dirname, 'node_modules/tsx/dist/cli.mjs');
+const HOOK_RUNNER = buildTypeScriptSubprocess(HOOK_PATH, {
+  startDir: __dirname,
+});
 const HOOK_SOURCE = fs.readFileSync(HOOK_PATH, 'utf-8');
 
 let testStateDir: string;
@@ -29,21 +32,6 @@ let testAuditDir: string;
 const GATE_FILE = 'pr-kaizen-Garsson-io_kaizen_55';
 const PR_URL = 'https://github.com/Garsson-io/kaizen/pull/55';
 const BRANCH = 'test-branch';
-
-function findAncestorFile(startDir: string, relativePath: string): string {
-  let dir = startDir;
-
-  while (true) {
-    const candidate = path.join(dir, relativePath);
-    if (fs.existsSync(candidate)) return candidate;
-
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      throw new Error(`Unable to find ${relativePath} from ${startDir}`);
-    }
-    dir = parent;
-  }
-}
 
 beforeEach(() => {
   testStateDir = fs.mkdtempSync(
@@ -77,8 +65,8 @@ function gateStatus(filename = GATE_FILE): string | null {
 
 function runFallback(input: object): void {
   const result = spawnSync(
-    process.execPath,
-    [TSX_CLI, HOOK_PATH],
+    HOOK_RUNNER.command,
+    HOOK_RUNNER.args,
     {
       encoding: 'utf-8',
       env: {

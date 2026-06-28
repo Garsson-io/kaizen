@@ -13,32 +13,17 @@
 
 import { beforeAll, describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { buildTypeScriptSubprocess } from './test-typescript-runner.js';
 
 const REPO_ROOT = resolve(__dirname, '..');
 const CLI = resolve(REPO_ROOT, 'scripts/hook-gym.ts');
-const TSX_CLI = findAncestorFile(__dirname, 'node_modules/tsx/dist/cli.mjs');
+const CLI_RUNNER = buildTypeScriptSubprocess(CLI, { startDir: __dirname });
 
 type CliResult = { stdout: string; stderr: string; status: number };
 
-function findAncestorFile(startDir: string, relativePath: string): string {
-  let dir = startDir;
-
-  while (true) {
-    const candidate = join(dir, relativePath);
-    if (existsSync(candidate)) return candidate;
-
-    const parent = dirname(dir);
-    if (parent === dir) {
-      throw new Error(`Unable to find ${relativePath} from ${startDir}`);
-    }
-    dir = parent;
-  }
-}
-
 function runCli(args: string[]): CliResult {
-  const result = spawnSync(process.execPath, [TSX_CLI, CLI, ...args], {
+  const result = spawnSync(CLI_RUNNER.command, [...CLI_RUNNER.args, ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
     timeout: 30000,

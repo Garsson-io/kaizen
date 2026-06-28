@@ -96,6 +96,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Shard 1 contains cold-start-bound TypeScript subprocess tests. Their
+      # helper uses Bun when available and falls back to Node+tsx otherwise.
+      - uses: oven-sh/setup-bun@v2
+        if: ${{ matrix.shard == 1 }}
       - run: npm ci
       - run: npm run build
       - name: Run coverage shard
