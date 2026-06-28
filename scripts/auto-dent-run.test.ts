@@ -3186,6 +3186,20 @@ describe('module wiring: re-exported symbols used locally must be imported', () 
   });
 });
 
+describe('runOnce stream-json line parsing', () => {
+  it('delegates supervised stdout JSON object parsing to the shared helper', () => {
+    const source = readFileSync(new URL('./auto-dent-run.ts', import.meta.url), 'utf-8');
+    const parserStart = source.indexOf('const rl = createInterface');
+    const parserSection = source.slice(
+      parserStart,
+      source.indexOf("child.stderr?.on('data'", parserStart),
+    );
+
+    expect(parserSection).toContain('parseJsonObject');
+    expect(parserSection).not.toContain('JSON.parse(line)');
+  });
+});
+
 describe('findExistingProgressIssue', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
