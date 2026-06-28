@@ -156,15 +156,13 @@ describe('stepRemove* return values — idempotency surface for the test-quality
 });
 
 describe('JSON object parsing', () => {
-  it('delegates readJsonOrNull object parsing to the shared helper', () => {
+  it('delegates JSON object file reads to the shared file helper', () => {
     const source = readFileSync(new URL('./kaizen-uninstall-plugin.ts', import.meta.url), 'utf-8');
-    const helperSection = source.slice(
-      source.indexOf('function readJsonOrNull'),
-      source.indexOf('function writeJson'),
-    );
 
-    expect(helperSection).toContain('parseJsonObject');
-    expect(helperSection).not.toContain('JSON.parse(raw)');
+    expect(source).toContain('../src/lib/json-file.js');
+    expect(source).not.toContain('function readJsonOrNull');
+    expect(source).not.toContain('parseJsonObject(readFileSync');
+    expect(source).not.toContain('JSON.parse(raw)');
   });
 });
 

@@ -49,15 +49,13 @@ function writeHook(projectRoot: string, rel: string, executable = true): string 
 }
 
 describe('safe JSON parsing', () => {
-  it('delegates safeReadJson parsing to the shared value helper', () => {
+  it('delegates JSON value file reads to the shared file helper', () => {
     const source = readFileSync(new URL('./kaizen-doctor.ts', import.meta.url), 'utf-8');
-    const helperSection = source.slice(
-      source.indexOf('function safeReadJson'),
-      source.indexOf('function sha256File'),
-    );
 
-    expect(helperSection).toContain('parseJsonValue');
-    expect(helperSection).not.toContain('JSON.parse');
+    expect(source).toContain('../src/lib/json-file.js');
+    expect(source).not.toContain('function safeReadJson');
+    expect(source).not.toContain('parseJsonValue(readFileSync');
+    expect(source).not.toContain('JSON.parse(readFileSync');
   });
 });
 

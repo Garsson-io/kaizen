@@ -31,7 +31,7 @@ import { dirname } from 'node:path';
 import { join, resolve, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { parseJsonValue } from '../src/lib/json-value.js';
+import { readJsonValueFile } from '../src/lib/json-file.js';
 
 export type CheckStatus = 'PASS' | 'WARN' | 'FAIL';
 
@@ -74,14 +74,6 @@ export interface CodexReadinessOpts {
 const DEFAULT_PLUGIN = 'kaizen@kaizen';
 const MIN_CODEX_VERSION = '0.142.3';
 const REQUIRED_CODEX_FEATURES = ['shell_tool', 'unified_exec', 'hooks'] as const;
-
-function safeReadJson(path: string): unknown | null {
-  try {
-    return parseJsonValue(readFileSync(path, 'utf-8'));
-  } catch {
-    return null;
-  }
-}
 
 function sha256File(path: string): string | null {
   try {
@@ -158,7 +150,7 @@ export function tokenize(input: string): string[] {
 /** Check 1: project-scope double install. */
 export function checkPluginDoubleInstall(opts: DoctorOpts): CheckResult {
   const plugin = opts.pluginName ?? DEFAULT_PLUGIN;
-  const settings = safeReadJson(join(opts.projectRoot, '.claude/settings.json')) as
+  const settings = readJsonValueFile(join(opts.projectRoot, '.claude/settings.json')) as
     | Record<string, unknown>
     | null;
   const enabled = (settings?.enabledPlugins ?? {}) as Record<string, unknown>;
@@ -195,7 +187,7 @@ export function checkDanglingHookPaths(opts: DoctorOpts): CheckResult {
   const missing: string[] = [];
   let total = 0;
   for (const cfg of cfgs) {
-    const data = safeReadJson(cfg.path);
+    const data = readJsonValueFile(cfg.path);
     if (!data) continue;
     for (const c of collectHookCommands(data)) {
       total++;
@@ -235,7 +227,7 @@ export function checkStalePluginCache(opts: DoctorOpts): CheckResult {
   const cacheDir = join(opts.homeDir, `.claude/plugins/cache/${shortName}`);
   const normalizedRoot = normalizeProjectRoot(opts.projectRoot);
 
-  const installed = safeReadJson(installedPath) as
+  const installed = readJsonValueFile(installedPath) as
     | { plugins?: Record<string, Array<Record<string, unknown>> | Record<string, unknown>> }
     | null;
   const entry = installed?.plugins?.[plugin];
@@ -338,7 +330,7 @@ export function checkRestartNeeded(opts: DoctorOpts): CheckResult {
       detail: `no session-start snapshot (${snapPath}) — cannot detect drift. Install kaizen-session-snapshot SessionStart hook to enable this check.`,
     };
   }
-  const snap = safeReadJson(snapPath) as SessionSnapshot | null;
+  const snap = readJsonValueFile(snapPath) as SessionSnapshot | null;
   if (!snap || typeof snap !== 'object' || !snap.hashes) {
     return {
       name: 'restart-needed',
@@ -379,8 +371,8 @@ export function checkRestartNeeded(opts: DoctorOpts): CheckResult {
  *  PASS when ≤1 source is non-empty (or neither — host project with no hooks).
  */
 export function checkSingleRegistrationPath(opts: DoctorOpts): CheckResult {
-  const settings = safeReadJson(join(opts.projectRoot, '.claude/settings.json'));
-  const plugin = safeReadJson(join(opts.projectRoot, '.claude-plugin/plugin.json'));
+  const settings = readJsonValueFile(join(opts.projectRoot, '.claude/settings.json'));
+  const plugin = readJsonValueFile(join(opts.projectRoot, '.claude-plugin/plugin.json'));
   const settingsHooks = collectHookCommands(
     (settings as { hooks?: unknown } | null)?.hooks,
   );
@@ -415,7 +407,7 @@ export function checkHookExecSmoke(opts: DoctorOpts): CheckResult {
   const nonExec: string[] = [];
   let total = 0;
   for (const cfgPath of cfgs) {
-    const data = safeReadJson(cfgPath);
+    const data = readJsonValueFile(cfgPath);
     if (!data) continue;
     for (const c of collectHookCommands(data)) {
       const hookPath = resolveHookPath(c, opts.projectRoot);

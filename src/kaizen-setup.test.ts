@@ -25,11 +25,13 @@ afterEach(() => {
 });
 
 describe("setup JSON file parsing", () => {
-  it("delegates runtime JSON object file reads to the shared parser", () => {
+  it("delegates runtime JSON object file reads to the shared file helper", () => {
     const source = readFileSync(new URL("./kaizen-setup.ts", import.meta.url), "utf-8");
 
-    expect(source).toContain("parseJsonObject");
+    expect(source).toContain("./lib/json-file.js");
     expect(source).not.toContain("JSON.parse(readFileSync");
+    expect(source).not.toContain("function readJsonObjectFile");
+    expect(source).not.toContain("parseJsonObject(readFileSync");
   });
 });
 
