@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   buildCodexExecArgs,
@@ -45,6 +46,17 @@ describe('parseCodexJsonl (#1144)', () => {
 
     expect(parsed.events).toHaveLength(1);
     expect(parsed.malformedLines).toEqual(['{not json']);
+  });
+
+  it('delegates JSONL row parsing and malformed-row accounting to the shared helper', () => {
+    const source = readFileSync('scripts/auto-dent-codex.ts', 'utf8');
+    const parserSource = source.slice(
+      source.indexOf('export function parseCodexJsonl'),
+      source.indexOf('export function extractCodexPhaseMarkers'),
+    );
+
+    expect(parserSource).not.toMatch(/JSON\.parse\(line\)/);
+    expect(parserSource).not.toMatch(/jsonl\.split/);
   });
 
   it('extracts current Codex item payloads from supervised provider runs (#1197)', () => {
