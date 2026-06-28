@@ -46,6 +46,8 @@ import {
   writeBatchOutcomeAttachment,
   readBatchOutcomesFromGithub,
   computeSteeringRecommendations,
+  deriveBanditPriorFromOutcomes,
+  type BanditPrior,
 } from './batch-outcome.js';
 import { phaseProvidersForAgentProvider, type PhaseProviderRecord, type Provider } from './auto-dent-provider.js';
 import { computeExploreExploitConversion, formatExploreExploitConversion } from './auto-dent-explore-conversion.js';
@@ -258,6 +260,8 @@ export interface BatchState {
    * so observable cloud data biases this batch's choices.
    */
   cross_batch_steering?: string[];
+  /** UCB1 warm-start prior derived from PRIOR batches' batch-outcome attachments (#1201). */
+  cross_batch_bandit_prior?: BanditPrior;
   /** Manifest-forced issue targets already consumed in this batch (#1213). */
   manifest_forced_targets_consumed?: string[];
 }
@@ -996,7 +1000,10 @@ function learnedSignalMode(
   excludedModes: Set<string>,
   reason: string,
 ): ModeSelection | null {
-  const bandit = computeBanditWeights(state.run_history || [], { explorationC: banditExplorationC() });
+  const bandit = computeBanditWeights(state.run_history || [], {
+    explorationC: banditExplorationC(),
+    prior: state.cross_batch_bandit_prior,
+  });
   if (!bandit) return null;
 
   const best = bandit.details
@@ -1316,14 +1323,18 @@ export function buildBanditDecisionTelemetry(
  */
 export function computeBanditWeights(
   history: RunMetrics[],
-  opts: { minRuns?: number; explorationC?: number } = {},
+  opts: { minRuns?: number; explorationC?: number; prior?: BanditPrior } = {},
 ): BanditResult | null {
   const minRuns = opts.minRuns ?? 10;
   const explorationC = opts.explorationC ?? DEFAULT_BANDIT_C;
+  const prior = opts.prior;
 
   // Only runs with mode data count toward bandit statistics.
   const withMode = history.filter(r => r.mode);
-  if (withMode.length < minRuns) return null;
+  const priorPlaysTotal = prior
+    ? SCHEDULABLE_MODES.reduce((sum, mode) => sum + (prior.modes[mode]?.plays ?? 0), 0)
+    : 0;
+  if (withMode.length + priorPlaysTotal < minRuns) return null;
 
   // Group runs by mode.
   const byMode = new Map<string, RunMetrics[]>();
@@ -1338,9 +1349,13 @@ export function computeBanditWeights(
   const meanReward: Record<string, number> = {};
   for (const mode of SCHEDULABLE_MODES) {
     const runs = byMode.get(mode) || [];
-    plays[mode] = runs.length;
-    meanReward[mode] = runs.length
-      ? runs.reduce((s, r) => s + modeSuccess(mode, r), 0) / runs.length
+    const priorMode = prior?.modes[mode];
+    const priorPlays = priorMode?.plays ?? 0;
+    const priorReward = priorMode?.total_reward ?? 0;
+    const currentReward = runs.reduce((s, r) => s + modeSuccess(mode, r), 0);
+    plays[mode] = priorPlays + runs.length;
+    meanReward[mode] = plays[mode] > 0
+      ? (priorReward + currentReward) / plays[mode]
       : 0;
   }
 
@@ -1482,7 +1497,10 @@ export function selectMode(state: BatchState, runNum: number, options: SelectMod
   }
 
   // Bandit selection: principled UCB1 explore/exploit weighting when data allows.
-  const bandit = computeBanditWeights(state.run_history || [], { explorationC: banditExplorationC() });
+  const bandit = computeBanditWeights(state.run_history || [], {
+    explorationC: banditExplorationC(),
+    prior: state.cross_batch_bandit_prior,
+  });
   if (bandit) {
     const mode = weightedModeSelect(bandit.weights, runNum, state.batch_id);
     return { mode, template: MODE_TEMPLATES[mode] || MODE_TEMPLATES.exploit, reason: 'bandit', bandit };
@@ -1550,11 +1568,13 @@ export function populateCrossBatchSteering(
 
   const repo = state.kaizen_repo;
   let steering: string[] = [];
+  let banditPrior: BanditPrior | undefined;
   if (repo && repo !== 'unknown') {
     try {
       const read = deps.read ?? readBatchOutcomesFromGithub;
       const outcomes = read(repo, { excludeBatchId: state.batch_id });
       const report = computeSteeringRecommendations(outcomes);
+      banditPrior = deriveBanditPriorFromOutcomes(outcomes) ?? undefined;
       steering = report.recommendations.map((r) => r.text);
       if (steering.length > 0) {
         console.log(
@@ -1575,6 +1595,7 @@ export function populateCrossBatchSteering(
   }
 
   state.cross_batch_steering = steering;
+  state.cross_batch_bandit_prior = banditPrior;
   try {
     writeState(stateFile, state);
   } catch {

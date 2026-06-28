@@ -6,6 +6,7 @@ import {
   readBatchOutcome,
   readBatchOutcomesFromGithub,
   computeSteeringRecommendations,
+  deriveBanditPriorFromOutcomes,
   formatSteeringReport,
   steeringPromptText,
   BatchOutcomeSchema,
@@ -233,6 +234,37 @@ const mode = (mode: string, runs: number, successes: number, prs: number, cost: 
   mode, runs, successes, success_rate: runs ? successes / runs : 0,
   cost_usd: cost, prs, avg_cost: runs ? cost / runs : 0,
   efficiency: cost ? prs / cost : 0, lines_deleted: 0, issues_pruned: 0,
+});
+
+describe('deriveBanditPriorFromOutcomes — pure mode prior adapter', () => {
+  it('converts recent batch outcomes into decayed prior plays and rewards', () => {
+    const older = makeOutcome({
+      batch_id: 'older',
+      batch_start: 1,
+      mode_breakdown: [mode('exploit', 4, 4, 4, 8), mode('explore', 4, 0, 0, 8)],
+    });
+    const newer = makeOutcome({
+      batch_id: 'newer',
+      batch_start: 2,
+      mode_breakdown: [mode('exploit', 2, 2, 2, 4), mode('explore', 2, 0, 0, 4)],
+    });
+
+    const prior = deriveBanditPriorFromOutcomes([older, newer], { decay: 0.5 });
+
+    expect(prior).toMatchObject({
+      source: 'batch-outcome',
+      source_batches: 2,
+      decay: 0.5,
+    });
+    expect(prior!.modes.exploit.plays).toBeCloseTo(4);
+    expect(prior!.modes.exploit.total_reward).toBeCloseTo(4);
+    expect(prior!.modes.explore.plays).toBeCloseTo(4);
+    expect(prior!.modes.explore.total_reward).toBe(0);
+  });
+
+  it('returns null when no outcome has mode evidence', () => {
+    expect(deriveBanditPriorFromOutcomes([makeOutcome({ mode_breakdown: [] })])).toBeNull();
+  });
 });
 
 describe('computeSteeringRecommendations — pure analysis', () => {

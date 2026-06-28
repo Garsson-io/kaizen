@@ -300,9 +300,37 @@ interface ModeRollup {
   efficiency: number; // PRs per $ — higher is better
 }
 
+export interface BanditPriorMode {
+  /** Decayed cross-batch plays for this mode. */
+  plays: number;
+  /** Decayed cross-batch reward total for this mode. */
+  total_reward: number;
+}
+
+export interface BanditPrior {
+  source: 'batch-outcome';
+  /** Number of batch outcomes that contributed at least one mode row. */
+  source_batches: number;
+  /** Recency decay applied per batch, newest outcome weight = 1. */
+  decay: number;
+  /** Per-mode prior evidence keyed by mode name. */
+  modes: Record<string, BanditPriorMode>;
+}
+
+function outcomesWithModeEvidence(
+  outcomes: BatchOutcome[],
+  opts: { newestFirst?: boolean; limit?: number } = {},
+): BatchOutcome[] {
+  const filtered = outcomes.filter((outcome) => outcome.mode_breakdown.length > 0);
+  const ordered = opts.newestFirst
+    ? [...filtered].sort((a, b) => b.batch_start - a.batch_start)
+    : filtered;
+  return ordered.slice(0, opts.limit ?? ordered.length);
+}
+
 function rollupModes(outcomes: BatchOutcome[]): ModeRollup[] {
   const acc = new Map<string, { runs: number; successes: number; prs: number; cost: number }>();
-  for (const o of outcomes) {
+  for (const o of outcomesWithModeEvidence(outcomes)) {
     for (const m of o.mode_breakdown) {
       const cur = acc.get(m.mode) ?? { runs: 0, successes: 0, prs: 0, cost: 0 };
       cur.runs += m.runs;
@@ -321,6 +349,36 @@ function rollupModes(outcomes: BatchOutcome[]): ModeRollup[] {
     success_rate: v.runs > 0 ? v.successes / v.runs : 0,
     efficiency: v.cost > 0 ? v.prs / v.cost : 0,
   }));
+}
+
+export function deriveBanditPriorFromOutcomes(
+  outcomes: BatchOutcome[],
+  opts: { decay?: number; limit?: number } = {},
+): BanditPrior | null {
+  const decay = opts.decay ?? 0.8;
+  const limit = opts.limit ?? outcomes.length;
+  const sorted = outcomesWithModeEvidence(outcomes, { newestFirst: true, limit });
+  if (sorted.length === 0) return null;
+
+  const modes: Record<string, BanditPriorMode> = {};
+  for (let i = 0; i < sorted.length; i++) {
+    const weight = Math.pow(decay, i);
+    for (const mode of sorted[i].mode_breakdown) {
+      const cur = modes[mode.mode] ?? { plays: 0, total_reward: 0 };
+      cur.plays += mode.runs * weight;
+      // Consume the durable BatchOutcome success proxy so every cross-batch
+      // reader learns from the same structured observation contract.
+      cur.total_reward += mode.successes * weight;
+      modes[mode.mode] = cur;
+    }
+  }
+
+  return {
+    source: 'batch-outcome',
+    source_batches: sorted.length,
+    decay,
+    modes,
+  };
 }
 
 const pct = (x: number): string => `${Math.round(x * 100)}%`;
