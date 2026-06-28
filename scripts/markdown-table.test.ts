@@ -10,4 +10,9 @@ describe('escapeMarkdownTableCell', () => {
   it('leaves ordinary cell text unchanged', () => {
     expect(escapeMarkdownTableCell('provider-independent')).toBe('provider-independent');
   });
+
+  it('can drop carriage returns for timeline table cells without changing the default (#1360)', () => {
+    expect(escapeMarkdownTableCell('a\rb')).toBe('a\rb');
+    expect(escapeMarkdownTableCell('a\rb', { carriageReturn: 'drop' })).toBe('ab');
+  });
 });
