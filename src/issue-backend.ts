@@ -27,10 +27,10 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { gh } from "./lib/gh-exec.js";
+import { readJsonObjectFile } from "./lib/json-file.js";
 
 // ── Types ──
 
@@ -287,16 +287,26 @@ export function readIssueConfig(projectRoot?: string): IssueBackendConfig {
   const root = projectRoot ?? process.cwd();
   const configPath = join(root, "kaizen.config.json");
 
-  if (!existsSync(configPath)) {
+  const config = readJsonObjectFile(configPath);
+  if (!config) {
     return { backend: "github" };
   }
 
-  const config = JSON.parse(readFileSync(configPath, "utf-8"));
-  const issues = config.issues ?? {};
+  const rawIssues = config.issues;
+  const issues = rawIssues && typeof rawIssues === "object" && !Array.isArray(rawIssues)
+    ? rawIssues as Record<string, unknown>
+    : {};
+  const rawIssueConfig = issues.config;
+  const issueConfig = rawIssueConfig && typeof rawIssueConfig === "object" && !Array.isArray(rawIssueConfig)
+    ? rawIssueConfig as Record<string, unknown>
+    : {};
+  const customCli = typeof issueConfig.customCli === "string"
+    ? issueConfig.customCli
+    : undefined;
 
   return {
-    backend: issues.backend ?? "github",
-    config: issues.config,
+    backend: issues.backend === "custom" ? "custom" : "github",
+    config: customCli ? { customCli } : undefined,
   };
 }
 

@@ -51,6 +51,7 @@ import {
 let testStateDir: string;
 let testAuditDir: string;
 const HOOK_PATH = path.resolve(__dirname, 'pr-kaizen-clear.ts');
+const HOOK_SOURCE = fs.readFileSync(HOOK_PATH, 'utf-8');
 
 beforeEach(() => {
   testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kaizen-clear-test-'));
@@ -71,6 +72,13 @@ afterEach(() => {
   fs.rmSync(testStateDir, { recursive: true, force: true });
   fs.rmSync(testAuditDir, { recursive: true, force: true });
   delete process.env.AUDIT_DIR;
+});
+
+describe('config JSON helper source invariant', () => {
+  it('routes kaizen.config.json reads through readJsonObjectFile', () => {
+    expect(HOOK_SOURCE).toContain('readJsonObjectFile');
+    expect(HOOK_SOURCE).not.toContain("readFileSync(join(root, 'kaizen.config.json')");
+  });
 });
 
 function runHook(input: object): string {

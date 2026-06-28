@@ -15,9 +15,10 @@
  * Migration: kaizen #320 (Phase 3 of #223)
  */
 
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { gh } from '../lib/gh-exec.js';
+import { readJsonObjectFile } from '../lib/json-file.js';
 import { type HookInput, readHookInput, writeHookOutput, traceNullInput, traceHookEvent } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
@@ -54,6 +55,12 @@ interface Impediment {
 }
 
 type GhRunner = (args: string[]) => string;
+
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
 
 // ── Audit logging ────────────────────────────────────────────────────
 
@@ -113,10 +120,10 @@ function getCandidateRepos(gatePrUrl: string): string[] {
   if (parsedPrUrl) repos.push(parsedPrUrl.repo);
   try {
     const root = resolveProjectRoot(process.cwd());
-    const cfg = JSON.parse(
-      readFileSync(join(root, 'kaizen.config.json'), 'utf-8'),
-    );
-    for (const r of [cfg?.issues?.repo, cfg?.host?.repo, cfg?.kaizen?.repo]) {
+    const cfg = readJsonObjectFile(join(root, 'kaizen.config.json'));
+    const candidateRepoFields = ['issues', 'host', 'kaizen']
+      .map((section) => objectOrNull(cfg?.[section])?.repo);
+    for (const r of candidateRepoFields) {
       if (typeof r === 'string' && r) repos.push(r);
     }
   } catch {
