@@ -21,7 +21,6 @@
 
 import {
   existsSync,
-  readFileSync,
   writeFileSync,
   rmSync,
   realpathSync,
@@ -30,7 +29,7 @@ import {
 import { join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { parseJsonObject } from '../src/lib/json-value.js';
+import { readJsonObjectFile } from '../src/lib/json-file.js';
 
 export interface UninstallOpts {
   plugin: string;
@@ -63,14 +62,6 @@ function shortNameOf(plugin: string): string {
   return idx < 0 ? plugin : plugin.slice(0, idx);
 }
 
-function readJsonOrNull(path: string): Record<string, unknown> | null {
-  try {
-    return parseJsonObject(readFileSync(path, 'utf-8'));
-  } catch {
-    return null;
-  }
-}
-
 function writeJson(path: string, data: unknown): void {
   writeFileSync(path, JSON.stringify(data, null, 2));
 }
@@ -93,7 +84,7 @@ export function stepRemoveEnabledPlugin(
 ): { changed: boolean; detail: string } {
   const path = join(projectRoot, '.claude', 'settings.json');
   if (!existsSync(path)) return { changed: false, detail: `no ${path}` };
-  const data = readJsonOrNull(path);
+  const data = readJsonObjectFile(path);
   if (!data) return { changed: false, detail: `unreadable ${path}` };
   const enabled = (data.enabledPlugins ?? {}) as Record<string, unknown>;
   if (!(plugin in enabled)) return { changed: false, detail: `enabledPlugins[${plugin}] already absent` };
@@ -110,7 +101,7 @@ export function stepRemoveInstalledRecord(
 ): { changed: boolean; detail: string } {
   const path = join(homeDir, '.claude', 'plugins', 'installed_plugins.json');
   if (!existsSync(path)) return { changed: false, detail: `no ${path}` };
-  const data = readJsonOrNull(path);
+  const data = readJsonObjectFile(path);
   if (!data) return { changed: false, detail: `unreadable ${path}` };
   const plugins = (data.plugins ?? {}) as Record<string, unknown>;
   if (!(plugin in plugins)) return { changed: false, detail: `record for ${plugin} already absent` };

@@ -20,7 +20,7 @@ import { join } from "path";
 import { parseArgs } from "util";
 import { loadAllSkillMetadata, validateSkillDependencies, validateSkillVersions } from "./skill-metadata.js";
 import { installGitHooks, buildThinWrapper, type InstallResult } from "./setup-git-hooks.js";
-import { parseJsonObject } from "./lib/json-value.js";
+import { readJsonObjectFile } from "./lib/json-file.js";
 
 // ── Types ──
 
@@ -81,14 +81,6 @@ export interface VerifyResult {
 interface PluginManifestRead {
   manifest: Record<string, unknown> | null;
   failure?: VerifyCheck;
-}
-
-function readJsonObjectFile(path: string): Record<string, unknown> | null {
-  try {
-    return parseJsonObject(readFileSync(path, "utf-8"));
-  } catch {
-    return null;
-  }
 }
 
 function readPluginManifest(pluginRoot: string): PluginManifestRead {
