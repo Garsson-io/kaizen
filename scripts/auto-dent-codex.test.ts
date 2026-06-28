@@ -4,7 +4,11 @@ import {
   buildCodexExecArgs,
   parseCodexJsonl,
   extractCodexPhaseMarkers,
+  normalizeCodexEventToStreamMessages,
+  normalizeCodexFinalTextToStreamMessages,
 } from './auto-dent-codex.js';
+import { processStreamMessage } from './auto-dent-stream.js';
+import { makeRunResult } from './auto-dent-test-helpers.js';
 
 describe('buildCodexExecArgs (#1144)', () => {
   it('constructs codex exec argv for externally sandboxed synthetic runs', () => {
@@ -116,5 +120,87 @@ describe('parseCodexJsonl (#1144)', () => {
       'AUTO_DENT_PHASE: IMPLEMENT | case=synthetic',
       'AUTO_DENT_PHASE: PR | url=https://example.test/pull/1',
     ]);
+  });
+});
+
+describe('normalizeCodexEventToStreamMessages (#1488)', () => {
+  it('turns Codex agent messages into canonical assistant text messages', () => {
+    const messages = normalizeCodexEventToStreamMessages({
+      type: 'item.completed',
+      item: {
+        type: 'agent_message',
+        text: 'AUTO_DENT_PHASE: PICK | issue=#1488 | title=Codex stream contract',
+      },
+    });
+
+    const result = makeRunResult();
+    for (const message of messages) {
+      processStreamMessage(message, result, Date.now());
+    }
+
+    expect(result.pickedIssue).toBe('#1488');
+    expect(result.pickedIssueTitle).toBe('Codex stream contract');
+  });
+
+  it('turns Codex command executions into shared tool-use and tool-result messages', () => {
+    const messages = normalizeCodexEventToStreamMessages({
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        command: 'gh pr create',
+        aggregated_output: 'https://github.com/Garsson-io/kaizen/pull/1499\n',
+        exit_code: 0,
+        status: 'completed',
+      },
+    });
+
+    const result = makeRunResult();
+    const ctx = {};
+    for (const message of messages) {
+      processStreamMessage(message, result, Date.now(), ctx);
+    }
+
+    expect(result.toolCalls).toBe(1);
+    expect(result.prs).toEqual(['https://github.com/Garsson-io/kaizen/pull/1499']);
+    expect(ctx).toMatchObject({ lastActivity: expect.stringContaining('gh pr create') });
+  });
+
+  it('turns Codex final messages into canonical result messages for final claim parsing', () => {
+    const claim = {
+      schema_version: 1,
+      selected_issue: '#1488',
+      case_worktree: '260628-k1488-codex-stream-contract',
+      tests: { status: 'pass', command: 'npm test', count: 3, evidence: ['3 passed'] },
+      pr_url: 'https://github.com/Garsson-io/kaizen/pull/1499',
+      review_status: 'pass',
+      reflection_status: 'done',
+      stop_reason: null,
+      blockers: [],
+    };
+
+    const messages = normalizeCodexEventToStreamMessages({
+      type: 'final_message',
+      message: JSON.stringify(claim),
+    });
+
+    const result = makeRunResult();
+    for (const message of messages) {
+      processStreamMessage(message, result, Date.now());
+    }
+
+    expect(result.finalClaimStatus).toBe('valid');
+    expect(result.finalClaim?.selected_issue).toBe('#1488');
+  });
+
+  it('preserves parsed final-text fallback through the canonical result path', () => {
+    const result = makeRunResult();
+    for (const message of normalizeCodexFinalTextToStreamMessages('AUTO_DENT_PHASE: TEST | result=pass | count=3')) {
+      processStreamMessage(message, result, Date.now());
+    }
+
+    expect(result.progressSteps?.find((s) => s.phase === 'TEST')).toMatchObject({
+      state: 'pass',
+      detail: '3 tests',
+    });
   });
 });

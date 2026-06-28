@@ -3226,6 +3226,17 @@ describe('runOnce stream-json line parsing', () => {
     expect(parserSection).toContain('parseJsonObject');
     expect(parserSection).not.toContain('JSON.parse(line)');
   });
+
+  it('routes Codex JSONL rows through normalized shared stream messages (#1488)', () => {
+    const source = readFileSync(new URL('./auto-dent-run.ts', import.meta.url), 'utf-8');
+    const runCodexStart = source.indexOf('async function runCodex');
+    const runCodexEnd = source.indexOf('// Execute one run', runCodexStart);
+    const runCodexSection = source.slice(runCodexStart, runCodexEnd);
+
+    expect(runCodexSection).toContain('normalizeCodexEventToStreamMessages');
+    expect(runCodexSection).toContain('processStreamMessage(streamMessage');
+    expect(runCodexSection).not.toContain('extractArtifacts([parsed.text, parsed.finalText]');
+  });
 });
 
 describe('findExistingProgressIssue', () => {
