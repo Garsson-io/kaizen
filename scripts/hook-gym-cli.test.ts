@@ -5,21 +5,29 @@
  *   B8 — `--list` emits formatted scenario summary with severity weights
  *   B9 — `--run <name> --dry-run` renders prompt with template vars substituted
  *
- * These are Integration level: they spawn a real `npx tsx` subprocess,
+ * These are Integration level: they spawn a real project-local `tsx` subprocess,
  * exercise the full CLI pipeline (arg parsing → scenario lookup → template
  * rendering → stdout), and assert on the composed output. Mocking stdout
  * would always pass — this is why the level is Integration not Unit.
  */
 
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 const REPO_ROOT = resolve(__dirname, '..');
 const CLI = resolve(REPO_ROOT, 'scripts/hook-gym.ts');
+const TSX = resolve(
+  REPO_ROOT,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'tsx.cmd' : 'tsx',
+);
 
-function runCli(args: string[]): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync('npx', ['tsx', CLI, ...args], {
+type CliResult = { stdout: string; stderr: string; status: number };
+
+function runCli(args: string[]): CliResult {
+  const result = spawnSync(TSX, [CLI, ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
     timeout: 30000,
@@ -32,8 +40,14 @@ function runCli(args: string[]): { stdout: string; stderr: string; status: numbe
 }
 
 describe('hook-gym CLI — --list (B8)', () => {
+  let result: CliResult;
+
+  beforeAll(() => {
+    result = runCli(['--list']);
+  });
+
   it('exits 0 and lists all three scenarios', () => {
-    const { stdout, status } = runCli(['--list']);
+    const { stdout, status } = result;
     expect(status).toBe(0);
     expect(stdout).toContain('probe-hooks');
     expect(stdout).toContain('lifecycle-gates');
@@ -41,12 +55,12 @@ describe('hook-gym CLI — --list (B8)', () => {
   });
 
   it('shows total count', () => {
-    const { stdout } = runCli(['--list']);
+    const { stdout } = result;
     expect(stdout).toMatch(/Total: \d+ scenarios/);
   });
 
   it('includes model, budget, and timeout columns', () => {
-    const { stdout } = runCli(['--list']);
+    const { stdout } = result;
     // probe-hooks uses haiku
     expect(stdout).toMatch(/probe-hooks\s+haiku/);
     // full-clear uses sonnet
@@ -58,13 +72,13 @@ describe('hook-gym CLI — --list (B8)', () => {
   });
 
   it('includes weighted severity total per scenario', () => {
-    const { stdout } = runCli(['--list']);
+    const { stdout } = result;
     // Severity weight is printed as weight=NN
     expect(stdout).toMatch(/weight=\d+/);
   });
 
   it('shows description for each scenario', () => {
-    const { stdout } = runCli(['--list']);
+    const { stdout } = result;
     expect(stdout).toContain('Full workflow');
     expect(stdout).toContain('Gate lifecycle');
     expect(stdout).toContain('Full lifecycle');
@@ -72,13 +86,19 @@ describe('hook-gym CLI — --list (B8)', () => {
 });
 
 describe('hook-gym CLI — --run <name> --dry-run (B9)', () => {
+  let result: CliResult;
+
+  beforeAll(() => {
+    result = runCli(['--run', 'probe-hooks', '--dry-run']);
+  });
+
   it('exits 0 for a valid scenario', () => {
-    const { status } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    const { status } = result;
     expect(status).toBe(0);
   });
 
   it('substitutes the {{timestamp}} template variable', () => {
-    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    const { stdout } = result;
     // The placeholder must be gone
     expect(stdout).not.toContain('{{timestamp}}');
     // And a real timestamp (14-digit YYYYMMDDHHMMSS) should appear
@@ -86,14 +106,14 @@ describe('hook-gym CLI — --run <name> --dry-run (B9)', () => {
   });
 
   it('substitutes the {{host_repo}} template variable', () => {
-    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    const { stdout } = result;
     expect(stdout).not.toContain('{{host_repo}}');
     // Host repo read from kaizen.config.json — kaizen self-dogfoods
     expect(stdout).toContain('Garsson-io/kaizen');
   });
 
   it('prints the scenario header block with model + budget + timeout', () => {
-    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    const { stdout } = result;
     expect(stdout).toContain('=== Scenario: probe-hooks ===');
     expect(stdout).toContain('haiku');
     expect(stdout).toMatch(/\$\d+\.\d{2}/);
@@ -101,21 +121,21 @@ describe('hook-gym CLI — --run <name> --dry-run (B9)', () => {
   });
 
   it('prints the expected-hooks section with severity and weight', () => {
-    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    const { stdout } = result;
     expect(stdout).toContain('--- Expected hooks ---');
     // Severity and weight annotation appears on every expected hook
     expect(stdout).toMatch(/\[sev=\d\]/);
   });
 
   it('prints the expected-gates section', () => {
-    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    const { stdout } = result;
     expect(stdout).toContain('--- Expected gates ---');
     expect(stdout).toContain('needs_review');
     expect(stdout).toContain('needs_pr_kaizen');
   });
 
   it('prints the rendered prompt section', () => {
-    const { stdout } = runCli(['--run', 'probe-hooks', '--dry-run']);
+    const { stdout } = result;
     expect(stdout).toContain('--- Rendered prompt ---');
     // The probe-hooks scenario instructs creating hook-gym-probe.md
     expect(stdout).toContain('hook-gym-probe.md');
