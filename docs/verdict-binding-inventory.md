@@ -16,6 +16,7 @@ TypeScript inventory as the source of truth.
 | PR merge-state verdict | scripts/auto-dent-github.ts: classifyMergeView() / checkMergeStatus() | scripts/auto-dent-github.ts:function:checkMergeStatus<br>scripts/auto-dent-github.ts:function:classifyMergeView | yes |
 | Reflection issue-ref verification verdict | src/hooks/lib/issue-ref-verifier.ts: verifyIssueRef() | src/hooks/lib/issue-ref-verifier.ts:function:verifyIssueRef | yes |
 | Batch outcome schema verdict | scripts/batch-outcome.ts: BatchOutcomeSchema.parse() | scripts/batch-outcome.ts:const:BatchOutcomeSchema | yes |
+| Hook-activation verdict | scripts/auto-dent-hook-activation.ts: evaluateHookActivation() from the session system.init event | scripts/auto-dent-hook-activation.ts:function:evaluateHookActivation<br>scripts/auto-dent-hook-activation.ts:interface:HookActivationVerdict | yes |
 
 | Terminal action | Computed verdicts consumed | Enforcing consumer | Failure mode blocked |
 |---|---|---|---|
