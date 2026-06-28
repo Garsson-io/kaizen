@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
@@ -11,6 +11,14 @@ import {
 import type { SkillMetadata } from "./skill-metadata.js";
 
 describe("parseSkillFrontmatter", () => {
+  it("uses the shared YAML frontmatter parser", () => {
+    const source = readFileSync(join(__dirname, "skill-metadata.ts"), "utf8");
+
+    expect(source).not.toContain("content.match(/^---\\r?\\n");
+    expect(source).not.toContain("for (const line of yaml.split");
+    expect(source).not.toContain("colonIdx");
+  });
+
   it("parses minimal frontmatter with name and description", () => {
     const content = `---
 name: kaizen-zen
@@ -54,6 +62,25 @@ user_invocable: true
       min_version: "1.0.40",
       user_invocable: true,
     });
+  });
+
+  it("parses block-style YAML arrays", () => {
+    const content = `---
+name: block-arrays
+description: Block array metadata
+triggers:
+  - implement spec
+  - go ahead
+depends_on:
+  - kaizen-evaluate
+  - kaizen-write-plan
+---
+
+# Block Arrays`;
+
+    const meta = parseSkillFrontmatter(content);
+    expect(meta?.triggers).toEqual(["implement spec", "go ahead"]);
+    expect(meta?.depends_on).toEqual(["kaizen-evaluate", "kaizen-write-plan"]);
   });
 
   it("handles user_invocable boolean correctly", () => {
