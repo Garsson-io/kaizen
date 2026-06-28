@@ -26,7 +26,7 @@
  *   npx tsx src/issue-backend.ts comment 42 --body "Working on this"
  */
 
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -112,10 +112,16 @@ function parseRawIssue(r: Record<string, any>): Issue {
   };
 }
 
-/** Shell-safe exec: quotes args containing spaces. */
-function shellExec(bin: string, args: string[]): string {
-  const cmd = `${bin} ${args.map(a => a.includes(" ") ? `"${a}"` : a).join(" ")}`;
-  return execSync(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+/** Run a custom CLI with a fixed binary and explicit argv. */
+function runCli(bin: string, args: string[]): string {
+  const result = spawnSync(bin, args, {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr || `${bin} failed`);
+  }
+  return (result.stdout || "").trim();
 }
 
 // ── GitHub Backend (default) ──
@@ -214,7 +220,7 @@ export class CustomCliBackend implements IssueBackend {
   }
 
   private run(args: string[]): string {
-    return shellExec(this.cli, args);
+    return runCli(this.cli, args);
   }
 
   create(opts: CreateIssueOpts): CreateResult {

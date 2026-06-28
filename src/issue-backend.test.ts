@@ -139,3 +139,58 @@ describe("GitHubBackend gh execution", () => {
     }
   });
 });
+
+describe("CustomCliBackend execution", () => {
+  it("passes custom CLI create arguments as argv without shell flattening", async () => {
+    vi.resetModules();
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify({
+        number: 77,
+        url: "https://issues.example/custom/77",
+      }),
+      stderr: "",
+    }));
+    const execSync = vi.fn(() => JSON.stringify({
+      number: 77,
+      url: "https://issues.example/custom/77",
+    }));
+    vi.doMock("node:child_process", () => ({ spawnSync, execSync }));
+
+    try {
+      const { CustomCliBackend: MockedCustomCliBackend } = await import("./issue-backend.js");
+
+      const result = new MockedCustomCliBackend("/opt/bin/custom-issues").create({
+        repo: "Garsson-io/kaizen",
+        title: "Title with spaces; $(touch nope)",
+        body: "Body with `backticks` and \"quotes\"",
+        labels: ["kaizen", "needs review"],
+      });
+
+      expect(result).toEqual({
+        number: 77,
+        url: "https://issues.example/custom/77",
+      });
+      expect(spawnSync).toHaveBeenCalledWith("/opt/bin/custom-issues", [
+        "create",
+        "--title",
+        "Title with spaces; $(touch nope)",
+        "--body",
+        "Body with `backticks` and \"quotes\"",
+        "--label",
+        "kaizen",
+        "--label",
+        "needs review",
+        "--repo",
+        "Garsson-io/kaizen",
+      ], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      expect(execSync).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
+  });
+});
