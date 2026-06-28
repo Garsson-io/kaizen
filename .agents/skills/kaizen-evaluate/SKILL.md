@@ -265,6 +265,19 @@ DONE WHEN: [the specific verifiable outcome that means it's fixed]
 
 Verifiable means: an external observer can check it without reading the implementation. Write this before you look at any code. Every plan step you add must connect back to DONE WHEN. Steps that don't are building infrastructure, not solving the problem.
 
+**Capture the Impact Baseline now.** BEFORE evidence has to be captured while the pre-fix reality still exists; a PR-time-only baseline is reconstructed theater. Add this block to the plan you store:
+
+```
+## Impact Baseline
+- Goal (#N): <observable outcome + direction the issue wants>
+- Acceptance signal: <what would prove it; selected at plan time>
+- BEFORE: <baseline sample, failing repro, metric, hook decision, or structural state>
+- AFTER capture method: <how the same scenario will be rerun after implementation>
+- Residual scan target: <what adjacent frictions/low-hanging fruit to check before done>
+```
+
+For pure refactors/no-behavior changes, use structural proof honestly: duplicated paths, competing mechanisms, or drift vectors before the change. Do not invent a behavior delta where none should exist.
+
 **Survey what already exists.** Before designing a solution, read CLAUDE.md's Key Files table. Then grep for existing tools in your problem domain:
 
 ```bash
@@ -325,6 +338,13 @@ DONE WHEN: [from step 1]
 ## Information Retrieved
 - [source]: [what you found] — [how it changes or confirms the plan]
 - (or: "No relevant existing tools found for [domain]")
+
+## Impact Baseline
+- Goal (#N): ...
+- Acceptance signal: ...
+- BEFORE: ...
+- AFTER capture method: ...
+- Residual scan target: ...
 
 ## Design Alternatives Considered
 ### Option A: [description] — SELECTED

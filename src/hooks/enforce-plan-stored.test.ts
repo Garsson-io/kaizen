@@ -73,6 +73,16 @@ const GOOD_TEST_PLAN = `## Test Plan
 | 2 | Token refresh on 401 response | Unit |
 | 3 | Config validation rejects bad input | Unit |`;
 
+const GOOD_IMPACT_SECTION = `## Impact (goal -> before/after -> match)
+
+- Goal (#1055): Non-docs PR creation shows observable issue impact before merge.
+- Acceptance signal: A PR body carries comparable evidence for the linked issue goal.
+- BEFORE: Base hook allowed a body with only Closes #1055 and no impact proof.
+- AFTER: Head hook blocks the missing-proof body and allows this populated proof.
+- Delta: Missing proof changes from allowed to blocked with impact-proof guidance.
+- Goal met?: yes
+- Residual scan: none`;
+
 function ghPrCreate(body: string): string {
   return `gh pr create --title "feat: test" --body "$(cat <<'EOF'\n${body}\nEOF\n)"`;
 }
@@ -264,7 +274,7 @@ describe('checkPlanBeforeEdit', () => {
 
     it('B6: substance deny reason is the same at the edit gate and the PR gate', () => {
       const editReason = checkPlanBeforeEdit('src/thing.ts', makeDeps({ retrievePlan: () => STUB_PLAN })).reason ?? '';
-      const prReason = checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps({ retrievePlan: () => STUB_PLAN })).reason ?? '';
+      const prReason = checkPlanBeforePr(ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`), makeDeps({ retrievePlan: () => STUB_PLAN })).reason ?? '';
       // Same heuristic, same message body — one substance bar at both choke points.
       expect(editReason).toContain('not substantive');
       expect(prReason).toContain('not substantive');
@@ -276,7 +286,7 @@ describe('checkPlanBeforeEdit', () => {
       // Any plan that passes at PR time must pass at edit time — same heuristic.
       const deps = makeDeps();
       expect(checkPlanBeforeEdit('src/thing.ts', deps).allowed).toBe(true);
-      expect(checkPlanBeforePr(ghPrCreate('Closes #1055'), deps).allowed).toBe(true);
+      expect(checkPlanBeforePr(ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`), deps).allowed).toBe(true);
     });
   });
 
@@ -326,8 +336,15 @@ describe('checkPlanBeforeEdit', () => {
 // ── Gate 2: gh pr create ────────────────────────────────────────────
 
 describe('checkPlanBeforePr', () => {
-  it('allows when plan + testplan exist', () => {
-    expect(checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps()).allowed).toBe(true);
+  it('DENIES non-docs PR without populated Impact proof even when plan + testplan exist', () => {
+    const result = checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('impact-proof');
+    expect(result.reason).toContain('Impact');
+  });
+
+  it('allows when plan + testplan exist and PR body contains populated Impact proof', () => {
+    expect(checkPlanBeforePr(ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`), makeDeps()).allowed).toBe(true);
   });
 
   it('allows non-pr-create commands', () => {
@@ -406,7 +423,7 @@ describe('checkPlanBeforePr', () => {
 
   it('#318 (B6): allows create for an OPEN issue (no regression)', () => {
     const result = checkPlanBeforePr(
-      ghPrCreate('Closes #1055'),
+      ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`),
       makeDeps({}, { getIssueState: () => 'OPEN' }),
     );
     expect(result.allowed).toBe(true);
@@ -432,6 +449,24 @@ describe('checkPlanBeforePr', () => {
     );
     expect(result.allowed).toBe(true);
     expect(called).toBe(false);
+  });
+
+  it('DENIES when Impact proof has placeholder fields', () => {
+    const placeholderImpact = `## Impact (goal -> before/after -> match)
+
+- Goal (#1055): TBD
+- Acceptance signal: TBD
+- BEFORE: TBD
+- AFTER: TBD
+- Delta: TBD
+- Goal met?: TBD
+- Residual scan: TBD
+
+Closes #1055`;
+    const result = checkPlanBeforePr(ghPrCreate(placeholderImpact), makeDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('impact-proof');
+    expect(result.reason).toContain('placeholder');
   });
 });
 

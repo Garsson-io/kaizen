@@ -68,6 +68,7 @@ describe('cli-dimensions against real prompts', () => {
     expect(output).toContain('correctness');
     expect(output).toContain('security');
     expect(output).toContain('tooling-fitness');
+    expect(output).toContain('impact-proof');
     expect(output).toContain('multi-pr-spiral');
     expect(output).toContain('reflection-quality');
     expect(output).toContain('test-quality');

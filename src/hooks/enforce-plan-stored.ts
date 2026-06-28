@@ -196,6 +196,73 @@ export function checkTestPlanSubstance(testPlanText: string): string[] {
   return failures;
 }
 
+type ImpactField = {
+  name: string;
+  pattern: string;
+};
+
+const IMPACT_FIELDS: ImpactField[] = [
+  { name: 'Goal', pattern: String.raw`Goal(?:\s*\(#[0-9]+\))?` },
+  { name: 'Acceptance signal', pattern: String.raw`Acceptance signal` },
+  { name: 'BEFORE', pattern: String.raw`BEFORE` },
+  { name: 'AFTER', pattern: String.raw`AFTER` },
+  { name: 'Delta', pattern: String.raw`Delta` },
+  { name: 'Goal met?', pattern: String.raw`Goal met\?` },
+  { name: 'Residual scan', pattern: String.raw`Residual scan` },
+];
+
+const PLACEHOLDER_VALUE = /^(?:tbd|todo|pending|placeholder|n\/a|na|<[^>]+>|\.\.\.)$/i;
+
+function extractImpactSection(text: string): string | null {
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => /^##\s+Impact\b/i.test(line.trim()));
+  if (start < 0) return null;
+  const rest = lines.slice(start + 1);
+  const nextSection = rest.findIndex((line) => /^##\s+\S+/i.test(line.trim()));
+  return [lines[start], ...(nextSection < 0 ? rest : rest.slice(0, nextSection))].join('\n');
+}
+
+export function checkImpactProofSubstance(prBodyText: string): string[] {
+  const section = extractImpactSection(prBodyText);
+  if (!section) return ['Missing ## Impact (goal -> before/after -> match) section'];
+
+  const failures: string[] = [];
+  for (const field of IMPACT_FIELDS) {
+    const match = section.match(new RegExp(String.raw`(?:^|\n)\s*[-*]?\s*${field.pattern}\s*:\s*(.+)`, 'i'));
+    const value = match?.[1]?.trim() ?? '';
+    if (!value) {
+      failures.push(`Missing Impact field: ${field.name}`);
+    } else if (PLACEHOLDER_VALUE.test(value)) {
+      failures.push(`Impact field uses placeholder value: ${field.name}`);
+    }
+  }
+  return failures;
+}
+
+function checkImpactProofBeforePr(fullCommand: string): PlanCheckResult | null {
+  const failures = checkImpactProofSubstance(fullCommand);
+  if (failures.length === 0) return null;
+  return {
+    allowed: false,
+    missing: ['impact-proof'],
+    reason: `BLOCKED: PR body lacks populated Impact proof for the linked issue (#1505).
+
+${failures.map(f => `  - ${f}`).join('\n')}
+
+Non-docs kaizen PRs must show goal impact, not just assert it. Use /kaizen-write-pr
+and include a populated section:
+
+## Impact (goal -> before/after -> match)
+- Goal (#N): <observable outcome + direction>
+- Acceptance signal: <what would prove it; chosen at plan time>
+- BEFORE: <baseline sample or structural proof>
+- AFTER: <same sample post-change>
+- Delta: <eyeballable difference>
+- Goal met?: yes | partial (deferred #M) | no
+- Residual scan: <done-in-PR | filed #K | none>`,
+  };
+}
+
 /**
  * Run the substance heuristic over the already-fetched gate text. Returns a
  * BLOCKED result if either the plan or the test plan is a rubber-stamp, else
@@ -463,6 +530,9 @@ Run /kaizen-write-plan — the skill knows how to create and store the plan corr
   // gate → one substance bar at both choke points (#1035).
   const substanceResult = checkSubstance(issueNum, gate.planText, gate.testPlanText);
   if (substanceResult) return substanceResult;
+
+  const impactProofResult = checkImpactProofBeforePr(fullCommand);
+  if (impactProofResult) return impactProofResult;
 
   return { allowed: true };
 }

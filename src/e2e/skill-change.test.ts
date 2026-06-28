@@ -336,6 +336,64 @@ describe("kaizen-evaluate — test-plan discipline (#1014)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Impact proof discipline — goal -> before/after -> match (kaizen #1505)
+// ---------------------------------------------------------------------------
+
+describe("kaizen workflow — Impact proof discipline (#1505)", () => {
+  it("kaizen-write-plan requires plan-time Impact Baseline capture", () => {
+    const skill = loadSkill("kaizen-write-plan");
+    expect(skill).toContain("Impact Baseline");
+    expect(skill).toContain("Acceptance signal");
+    expect(skill).toContain("BEFORE");
+  });
+
+  it("kaizen-evaluate mirrors the plan-time Impact Baseline requirement", () => {
+    const skill = loadSkill("kaizen-evaluate");
+    expect(skill).toContain("Impact Baseline");
+    expect(skill).toContain("Acceptance signal");
+    expect(skill).toContain("BEFORE");
+  });
+
+  it("kaizen-write-pr retrieves the stored plan and requires the Impact rubric", () => {
+    const skill = loadSkill("kaizen-write-pr");
+    expect(skill).toContain("retrieve-plan");
+    expect(skill).toContain("## Impact (goal");
+    expect(skill).toContain("Goal met?");
+    expect(skill).toContain("Residual scan");
+  });
+
+  it("artifact lifecycle documents Impact proof as a PR artifact sourced from the plan", () => {
+    const doc = readFileSync(resolve(KAIZEN_ROOT, "docs/artifact-lifecycle.md"), "utf-8");
+    expect(doc).toContain("Impact proof");
+    expect(doc).toContain("plan-time");
+    expect(doc).toContain("PR description");
+  });
+
+  it("verification discipline codifies meet-reality before declaring done", () => {
+    const doc = readFileSync(resolve(KAIZEN_ROOT, ".agents/kaizen/verification.md"), "utf-8");
+    expect(doc).toContain("Meet Reality Before Declaring Done");
+    expect(doc).toContain("BEFORE");
+    expect(doc).toContain("AFTER");
+  });
+
+  it.skipIf(!isLive)(
+    "live smoke: planning prompt emits Impact Baseline fields",
+    () => {
+      const prompt = [
+        "You are applying kaizen-write-plan Phase 4.5 to an issue about PRs lacking goal-impact proof.",
+        "Use the new Impact Baseline discipline.",
+        "Return only the Impact Baseline block with fields for Goal, Acceptance signal, BEFORE, AFTER capture method, and Residual scan.",
+      ].join("\n");
+
+      const output = runSkill(prompt, { maxBudget: 0.10, timeout: 90_000 });
+      expect(output).toMatch(/Impact Baseline/i);
+      expect(output).toMatch(/Acceptance signal/i);
+      expect(output).toMatch(/BEFORE/i);
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Behavioral smoke test — dry dimension detects known DRY violation (kaizen #952)
 // ---------------------------------------------------------------------------
 
