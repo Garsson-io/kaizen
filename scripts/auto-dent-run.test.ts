@@ -2242,9 +2242,7 @@ describe('selectMode', () => {
     cleanupDirs.length = 0;
   });
 
-  it('forces exploit with a target issue when repeated candidate manifests name the same top candidate', () => {
-    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-mode-'));
-    cleanupDirs.push(tmpDir);
+  function writeRepeatedCandidateManifests(tmpDir: string, issue = '#1213', suggestedMode = 'exploit') {
     for (const run of [1, 2, 3]) {
       writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
         version: 1,
@@ -2254,12 +2252,18 @@ describe('selectMode', () => {
             id: 'self-steering',
             title: 'Self-steering bundle',
             rationale: 'Repeated top candidate',
-            refs: ['#1213', '#1189'],
-            suggested_mode: 'exploit',
+            refs: [issue, '#1189'],
+            suggested_mode: suggestedMode,
           },
         ],
       }));
     }
+  }
+
+  it('forces exploit with a target issue when repeated candidate manifests name the same top candidate', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-mode-'));
+    cleanupDirs.push(tmpDir);
+    writeRepeatedCandidateManifests(tmpDir);
 
     const result = selectMode(makeBatchState(), 7, { logDir: tmpDir });
 
@@ -2274,13 +2278,7 @@ describe('selectMode', () => {
   it('does not force a consumed manifest target again', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-consumed-'));
     cleanupDirs.push(tmpDir);
-    for (const run of [1, 2, 3]) {
-      writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
-        version: 1,
-        runTag: `batch/run-${run}`,
-        candidates: [{ id: 'self-steering', title: 'Self-steering bundle', refs: ['#1213'] }],
-      }));
-    }
+    writeRepeatedCandidateManifests(tmpDir);
 
     const result = selectMode(
       makeBatchState({ manifest_forced_targets_consumed: ['#1213'] }),
@@ -2289,6 +2287,36 @@ describe('selectMode', () => {
     );
 
     expect(result.reason).not.toBe('manifest-forced');
+    expect(result.target_issue).toBeUndefined();
+  });
+
+  it('short-circuits forced explore when a fresh repeated manifest target exists', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-fresh-explore-'));
+    cleanupDirs.push(tmpDir);
+    writeRepeatedCandidateManifests(tmpDir, '#1191');
+
+    const result = selectMode(makeBatchState({ guidance: 're-scout gaps mode:explore' }), 7, { logDir: tmpDir });
+
+    expect(result).toMatchObject({
+      mode: 'exploit',
+      template: 'deep-dive-default.md',
+      reason: 'manifest-fresh-short-circuit',
+      target_issue: '#1191',
+    });
+  });
+
+  it('does not short-circuit non-explore guidance', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-fresh-reflect-'));
+    cleanupDirs.push(tmpDir);
+    writeRepeatedCandidateManifests(tmpDir, '#1191');
+
+    const result = selectMode(makeBatchState({ guidance: 'think about the batch mode:reflect' }), 7, { logDir: tmpDir });
+
+    expect(result).toMatchObject({
+      mode: 'reflect',
+      template: 'reflect-batch.md',
+      reason: 'guidance',
+    });
     expect(result.target_issue).toBeUndefined();
   });
 

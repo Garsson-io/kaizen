@@ -1583,13 +1583,14 @@ export function weightedModeSelect(
  * Select the cognitive mode for a given run.
  *
  * Priority (highest first):
- *   1. Guidance override: "mode:<name>" in guidance forces that mode
- *   2. Test task: always exploit with test template
- *   3. Manifest-forced: repeated explore manifests bind a pending plan target
- *   4. Signal-driven: reactive to batch state (failures, stalls, streaks)
- *   5. Contemplate overlay: every 15th run for strategic assessment
- *   6. Bandit selection: UCB1 explore/exploit weighting from run history
- *   7. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
+ *   1. Explore freshness: repeated manifests can short-circuit mode:explore
+ *   2. Guidance override: "mode:<name>" in guidance forces that mode
+ *   3. Test task: always exploit with test template
+ *   4. Manifest-forced: repeated explore manifests bind a pending plan target
+ *   5. Signal-driven: reactive to batch state (failures, stalls, streaks)
+ *   6. Contemplate overlay: every 15th run for strategic assessment
+ *   7. Bandit selection: UCB1 explore/exploit weighting from run history
+ *   8. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
  */
 export interface SelectModeOptions {
   logDir?: string;
@@ -1597,10 +1598,22 @@ export interface SelectModeOptions {
 }
 
 export function selectMode(state: BatchState, runNum: number, options: SelectModeOptions = {}): ModeSelection {
+  const forcedTarget = findManifestForcedTarget(state, options.logDir, {
+    repeatThreshold: options.manifestRepeatThreshold,
+  });
+
   // Force mode from guidance (e.g., "mode:explore")
   const modeOverride = state.guidance.match(/\bmode:(\w+)/i);
   if (modeOverride) {
     const forced = modeOverride[1].toLowerCase();
+    if (forced === 'explore' && forcedTarget) {
+      return {
+        mode: 'exploit',
+        template: MODE_TEMPLATES.exploit,
+        reason: 'manifest-fresh-short-circuit',
+        target_issue: forcedTarget.issue,
+      };
+    }
     return {
       mode: forced,
       template: MODE_TEMPLATES[forced] || MODE_TEMPLATES.exploit,
@@ -1613,9 +1626,6 @@ export function selectMode(state: BatchState, runNum: number, options: SelectMod
     return { mode: 'exploit', template: 'test-task.md', reason: 'test-task' };
   }
 
-  const forcedTarget = findManifestForcedTarget(state, options.logDir, {
-    repeatThreshold: options.manifestRepeatThreshold,
-  });
   if (forcedTarget) {
     return {
       mode: 'exploit',
