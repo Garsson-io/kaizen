@@ -1,3 +1,6 @@
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+
 export interface ParsedJsonLines<T = unknown> {
   rows: T[];
   malformedRows: string[];
@@ -23,4 +26,9 @@ export function parseJsonLinesWithMalformedRows<T = unknown>(text: string): Pars
 
 export function parseJsonLines<T = unknown>(text: string): T[] {
   return parseJsonLinesWithMalformedRows<T>(text).rows;
+}
+
+export function appendJsonLine(filepath: string, value: unknown): void {
+  mkdirSync(dirname(filepath), { recursive: true });
+  appendFileSync(filepath, JSON.stringify(value) + '\n');
 }

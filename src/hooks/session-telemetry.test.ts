@@ -10,6 +10,16 @@ import {
   type SessionStopGateEvent,
 } from './session-telemetry.js';
 
+const SESSION_TELEMETRY_SOURCE = readFileSync(new URL('./session-telemetry.ts', import.meta.url), 'utf-8');
+
+describe('json-lines helper source invariant', () => {
+  it('routes telemetry JSONL appends through appendJsonLine', () => {
+    expect(SESSION_TELEMETRY_SOURCE).toContain('appendJsonLine');
+    expect(SESSION_TELEMETRY_SOURCE).toContain("from '../lib/json-lines.js'");
+    expect(SESSION_TELEMETRY_SOURCE).not.toContain('appendFileSync(filePath, JSON.stringify');
+  });
+});
+
 describe('emitSessionEvent', () => {
   it('writes a pr_created event with correct envelope', () => {
     const dir = `/tmp/.test-st-${Date.now()}-a`;

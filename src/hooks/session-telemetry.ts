@@ -14,8 +14,8 @@
  * Part of horizon #249 (Observability), issue #671.
  */
 
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { appendJsonLine } from '../lib/json-lines.js';
 
 // Session event types — lightweight versions of auto-dent events
 
@@ -89,16 +89,13 @@ export function emitSessionEvent(
 ): void {
   try {
     const dir = options?.telemetryDir ?? resolveTelemetryDir();
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
     const filePath = resolve(dir, 'events.jsonl');
     const envelope: SessionEventEnvelope = {
       timestamp: (options?.now ?? new Date()).toISOString(),
       source: 'interactive',
       event,
     };
-    appendFileSync(filePath, JSON.stringify(envelope) + '\n');
+    appendJsonLine(filePath, envelope);
   } catch {
     // Telemetry is best-effort — never break the hook
   }
