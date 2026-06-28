@@ -25,6 +25,18 @@ strip_heredoc_body() {
   echo "$result"
 }
 
+# Split a command line by pipe/chain operators and bare newlines.
+# Keeps hook detectors consistent with the TypeScript splitCommandSegments()
+# helper while preserving the historical sed-based shell behavior.
+split_command_segments() {
+  local cmd_line="$1"
+  printf '%s\n' "$cmd_line" | \
+    sed 's/[|;&]\{1,\}/\n/g' | \
+    sed 's/^[[:space:]]*//' | \
+    sed 's/[[:space:]]*$//' | \
+    sed '/^$/d'
+}
+
 # Check if a command line contains an actual `gh pr <subcommand>` invocation,
 # not just the text inside a string argument (e.g., echo '...gh pr create...').
 # Splits by pipe/chain operators and checks if any segment starts with `gh pr`.
@@ -33,8 +45,7 @@ is_gh_pr_command() {
   local cmd_line="$1"
   local subcommands="$2"
   # Split by |, &&, ||, ; then check if any segment starts with gh pr <sub>
-  echo "$cmd_line" | sed 's/[|;&]\{1,\}/\n/g' | sed 's/^[[:space:]]*//' | \
-    grep -qE "^gh[[:space:]]+pr[[:space:]]+($subcommands)"
+  split_command_segments "$cmd_line" | grep -qE "^gh[[:space:]]+pr[[:space:]]+($subcommands)"
 }
 
 # Check if a command line contains an actual `git <subcommand>` invocation.
@@ -47,8 +58,7 @@ is_git_command() {
   # Match both `git push` and `git -C /some/path push`
   # Note: subcommand must be parenthesized to prevent regex alternation leak
   # (kaizen #323: `--delete-branch` matched bare `branch` without grouping)
-  echo "$cmd_line" | sed 's/[|;&]\{1,\}/\n/g' | sed 's/^[[:space:]]*//' | \
-    grep -qE "^git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(${subcommand})"
+  split_command_segments "$cmd_line" | grep -qE "^git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(${subcommand})"
 }
 
 # Extract the -C <path> argument from a git command, if present.
@@ -56,7 +66,7 @@ is_git_command() {
 # Usage: TARGET_DIR=$(extract_git_c_path "$CMD_LINE")
 extract_git_c_path() {
   local cmd_line="$1"
-  echo "$cmd_line" | sed 's/[|;&]\{1,\}/\n/g' | sed 's/^[[:space:]]*//' | \
+  split_command_segments "$cmd_line" | \
     grep -E '^git[[:space:]]+-C' | \
     sed -n 's/^git[[:space:]]\{1,\}-C[[:space:]]\{1,\}\([^[:space:]]\{1,\}\).*/\1/p' | head -1
 }
