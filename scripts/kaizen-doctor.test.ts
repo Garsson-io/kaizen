@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -532,7 +532,36 @@ describe('runAllChecks + exitCodeFor', () => {
   afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
 
   it('returns checks in defined order', () => {
-    const results = runAllChecks({ projectRoot: proj, homeDir: home });
+    const codexRun = vi.fn((cmd: string, args: readonly string[]) => {
+      const key = `${cmd} ${args.join(' ')}`;
+      if (key === 'codex --version') return 'codex-cli 0.142.3\n';
+      if (key === 'codex doctor --json') {
+        return JSON.stringify({
+          checks: {
+            'auth.credentials': {
+              details: {
+                'stored API key': 'false',
+                'stored ChatGPT tokens': 'true',
+                'stored auth mode': 'chatgpt',
+              },
+            },
+          },
+        });
+      }
+      if (key === 'codex features list') {
+        return [
+          'shell_tool stable true',
+          'unified_exec stable true',
+          'hooks stable true',
+        ].join('\n');
+      }
+      throw new Error(`unexpected command: ${key}`);
+    });
+    const results = runAllChecks({
+      projectRoot: proj,
+      homeDir: home,
+      codexReadiness: { run: codexRun },
+    });
     expect(results.map(r => r.name)).toEqual([
       'single-registration-path',
       'plugin-double-install',
@@ -542,6 +571,7 @@ describe('runAllChecks + exitCodeFor', () => {
       'hook-exec-smoke',
       'codex-readiness',
     ]);
+    expect(codexRun).toHaveBeenCalledWith('codex', ['--version']);
   });
 
   it('exitCodeFor returns 1 when any FAIL', () => {

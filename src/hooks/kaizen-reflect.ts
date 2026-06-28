@@ -160,6 +160,8 @@ function runHookTimingSentinel(changedFiles: string): string {
   }
 }
 
+type HookTimingRunner = (changedFiles: string) => string;
+
 /** Build the transcript instruction line for subagent prompts. */
 function transcriptInstruction(transcriptPath?: string): string {
   if (transcriptPath) {
@@ -298,6 +300,7 @@ export function processHookInput(
     gh?: GhRunner;
     sendNotification?: (text: string) => void;
     telemetryDir?: string;
+    runHookTimingSentinel?: HookTimingRunner;
   } = {},
 ): string | null {
   const command = input.tool_input?.command ?? '';
@@ -356,7 +359,7 @@ export function processHookInput(
   const transcriptPath = input.transcript_path;
 
   // Run hook timing sentinel (kaizen #453 — speed as a kaizen dimension)
-  const timingReport = runHookTimingSentinel(changed);
+  const timingReport = (options.runHookTimingSentinel ?? runHookTimingSentinel)(changed);
   const timingSection = timingReport
     ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${timingReport}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`
     : '';
