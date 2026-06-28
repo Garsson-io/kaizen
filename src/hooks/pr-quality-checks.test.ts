@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   checkCodeQuality,
@@ -35,13 +36,30 @@ describe('detectCommandType', () => {
   });
 });
 
+describe('git runner invariant', () => {
+  it('routes default git reads through argv-style gitStdout', () => {
+    const source = readFileSync(
+      new URL('./pr-quality-checks.ts', import.meta.url),
+      'utf-8',
+    );
+
+    expect(source).not.toMatch(/execSync\(cmd/);
+    expect(source).not.toContain('git diff --name-only main...HEAD');
+    expect(source).not.toContain('git diff --cached --name-only');
+    expect(source).toContain("import { gitStdout } from './lib/git-state.js';");
+    expect(source).toContain('const defaultGit: GitRunner = (args) => gitStdout(args);');
+    expect(source).toContain("git(['diff', '--name-only', 'main...HEAD'])");
+    expect(source).toContain("git(['diff', '--cached', '--name-only'])");
+  });
+});
+
 describe('getChangedFiles', () => {
   it('uses git diff for create', () => {
-    const exec = (cmd: string) => {
-      if (cmd.includes('git diff')) return 'src/a.ts\nsrc/b.ts';
+    const git = (args: string[]) => {
+      if (args[0] === 'diff') return 'src/a.ts\nsrc/b.ts';
       return '';
     };
-    expect(getChangedFiles('gh pr create', false, exec)).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(getChangedFiles('gh pr create', false, git)).toEqual(['src/a.ts', 'src/b.ts']);
   });
 
   it('uses gh pr diff for merge', () => {
@@ -72,24 +90,23 @@ describe('getChangedFiles', () => {
   });
 
   it('falls back to git diff on merge if gh pr diff fails', () => {
-    const exec = (cmd: string) => {
-      if (cmd.includes('gh pr diff')) return '';
-      if (cmd.includes('git diff')) return 'src/e.ts';
+    const git = (args: string[]) => {
+      if (args[0] === 'diff') return 'src/e.ts';
       return '';
     };
-    expect(getChangedFiles('gh pr merge 42', true, exec)).toEqual(['src/e.ts']);
+    expect(getChangedFiles('gh pr merge 42', true, git)).toEqual(['src/e.ts']);
   });
 
   it('falls back to git diff when argv-style gh PR diff returns empty', () => {
-    const execCalls: string[] = [];
-    const exec = (cmd: string) => {
-      execCalls.push(cmd);
-      if (cmd.includes('git diff')) return 'src/e.ts';
+    const gitCalls: string[][] = [];
+    const git = (args: string[]) => {
+      gitCalls.push(args);
+      if (args[0] === 'diff') return 'src/e.ts';
       return '';
     };
 
-    expect(getChangedFiles('gh pr merge 42', true, exec, () => '')).toEqual(['src/e.ts']);
-    expect(execCalls).toEqual(['git diff --name-only main...HEAD']);
+    expect(getChangedFiles('gh pr merge 42', true, git, () => '')).toEqual(['src/e.ts']);
+    expect(gitCalls).toEqual([['diff', '--name-only', 'main...HEAD']]);
   });
 });
 
@@ -181,17 +198,17 @@ describe('formatTestCoverageWarning', () => {
 
 describe('checkVerification', () => {
   it('warns on missing verification in pr_create', () => {
-    const msg = checkVerification('gh pr create --title "test" --body "just a summary"', 'pr_create', () => '');
+    const msg = checkVerification('gh pr create --title "test" --body "just a summary"', 'pr_create');
     expect(msg).toContain('Missing Verification section');
   });
 
   it('passes when verification keyword present in command', () => {
-    const msg = checkVerification('gh pr create --body "## Verification\n- check this"', 'pr_create', () => '');
+    const msg = checkVerification('gh pr create --body "## Verification\n- check this"', 'pr_create');
     expect(msg).toBe('');
   });
 
   it('passes with Test plan header', () => {
-    const msg = checkVerification('gh pr create --body "## Test plan\n- tests pass"', 'pr_create', () => '');
+    const msg = checkVerification('gh pr create --body "## Test plan\n- tests pass"', 'pr_create');
     expect(msg).toBe('');
   });
 
@@ -200,7 +217,7 @@ describe('checkVerification', () => {
       if (args[0] === 'pr' && args[1] === 'view') return '## Verification\n- Run npm test\n- Check output';
       return '';
     };
-    const msg = checkVerification('gh pr merge 42', 'pr_merge', () => '', gh);
+    const msg = checkVerification('gh pr merge 42', 'pr_merge', gh);
     expect(msg).toContain('POST-MERGE VERIFICATION REQUIRED');
   });
 
@@ -211,7 +228,7 @@ describe('checkVerification', () => {
       return '## Verification\n- Run npm test';
     };
 
-    const msg = checkVerification('gh pr merge 42', 'pr_merge', () => '', gh);
+    const msg = checkVerification('gh pr merge 42', 'pr_merge', gh);
 
     expect(msg).toContain('POST-MERGE VERIFICATION REQUIRED');
     expect(ghCalls).toEqual([[
@@ -232,7 +249,7 @@ describe('checkVerification', () => {
       return '## Verification\n- Run npm test';
     };
 
-    const msg = checkVerification('gh pr merge --squash', 'pr_merge', () => '', gh);
+    const msg = checkVerification('gh pr merge --squash', 'pr_merge', gh);
 
     expect(msg).toContain('POST-MERGE VERIFICATION REQUIRED');
     expect(ghCalls).toEqual([[
@@ -250,12 +267,12 @@ describe('checkVerification', () => {
       if (args[0] === 'pr' && args[1] === 'view') return '## Summary\nSome changes';
       return '';
     };
-    const msg = checkVerification('gh pr merge 42', 'pr_merge', () => '', gh);
+    const msg = checkVerification('gh pr merge 42', 'pr_merge', gh);
     expect(msg).toContain('no Verification section');
   });
 
   it('returns empty for git_commit', () => {
-    expect(checkVerification('git commit -m "fix"', 'git_commit', () => '')).toBe('');
+    expect(checkVerification('git commit -m "fix"', 'git_commit')).toBe('');
   });
 });
 
@@ -302,19 +319,24 @@ describe('checkPractices', () => {
 
 describe('checkCodeQuality', () => {
   it('checks mock count on git_commit', () => {
+    const gitCalls: string[][] = [];
     const result = checkCodeQuality([], 'git_commit', {
-      exec: () => 'src/foo.test.ts',
+      git: (args) => {
+        gitCalls.push(args);
+        return 'src/foo.test.ts';
+      },
       fileExists: () => true,
       readFile: () => 'vi.mock("a");\nvi.mock("b");\nvi.mock("c");\nvi.mock("d");',
     });
     expect(result.warnings.length).toBe(1);
     expect(result.warnings[0]).toContain('4 mocks');
+    expect(gitCalls).toEqual([['diff', '--cached', '--name-only']]);
   });
 
   it('checks file length on git_commit', () => {
     const longFile = Array(501).fill('const x = 1;').join('\n');
     const result = checkCodeQuality([], 'git_commit', {
-      exec: () => 'src/big.ts',
+      git: () => 'src/big.ts',
       fileExists: () => true,
       readFile: () => longFile,
     });
@@ -324,7 +346,7 @@ describe('checkCodeQuality', () => {
 
   it('skips checks for non-commit commands', () => {
     const result = checkCodeQuality([], 'pr_create', {
-      exec: () => '',
+      git: () => '',
       fileExists: () => true,
       readFile: () => '',
     });
@@ -362,7 +384,7 @@ describe('runQualityChecks', () => {
 
   it('runs all PR checks for gh pr create', () => {
     const result = runQualityChecks('gh pr create --title "test" --body "## Verification\n- ok"', {
-      exec: () => 'src/a.ts\nsrc/a.test.ts',
+      git: () => 'src/a.ts\nsrc/a.test.ts',
     });
     // Should have test coverage success + practices checklist
     expect(result.messages.length).toBeGreaterThanOrEqual(1);
@@ -370,7 +392,7 @@ describe('runQualityChecks', () => {
 
   it('runs test coverage and verification for gh pr merge', () => {
     const result = runQualityChecks('gh pr merge 42', {
-      exec: (cmd) => {
+      git: () => {
         return '';
       },
       gh: (args) => {
@@ -384,7 +406,7 @@ describe('runQualityChecks', () => {
 
   it('runs code quality checks for git commit', () => {
     const result = runQualityChecks('git commit -m "fix"', {
-      exec: () => '',
+      git: () => '',
     });
     // No warnings if no files
     expect(result.messages).toEqual([]);
