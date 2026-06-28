@@ -40,6 +40,9 @@ When they conflict, trust the data.
 Every failure is a gift — if you file the issue.
 An incident without a kaizen issue is just suffering.
 
+A red test is never someone else's problem.
+Fix it before merge, or give it an owner and an open issue — never call it noise.
+
 The fix isn't done until the outcome is verified.
 "It should work" is not a test.
 

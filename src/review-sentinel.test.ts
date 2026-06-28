@@ -5,9 +5,36 @@ import {
   expectedPrReviewDimensions,
   serializeReviewSentinel,
   validateReviewSentinel,
+  reviewSentinelPath,
+  reviewSentinelStateKey,
 } from './review-sentinel.js';
+import { prUrlToStateKey } from './hooks/state-utils.js';
 
 const PR_URL = 'https://github.com/Garsson-io/kaizen/pull/997';
+
+describe('review sentinel path SSOT (#1481 anti-drift)', () => {
+  it('derives the same state key as the legacy prUrlToStateKey (behavior-preserving)', () => {
+    for (const url of [
+      'https://github.com/Garsson-io/kaizen/pull/55',
+      'https://github.com/Garsson-io/kaizen/pull/997',
+      'https://github.com/owner/repo-name/pull/12345',
+    ]) {
+      expect(reviewSentinelStateKey(url)).toBe(prUrlToStateKey(url));
+    }
+  });
+
+  it('writer and reader resolve to one identical path', () => {
+    expect(reviewSentinelPath('/state', PR_URL, 3)).toBe(
+      `/state/${prUrlToStateKey(PR_URL)}.reviewed-r3`,
+    );
+    // round may be passed as string or number — both must agree.
+    expect(reviewSentinelPath('/state', PR_URL, '3')).toBe(reviewSentinelPath('/state', PR_URL, 3));
+  });
+
+  it('throws on an invalid PR URL', () => {
+    expect(() => reviewSentinelStateKey('not-a-url')).toThrow('invalid PR URL');
+  });
+});
 
 describe('review sentinel contract', () => {
   it('uses the shared YAML frontmatter parser for expected review dimensions', () => {

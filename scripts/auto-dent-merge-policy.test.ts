@@ -178,3 +178,42 @@ describe('auto-dent merge policy — hook_activation binding (#1220 completion /
     ).toEqual({ allow: true, reasons: [] });
   });
 });
+
+describe('auto-dent merge policy — test-health binding (#1481/#1518)', () => {
+  const ready = {
+    prCount: 1,
+    reviewRequired: true,
+    reviewVerdict: 'pass' as const,
+    processVerdict: 'pass' as const,
+    lifecycleHealth: 'clean' as const,
+    hookActivation: HOOK_ACTIVE_CLAUDE,
+    provider: 'claude' as const,
+  };
+
+  it('blocks a PR whose run observed an unowned test failure', () => {
+    const d = decideAutoMergeSafety({ ...ready, testHealth: 'unowned-failures' });
+    expect(d.allow).toBe(false);
+    expect(d.reasons.some(r => r.includes('test health unowned-failures'))).toBe(true);
+  });
+
+  it('blocks regardless of reviewRequired (test health is provider-agnostic, not review-gated)', () => {
+    const d = decideAutoMergeSafety({ ...ready, reviewRequired: false, testHealth: 'unowned-failures' });
+    expect(d.allow).toBe(false);
+  });
+
+  it('does not block on pass / unknown / absent test-health', () => {
+    expect(decideAutoMergeSafety({ ...ready, testHealth: 'pass' }).allow).toBe(true);
+    expect(decideAutoMergeSafety({ ...ready, testHealth: 'unknown' }).allow).toBe(true);
+    expect(decideAutoMergeSafety({ ...ready }).allow).toBe(true);
+  });
+
+  it('does not block an unowned-failure run that is not producing a PR', () => {
+    expect(decideAutoMergeSafety({ ...ready, prCount: 0, testHealth: 'unowned-failures' }).allow).toBe(true);
+  });
+
+  it('surfaces test-health alongside other red verdicts', () => {
+    const reasons = autoMergeBlockReasons({ ...ready, reviewVerdict: 'fail', testHealth: 'unowned-failures' });
+    expect(reasons).toContain('review verdict fail');
+    expect(reasons.some(r => r.includes('test health unowned-failures'))).toBe(true);
+  });
+});

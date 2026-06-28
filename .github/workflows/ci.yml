@@ -34,9 +34,19 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The Python hook lifecycle suite (test_hooks.py) MUST gate in CI — a
+      # missing runner used to silently skip it, producing green CI while the
+      # local suite was red (#1481). Install pytest and require it.
+      - name: Install pytest
+        run: python -m pip install --upgrade pytest
       - run: npm ci
       - run: npm run build
       - name: Run shell hook tests
+        env:
+          KAIZEN_REQUIRE_PYTHON_TESTS: '1'
         run: bash .claude/hooks/tests/run-all-tests.sh
       - name: Verify no test side-effects on repo files
         run: |
@@ -54,6 +64,24 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate hook file integrity
         run: bash .claude/hooks/tests/validate-hook-integrity.sh
+
+  known-failures:
+    name: Known-failure ownership
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # #1518: the known-failures registry must be schema-valid and every entry's
+      # owning issue must still be OPEN. A closed/missing owner fails CI, forcing
+      # the failure to be fixed or re-filed — it can't become invisible noise.
+      - name: Validate known-failure ownership
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npx tsx scripts/known-failures-status.ts --validate --repo "$GITHUB_REPOSITORY"
 
   ts-tests:
     name: TypeScript tests + coverage

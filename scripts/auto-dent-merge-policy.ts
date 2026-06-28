@@ -3,6 +3,7 @@ import {
   type LifecycleHealth,
   type ProcessVerdict,
   type ReviewVerdict,
+  type TestHealthVerdict,
 } from '../src/verdict-binding-policy.js';
 import { providerClaimsHookSupport, type HookActivationVerdict } from './auto-dent-hook-activation.js';
 import type { Provider } from './auto-dent-provider.js';
@@ -15,6 +16,12 @@ export interface AutoMergeSafetySignals {
   reviewVerdict?: ReviewVerdict;
   processVerdict?: ProcessVerdict;
   lifecycleHealth?: LifecycleHealth;
+  /**
+   * Test-health verdict for the run (#1481/#1518). `unowned-failures` blocks the
+   * merge; `pass`/`unknown`/absent do not. Consumed via the shared
+   * `qualityVerdictBlockReasons` SSOT — no separate rule here.
+   */
+  testHealth?: TestHealthVerdict;
   /**
    * Hook-activation verdict for the run (#843/#1500). `undefined` means no
    * `system.init` event was observed this run, so hook state is unknown.

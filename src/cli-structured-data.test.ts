@@ -70,9 +70,11 @@ describe('handler registry', () => {
       'store-review-summary', 'list-review-rounds', 'list-review-dims',
       'read-review-finding', 'read-review-summary',
       'store-plan', 'retrieve-plan', 'store-testplan', 'retrieve-testplan',
+      'attach-transcript',
       'store-metadata', 'retrieve-metadata', 'query-connected', 'query-pr',
       'update-pr-section',
       'store-iteration', 'retrieve-iteration',
+      'emit-test-review-sentinel',
     ];
     for (const cmd of expectedCommands) {
       expect(handlers[cmd], `missing handler for '${cmd}'`).toBeDefined();
@@ -85,8 +87,8 @@ describe('handler registry', () => {
     }
   });
 
-  it('has exactly 21 handlers (no stale entries)', () => {
-    expect(Object.keys(handlers).length).toBe(21);
+  it('has exactly 22 handlers (no stale entries)', () => {
+    expect(Object.keys(handlers).length).toBe(22);
   });
 
   it('registers the attach-transcript handler (#1508)', () => {

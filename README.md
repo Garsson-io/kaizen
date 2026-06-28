@@ -13,7 +13,7 @@ A process improvement methodology implemented as a Claude Code plugin. Kaizen pr
 ## What You Get
 
 - **Enforcement hooks** — PR review loops, worktree isolation, test coverage checks, dirty file gates, kaizen reflection triggers
-- **Dev workflow skills** — `/kaizen-pick`, `/kaizen-gaps`, `/kaizen-evaluate`, `/kaizen-implement`, `/kaizen-deep-dive`, `/kaizen-reflect`, `/kaizen-audit-issues`, `/kaizen-prd`, `/kaizen-plan`, `/kaizen-review-pr`, `/kaizen-zen`
+- **Dev workflow skills** — `/kaizen-do`, `/kaizen-pick`, `/kaizen-gaps`, `/kaizen-evaluate`, `/kaizen-implement`, `/kaizen-deep-dive`, `/kaizen-reflect`, `/kaizen-audit-issues`, `/kaizen-prd`, `/kaizen-plan`, `/kaizen-review-pr`, `/kaizen-zen`
 - **Background agents** — `kaizen-bg` for post-PR reflection
 - **Philosophy and policies** — the Zen of Kaizen, escalation levels (L1/L2/L3), verification discipline, engineering practices
 - **Issue taxonomy** — labels, epics, horizons, incident recording format
@@ -84,6 +84,7 @@ Kaizen reads `kaizen.config.json` from your project root:
 ## The Dev Work Skill Chain
 
 ```
+/kaizen-do        (driver: set /goal and run one ticket/task through all gates)
 /kaizen-gaps      (strategic: where should we invest?)
   -> /kaizen-pick     (select: which issue next?)
     -> /kaizen-evaluate   (scope: what to build?)

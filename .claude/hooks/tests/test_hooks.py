@@ -283,7 +283,10 @@ class TestPRLifecycle:
         r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "needs_review"
-        assert "No review findings stored" in r.stdout
+        # The gate now reports the structured sentinel reason (#920); the old
+        # "No review findings stored" wording was replaced by the sentinel-aware
+        # "no valid review sentinel stored" message.
+        assert "no valid review sentinel stored" in r.stdout
 
         # Sentinel present -> clears
         state.create_review_sentinel(self.PR_URL, 1)

@@ -26,6 +26,7 @@ import {
   buildReviewSentinelRecord,
   serializeReviewSentinel,
   validateReviewSentinel,
+  reviewSentinelPath,
   type ReviewSentinelInput,
   type ReviewSentinelValidation,
 } from '../review-sentinel.js';
@@ -111,7 +112,7 @@ function isValidPrUrl(url: string): boolean {
  * Format: <stateDir>/<stateKey>.reviewed-r<round>
  */
 function defaultCheckReviewSentinel(prUrl: string, round: string, stateDir: string): ReviewSentinelValidation {
-  const sentinel = join(stateDir, `${prUrlToStateKey(prUrl)}.reviewed-r${round}`);
+  const sentinel = reviewSentinelPath(stateDir, prUrl, round);
   try {
     statSync(sentinel);
     return validateReviewSentinel(readFileSync(sentinel, 'utf-8'), { prUrl, round });
@@ -131,7 +132,7 @@ export function writeReviewSentinel(
   options: Partial<ReviewSentinelInput> = {},
 ): void {
   ensureStateDir(stateDir);
-  const sentinel = join(stateDir, `${prUrlToStateKey(prUrl)}.reviewed-r${round}`);
+  const sentinel = reviewSentinelPath(stateDir, prUrl, round);
   const record = buildReviewSentinelRecord({ ...options, prUrl, round });
   writeFileSync(sentinel, serializeReviewSentinel(record));
 }

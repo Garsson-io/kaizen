@@ -176,6 +176,7 @@ import {
   type FinalClaimStatus,
   type FinalRunClaim,
 } from './auto-dent-final-claim.js';
+import { renderAutoDentGoalContract } from './kaizen-workflow-driver.js';
 import {
   validateRunLifecycle,
   summarizeLifecycle,
@@ -628,6 +629,7 @@ export function buildTemplateVars(
   const crossBatchSteeringText = crossBatchSteering.length > 0
     ? crossBatchSteering.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
+  const modeSelection = selectMode(state, runNum);
 
   return {
     guidance: state.guidance,
@@ -655,6 +657,7 @@ export function buildTemplateVars(
     prior_reflections: priorReflections,
     failure_class_summary: failureClassSummary,
     contemplation_recommendations: contemplationRecsText,
+    goal_forcing_contract: renderAutoDentGoalContract(modeSelection.mode),
   };
 }
 
@@ -1184,7 +1187,7 @@ Run tag: ${runTag}
    \`\`\`
 3. Commit with message: "test: probe ${runTag}"
 4. Create a PR: \`gh pr create --title "test: probe ${runTag}" --body "Synthetic test task for pipeline validation. Run tag: ${runTag}" --repo ${hostRepo}\`
-5. Leave auto-merge to the harness after review verdicts are known
+5. Leave auto-merge to the harness.
 
 Do not ask for confirmation. Complete all steps.`;
   } else {
@@ -1202,6 +1205,8 @@ You are running inside an auto-dent batch loop (run ${runNum}${state.max_runs > 
 After this run completes, the loop will start another run with fresh context.
 Run to completion. Do not ask for confirmation — make autonomous decisions.`;
 
+  prompt += `\n\n${renderAutoDentGoalContract(selectMode(state, runNum).mode)}`;
+
   if (state.issues_closed.length > 0) {
     prompt += `\n\nIssues already addressed in previous runs (do not rework): ${state.issues_closed.join(' ')}`;
   }
@@ -1210,58 +1215,7 @@ Run to completion. Do not ask for confirmation — make autonomous decisions.`;
     prompt += `\n\nPRs already created in this batch (avoid overlapping work): ${state.prs.join(' ')}`;
   }
 
-  prompt += `
-
-## Merge & Labeling Policy
-
-After creating a PR, do NOT run merge commands yourself.
-The auto-dent harness queues auto-merge after review verdicts and process evidence are known.
-Leave the PR open for the harness-owned terminal action.
-
-## Stopping the Loop
-
-If you determine there is no more meaningful work to do matching the guidance
-(backlog exhausted, all relevant issues claimed, or remaining issues are
-blocked/too risky), include this exact marker in your final response:
-
-AUTO_DENT_PHASE: STOP | reason=<reason>
-
-For example: "AUTO_DENT_PHASE: STOP | reason=backlog exhausted — no more open issues matching 'hooks reliability'"
-This will gracefully stop the batch loop. Only use this when you've genuinely
-run out of work — not when a single run is complete.
-
-When done, summarize what was accomplished. List all PRs created, issues filed,
-and issues closed with full URLs.
-
-## Progress Markers
-
-Throughout your work, emit structured progress markers so the harness can show
-what you're doing. Place each marker on its own line. Format:
-
-AUTO_DENT_PHASE: <PHASE> | key=value | key=value ...
-
-Phases and their expected keys:
-
-| Phase | When | Keys |
-|-------|------|------|
-| PICK | After selecting an issue | issue=<#NNN or URL>, title=<short title> |
-| EVALUATE | After scoping the work | verdict=<proceed/skip/defer>, reason=<why> |
-| IMPLEMENT | Starting implementation | case=<case-id>, branch=<branch-name> |
-| TEST | After running tests | result=<pass/fail>, count=<number of tests> |
-| PR | After creating a PR | url=<PR URL> |
-| MERGE | After the harness reports merge status | url=<PR URL>, status=<queued/merged/blocked> |
-| REFLECT | After reflection | issues_filed=<N>, lessons=<short summary> |
-
-Example:
-  AUTO_DENT_PHASE: PICK | issue=#472 | title=improve hook test DRY
-  AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=clear spec, medium complexity
-  AUTO_DENT_PHASE: IMPLEMENT | case=260323-1200-k472 | branch=case/260323-1200-k472
-  AUTO_DENT_PHASE: TEST | result=pass | count=15
-  AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/500
-  AUTO_DENT_PHASE: MERGE | url=https://github.com/Garsson-io/kaizen/pull/500 | status=queued
-  AUTO_DENT_PHASE: REFLECT | issues_filed=1 | lessons=shared helpers reduce test boilerplate
-
-Emit these naturally as you complete each phase. Missing keys are fine — emit what you have.`;
+  prompt += `\n\nWhen done, follow the shared harness terminal protocol from the goal-forcing contract.`;
 
   return prompt;
 }
@@ -2693,6 +2647,13 @@ async function main(): Promise<void> {
     // Default provider to 'claude' (hook-expecting) for legacy state → fail-closed.
     hookActivation: result.hookActivation,
     provider: state.provider ?? 'claude',
+    // testHealth (#1481/#1518) is consumed by the shared SSOT and is enforced
+    // provider-agnostically at the test runner (run-all-tests.sh owned/unowned
+    // classification) and the `known-failures` CI gate. The harness does not run
+    // the suite itself, so it has no truthful run-level test signal to pass here
+    // yet — left `unknown` (non-blocking) rather than fabricated. Capturing a
+    // run-level test-failure signal for the harness is tracked as #1527,
+    // mirroring how #1220 deferred run-success consumption to #1501.
   });
   const autoMergeQueue = queueAutoMerge(result, state.host_repo || state.kaizen_repo, autoMergeDecision);
   if (!autoMergeDecision.allow) {

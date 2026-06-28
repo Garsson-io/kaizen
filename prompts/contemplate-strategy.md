@@ -10,6 +10,8 @@ Batch: {{batch_id}}
 Guidance: {{guidance}}
 Runs completed: {{run_num}}
 
+{{goal_forcing_contract}}
+
 {{#issues_closed}}
 Issues addressed so far: {{issues_closed}}
 {{/issues_closed}}
@@ -131,7 +133,6 @@ CONTEMPLATION_REC: Horizon autonomous-kaizen has zero recent activity — priori
 These recommendations will be visible to subsequent runs in the batch, steering
 future work based on your strategic assessment. Emit at least one recommendation.
 
-## Progress Markers
-
-AUTO_DENT_PHASE: PICK | issue=strategic-assessment | title=batch contemplation
-AUTO_DENT_PHASE: REFLECT | issues_filed=<N> | lessons=<strategic insights>
+Use the shared harness terminal protocol for phase markers. In this mode,
+`PICK` should name `strategic-assessment`, and `REFLECT` should record issues
+filed plus the strategic lessons.
