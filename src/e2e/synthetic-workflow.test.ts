@@ -17,7 +17,6 @@ import { resolveTsxBin } from "./test-runtime.js";
 
 describe("Synthetic Workflow E2E", () => {
   let session: SessionSimulator;
-  const itWithTsx = resolveTsxBin() ? it : it.skip;
 
   afterEach(() => {
     session?.cleanup();
@@ -43,6 +42,10 @@ describe("Synthetic Workflow E2E", () => {
   function expectStateFilesContaining(session: SessionSimulator, content: string, count: number): void {
     const files = session.stateFilesContaining(content);
     expect(files, `Expected ${count} state file(s) containing ${content}\n${session.stateSummary()}`).toHaveLength(count);
+  }
+
+  function expectTsxAvailable(): void {
+    expect(resolveTsxBin(), "tsx is required for PR workflow outcome E2E tests").toBeTruthy();
   }
 
   describe("scope-guard propagation", () => {
@@ -181,7 +184,8 @@ describe("Synthetic Workflow E2E", () => {
       });
     });
 
-    itWithTsx("does not set PR workflow gates for failed PR creation outcomes", () => {
+    it("does not set PR workflow gates for failed PR creation outcomes", () => {
+      expectTsxAvailable();
       session = new SessionSimulator();
       session.setHome("clean");
 
@@ -193,7 +197,8 @@ describe("Synthetic Workflow E2E", () => {
       expectStateFilesContaining(session, "STATUS=needs_pr_kaizen", 0);
     });
 
-    itWithTsx("sets persisted PR workflow gates for successful PR creation outcomes", () => {
+    it("sets persisted PR workflow gates for successful PR creation outcomes", () => {
+      expectTsxAvailable();
       session = new SessionSimulator();
       session.setHome("clean");
 
@@ -211,7 +216,8 @@ describe("Synthetic Workflow E2E", () => {
       expect(stopResult.results.some((result) => result.stdout.includes("KAIZEN REFLECTION"))).toBe(true);
     });
 
-    itWithTsx("full manifest session completes with no hook timeouts", () => {
+    it("full manifest session completes with no hook timeouts", () => {
+      expectTsxAvailable();
       session = new SessionSimulator();
       session.setHome("clean");
 

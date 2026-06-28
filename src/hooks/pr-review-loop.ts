@@ -273,6 +273,10 @@ export interface ProcessOptions {
   lookupPrUrlForBranch?: (branch: string) => string | undefined;
 }
 
+export function toolExitCode(input: Pick<HookInput, 'tool_response'>): string {
+  return String(input.tool_response?.exit_code ?? '0');
+}
+
 function decide(
   action: HookDecision['action'],
   reason: string,
@@ -290,7 +294,7 @@ export function processHookInput(
   const command = input.tool_input?.command ?? '';
   const stdout = input.tool_response?.stdout ?? '';
   const stderr = input.tool_response?.stderr ?? '';
-  const exitCode = String(input.tool_response?.exit_code ?? '0');
+  const exitCode = toolExitCode(input);
 
   if (exitCode !== '0') {
     return decide('ignore', 'non_zero_exit', null, { exitCode });
