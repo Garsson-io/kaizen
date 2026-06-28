@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import { readYamlFrontmatter, stripYamlFrontmatter } from './lib/frontmatter.js';
+import { parseJsonLines } from './lib/json-lines.js';
 import { firstMarkdownFence, markdownFences } from './lib/markdown-fence.js';
 import { resolveProjectRoot, type GitRunner } from './lib/resolve-project-root.js';
 import { retrievePlan, issueTarget } from './structured-data.js';
@@ -58,6 +59,19 @@ export interface DimensionReview {
 export type ReviewFailureClass =
   | 'claude_review_failed'
   | 'codex_review_unsupported';
+
+interface StreamJsonContentBlock {
+  type?: unknown;
+  text?: string;
+}
+
+interface StreamJsonMessage {
+  type?: unknown;
+  total_cost_usd?: number;
+  message?: {
+    content?: unknown;
+  };
+}
 
 export interface ReviewProvider {
   provider: 'claude' | 'codex';
@@ -497,19 +511,19 @@ async function runClaude(
       // actual text lives in assistant message content blocks.
       let costUsd = 0;
       let text = '';
-      for (const line of stdout.split('\n')) {
-        if (!line.trim()) continue;
-        try {
-          const msg = JSON.parse(line);
-          if (msg.type === 'result') {
-            costUsd = msg.total_cost_usd ?? 0;
-          } else if (msg.type === 'assistant') {
-            const content = msg.message?.content ?? [];
-            for (const block of content) {
-              if (block.type === 'text') text += block.text;
+      for (const msg of parseJsonLines<StreamJsonMessage>(stdout)) {
+        if (msg.type === 'result') {
+          costUsd = msg.total_cost_usd ?? 0;
+        } else if (msg.type === 'assistant') {
+          const content = Array.isArray(msg.message?.content)
+            ? msg.message.content as StreamJsonContentBlock[]
+            : [];
+          for (const block of content) {
+            if (block.type === 'text') {
+              text += block.text ?? '';
             }
           }
-        } catch { continue; }
+        }
       }
 
       resolve({ text, costUsd, durationMs, exitCode: code ?? -1 });
