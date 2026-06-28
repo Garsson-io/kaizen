@@ -52,22 +52,26 @@ export async function readHookInput(): Promise<HookInput | null> {
 }
 
 /**
- * Write a null-input trace entry to the hook trace log.
- * Call before `process.exit(0)` in hooks that have no local trace infrastructure.
+ * Append a structured event to the hook trace log (best-effort, never throws).
+ * The shared primitive behind hook observability — use it to leave a durable
+ * signal when a hook takes (or skips) an action that would otherwise be silent.
  */
-export function traceNullInput(hookName: string): void {
+export function traceHookEvent(hook: string, fields: Record<string, unknown>): void {
   if (!isTraceEnabled()) return;
   try {
     appendFileSync(
       getTraceFile(),
-      JSON.stringify({
-        ts: new Date().toISOString(),
-        hook: hookName,
-        action: 'ignore',
-        reason: 'null_input',
-      }) + '\n',
+      JSON.stringify({ ts: new Date().toISOString(), hook, ...fields }) + '\n',
     );
   } catch { /* never fail on trace */ }
+}
+
+/**
+ * Write a null-input trace entry to the hook trace log.
+ * Call before `process.exit(0)` in hooks that have no local trace infrastructure.
+ */
+export function traceNullInput(hookName: string): void {
+  traceHookEvent(hookName, { action: 'ignore', reason: 'null_input' });
 }
 
 /** Write advisory output to stdout (shown to the agent in PostToolUse). */

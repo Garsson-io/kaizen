@@ -19,7 +19,7 @@ import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gh } from '../lib/gh-exec.js';
-import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
+import { type HookInput, readHookInput, writeHookOutput, traceNullInput, traceHookEvent } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import { verifyIssueRef, type RefStatus } from './lib/issue-ref-verifier.js';
 import { parseGithubPrUrl } from '../lib/github-pr.js';
@@ -859,8 +859,11 @@ export const IN_PROGRESS_STATUS_LABELS = [
  */
 export function extractClosingIssues(prBody: string): string[] {
   const nums = new Set<string>();
+  // Leading \b anchors the keyword to a word start so substrings like
+  // "disclosed"/"prefixed"/"hotfixes" don't false-match; optional `:` accepts
+  // the "Closes: #N" form GitHub also honors.
   const re =
-    /(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+(?:Garsson-io\/kaizen)?#(\d+)/gi;
+    /\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?):?\s+(?:Garsson-io\/kaizen)?#(\d+)/gi;
   for (const m of prBody.matchAll(re)) nums.add(m[1]);
   return [...nums];
 }
@@ -909,11 +912,44 @@ export function reconcileClosedIssueStatusLabels(
       );
       if (toRemove.length === 0) continue; // no divergence → nothing to do
 
-      const args = ['issue', 'edit', num, '--repo', 'Garsson-io/kaizen'];
-      for (const l of toRemove) args.push('--remove-label', l);
-      if (!labels.includes('status:done')) args.push('--add-label', 'status:done');
-      ghRun(args);
-    } catch {}
+      // Remove the stale in-progress label(s) FIRST, in their own call. This is
+      // the #1229 invariant ("a PR-closed issue can't stay in-progress") and the
+      // labels are known-present on the issue, so it can't fail on a missing one.
+      const removeArgs = ['issue', 'edit', num, '--repo', 'Garsson-io/kaizen'];
+      for (const l of toRemove) removeArgs.push('--remove-label', l);
+      ghRun(removeArgs);
+
+      // Stamp status:done in a SEPARATE best-effort call. `gh issue edit` applies
+      // a label set atomically, so fusing --add-label into the removal above would
+      // abort the whole edit (and the removal) if status:done is absent — which
+      // can happen in a host repo that never defined it.
+      if (!labels.includes('status:done')) {
+        try {
+          ghRun([
+            'issue',
+            'edit',
+            num,
+            '--repo',
+            'Garsson-io/kaizen',
+            '--add-label',
+            'status:done',
+          ]);
+        } catch {}
+      }
+      traceHookEvent('pr-kaizen-clear', {
+        action: 'reconcile-status',
+        issue: num,
+        removed: toRemove,
+      });
+    } catch (err) {
+      // Best-effort, but leave a durable signal so a failed reconcile isn't
+      // silent (the #1229 symptom would otherwise recur invisibly).
+      traceHookEvent('pr-kaizen-clear', {
+        action: 'reconcile-status',
+        issue: num,
+        error: String(err),
+      });
+    }
   }
 }
 
