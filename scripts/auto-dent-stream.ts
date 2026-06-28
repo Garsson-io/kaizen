@@ -218,6 +218,12 @@ function extractIssueRefs(value: string): string[] {
 }
 
 /**
+ * Human label for a pushed-but-PR-less branch. One constant shared by the ledger
+ * step detail and the live-console line so the two phrasings can never drift (#1492).
+ */
+export const BRANCH_PUSH_PENDING = 'branch pushed — PR pending';
+
+/**
  * GitHub's post-`git push` "create a pull request" helper URL — `pull/new/<branch>`
  * or `compare/<branch>?expand=1`. This is NOT a PR: the `pull/\d+` matcher above
  * already excludes it (no digit follows `pull/`), so detecting it only *adds* the
@@ -274,7 +280,7 @@ export function extractArtifacts(text: string, result: RunResult): void {
       upsertProgressStep(result, {
         phase: 'PR',
         state: 'branch-pushed',
-        detail: 'branch pushed — PR pending',
+        detail: BRANCH_PUSH_PENDING,
         url: pushUrl,
       }, 'replace');
     }
@@ -621,7 +627,7 @@ export function ingestRunText(
   const pushUrl = extractBranchPushUrl(text);
   if (pushUrl) {
     emitOnce(
-      `${color.yellow('◉ [PUSH]')} branch pushed — PR pending ${pushUrl}`,
+      `${color.yellow('◉ [PUSH]')} ${BRANCH_PUSH_PENDING} ${pushUrl}`,
       elapsed,
       ctx,
     );

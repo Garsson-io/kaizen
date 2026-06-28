@@ -114,6 +114,18 @@ The trampoline prints real-time progress after each run:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
+During a run the live console is **decision-led, not tool-call-led** (#1492). Every
+text source — assistant prose, tool results, and the final result — flows through one
+ingestion pipeline (`ingestRunText` in `auto-dent-stream.ts`), so parsed phase markers
+(`◉ [PICK] #1365 — …`, `[IMPLEMENT]`, `[STOP]`, …) print to the console regardless of
+whether the agent narrated them or `echo`ed them to stdout. Markers are deduplicated, so
+a decision echoed through several stream messages prints once. Control signals (stop,
+contemplation recs) are honored only from agent-authoritative text — never from tool
+output — so a `cat` of a file containing a literal `AUTO_DENT_PHASE: STOP` cannot halt
+the batch. A GitHub branch-push helper URL (`pull/new/…`, `compare/…`) renders as a
+distinct `◉ [PUSH] branch pushed — PR pending` line and a `PR | branch-pushed` work-cycle
+row, so a pushed branch is never misread as a real PR (a later `/pull/<N>` supersedes it).
+
 ### From another terminal
 
 ```bash

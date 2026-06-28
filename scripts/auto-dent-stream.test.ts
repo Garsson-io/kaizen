@@ -569,6 +569,13 @@ describe('branch-push helper URLs vs real PRs (#1492)', () => {
     expect(prStep?.url).toBe('https://github.com/Garsson-io/kaizen/pull/new/case-x');
   });
 
+  it('classifies a compare URL end-to-end through extractArtifacts (ledger)', () => {
+    const result = makeRunResult();
+    extractArtifacts('open it: https://github.com/o/r/compare/case-x?expand=1', result);
+    expect(result.prs).toEqual([]);
+    expect(result.progressSteps?.find((s) => s.phase === 'PR')?.state).toBe('branch-pushed');
+  });
+
   it('emits a [PUSH] line to the live console', () => {
     const result = makeRunResult();
     const ctx: StreamContext = {};
@@ -582,6 +589,17 @@ describe('branch-push helper URLs vs real PRs (#1492)', () => {
     );
     expect(out).toContain('[PUSH]');
     expect(out).toContain('PR pending');
+  });
+
+  it('dedups the [PUSH] line across messages (shared ctx)', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const url = 'https://github.com/o/r/pull/new/case-x';
+    const out = captureConsole(() => {
+      processStreamMessage(assistantText(`pushed: ${url}`), result, Date.now(), ctx);
+      processStreamMessage(toolResult(`remote: ${url}`), result, Date.now(), ctx);
+    });
+    expect(out.match(/\[PUSH\]/g)?.length).toBe(1);
   });
 
   it('a real PR supersedes the branch-pushed step and is recorded in prs', () => {
