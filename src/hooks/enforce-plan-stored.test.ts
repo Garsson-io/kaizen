@@ -10,6 +10,7 @@ import { describe, expect, it, afterEach } from 'vitest';
 import {
   checkPlanBeforePr,
   checkPlanBeforeEdit,
+  checkIssueNotSuperseded,
   extractIssueNumber,
   extractCaseIssueFromBranch,
   isDocsOnly,
@@ -43,6 +44,7 @@ function makeDeps(backendOverrides: Partial<CaseBackend> = {}, depsOverrides: Pa
     getWorktreeRoot: () => '/repo/.claude/worktrees/wt',
     getMainCheckout: () => '/repo',
     getDeclaredIssue: () => '1055',
+    getIssueState: () => 'OPEN',
     ...depsOverrides,
   };
 }
@@ -375,6 +377,70 @@ describe('checkPlanBeforePr', () => {
     expect(result.allowed).toBe(false);
     expect(result.missing).toContain('issue-mismatch');
     expect(result.reason).toContain('Stale kaizen.issue');
+  });
+
+  // ── #318: superseded-issue guard integration ──────────────────────
+  it('#318 (B5): BLOCKS create for a CLOSED issue even with a substantive plan', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Closes #1055'),
+      makeDeps({}, { getIssueState: () => 'CLOSED' }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('superseded');
+    expect(result.reason).toContain('already CLOSED');
+  });
+
+  it('#318 (B6): allows create for an OPEN issue (no regression)', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Closes #1055'),
+      makeDeps({}, { getIssueState: () => 'OPEN' }),
+    );
+    expect(result.allowed).toBe(true);
+  });
+
+  it('#318 (B7): KAIZEN_SKIP_PLAN_CHECK bypasses the superseded guard', () => {
+    process.env.KAIZEN_SKIP_PLAN_CHECK = '1';
+    const result = checkPlanBeforePr(
+      ghPrCreate('Closes #1055'),
+      makeDeps({}, { getIssueState: () => 'CLOSED' }),
+    );
+    expect(result.allowed).toBe(true);
+  });
+
+  it('#318 (B8): docs-only PR short-circuits before the superseded check (no gh call)', () => {
+    let called = false;
+    const result = checkPlanBeforePr(
+      ghPrCreate('Closes #1055'),
+      makeDeps({ retrievePlan: () => null }, {
+        getChangedFiles: () => ['README.md'],
+        getIssueState: () => { called = true; return 'CLOSED'; },
+      }),
+    );
+    expect(result.allowed).toBe(true);
+    expect(called).toBe(false);
+  });
+});
+
+describe('checkIssueNotSuperseded (#318)', () => {
+  it('B1: allows when issue is OPEN', () => {
+    expect(checkIssueNotSuperseded('1055', 'o/r', makeDeps({}, { getIssueState: () => 'OPEN' })).allowed).toBe(true);
+  });
+
+  it('B2: DENIES (missing=superseded) when issue is CLOSED', () => {
+    const result = checkIssueNotSuperseded('1055', 'o/r', makeDeps({}, { getIssueState: () => 'CLOSED' }));
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toContain('superseded');
+  });
+
+  it('B3: fails OPEN (allowed) when state is null/unknown', () => {
+    expect(checkIssueNotSuperseded('1055', 'o/r', makeDeps({}, { getIssueState: () => null })).allowed).toBe(true);
+  });
+
+  it('B4: deny reason is non-lossy — points to verify + reopen, never auto-close', () => {
+    const reason = checkIssueNotSuperseded('1055', 'o/r', makeDeps({}, { getIssueState: () => 'CLOSED' })).reason ?? '';
+    expect(reason).toContain('issue reopen');
+    expect(reason).toContain('VERIFY');
+    expect(reason).not.toMatch(/auto-clos/i);
   });
 });
 

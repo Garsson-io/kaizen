@@ -21,6 +21,7 @@ import { gitStdout } from './lib/git-state.js';
 import { isGhPrCommand, stripHeredocBody, extractRepoFlag } from './parse-command.js';
 import { CaseSystem } from '../case-system.js';
 import { extractCaseIssueFromBranch } from './lib/case-branch.js';
+import { queryIssueState, type IssueState } from '../lib/github-pr.js';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -42,6 +43,12 @@ export interface PlanCheckDeps {
   getMainCheckout: () => string;
   /** Explicitly-declared issue for this worktree via `git config kaizen.issue`. */
   getDeclaredIssue: () => string | null;
+  /**
+   * Look up an issue's OPEN/CLOSED state. Returns null on any failure so the
+   * caller fails open — an unknown state must never be mistaken for CLOSED.
+   * Injectable for tests; defaults to {@link queryIssueState}.
+   */
+  getIssueState: (issue: number, repo: string) => IssueState | null;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -78,6 +85,7 @@ const DEFAULT_DEPS: PlanCheckDeps = {
     const v = gitStdout(['config', '--get', 'kaizen.issue']);
     return v && /^\d+$/.test(v) ? v : null;
   },
+  getIssueState: (issue: number, repo: string) => queryIssueState({ repo, issue }),
 };
 
 // ── Issue extraction ────────────────────────────────────────────────
@@ -331,6 +339,61 @@ IMPORTANT: Wait for the skill to COMPLETE. Do not retry Write until the skill is
   return { allowed: true };
 }
 
+// ── Superseded-issue guard (PR create only) ─────────────────────────
+
+/**
+ * Block `gh pr create` when the target issue is already CLOSED — almost always
+ * because a sibling auto-dent run already shipped it (#318). Creating the PR
+ * anyway produces an orphan duplicate that later needs a *manual rescue* (the
+ * exact "work abandoned, requires a manual rescue PR" failure mode).
+ *
+ * Prevention over lossy cleanup: the original #318 proposal auto-closed such PRs
+ * *after* creation, but the issue's own critique warns that is lossy — a
+ * superseded PR may carry unique improvements. Blocking at create time loses
+ * nothing (no PR exists yet) and, if the work is genuinely unique, the author
+ * simply reopens the issue to lift the gate. This mirrors the rescue path's
+ * closed-issue guard (`auto-dent-rescue.ts`, #1300/#1302) so BOTH PR-creation
+ * moments (foreground create + background rescue draft) are covered by the same
+ * `queryIssueState` primitive.
+ *
+ * Fails OPEN: a null/unknown state returns allowed — an unknown state must never
+ * be mistaken for CLOSED, matching the rescue path's invariant.
+ */
+export function checkIssueNotSuperseded(
+  issueNum: string,
+  repo: string,
+  deps: PlanCheckDeps = DEFAULT_DEPS,
+): PlanCheckResult {
+  const n = parseInt(issueNum, 10);
+  if (!Number.isFinite(n)) return { allowed: true };
+
+  const state = deps.getIssueState(n, repo);
+  if (state !== 'CLOSED') return { allowed: true }; // OPEN or null (fail open)
+
+  return {
+    allowed: false,
+    missing: ['superseded'],
+    reason: `BLOCKED: issue #${issueNum} is already CLOSED — this PR would be superseded (#318).
+
+A sibling run (or someone else) almost certainly already shipped #${issueNum}.
+Creating this PR now produces an orphan duplicate that has to be rescued/closed by hand.
+
+VERIFY before proceeding:
+  gh issue view ${issueNum} --repo ${repo} --json state,title,closedAt
+  gh pr list --repo ${repo} --search "${issueNum} in:body" --state merged --json number,title
+
+THEN choose:
+  - Duplicate work → abandon this branch (no PR). The issue is done.
+  - Your work is genuinely unique / not covered by the merged PR → reopen the
+    issue to lift this gate, then retry:
+      gh issue reopen ${issueNum} --repo ${repo}
+  - Wrong issue bound → fix the link:
+      git config --worktree kaizen.issue <correct-N>
+
+This gate prevents abandoned work that needs a manual rescue PR.`,
+  };
+}
+
 // ── Gate 2: gh pr create — full check with substance ────────────────
 
 export function checkPlanBeforePr(
@@ -371,6 +434,13 @@ This hook enforces I3 (stored test plan) and I8 (plan before implementation).`,
   if (branchIssue && branchIssue !== issueNum) {
     return staleIssueResult(branchIssue, issueNum);
   }
+
+  // Superseded guard (#318): if the target issue is already CLOSED, a sibling run
+  // shipped it — block before we manufacture an orphan PR that needs a manual
+  // rescue. Checked before the plan gate so a closed issue is reported even when
+  // no plan exists. Fails open on unknown state.
+  const supersededResult = checkIssueNotSuperseded(issueNum, repo, deps);
+  if (!supersededResult.allowed) return supersededResult;
 
   // Use Case FE for existence check
   const gate = deps.caseSystem.checkPlanGate(parseInt(issueNum, 10), repo);
