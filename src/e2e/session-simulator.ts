@@ -30,7 +30,7 @@ import {
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { KAIZEN_PLUGIN_SOURCE } from "../kaizen-plugin-identity.js";
-import { KAIZEN_ROOT, resolveTsxBin } from "./test-runtime.js";
+import { KAIZEN_ROOT, resolveTypeScriptHookRunner } from "./test-runtime.js";
 
 import {
   runHook,
@@ -139,11 +139,11 @@ export class SessionSimulator {
   private mockDir: MockDir;
   private steps: StepResult[] = [];
   private hookTimeout: number;
-  private tsxBin: string | undefined;
+  private typeScriptRunnerBin: string | undefined;
 
   constructor(opts?: { hookTimeout?: number }) {
     this.hookTimeout = opts?.hookTimeout ?? 5000;
-    this.tsxBin = resolveTsxBin();
+    this.typeScriptRunnerBin = resolveTypeScriptHookRunner()?.command;
     this.fakeHome = mkdtempSync(join(tmpdir(), "ses-home-"));
     this.stateDir = mkdtempSync(join(tmpdir(), "ses-state-"));
     this.auditDir = mkdtempSync(join(tmpdir(), "ses-audit-"));
@@ -354,7 +354,7 @@ export class SessionSimulator {
           DEBUG_LOG: "/dev/null",
           HOOK_TIMING_SENTINEL_DISABLED: "true",
           SEND_TELEGRAM_IPC_DISABLED: "true",
-          ...(this.tsxBin ? { KAIZEN_TSX_BIN: this.tsxBin } : {}),
+          ...(this.typeScriptRunnerBin ? { KAIZEN_TSX_BIN: this.typeScriptRunnerBin } : {}),
           PATH: this.mockDir.pathWithMocks,
         },
       });
