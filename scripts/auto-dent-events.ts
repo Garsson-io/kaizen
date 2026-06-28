@@ -15,8 +15,8 @@
  * See issue #647, parent horizon #249 (Observability).
  */
 
-import { appendFileSync } from 'fs';
 import { resolve } from 'path';
+import { appendJsonLine } from '../src/lib/json-lines.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 
 // Event type definitions
@@ -169,7 +169,7 @@ export class EventEmitter {
       event,
     };
     try {
-      appendFileSync(this.filePath, JSON.stringify(envelope) + '\n');
+      appendJsonLine(this.filePath, envelope);
     } catch {
       // Telemetry is best-effort — never break the run
     }
