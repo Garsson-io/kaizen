@@ -633,6 +633,7 @@ describe("kaizen workflow — artifact-first Impact proof readability (#1522)", 
     expect(prompt).toContain("Artifact-first readability");
     expect(prompt).toContain("Fail when the PR describes an artifact in prose even though the artifact can be shown");
     expect(prompt).toContain("generated outputs, rendered UI, comments, reports, files, logs, hook messages, API responses, state");
+    expect(prompt).toContain("Do not require the table for tiny/simple proofs where the existing bullet rubric is clearer");
   });
 
   it("artifact lifecycle documents durable evidence bundles behind compact Impact tables", () => {
