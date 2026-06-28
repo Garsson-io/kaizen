@@ -16,8 +16,8 @@
  *   session.cleanup();
  */
 
+import { execFileSync } from "node:child_process";
 import {
-  execFileSync,
   mkdtempSync,
   mkdirSync,
   writeFileSync,

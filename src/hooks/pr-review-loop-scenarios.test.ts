@@ -43,6 +43,7 @@ function opts(diffFn?: (sha: string) => number): ProcessOptions {
     computeDiffLines: diffFn ?? (() => 10),
     checkShaExists: () => true,
     checkReviewSentinel: () => true, // Scenario tests assume sentinel exists
+    isMergeFromMainPush: () => false,
   };
 }
 

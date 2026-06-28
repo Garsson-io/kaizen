@@ -477,6 +477,10 @@ if echo "$@" | grep -q "remote get-url"; then
   echo "{remote_url}"
   exit 0
 fi
+if echo "$@" | grep -q "log -1 --format=%P HEAD"; then
+  echo "mock-parent-sha"
+  exit 0
+fi
 if echo "$@" | grep -q "rev-parse --git-common-dir"; then
   echo ".git"
   exit 0
