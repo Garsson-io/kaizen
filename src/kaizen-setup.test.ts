@@ -24,6 +24,15 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 
+describe("setup JSON file parsing", () => {
+  it("delegates runtime JSON object file reads to the shared parser", () => {
+    const source = readFileSync(new URL("./kaizen-setup.ts", import.meta.url), "utf-8");
+
+    expect(source).toContain("parseJsonObject");
+    expect(source).not.toContain("JSON.parse(readFileSync");
+  });
+});
+
 describe("detectInstall", () => {
   it("detects plugin install via CLAUDE_PLUGIN_ROOT", () => {
     const result = detectInstall({ cwd: tempDir, env: { CLAUDE_PLUGIN_ROOT: "/plugins/kaizen" } });
@@ -189,6 +198,21 @@ describe("verifySetup", () => {
     expect(result.checks.some(c => c.name.startsWith("hook-"))).toBe(true);
     expect(result.checks.some(c => c.name.startsWith("skill-"))).toBe(true);
     expect(result.checks.some(c => c.name.startsWith("matcher-"))).toBe(true);
+  });
+
+  it("reports invalid plugin.json during setup verification without reparsing it", () => {
+    const pluginRoot = join(tempDir, "plugin");
+    mkdirSync(join(pluginRoot, ".claude-plugin"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), "not json");
+    writeFileSync(join(tempDir, "kaizen.config.json"), JSON.stringify({ host: { name: "p", repo: "o/r" }, kaizen: { repo: "g/k" } }));
+    mkdirSync(join(tempDir, ".agents", "kaizen", "local"), { recursive: true });
+    writeFileSync(join(tempDir, ".agents", "kaizen", "local", "policies-local.md"), "# Policies");
+    writeFileSync(join(tempDir, "CLAUDE.md"), "# kaizen");
+
+    const result = verifySetup(tempDir, { pluginRoot });
+    const pluginJsonCheck = result.checks.find(c => c.name === "plugin-json");
+    expect(result.status).toBe("failed");
+    expect(pluginJsonCheck).toMatchObject({ ok: false, detail: "invalid JSON" });
   });
 });
 

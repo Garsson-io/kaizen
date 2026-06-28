@@ -20,6 +20,7 @@ import { join } from "path";
 import { parseArgs } from "util";
 import { loadAllSkillMetadata, validateSkillDependencies, validateSkillVersions } from "./skill-metadata.js";
 import { installGitHooks, buildThinWrapper, type InstallResult } from "./setup-git-hooks.js";
+import { parseJsonObject } from "./lib/json-value.js";
 
 // ── Types ──
 
@@ -75,6 +76,37 @@ export interface VerifyResult {
   checks: VerifyCheck[];
   passed: number;
   failed: number;
+}
+
+interface PluginManifestRead {
+  manifest: Record<string, unknown> | null;
+  failure?: VerifyCheck;
+}
+
+function readJsonObjectFile(path: string): Record<string, unknown> | null {
+  try {
+    return parseJsonObject(readFileSync(path, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function readPluginManifest(pluginRoot: string): PluginManifestRead {
+  const pluginJsonPath = join(pluginRoot, ".claude-plugin", "plugin.json");
+  if (!existsSync(pluginJsonPath)) {
+    return {
+      manifest: null,
+      failure: { name: "plugin-json", ok: false, detail: "plugin.json not found" },
+    };
+  }
+
+  const manifest = readJsonObjectFile(pluginJsonPath);
+  return manifest
+    ? { manifest }
+    : {
+        manifest: null,
+        failure: { name: "plugin-json", ok: false, detail: "invalid JSON" },
+      };
 }
 
 // ── Functions ──
@@ -143,12 +175,11 @@ export function enablePlugin(cwd: string, pluginName = "kaizen@kaizen"): EnableR
 
   let data: Record<string, unknown> = {};
   if (existsSync(path)) {
-    try {
-      data = JSON.parse(readFileSync(path, "utf-8"));
-      if (!data || typeof data !== "object") data = {};
-    } catch (e) {
-      return { step: "enable", status: "error", path, error: `settings.json parse error: ${String(e)}` };
+    const parsed = readJsonObjectFile(path);
+    if (!parsed) {
+      return { step: "enable", status: "error", path, error: "settings.json parse error: invalid JSON object" };
     }
+    data = parsed;
   } else {
     mkdirSync(dir, { recursive: true });
   }
@@ -214,22 +245,13 @@ interface PluginContractCheck {
   matchers: VerifyCheck[];
 }
 
-export function verifyPluginContract(pluginRoot: string): PluginContractCheck {
+function verifyPluginContractFromManifest(pluginRoot: string, manifestRead: PluginManifestRead): PluginContractCheck {
   const result: PluginContractCheck = { hookPaths: [], skillDirs: [], matchers: [] };
-  const pluginJsonPath = join(pluginRoot, ".claude-plugin", "plugin.json");
-
-  if (!existsSync(pluginJsonPath)) {
-    result.hookPaths.push({ name: "plugin-json", ok: false, detail: "plugin.json not found" });
+  if (!manifestRead.manifest) {
+    result.hookPaths.push(manifestRead.failure ?? { name: "plugin-json", ok: false, detail: "invalid JSON" });
     return result;
   }
-
-  let manifest: Record<string, unknown>;
-  try {
-    manifest = JSON.parse(readFileSync(pluginJsonPath, "utf-8"));
-  } catch {
-    result.hookPaths.push({ name: "plugin-json", ok: false, detail: "invalid JSON" });
-    return result;
-  }
+  const manifest = manifestRead.manifest;
 
   // Validate hook command paths
   const hooks = manifest.hooks as Record<string, unknown[]> | undefined;
@@ -287,14 +309,18 @@ export function verifyPluginContract(pluginRoot: string): PluginContractCheck {
   return result;
 }
 
+export function verifyPluginContract(pluginRoot: string): PluginContractCheck {
+  return verifyPluginContractFromManifest(pluginRoot, readPluginManifest(pluginRoot));
+}
+
 export function verifySetup(cwd: string, opts?: { pluginRoot?: string }): VerifyResult {
   const checks: VerifyCheck[] = [];
 
   // Config
   const configPath = join(cwd, "kaizen.config.json");
   if (existsSync(configPath)) {
-    try {
-      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    const config = readJsonObjectFile(configPath);
+    if (config) {
       checks.push({ name: "config-valid", ok: true });
       for (const field of ["host.name", "host.repo", "kaizen.repo"]) {
         const parts = field.split(".");
@@ -302,7 +328,7 @@ export function verifySetup(cwd: string, opts?: { pluginRoot?: string }): Verify
         for (const p of parts) val = (val as Record<string, unknown>)?.[p];
         checks.push({ name: `config-field-${field}`, ok: !!val, detail: val ? String(val) : "missing" });
       }
-    } catch {
+    } else {
       checks.push({ name: "config-valid", ok: false, detail: "invalid JSON" });
     }
   } else {
@@ -333,14 +359,12 @@ export function verifySetup(cwd: string, opts?: { pluginRoot?: string }): Verify
   // Plugin contract validation
   const pluginRoot = opts?.pluginRoot;
   if (pluginRoot) {
-    const contract = verifyPluginContract(pluginRoot);
+    const pluginManifest = readPluginManifest(pluginRoot);
+    const contract = verifyPluginContractFromManifest(pluginRoot, pluginManifest);
     checks.push(...contract.hookPaths, ...contract.skillDirs, ...contract.matchers);
 
     // Skill metadata validation
-    const pluginJsonPath = join(pluginRoot, ".claude-plugin", "plugin.json");
-    const skillsPath = existsSync(pluginJsonPath)
-      ? (JSON.parse(readFileSync(pluginJsonPath, "utf-8")).skills as string | undefined)
-      : undefined;
+    const skillsPath = pluginManifest.manifest?.skills as string | undefined;
 
     if (skillsPath) {
       const skillsDir = join(pluginRoot, skillsPath);
@@ -359,9 +383,9 @@ export function verifySetup(cwd: string, opts?: { pluginRoot?: string }): Verify
       }
 
       let pluginVersion: string | undefined;
-      try {
-        pluginVersion = JSON.parse(readFileSync(pluginJsonPath, "utf-8")).version as string;
-      } catch { /* ignore */ }
+      if (typeof pluginManifest.manifest?.version === "string") {
+        pluginVersion = pluginManifest.manifest.version;
+      }
 
       if (pluginVersion) {
         const versionIssues = validateSkillVersions(skills, pluginVersion);
