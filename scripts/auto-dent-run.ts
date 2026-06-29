@@ -2210,14 +2210,57 @@ export function cleanGuidanceForTitle(guidance: string): string {
 
 // Batch progress issue management
 
+type ProgressAttachmentWriter = typeof writeAttachment;
+
+function parseProgressIssueNumber(progressIssue: string): string {
+  return progressIssue.match(/issues\/(\d+)/)?.[1] ?? '';
+}
+
+function progressIssueTarget(progressIssue: string, repo: string): { kind: 'issue'; number: string; repo: string } | null {
+  const number = parseProgressIssueNumber(progressIssue);
+  if (!number || !repo) return null;
+  return { kind: 'issue', number, repo };
+}
+
+function writeProgressAttachment(
+  progressIssue: string,
+  repo: string,
+  name: string,
+  markdown: string,
+  write: ProgressAttachmentWriter = writeAttachment,
+): string {
+  const target = progressIssueTarget(progressIssue, repo);
+  if (!target) return '';
+  try {
+    return write(target, name, markdown);
+  } catch (err) {
+    console.log(`  [hygiene] progress attachment ${name} skipped: ${(err as Error).message}`);
+    return '';
+  }
+}
+
 /**
  * Search GitHub for an existing batch progress issue by batch ID.
  * Returns the issue URL if found, empty string otherwise.
  */
-export function findExistingProgressIssue(batchId: string, kaizenRepo: string): string {
-  const result = ghExec(
-    `gh issue list --repo ${kaizenRepo} --label auto-dent --search ${JSON.stringify(batchId)} --json url --limit 1`,
-  );
+export function findExistingProgressIssue(
+  batchId: string,
+  kaizenRepo: string,
+  runGh: (args: string[]) => string = gh,
+): string {
+  let result = '';
+  try {
+    result = runGh([
+      'issue', 'list',
+      '--repo', kaizenRepo,
+      '--label', 'auto-dent',
+      '--search', batchId,
+      '--json', 'url',
+      '--limit', '1',
+    ]);
+  } catch {
+    return '';
+  }
   if (!result) return '';
   try {
     const issues = JSON.parse(result) as Array<{ url: string }>;
@@ -2231,14 +2274,16 @@ export function findExistingProgressIssue(batchId: string, kaizenRepo: string): 
 export function ensureBatchProgressIssue(
   state: BatchState,
   stateFile: string,
+  deps: { gh?: (args: string[]) => string } = {},
 ): string {
   if (state.progress_issue) return state.progress_issue;
 
   const kaizenRepo = state.kaizen_repo;
   if (!kaizenRepo) return '';
+  const runGh = deps.gh ?? gh;
 
   // Search for an existing progress issue to avoid duplicates (#726)
-  const existing = findExistingProgressIssue(state.batch_id, kaizenRepo);
+  const existing = findExistingProgressIssue(state.batch_id, kaizenRepo, runGh);
   if (existing) {
     console.log(`  [hygiene] found existing batch progress issue: ${existing}`);
     const freshState = readState(stateFile);
@@ -2270,12 +2315,22 @@ export function ensureBatchProgressIssue(
     '',
     '</details>',
     '',
-    '_Run-by-run updates posted as comments. Auto-managed by auto-dent._',
+    '_Run-by-run updates are stored as named kaizen attachments. Auto-managed by auto-dent._',
   ].join('\n');
 
-  const url = ghExec(
-    `gh issue create --repo ${kaizenRepo} --title ${JSON.stringify(title)} --label auto-dent,kaizen --body ${JSON.stringify(body)}`,
-  );
+  let url = '';
+  try {
+    url = runGh([
+      'issue', 'create',
+      '--repo', kaizenRepo,
+      '--title', title,
+      '--label', 'auto-dent,kaizen',
+      '--body', body,
+    ]);
+  } catch (err) {
+    console.log(`  [hygiene] progress issue create skipped: ${(err as Error).message}`);
+    return '';
+  }
 
   if (url) {
     console.log(`  [hygiene] created batch progress issue: ${url}`);
@@ -2294,12 +2349,12 @@ export function updateBatchProgressIssue(
   exitCode: number,
   duration: number,
   result: RunResult,
+  deps: { writeAttachment?: ProgressAttachmentWriter } = {},
 ): void {
   if (!progressIssue || !kaizenRepo) return;
 
-  const m = progressIssue.match(/issues\/(\d+)/);
-  if (!m) return;
-  const issueNum = m[1];
+  const issueNum = parseProgressIssueNumber(progressIssue);
+  if (!issueNum) return;
 
   const score = scoreRunResult(result, exitCode, duration);
   const status = score.success ? 'pass' : exitCode === 0 ? 'no-pr' : `fail (exit ${exitCode})`;
@@ -2341,10 +2396,15 @@ export function updateBatchProgressIssue(
   }
 
   const comment = lines.join('\n');
-  ghExec(
-    `gh issue comment ${issueNum} --repo ${kaizenRepo} --body ${JSON.stringify(comment)}`,
+  const url = writeProgressAttachment(
+    progressIssue,
+    kaizenRepo,
+    `progress/run-${runNum}`,
+    comment,
+    deps.writeAttachment ?? writeAttachment,
   );
-  console.log(`  [hygiene] updated progress issue with run #${runNum}`);
+  if (url) console.log(`  [hygiene] updated progress issue with run #${runNum}: ${url}`);
+  else console.log(`  [hygiene] updated progress issue with run #${runNum}`);
 }
 
 /**
@@ -2367,10 +2427,11 @@ export function closeBatchProgressIssue(
   kaizenRepo: string,
   state: BatchState,
   batchDir?: string,
+  deps: { writeAttachment?: ProgressAttachmentWriter } = {},
 ): void {
   if (!progressIssue || !kaizenRepo) return;
-  const m = progressIssue.match(/issues\/(\d+)/);
-  if (!m) return;
+  const issueNum = parseProgressIssueNumber(progressIssue);
+  if (!issueNum) return;
 
   const elapsed = Math.floor(Date.now() / 1000) - state.batch_start;
   const hours = Math.floor(elapsed / 3600);
@@ -2415,8 +2476,12 @@ export function closeBatchProgressIssue(
     `**Issues closed:** ${formatIssuesClosedLine(reconciledClosed, state.issues_closed)}`,
   ].join('\n');
 
-  ghExec(
-    `gh issue comment ${m[1]} --repo ${kaizenRepo} --body ${JSON.stringify(summary)}`,
+  writeProgressAttachment(
+    progressIssue,
+    kaizenRepo,
+    'progress/batch-complete',
+    summary,
+    deps.writeAttachment ?? writeAttachment,
   );
 
   // Durable cross-batch learning (#1108, #940 Phase 1): write a machine-readable
@@ -2425,8 +2490,8 @@ export function closeBatchProgressIssue(
   // must never block batch close (this runs on abnormal exits too).
   try {
     const outcome = buildBatchOutcome(state, batchScore, Math.floor(Date.now() / 1000));
-    writeBatchOutcomeAttachment(m[1], kaizenRepo, outcome);
-    console.log(`  [intelligence] stored batch-outcome attachment on #${m[1]}`);
+    writeBatchOutcomeAttachment(issueNum, kaizenRepo, outcome);
+    console.log(`  [intelligence] stored batch-outcome attachment on #${issueNum}`);
   } catch (err) {
     console.log(`  [intelligence] batch-outcome write skipped: ${(err as Error).message}`);
   }
@@ -2436,8 +2501,8 @@ export function closeBatchProgressIssue(
   // not just the summary. Best-effort — must never block close (abnormal exits too).
   if (batchDir) {
     try {
-      const url = uploadBatchArtifacts(m[1], kaizenRepo, batchDir, new Date().toISOString());
-      if (url) console.log(`  [intelligence] uploaded raw batch artifacts to #${m[1]}`);
+      const url = uploadBatchArtifacts(issueNum, kaizenRepo, batchDir, new Date().toISOString());
+      if (url) console.log(`  [intelligence] uploaded raw batch artifacts to #${issueNum}`);
       else console.log(`  [intelligence] no raw artifacts on disk to upload`);
     } catch (err) {
       console.log(`  [intelligence] batch-artifacts upload skipped: ${(err as Error).message}`);
@@ -2454,7 +2519,7 @@ export function closeBatchProgressIssue(
     const result = runBacklogHealthMaintenance({
       gh: ghArgs,
       repo: kaizenRepo,
-      progressIssue: m[1],
+      progressIssue: issueNum,
       windowDays,
       log: (msg) => console.log(`  [backlog-health] ${msg}`),
       err: (msg) => console.log(`  [backlog-health] ${msg}`),
@@ -2486,7 +2551,7 @@ export function closeBatchProgressIssue(
       staleDays,
       limit: 100,
       apply,
-      progressIssue: m[1],
+      progressIssue: issueNum,
       log: (msg) => console.log(`  [stale-pr] ${msg}`),
       err: (msg) => console.log(`  [stale-pr] ${msg}`),
     });
@@ -2499,7 +2564,7 @@ export function closeBatchProgressIssue(
     console.log(`  [stale-pr] triage maintenance skipped: ${(err as Error).message}`);
   }
 
-  ghExec(`gh issue close ${m[1]} --repo ${kaizenRepo} --reason completed`);
+  ghExec(`gh issue close ${issueNum} --repo ${kaizenRepo} --reason completed`);
   console.log(`  [hygiene] closed batch progress issue`);
 }
 
@@ -3385,13 +3450,18 @@ export async function runReviewWiring(
               reviewVerdict = 'fail';
               deps.appendLog(`\nreview_fix=fail rounds=${fixState.currentRound} cost=$${fixCost.toFixed(2)} pr=${prUrl}\n`);
               try {
-                const url = deps.ghExec(`gh pr comment ${prUrl} --body ${JSON.stringify(
-                  `## Review Fix Loop: Exhausted\n\n` +
-                  `Ran ${fixState.currentRound} fix round(s) but gaps remain. ` +
-                  `Total review+fix cost: $${reviewCostUsd.toFixed(2)}.\n\n` +
-                  `@aviadr1 needs human review.`
-                )}`);
-                if (url && !reviewUrls.includes(url)) reviewUrls.push(url);
+                const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '';
+                if (prNum && input.repo) {
+                  const url = deps.writeAttachment(
+                    { kind: 'pr', number: prNum, repo: input.repo },
+                    'review-fix-loop',
+                    `## Review Fix Loop: Exhausted\n\n` +
+                      `Ran ${fixState.currentRound} fix round(s) but gaps remain. ` +
+                      `Total review+fix cost: $${reviewCostUsd.toFixed(2)}.\n\n` +
+                    `@aviadr1 needs human review.`,
+                  );
+                  if (url && !reviewUrls.includes(url)) reviewUrls.push(url);
+                }
               } catch { /* best effort */ }
             }
           } catch (e: any) {
@@ -4382,9 +4452,7 @@ function postPlan(): void {
   const kaizenRepo = state.kaizen_repo;
   if (!kaizenRepo) return;
 
-  ghExec(
-    `gh issue comment ${progressIssue} --repo ${kaizenRepo} --body ${JSON.stringify(markdown)}`,
-  );
+  writeProgressAttachment(progressIssue, kaizenRepo, 'progress/plan', markdown);
   console.log(`  [plan] Posted plan summary to ${progressIssue}`);
 }
 

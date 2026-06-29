@@ -226,9 +226,19 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
       AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
     );
 
-    expect(closeSection).toContain('uploadBatchArtifacts(m[1], kaizenRepo, batchDir');
+    expect(closeSection).toContain('uploadBatchArtifacts(issueNum, kaizenRepo, batchDir');
     expect(closeSection).toContain('[intelligence] uploaded raw batch artifacts');
     expect(closeSection).toContain('[intelligence] no raw artifacts on disk to upload');
+  });
+
+  it('stores the batch completion summary as a named progress attachment', () => {
+    const closeSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
+    );
+
+    expect(closeSection).toContain("'progress/batch-complete'");
+    expect(closeSection).toContain('writeProgressAttachment');
   });
 });
 
@@ -4859,36 +4869,45 @@ describe('findExistingProgressIssue', () => {
   });
 
   it('returns URL when GitHub search finds a matching issue', () => {
-    vi.spyOn(github, 'ghExec').mockReturnValue(JSON.stringify([{ url: 'https://github.com/Garsson-io/kaizen/issues/707' }]));
-    const result = findExistingProgressIssue('batch-260323-1405-5400', 'Garsson-io/kaizen');
+    const gh = vi.fn(() => JSON.stringify([{ url: 'https://github.com/Garsson-io/kaizen/issues/707' }]));
+    const result = findExistingProgressIssue('batch-260323-1405-5400', 'Garsson-io/kaizen', gh);
     expect(result).toBe('https://github.com/Garsson-io/kaizen/issues/707');
   });
 
   it('returns empty string when no matching issue found', () => {
-    vi.spyOn(github, 'ghExec').mockReturnValue('[]');
-    const result = findExistingProgressIssue('batch-nonexistent', 'Garsson-io/kaizen');
+    const result = findExistingProgressIssue('batch-nonexistent', 'Garsson-io/kaizen', () => '[]');
     expect(result).toBe('');
   });
 
-  it('returns empty string when ghExec returns empty string', () => {
-    vi.spyOn(github, 'ghExec').mockReturnValue('');
-    const result = findExistingProgressIssue('batch-123', 'Garsson-io/kaizen');
+  it('returns empty string when gh returns empty string', () => {
+    const result = findExistingProgressIssue('batch-123', 'Garsson-io/kaizen', () => '');
     expect(result).toBe('');
   });
 
-  it('returns empty string when ghExec returns invalid JSON', () => {
-    vi.spyOn(github, 'ghExec').mockReturnValue('not-json');
-    const result = findExistingProgressIssue('batch-123', 'Garsson-io/kaizen');
+  it('returns empty string when gh returns invalid JSON', () => {
+    const result = findExistingProgressIssue('batch-123', 'Garsson-io/kaizen', () => 'not-json');
+    expect(result).toBe('');
+  });
+
+  it('returns empty string when gh throws', () => {
+    const result = findExistingProgressIssue('batch-123', 'Garsson-io/kaizen', () => {
+      throw new Error('permission denied');
+    });
     expect(result).toBe('');
   });
 
   it('passes batch ID in search query', () => {
-    const spy = vi.spyOn(github, 'ghExec').mockReturnValue('[]');
-    findExistingProgressIssue('batch-260323-1405-5400', 'Garsson-io/kaizen');
-    expect(spy).toHaveBeenCalledOnce();
-    expect(spy.mock.calls[0][0]).toContain('batch-260323-1405-5400');
-    expect(spy.mock.calls[0][0]).toContain('--repo Garsson-io/kaizen');
-    expect(spy.mock.calls[0][0]).toContain('--label auto-dent');
+    const gh = vi.fn(() => '[]');
+    findExistingProgressIssue('batch-260323-1405-5400', 'Garsson-io/kaizen', gh);
+    expect(gh).toHaveBeenCalledOnce();
+    expect(gh.mock.calls[0][0]).toEqual([
+      'issue', 'list',
+      '--repo', 'Garsson-io/kaizen',
+      '--label', 'auto-dent',
+      '--search', 'batch-260323-1405-5400',
+      '--json', 'url',
+      '--limit', '1',
+    ]);
   });
 });
 
@@ -4907,53 +4926,53 @@ describe('ensureBatchProgressIssue', () => {
   });
 
   it('returns cached progress_issue without calling GitHub', () => {
-    const spy = vi.spyOn(github, 'ghExec');
+    const gh = vi.fn();
     const state = makeBatchState({ progress_issue: 'https://github.com/o/r/issues/42' });
     writeState(stateFile, state);
-    const result = ensureBatchProgressIssue(state, stateFile);
+    const result = ensureBatchProgressIssue(state, stateFile, { gh });
     expect(result).toBe('https://github.com/o/r/issues/42');
-    expect(spy).not.toHaveBeenCalled();
+    expect(gh).not.toHaveBeenCalled();
   });
 
   it('returns empty string when kaizen_repo is empty', () => {
-    const spy = vi.spyOn(github, 'ghExec');
+    const gh = vi.fn();
     const state = makeBatchState({ kaizen_repo: '' });
     writeState(stateFile, state);
-    const result = ensureBatchProgressIssue(state, stateFile);
+    const result = ensureBatchProgressIssue(state, stateFile, { gh });
     expect(result).toBe('');
-    expect(spy).not.toHaveBeenCalled();
+    expect(gh).not.toHaveBeenCalled();
   });
 
   it('reuses existing issue found via search instead of creating duplicate', () => {
     const existingUrl = 'https://github.com/Garsson-io/kaizen/issues/707';
-    const spy = vi.spyOn(github, 'ghExec')
-      .mockReturnValueOnce(JSON.stringify([{ url: existingUrl }]));
+    const gh = vi.fn(() => JSON.stringify([{ url: existingUrl }]));
     const state = makeBatchState({ progress_issue: undefined });
     writeState(stateFile, state);
 
-    const result = ensureBatchProgressIssue(state, stateFile);
+    const result = ensureBatchProgressIssue(state, stateFile, { gh });
 
     expect(result).toBe(existingUrl);
-    expect(spy).toHaveBeenCalledOnce(); // only search, no create
-    expect(spy.mock.calls[0][0]).toContain('issue list');
+    expect(gh).toHaveBeenCalledOnce(); // only search, no create
+    expect(gh.mock.calls[0][0].slice(0, 2)).toEqual(['issue', 'list']);
     const saved = readState(stateFile);
     expect(saved.progress_issue).toBe(existingUrl);
   });
 
   it('creates new issue when search finds nothing', () => {
     const newUrl = 'https://github.com/Garsson-io/kaizen/issues/800';
-    const spy = vi.spyOn(github, 'ghExec')
+    const gh = vi.fn()
       .mockReturnValueOnce('[]')       // search returns empty
       .mockReturnValueOnce(newUrl);     // create returns new URL
     const state = makeBatchState({ progress_issue: undefined });
     writeState(stateFile, state);
 
-    const result = ensureBatchProgressIssue(state, stateFile);
+    const result = ensureBatchProgressIssue(state, stateFile, { gh });
 
     expect(result).toBe(newUrl);
-    expect(spy).toHaveBeenCalledTimes(2);
-    expect(spy.mock.calls[0][0]).toContain('issue list');   // search
-    expect(spy.mock.calls[1][0]).toContain('issue create'); // create
+    expect(gh).toHaveBeenCalledTimes(2);
+    expect(gh.mock.calls[0][0].slice(0, 2)).toEqual(['issue', 'list']);
+    expect(gh.mock.calls[1][0].slice(0, 2)).toEqual(['issue', 'create']);
+    expect(gh.mock.calls[1][0]).toContain('--body');
     const saved = readState(stateFile);
     expect(saved.progress_issue).toBe(newUrl);
   });
@@ -4964,8 +4983,8 @@ describe('updateBatchProgressIssue', () => {
     vi.restoreAllMocks();
   });
 
-  it('posts issue, PR, review, and structured work-cycle artifacts', () => {
-    const spy = vi.spyOn(github, 'ghExec').mockReturnValue('https://github.com/Garsson-io/kaizen/issues/1226#issuecomment-1');
+  it('stores issue, PR, review, and structured work-cycle artifacts in a named attachment', () => {
+    const writeAttachment = vi.fn(() => 'https://github.com/Garsson-io/kaizen/issues/1226#issuecomment-1');
     const result = makeRunResult({
       pickedIssue: '#1225',
       pickedIssueTitle: 'redo CI proof gate',
@@ -5000,12 +5019,13 @@ describe('updateBatchProgressIssue', () => {
       1,
       1205,
       result,
+      { writeAttachment },
     );
 
-    expect(spy).toHaveBeenCalledOnce();
-    const cmd = spy.mock.calls[0][0];
-    expect(cmd).toContain('gh issue comment 1226');
-    const body = JSON.parse(cmd.match(/--body (.+)$/)![1]);
+    expect(writeAttachment).toHaveBeenCalledOnce();
+    expect(writeAttachment.mock.calls[0][0]).toEqual({ kind: 'issue', number: '1226', repo: 'Garsson-io/kaizen' });
+    expect(writeAttachment.mock.calls[0][1]).toBe('progress/run-1');
+    const body = writeAttachment.mock.calls[0][2];
     expect(body).toContain('| **Issue worked** | https://github.com/Garsson-io/kaizen/issues/1225 — redo CI proof gate |');
     expect(body).toContain('| **PR generated** | https://github.com/Garsson-io/kaizen/pull/1227 |');
     expect(body).toContain('| **Review state** | fail (https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2) |');
@@ -5019,6 +5039,22 @@ describe('updateBatchProgressIssue', () => {
     expect(body).toContain('| CLEANUP | not observed | - | - |');
     expect(body.indexOf('| PICK |')).toBeLessThan(body.indexOf('| REVIEW |'));
     expect(body.indexOf('| REVIEW |')).toBeLessThan(body.indexOf('| STOP |'));
+  });
+
+  it('keeps progress writes fail-open when the attachment write fails', () => {
+    const writeAttachment = vi.fn(() => {
+      throw new Error('network failed');
+    });
+
+    expect(() => updateBatchProgressIssue(
+      'https://github.com/Garsson-io/kaizen/issues/1226',
+      'Garsson-io/kaizen',
+      2,
+      0,
+      60,
+      makeRunResult(),
+      { writeAttachment },
+    )).not.toThrow();
   });
 });
 
