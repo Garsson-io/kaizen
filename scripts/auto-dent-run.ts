@@ -2669,6 +2669,84 @@ export function ensureBatchProgressIssue(
   return '';
 }
 
+export interface FormatRunProgressAttachmentInput {
+  runNum: number;
+  exitCode: number;
+  duration: number;
+  result: RunResult;
+  kaizenRepo: string;
+  mode?: string;
+}
+
+function formatRunDuration(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(safeSeconds / 60);
+  const secs = safeSeconds % 60;
+  return `${mins}m ${secs}s`;
+}
+
+function formatRunProgressStatus(score: ReturnType<typeof scoreRunResult>, exitCode: number): string {
+  if (score.success) return 'pass';
+  return exitCode === 0 ? 'no-pr' : `fail (exit ${exitCode})`;
+}
+
+function formatRunNarrativeSummary(mode: string, status: string, prs: string[]): string {
+  const prText = prs.length > 0 ? `with PR ${prs.join(', ')}` : 'without a PR';
+  if (status === 'pass') return `${mode} mode completed ${prText}.`;
+  if (status === 'no-pr') return `${mode} mode completed ${prText}.`;
+  return `${mode} mode ended as ${status} ${prText}.`;
+}
+
+export function formatRunProgressAttachment(input: FormatRunProgressAttachmentInput): string {
+  const { runNum, exitCode, duration, result, kaizenRepo } = input;
+  const mode = input.mode ?? 'exploit';
+  const score = scoreRunResult(result, exitCode, duration);
+  const status = formatRunProgressStatus(score, exitCode);
+  const lines = [
+    `### Run #${runNum} - ${status}`,
+    '',
+    formatRunNarrativeSummary(mode, status, result.prs),
+    '',
+    `> ${formatRunScoreLine(score)}`,
+    '',
+    '### Outcome',
+    '',
+    `- **Issue:** ${formatIssueForDisplay(result.pickedIssue, kaizenRepo, result.pickedIssueTitle)}`,
+    `- **PR:** ${result.prs.length > 0 ? result.prs.join(', ') : 'none'}`,
+    `- **Review:** ${formatReviewForDisplay(result)}`,
+  ];
+
+  if (result.issuesFiled.length > 0) {
+    lines.push(`- **Issues filed:** ${result.issuesFiled.join(', ')}`);
+  }
+  if (result.issuesClosed.length > 0) {
+    lines.push(`- **Issues closed:** ${result.issuesClosed.join(' ')}`);
+  }
+  if (result.cases.length > 0) {
+    lines.push(`- **Cases:** ${result.cases.map((c) => '`' + c + '`').join(', ')}`);
+  }
+  if (result.stopRequested) {
+    lines.push(`- **STOP requested:** ${result.stopReason || 'requested'}`);
+  }
+
+  lines.push(
+    '',
+    '### Run Metrics',
+    '',
+    '| Metric | Value |',
+    '|--------|-------|',
+    `| Duration | ${formatRunDuration(duration)} |`,
+    `| Cost | $${result.cost.toFixed(2)} |`,
+    `| Tool calls | ${result.toolCalls} |`,
+    '',
+    '### Work Cycle',
+    '',
+    formatProgressStepsMarkdown(result, kaizenRepo),
+  );
+
+  return lines.join('\n');
+}
+
 export function updateBatchProgressIssue(
   progressIssue: string,
   kaizenRepo: string,
@@ -2683,46 +2761,13 @@ export function updateBatchProgressIssue(
   const issueNum = parseProgressIssueNumber(progressIssue);
   if (!issueNum) return;
 
-  const score = scoreRunResult(result, exitCode, duration);
-  const status = score.success ? 'pass' : exitCode === 0 ? 'no-pr' : `fail (exit ${exitCode})`;
-  const mins = Math.floor(duration / 60);
-  const secs = duration % 60;
-
-  const lines = [
-    `### Run #${runNum} — ${status}`,
-    '',
-    `> ${formatRunScoreLine(score)}`,
-    '',
-    `| Metric | Value |`,
-    `|--------|-------|`,
-    `| **Duration** | ${mins}m ${secs}s |`,
-    `| **Cost** | $${result.cost.toFixed(2)} |`,
-    `| **Tool calls** | ${result.toolCalls} |`,
-    `| **Issue worked** | ${formatIssueForDisplay(result.pickedIssue, kaizenRepo, result.pickedIssueTitle)} |`,
-    `| **PR generated** | ${result.prs.length > 0 ? result.prs.join(', ') : 'none'} |`,
-    `| **Review state** | ${formatReviewForDisplay(result)} |`,
-  ];
-
-  if (result.issuesFiled.length > 0) {
-    lines.push(`| **Issues filed** | ${result.issuesFiled.join(', ')} |`);
-  }
-  if (result.issuesClosed.length > 0) {
-    lines.push(`| **Issues closed** | ${result.issuesClosed.join(' ')} |`);
-  }
-  if (result.cases.length > 0) {
-    lines.push(
-      `| **Cases** | ${result.cases.map((c) => '`' + c + '`').join(', ')} |`,
-    );
-  }
-  if (result.stopRequested) {
-    lines.push('', `**STOP requested:** ${result.stopReason}`);
-  }
-  const stepsTable = formatProgressStepsMarkdown(result, kaizenRepo);
-  if (stepsTable) {
-    lines.push('', stepsTable);
-  }
-
-  const comment = lines.join('\n');
+  const comment = formatRunProgressAttachment({
+    runNum,
+    exitCode,
+    duration,
+    result,
+    kaizenRepo,
+  });
   const url = writeProgressAttachment(
     progressIssue,
     kaizenRepo,
