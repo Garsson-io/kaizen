@@ -4499,7 +4499,7 @@ describe('mode-output progress fallback (#702)', () => {
   });
 
   it('posts harness-owned explore output to the progress issue', () => {
-    const commands: string[] = [];
+    const commands: string[][] = [];
 
     postModeOutputToProgressIssue({
       progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
@@ -4508,23 +4508,23 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 3,
       logFile: '/logs/run-3.log',
       readLog: () => exploreLog,
-      gh: (cmd) => {
-        commands.push(cmd);
+      gh: (args) => {
+        commands.push(args);
         return 'https://github.com/Garsson-io/kaizen/issues/7020#issuecomment-1';
       },
       log: () => {},
     });
 
     expect(commands).toHaveLength(1);
-    expect(commands[0]).toContain('gh issue comment 7020 --repo Garsson-io/kaizen');
-    const body = JSON.parse(commands[0].match(/--body (.+)$/)![1]);
+    expect(commands[0].slice(0, 5)).toEqual(['issue', 'comment', '7020', '--repo', 'Garsson-io/kaizen']);
+    const body = commands[0][commands[0].indexOf('--body') + 1];
     expect(body).toContain('### explore run #3 — analysis fallback');
     expect(body).toContain('Candidate analysis');
     expect(body).toContain('File #11 for missing fallback');
   });
 
   it('posts reflect output from codex final text blocks', () => {
-    const commands: string[] = [];
+    const commands: string[][] = [];
     const reflectLog = [
       '[provider] codex subscription-cli',
       '--- codex final text ---',
@@ -4542,14 +4542,14 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 4,
       logFile: '/logs/run-4.log',
       readLog: () => reflectLog,
-      gh: (cmd) => {
-        commands.push(cmd);
+      gh: (args) => {
+        commands.push(args);
         return '';
       },
       log: () => {},
     });
 
-    const body = JSON.parse(commands[0].match(/--body (.+)$/)![1]);
+    const body = commands[0][commands[0].indexOf('--body') + 1];
     expect(body).toContain('### reflect run #4 — analysis fallback');
     expect(body).toContain('REFLECTION_INSIGHT: progress issue fallback is missing');
     expect(body).toContain('Detailed reflection body.');
@@ -4557,7 +4557,7 @@ describe('mode-output progress fallback (#702)', () => {
   });
 
   it('does not post for exploit mode', () => {
-    const commands: string[] = [];
+    const commands: string[][] = [];
 
     postModeOutputToProgressIssue({
       progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
@@ -4566,8 +4566,8 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 5,
       logFile: '/logs/run-5.log',
       readLog: () => exploreLog,
-      gh: (cmd) => {
-        commands.push(cmd);
+      gh: (args) => {
+        commands.push(args);
         return '';
       },
       log: () => {},
@@ -4577,7 +4577,7 @@ describe('mode-output progress fallback (#702)', () => {
   });
 
   it('deduplicates contemplate when the agent already posted to the progress issue', () => {
-    const commands: string[] = [];
+    const commands: string[][] = [];
     const logs: string[] = [];
 
     postModeOutputToProgressIssue({
@@ -4587,8 +4587,8 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 6,
       logFile: '/logs/run-6.log',
       readLog: () => 'Strategic output\nReflection complete (posted to progress issue).',
-      gh: (cmd) => {
-        commands.push(cmd);
+      gh: (args) => {
+        commands.push(args);
         return '';
       },
       log: (msg) => logs.push(msg),
@@ -4599,7 +4599,7 @@ describe('mode-output progress fallback (#702)', () => {
   });
 
   it('fails open when the log cannot be read', () => {
-    const commands: string[] = [];
+    const commands: string[][] = [];
     const logs: string[] = [];
 
     expect(() => postModeOutputToProgressIssue({
@@ -4609,8 +4609,8 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 7,
       logFile: '/logs/missing.log',
       readLog: () => { throw new Error('ENOENT'); },
-      gh: (cmd) => {
-        commands.push(cmd);
+      gh: (args) => {
+        commands.push(args);
         return '';
       },
       log: (msg) => logs.push(msg),
@@ -4621,7 +4621,7 @@ describe('mode-output progress fallback (#702)', () => {
   });
 
   it('fails open without a progress issue or repository', () => {
-    const commands: string[] = [];
+    const commands: string[][] = [];
     const logs: string[] = [];
 
     postModeOutputToProgressIssue({
@@ -4631,8 +4631,8 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 8,
       logFile: '/logs/run-8.log',
       readLog: () => exploreLog,
-      gh: (cmd) => {
-        commands.push(cmd);
+      gh: (args) => {
+        commands.push(args);
         return '';
       },
       log: (msg) => logs.push(msg),

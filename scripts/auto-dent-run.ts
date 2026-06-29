@@ -65,6 +65,7 @@ import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
 import { hasHardQualityFailure } from '../src/verdict-binding-policy.js';
 import { extractPlanText } from '../src/structured-data.js';
+import { gh } from '../src/lib/gh-exec.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -2828,7 +2829,7 @@ export function postModeOutputToProgressIssue(input: {
   runNum: number;
   logFile: string;
   readLog?: (path: string) => string;
-  gh?: typeof ghExec;
+  gh?: (args: string[]) => string;
   log?: (msg: string) => void;
 }): void {
   if (!MODE_OUTPUT_FALLBACK_MODES.has(input.mode)) return;
@@ -2872,9 +2873,9 @@ export function postModeOutputToProgressIssue(input: {
     '',
     output,
   ].join('\n');
-  const gh = input.gh ?? ghExec;
+  const runGh = input.gh ?? ((args) => gh(args));
   try {
-    const url = gh(`gh issue comment ${issueNum} --repo ${input.repo} --body ${JSON.stringify(body)}`);
+    const url = runGh(['issue', 'comment', issueNum, '--repo', input.repo, '--body', body]);
     log(`  [hygiene] posted ${input.mode} output fallback to progress issue${url ? `: ${url}` : ''}`);
   } catch (err) {
     log(`  [hygiene] ${input.mode} output fallback skipped: ${(err as Error).message}`);
