@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { makeIgnoredTestDir } from '../lib/test-dirs.js';
 import {
   countChangedFiles,
   countSessionEvents,
@@ -14,9 +15,7 @@ import {
 const SESSION_TELEMETRY_SOURCE = readFileSync(new URL('./session-telemetry.ts', import.meta.url), 'utf-8');
 
 function makeTelemetryTestDir(suffix: string): string {
-  const base = join(process.cwd(), 'data', 'test-tmp');
-  mkdirSync(base, { recursive: true });
-  return mkdtempSync(join(base, `session-${suffix}-`));
+  return makeIgnoredTestDir(`session-${suffix}`);
 }
 
 describe('json-lines helper source invariant', () => {
