@@ -21,7 +21,6 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { shellQuote } from "../lib/shell-quote.js";
 
 // ── Event Input Types ──
 
@@ -234,6 +233,10 @@ export interface IsolatedHookEnv {
   auditDir: string;
   env: Record<string, string>;
   cleanup: () => void;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function repoRoot(): string {

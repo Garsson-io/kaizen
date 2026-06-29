@@ -243,13 +243,22 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
     repo = values.repo ?? parsedPrUrl.repo;
   }
 
+  const dimensions = splitCsv(values.dimensions);
+  if (values.dimensions !== undefined && dimensions.length === 0) {
+    throw new Error('--dimensions must select at least one dimension');
+  }
+  const groups = splitCsv(values.group);
+  if (values.group !== undefined && groups.length === 0) {
+    throw new Error('--group must select at least one dimension group');
+  }
+
   return {
     command,
     pr: normalizePr(values.pr),
     issue: values.issue,
     repo,
-    dimensions: splitCsv(values.dimensions),
-    groups: splitCsv(values.group),
+    dimensions,
+    groups,
     allPrDimensions: values['all-pr'] === true,
     reviewProvider,
     timeoutMs: parseTimeoutMs(values.timeout),
@@ -522,6 +531,15 @@ export async function storeReviewArtifact(
   return { round, urls: stored.urls, summaryUrl: stored.summaryUrl, gate };
 }
 
+export function assertArtifactTargetMatchesArgs(artifact: ReviewRoundArtifact, args: ReviewRoundCliArgs): void {
+  if (args.pr && args.pr !== artifact.pr) {
+    throw new Error(`--pr ${args.pr} does not match artifact PR ${artifact.pr}`);
+  }
+  if (args.repo && args.repo !== artifact.repo) {
+    throw new Error(`--repo ${args.repo} does not match artifact repo ${artifact.repo}`);
+  }
+}
+
 export function debugAttachmentName(artifact: ReviewRoundArtifact): string {
   return `review/debug/${defaultArtifactPath(artifact.pr, artifact.generatedAt)
     .replace(/^logs\/review\//, '')
@@ -769,6 +787,7 @@ async function main(): Promise<void> {
   if (args.command === 'store') {
     const artifactPath = required(args.file, '--file');
     const artifact = readArtifact(artifactPath);
+    assertArtifactTargetMatchesArgs(artifact, args);
     if (args.debug) {
       const url = storeDebugArtifact(artifact, artifactPath);
       console.log(`Debug artifact stored (non-authoritative): ${url}`);

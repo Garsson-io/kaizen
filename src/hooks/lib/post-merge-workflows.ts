@@ -1,5 +1,4 @@
 import { parseGithubPrUrl } from '../../lib/github-pr.js';
-import { shellQuote } from '../../lib/shell-quote.js';
 
 function repoArg(prUrl: string): string {
   const parsed = parseGithubPrUrl(prUrl);
@@ -19,6 +18,10 @@ export function postMergeWorkflowVerificationLines(prUrl: string): string {
     `   - Workflow runs: \`gh run list ${repo}--branch main --commit <merge-sha>\``,
     '   - If any run failed, investigate and report or fix it before declaring the work done.',
   ].join('\n');
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 export function safeMainSyncCommand(mainCheckout?: string): string {

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
+  assertArtifactTargetMatchesArgs,
   assertArtifactStoreable,
   buildHelp,
   expandDimensionGroups,
@@ -144,6 +145,11 @@ describe('parseCliArgs', () => {
 
     expect(parsed.allPrDimensions).toBe(true);
     expect(parsed.dimensions).toEqual([]);
+  });
+
+  it('rejects explicit empty selectors instead of widening to all PR dimensions', () => {
+    expect(() => parseCliArgs(['run', '--dimensions', ''])).toThrow('--dimensions must select at least one dimension');
+    expect(() => parseCliArgs(['run', '--group', ''])).toThrow('--group must select at least one dimension group');
   });
 });
 
@@ -629,6 +635,24 @@ describe('storeReviewArtifact', () => {
     expect(deps.storeReviewBatch).toHaveBeenCalled();
     expect(deps.writeReviewSentinel).toHaveBeenCalledWith('Garsson-io/kaizen', '1735', 4, { strict: true });
     expect(deps.rerunReviewVerdictGate).not.toHaveBeenCalled();
+  });
+});
+
+describe('assertArtifactTargetMatchesArgs', () => {
+  it('rejects explicit store targets that do not match the artifact metadata', () => {
+    const artifact = baseArtifact({ requestedDimensions: ['security'] });
+
+    expect(() => assertArtifactTargetMatchesArgs(artifact, parseCliArgs([
+      'store',
+      '--file', 'artifact.json',
+      '--pr', '9999',
+    ]))).toThrow('--pr 9999 does not match artifact PR 1735');
+
+    expect(() => assertArtifactTargetMatchesArgs(artifact, parseCliArgs([
+      'store',
+      '--file', 'artifact.json',
+      '--repo', 'Other/repo',
+    ]))).toThrow('--repo Other/repo does not match artifact repo Garsson-io/kaizen');
   });
 });
 
