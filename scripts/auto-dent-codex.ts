@@ -3,6 +3,7 @@
  */
 
 export {
+  assessCodexRun,
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
   hasCodexFailedTerminalEvent,
@@ -11,7 +12,9 @@ export {
   isCodexTerminalEvent,
   normalizeCodexEventToStreamMessages,
   normalizeCodexFinalTextToStreamMessages,
+  normalizeCodexProcessExitCode,
   parseCodexJsonl,
   type AutoDentStreamMessage,
+  type CodexRunAssessment,
   type ParsedCodexJsonl,
 } from '../src/codex-agent.js';

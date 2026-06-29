@@ -10,8 +10,8 @@
  * the provider-neutral `spawnAgent`/`buildSpawnAgentCommand` surface (#1580).
  */
 
-import { spawn, spawnSync } from 'node:child_process';
-import { buildCodexExecArgs, hasCodexFailedTerminalEvent, hasCodexTerminalEvent, parseCodexJsonl } from './codex-agent.js';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { assessCodexRun, buildCodexExecArgs, parseCodexJsonl } from './codex-agent.js';
 import { parseJsonLines } from './lib/json-lines.js';
 
 interface StreamJsonContentBlock {
@@ -105,6 +105,14 @@ export interface SpawnAgentCommand {
   stdin: boolean;
 }
 
+export function resolveCodexRepoRoot(cwd = process.cwd()): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
+  } catch {
+    return cwd;
+  }
+}
+
 export function buildSpawnClaudeArgs(opts: SpawnClaudeArgsOptions = {}): string[] {
   const model = opts.model ?? process.env.REVIEW_MODEL ?? 'sonnet';
   const outputFormat = opts.outputFormat ?? 'stream-json';
@@ -135,7 +143,10 @@ export function buildSpawnAgentCommand(opts: SpawnClaudeArgsOptions = {}): Spawn
   if (provider === 'codex') {
     return {
       command: 'codex',
-      args: buildCodexExecArgs(opts.cwd ?? process.cwd()),
+      args: buildCodexExecArgs(resolveCodexRepoRoot(opts.cwd), {
+        sandbox: 'read-only',
+        bypassApprovalsAndSandbox: false,
+      }),
       stdin: true,
     };
   }
@@ -217,18 +228,16 @@ function parseClaudeStreamResult(stdout: string): { text: string; costUsd: numbe
   return { text, costUsd };
 }
 
-function parseAgentResult(provider: SpawnAgentProvider['provider'], stdout: string): { text: string; costUsd: number; malformedLines: string[]; hasTerminalEvent: boolean; hasFailedTerminalEvent: boolean } {
+function parseAgentResult(provider: SpawnAgentProvider['provider'], stdout: string): { text: string; costUsd: number; failureNotes: string[] } {
   if (provider === 'codex') {
     const parsed = parseCodexJsonl(stdout);
     return {
       text: parsed.finalText || parsed.text,
       costUsd: 0,
-      malformedLines: parsed.malformedLines,
-      hasTerminalEvent: hasCodexTerminalEvent(parsed),
-      hasFailedTerminalEvent: hasCodexFailedTerminalEvent(parsed),
+      failureNotes: assessCodexRun(parsed).failureNotes,
     };
   }
-  return { ...parseClaudeStreamResult(stdout), malformedLines: [], hasTerminalEvent: true, hasFailedTerminalEvent: false };
+  return { ...parseClaudeStreamResult(stdout), failureNotes: [] };
 }
 
 /**
@@ -281,16 +290,11 @@ export const spawnAgent: SpawnClaudeFn = (prompt, opts) => {
       settled = true;
       clearTimeout(timer);
       const durationMs = Date.now() - start;
-      const { text, costUsd, malformedLines, hasTerminalEvent, hasFailedTerminalEvent } = parseAgentResult(provider, stdout);
-      const codexFailureNotes = [
-        ...(malformedLines.length > 0 ? [`malformed codex jsonl lines: ${malformedLines.length}`] : []),
-        ...(provider === 'codex' && !hasTerminalEvent ? ['missing codex terminal event'] : []),
-        ...(provider === 'codex' && hasFailedTerminalEvent ? ['codex turn failed'] : []),
-      ];
-      const normalizedStderr = codexFailureNotes.length > 0
-        ? `${stderr}${stderr ? '\n' : ''}${codexFailureNotes.join('\n')}`
+      const { text, costUsd, failureNotes } = parseAgentResult(provider, stdout);
+      const normalizedStderr = failureNotes.length > 0
+        ? `${stderr}${stderr ? '\n' : ''}${failureNotes.join('\n')}`
         : stderr;
-      const exitCode = codexFailureNotes.length > 0 ? -1 : (code ?? -1);
+      const exitCode = failureNotes.length > 0 ? -1 : (code ?? -1);
 
       resolve({ text, costUsd, durationMs, exitCode, rawStdout: stdout, rawStderr: normalizedStderr, args });
     });

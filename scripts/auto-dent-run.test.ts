@@ -54,6 +54,7 @@ import {
   extractPlanText,
   normalizeCodexRunExitCode,
   populateCrossBatchSteering,
+  runReviewWiring,
   shouldRunCodexProvider,
   attachRunTranscripts,
 } from './auto-dent-run.js';
@@ -1752,6 +1753,59 @@ describe('BatchState provider field (#1144)', () => {
   it('fails Codex runs that end with a failed terminal turn (#1580)', () => {
     expect(normalizeCodexRunExitCode(0, 0, true, true)).toBe(1);
     expect(normalizeCodexRunExitCode(3, 0, true, true)).toBe(3);
+  });
+});
+
+describe('runReviewWiring provider selection (#1580)', () => {
+  it('derives auto-dent review/fix providers from runtime phase providers', async () => {
+    const runFixCalls: any[] = [];
+    const reviewBatteryMock = vi.fn(async (opts: any) => {
+      expect(opts.cwd).toBe('/repo/worktree');
+      return {
+        verdict: 'fail',
+        costUsd: 0.1,
+        durationMs: 1,
+        missingCount: 1,
+        partialCount: 0,
+        failedDimensions: [],
+        dimensions: [{
+          dimension: 'requirements',
+          verdict: 'fail',
+          findings: [{ requirement: 'R1', status: 'MISSING', detail: 'gap' }],
+          summary: 'gap',
+        }],
+      };
+    });
+    const runFixLoopMock = vi.fn(async (opts: any) => {
+      runFixCalls.push(opts);
+      return { totalCostUsd: 0.2, currentRound: 1, outcome: 'pass' };
+    });
+
+    await runReviewWiring({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1588'],
+      pickedIssue: '1580',
+      repo: 'Garsson-io/kaizen',
+      repoRoot: '/repo/worktree',
+      provider: 'codex',
+      totalBudget: 2,
+      implementationCost: 0.1,
+      runId: 'run-1',
+      batchId: 'batch-1',
+      runNum: 1,
+    }, {
+      reviewBattery: reviewBatteryMock as any,
+      runFixLoop: runFixLoopMock as any,
+      listPrDimensions: () => ['requirements'],
+      formatBatteryReport: () => 'report',
+      emit: vi.fn(),
+      appendLog: vi.fn(),
+      writeAttachment: vi.fn(() => 'https://github.com/Garsson-io/kaizen/pull/1588#issuecomment-1') as any,
+      ghExec: vi.fn(),
+    });
+
+    expect(runFixCalls[0].reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(runFixCalls[0].fixProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(runFixCalls[0].cwd).toBe('/repo/worktree');
   });
 });
 

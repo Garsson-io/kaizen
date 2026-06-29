@@ -71,12 +71,13 @@ describe('cmdJudge exit codes (what a gate branches on)', () => {
     };
 
     const code = await cmdJudge(
-      ['node', 'cli', 'judge', '--charter', 'red-team', '--artifact-file', artifactFile, '--provider', 'codex'],
+      ['node', 'cli', 'judge', '--charter', 'red-team', '--artifact-file', artifactFile, '--provider', 'codex', '--cwd', dir],
       spawn,
     );
 
     expect(code).toBe(0);
     expect(calls[0].provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(calls[0].cwd).toBe(dir);
   });
 
   it('a diverse comma panel runs one judge per lens', async () => {

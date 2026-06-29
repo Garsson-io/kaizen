@@ -6,6 +6,7 @@
  */
 
 import { parseJsonLinesWithMalformedRows } from './lib/json-lines.js';
+import { formatPhaseMarkerLine, parsePhaseMarkers } from './phase-marker.js';
 
 export interface ParsedCodexJsonl {
   events: unknown[];
@@ -16,19 +17,37 @@ export interface ParsedCodexJsonl {
 
 export type AutoDentStreamMessage = Record<string, any>;
 
-export function buildCodexExecArgs(repoRoot: string): string[] {
-  return [
+export interface CodexExecArgsOptions {
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  bypassApprovalsAndSandbox?: boolean;
+}
+
+export interface CodexRunAssessment {
+  malformedLineCount: number;
+  hasTerminalEvent: boolean;
+  hasFailedTerminalEvent: boolean;
+  failureNotes: string[];
+}
+
+export function buildCodexExecArgs(repoRoot: string, opts: CodexExecArgsOptions = {}): string[] {
+  const sandbox = opts.sandbox ?? 'danger-full-access';
+  const args = [
     'exec',
     '--json',
     '--cd',
     repoRoot,
     '--sandbox',
-    'danger-full-access',
-    '--dangerously-bypass-approvals-and-sandbox',
+    sandbox,
+  ];
+  if (opts.bypassApprovalsAndSandbox ?? (sandbox === 'danger-full-access')) {
+    args.push('--dangerously-bypass-approvals-and-sandbox');
+  }
+  args.push(
     '--color',
     'never',
     '-',
-  ];
+  );
+  return args;
 }
 
 function collectText(value: unknown, out: string[]): void {
@@ -70,6 +89,23 @@ export function hasCodexTerminalEvent(parsed: ParsedCodexJsonl): boolean {
 
 export function hasCodexFailedTerminalEvent(parsed: ParsedCodexJsonl): boolean {
   return parsed.events.some(isCodexFailedTerminalEvent);
+}
+
+export function assessCodexRun(parsed: ParsedCodexJsonl): CodexRunAssessment {
+  const malformedLineCount = parsed.malformedLines.length;
+  const hasTerminalEvent = hasCodexTerminalEvent(parsed);
+  const hasFailedTerminalEvent = hasCodexFailedTerminalEvent(parsed);
+  const failureNotes = [
+    ...(malformedLineCount > 0 ? [`malformed codex jsonl lines: ${malformedLineCount}`] : []),
+    ...(!hasTerminalEvent ? ['missing codex terminal event'] : []),
+    ...(hasFailedTerminalEvent ? ['codex turn failed'] : []),
+  ];
+  return { malformedLineCount, hasTerminalEvent, hasFailedTerminalEvent, failureNotes };
+}
+
+export function normalizeCodexProcessExitCode(exitCode: number, assessment: CodexRunAssessment): number {
+  if (assessment.failureNotes.length > 0 && exitCode === 0) return 1;
+  return exitCode;
 }
 
 function textFrom(value: unknown): string {
@@ -196,11 +232,13 @@ export function parseCodexJsonl(jsonl: string): ParsedCodexJsonl {
 }
 
 export function extractCodexPhaseMarkers(parsed: ParsedCodexJsonl): string[] {
-  return [parsed.text, parsed.finalText]
-    .join('\n')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line, index, lines) =>
-      line.startsWith('AUTO_DENT_PHASE:') && lines.indexOf(line) === index,
-    );
+  const seen = new Set<string>();
+  const markers: string[] = [];
+  for (const marker of parsePhaseMarkers([parsed.text, parsed.finalText].join('\n'))) {
+    const line = formatPhaseMarkerLine(marker.phase, marker.fields);
+    if (seen.has(line)) continue;
+    seen.add(line);
+    markers.push(line);
+  }
+  return markers;
 }

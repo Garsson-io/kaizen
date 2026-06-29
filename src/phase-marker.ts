@@ -17,6 +17,35 @@
 /** Line prefix the stream parser keys on. */
 export const PHASE_MARKER_PREFIX = 'AUTO_DENT_PHASE';
 
+export interface PhaseMarker {
+  phase: string;
+  fields: Record<string, string>;
+}
+
+export function parsePhaseMarkers(text: string): PhaseMarker[] {
+  const markers: PhaseMarker[] = [];
+
+  for (const match of text.matchAll(
+    new RegExp(`^${PHASE_MARKER_PREFIX}:\\s*(\\w+)(?:\\s*\\|(.+))?$`, 'gm'),
+  )) {
+    const phase = match[1];
+    const fields: Record<string, string> = {};
+
+    if (match[2]) {
+      for (const pair of match[2].split('|')) {
+        const eqIdx = pair.indexOf('=');
+        if (eqIdx > 0) {
+          fields[pair.slice(0, eqIdx).trim()] = pair.slice(eqIdx + 1).trim();
+        }
+      }
+    }
+
+    markers.push({ phase, fields });
+  }
+
+  return markers;
+}
+
 /**
  * Format one marker line: `AUTO_DENT_PHASE: <PHASE> | k=v | k=v`. Undefined/empty
  * fields are dropped. Values must be single-line and `|`-free (URLs, issue refs,

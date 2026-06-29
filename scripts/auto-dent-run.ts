@@ -169,12 +169,12 @@ import {
 } from './auto-dent-stream.js';
 import { degradedRunLogBanner, unknownHookActivationVerdict, type HookActivationVerdict } from './auto-dent-hook-activation.js';
 import {
+  assessCodexRun,
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
-  hasCodexFailedTerminalEvent,
-  hasCodexTerminalEvent,
   normalizeCodexEventToStreamMessages,
   normalizeCodexFinalTextToStreamMessages,
+  normalizeCodexProcessExitCode,
   parseCodexJsonl,
 } from './auto-dent-codex.js';
 import {
@@ -1705,8 +1705,16 @@ export function normalizeCodexRunExitCode(
   hasTerminalEvent = true,
   hasFailedTerminalEvent = false,
 ): number {
-  if ((malformedLineCount > 0 || !hasTerminalEvent || hasFailedTerminalEvent) && exitCode === 0) return 1;
-  return exitCode;
+  return normalizeCodexProcessExitCode(exitCode, {
+    malformedLineCount,
+    hasTerminalEvent,
+    hasFailedTerminalEvent,
+    failureNotes: [
+      ...(malformedLineCount > 0 ? [`malformed codex jsonl lines: ${malformedLineCount}`] : []),
+      ...(!hasTerminalEvent ? ['missing codex terminal event'] : []),
+      ...(hasFailedTerminalEvent ? ['codex turn failed'] : []),
+    ],
+  });
 }
 
 async function runCodex(
@@ -1744,7 +1752,10 @@ async function runCodex(
     let processExited = false;
     let raw = '';
     const ctx: StreamContext = { provider: 'codex' };
-    const child = spawn('codex', buildCodexExecArgs(input.repoRoot), {
+    const child = spawn('codex', buildCodexExecArgs(input.repoRoot, {
+      sandbox: 'danger-full-access',
+      bypassApprovalsAndSandbox: true,
+    }), {
       cwd: input.repoRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -1804,13 +1815,9 @@ async function runCodex(
       }
 
       const duration = Math.floor((Date.now() - runStart) / 1000);
+      const assessment = assessCodexRun(parsed);
       resolvePromise({
-        exitCode: normalizeCodexRunExitCode(
-          exitCode,
-          parsed.malformedLines.length,
-          hasCodexTerminalEvent(parsed),
-          hasCodexFailedTerminalEvent(parsed),
-        ),
+        exitCode: normalizeCodexProcessExitCode(exitCode, assessment),
         duration,
         result: input.result,
         mode: input.mode,
@@ -2254,6 +2261,8 @@ export interface ReviewWiringInput {
   prs: string[];
   pickedIssue: string;
   repo: string;
+  repoRoot: string;
+  provider?: Provider;
   totalBudget: number;
   implementationCost: number;
   runId: string;
@@ -2303,6 +2312,7 @@ export async function runReviewWiring(
         prUrl,
         issueNum: input.pickedIssue,
         repo: input.repo,
+        cwd: input.repoRoot,
         timeoutMs: 120_000,
       });
       reviewCostUsd += batteryResult.costUsd;
@@ -2344,7 +2354,17 @@ export async function runReviewWiring(
           } as AutoDentEvent);
 
           try {
-            const reviewFixProviders = defaultReviewFixProviders();
+            const phaseProviders = phaseProvidersForAgentProvider((input.provider ?? 'claude') as any);
+            const reviewFixProviders = {
+              reviewProvider: {
+                provider: phaseProviders.review?.provider === 'codex' ? 'codex' as const : 'claude' as const,
+                billing: 'subscription-cli' as const,
+              },
+              fixProvider: {
+                provider: phaseProviders.fix?.provider === 'codex' ? 'codex' as const : 'claude' as const,
+                billing: 'subscription-cli' as const,
+              },
+            };
             const fixState = await deps.runFixLoop({
               prUrl,
               issueNum: input.pickedIssue,
@@ -2355,6 +2375,7 @@ export async function runReviewWiring(
               maxRounds: 2, // fix loop runs up to 2 fix+re-review rounds internally
               budgetCap: remainingBudget,
               resume: false, // fresh run within auto-dent; not crash recovery
+              cwd: input.repoRoot,
             });
             const fixCost = fixState.totalCostUsd ?? 0;
             reviewCostUsd += fixCost;
@@ -2555,6 +2576,8 @@ async function main(): Promise<void> {
       prs: result.prs,
       pickedIssue: pickedIssue ?? '',
       repo: state.kaizen_repo || state.host_repo || '',
+      repoRoot,
+      provider: state.provider,
       totalBudget: parseFloat(state.budget) || 2,
       implementationCost: result.cost ?? 0,
       runId,

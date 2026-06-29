@@ -30,6 +30,7 @@ import {
   isCodexFailedTerminalEvent,
   isCodexTerminalEvent,
   normalizeCodexEventToStreamMessages,
+  normalizeCodexProcessExitCode,
 } from './auto-dent-codex.js';
 import { parsePhaseMarkers as parsePhaseMarkersLocal } from './auto-dent-stream.js';
 import {
@@ -211,7 +212,10 @@ export function buildLiveProbeCommand(opts: Required<Pick<LiveProbeOpts, 'provid
     return {
       provider: 'codex',
       command: 'codex',
-      args: buildCodexExecArgs(opts.cwd),
+      args: buildCodexExecArgs(opts.cwd, {
+        sandbox: 'read-only',
+        bypassApprovalsAndSandbox: false,
+      }),
     };
   }
   return {
@@ -234,7 +238,18 @@ export function normalizeLiveProbeExitCode(
   hasTerminalEvent = true,
   hasFailedTerminalEvent = false,
 ): number {
-  if (provider === 'codex' && (malformedJsonlLines > 0 || !hasTerminalEvent || hasFailedTerminalEvent) && exitCode === 0) return 1;
+  if (provider === 'codex') {
+    return normalizeCodexProcessExitCode(exitCode, {
+      malformedLineCount: malformedJsonlLines,
+      hasTerminalEvent,
+      hasFailedTerminalEvent,
+      failureNotes: [
+        ...(malformedJsonlLines > 0 ? [`malformed codex jsonl lines: ${malformedJsonlLines}`] : []),
+        ...(!hasTerminalEvent ? ['missing codex terminal event'] : []),
+        ...(hasFailedTerminalEvent ? ['codex turn failed'] : []),
+      ],
+    });
+  }
   return exitCode;
 }
 

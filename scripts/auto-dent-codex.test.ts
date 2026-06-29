@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
+  assessCodexRun,
   buildCodexExecArgs,
   hasCodexFailedTerminalEvent,
   hasCodexTerminalEvent,
@@ -30,6 +31,16 @@ describe('buildCodexExecArgs (#1144)', () => {
       'never',
       '-',
     ]);
+  });
+
+  it('can construct read-only Codex exec argv for review and probe callers', () => {
+    const args = buildCodexExecArgs('/repo/worktree', {
+      sandbox: 'read-only',
+      bypassApprovalsAndSandbox: false,
+    });
+
+    expect(args).toContain('read-only');
+    expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
   });
 });
 
@@ -118,6 +129,24 @@ describe('parseCodexJsonl (#1144)', () => {
     expect(isCodexFailedTerminalEvent({ type: 'turn.failed', error: { message: 'usage limit' } })).toBe(true);
     expect(isCodexFailedTerminalEvent({ type: 'turn.completed' })).toBe(false);
     expect(hasCodexFailedTerminalEvent(parseCodexJsonl(JSON.stringify({ type: 'turn.failed' })))).toBe(true);
+  });
+
+  it('centralizes Codex run failure assessment', () => {
+    expect(assessCodexRun(parseCodexJsonl(JSON.stringify({ type: 'turn.completed' })))).toMatchObject({
+      malformedLineCount: 0,
+      hasTerminalEvent: true,
+      hasFailedTerminalEvent: false,
+      failureNotes: [],
+    });
+
+    const failed = assessCodexRun(parseCodexJsonl([
+      '{not json',
+      JSON.stringify({ type: 'turn.failed' }),
+    ].join('\n')));
+    expect(failed.failureNotes).toEqual([
+      'malformed codex jsonl lines: 1',
+      'codex turn failed',
+    ]);
   });
 
   it('recovers AUTO_DENT_PHASE markers from parsed Codex text', () => {

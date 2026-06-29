@@ -7,9 +7,9 @@
  *   npx tsx scripts/review-fix.ts --pr <url> --issue <num> --repo <owner/repo> --dry-run
  *
  * Flow:
- *   1. REVIEW: Run requirements battery (claude -p) → structured findings
+ *   1. REVIEW: Run requirements battery with the selected provider → structured findings
  *   2. If PASS → done
- *   3. If gaps → FIX: Spawn claude -p session that:
+ *   3. If gaps → FIX: Spawn the selected fix provider session that:
  *      a. Reads the issue
  *      b. Reads the PR diff
  *      c. Checks out the PR branch
@@ -40,7 +40,7 @@ import { addSection, writeAttachment } from '../src/section-editor.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 import { readJsonValueFile, writeJsonObjectFile } from '../src/lib/json-file.js';
 import { ghExec } from './auto-dent-github.js';
-import { buildCodexExecArgs, hasCodexFailedTerminalEvent, hasCodexTerminalEvent, parseCodexJsonl } from './auto-dent-codex.js';
+import { assessCodexRun, buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
 import {
   PROVIDER_CAPABILITIES,
   validateProviderPlan,
@@ -165,7 +165,7 @@ export type PrefetchResult = {
 
 export interface RunFixLoopDeps {
   prefetch?: (prUrl: string, issueNum: string, repo: string) => PrefetchResult;
-  launchFix?: (prompt: string, logDir: string, round: number, provider: ReviewFixProvider) => { pid: number; logFile: string; promptFile: string; provider?: ReviewFixProvider };
+  launchFix?: (prompt: string, logDir: string, round: number, provider: ReviewFixProvider, repoRoot?: string) => { pid: number; logFile: string; promptFile: string; provider?: ReviewFixProvider };
   checkFix?: (logFile: string, pid: number, provider?: ReviewFixProvider) => { done: boolean; success: boolean; costUsd: number; output: string };
   runReview?: (params: { dimensions: string[]; prUrl: string; issueNum: string; repo: string; timeoutMs: number; reviewProvider?: ReviewProvider }) => Promise<BatteryResult>;
   getStateDir?: () => string;
@@ -227,7 +227,10 @@ export function buildFixProviderCommand(input: {
   }
   return {
     command: 'codex',
-    args: buildCodexExecArgs(input.repoRoot ?? process.cwd()),
+    args: buildCodexExecArgs(input.repoRoot ?? process.cwd(), {
+      sandbox: 'danger-full-access',
+      bypassApprovalsAndSandbox: true,
+    }),
   };
 }
 
@@ -395,6 +398,7 @@ export interface CliArgs {
   maxRounds: number;
   budgetCap: number;
   resume: boolean;
+  cwd?: string;
 }
 
 export function parseArgs(argv = process.argv): CliArgs {
@@ -544,7 +548,7 @@ Be surgical. Fix gaps, don't refactor. Minimum viable fix for each finding.`;
  * The caller should save these to state and exit.
  * On --resume, call checkFixResult() to see if it's done.
  */
-function launchFix(prompt: string, logDir: string, round: number, provider: ReviewFixProvider): { pid: number; logFile: string; promptFile: string; provider: ReviewFixProvider } {
+function launchFix(prompt: string, logDir: string, round: number, provider: ReviewFixProvider, repoRoot = process.cwd()): { pid: number; logFile: string; promptFile: string; provider: ReviewFixProvider } {
   const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
   const promptFile = join(logDir, `fix-round${round}-${timestamp}.prompt.txt`);
   const logFile = join(logDir, `fix-round${round}-${timestamp}.log`);
@@ -555,7 +559,7 @@ function launchFix(prompt: string, logDir: string, round: number, provider: Revi
   const out = openSync(logFile, 'w');
   const err = openSync(logFile + '.stderr', 'w');
   const stdin = openSync(promptFile, 'r');
-  const command = buildFixProviderCommand({ provider, repoRoot: process.cwd() });
+  const command = buildFixProviderCommand({ provider, repoRoot });
 
   const child = asyncSpawn(command.command, command.args, {
     detached: true,
@@ -613,16 +617,15 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
   // Parse provider-specific JSONL — look for the final result message.
   if (provider.provider === 'codex') {
     const parsedCodex = parseCodexJsonl(stdout);
-    const hasTerminalEvent = hasCodexTerminalEvent(parsedCodex);
-    const hasFailedTerminalEvent = hasCodexFailedTerminalEvent(parsedCodex);
+    const assessment = assessCodexRun(parsedCodex);
     const output = parsedCodex.finalText || parsedCodex.text;
-    if (running && !hasTerminalEvent) {
+    if (running && !assessment.hasTerminalEvent) {
       return { done: false, success: false, costUsd: 0, output: '' };
     }
-    if (hasTerminalEvent) {
+    if (assessment.hasTerminalEvent) {
       return {
         done: true,
-        success: parsedCodex.malformedLines.length === 0 && !hasFailedTerminalEvent,
+        success: assessment.failureNotes.length === 0,
         costUsd: 0,
         output: output || stderr,
       };
@@ -656,6 +659,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
   const doCheckFix = deps.checkFix ?? checkFixResult;
   const doRunReview = deps.runReview ?? reviewBattery;
   const doStateDir = deps.getStateDir ?? stateDir;
+  const repoRoot = opts.cwd ?? process.cwd();
   const providerDefaults = defaultReviewFixProviders();
   const requestedProviders = {
     reviewProvider: opts.reviewProvider ?? providerDefaults.reviewProvider,
@@ -745,6 +749,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       prUrl: opts.prUrl,
       issueNum: opts.issueNum,
       repo: opts.repo,
+      cwd: repoRoot,
       timeoutMs: 180_000,
       reviewProvider: state.reviewProvider,
     });
@@ -855,7 +860,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged,
     );
     const fixProvider = state.fixProvider ?? providerDefaults.fixProvider;
-    const fixInfo = doLaunchFix(fixPrompt, doStateDir(), round, fixProvider);
+    const fixInfo = doLaunchFix(fixPrompt, doStateDir(), round, fixProvider, repoRoot);
     state.phase = 'fix_running';
     state.activeFix = { ...fixInfo, provider: fixInfo.provider ?? fixProvider };
     saveState(state, doStateDir());

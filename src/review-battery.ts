@@ -661,7 +661,7 @@ export interface BatteryOptions {
 /**
  * Run a battery of review dimensions in parallel.
  * - Auto-skips dims that need 'plan' data when no planText is provided.
- * - Batches dims with identical data needs into one claude call.
+ * - Batches dims with identical data needs into one selected-provider call.
  * - Logs per-dim timing and surfaces failed dims explicitly.
  */
 export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult> {
