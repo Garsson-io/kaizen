@@ -61,7 +61,9 @@ import {
   shouldRunCodexProvider,
   attachRunTranscripts,
   applyContextDelegationAnalysis,
+  buildContextDelegationAnalysisLog,
 } from './auto-dent-run.js';
+import { analyzeContextDelegation } from './auto-dent-context-delegation.js';
 import {
   resolveProviderWorkspaceRoot,
 } from './auto-dent-provider-workspace.js';
@@ -4802,6 +4804,38 @@ describe('workflow gate repair scheduling (#1533)', () => {
 });
 
 describe('context-delegation evidence wiring (#1509)', () => {
+  it('includes Codex raw JSONL sidecar tool telemetry in context pressure analysis', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'codex-context-pressure-'));
+    try {
+      const logFile = join(dir, 'run-1.log');
+      const rawFile = join(dir, 'run-1-codex.jsonl');
+      writeFileSync(logFile, [
+        '[provider] codex subscription-cli',
+        '[provider] raw_jsonl=run-1-codex.jsonl',
+        'AUTO_DENT_PHASE: DELEGATE | status=not-applicable | evidence=narrow task',
+      ].join('\n'));
+      writeFileSync(rawFile, Array.from({ length: 12 }, (_, i) => JSON.stringify({
+        type: 'item.completed',
+        item: {
+          type: 'command_execution',
+          command: `npx tsx scripts/probe-${i}.ts`,
+          aggregated_output: 'ok',
+          exit_code: 0,
+          status: 'completed',
+        },
+      })).join('\n'));
+
+      const logText = buildContextDelegationAnalysisLog(logFile);
+      const analysis = analyzeContextDelegation(logText);
+
+      expect(analysis.pressure.required).toBe(true);
+      expect(analysis.pressure.mainThreadToolCalls).toBe(12);
+      expect(analysis.pressure.reasons).toContain('main_thread_tool_calls:12/12');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('routes auto-dent progress evidence into process validation', () => {
     const reasonsIndex = AUTO_DENT_RUN_SOURCE.indexOf('const contextDelegationPressureReasons = contextDelegationAnalysis.pressure.reasons;');
     const helperIndex = AUTO_DENT_RUN_SOURCE.indexOf('const contextDelegationProgressEvidence = hasContextDelegationProgressEvidence(result.progressSteps, {');

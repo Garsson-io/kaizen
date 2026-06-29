@@ -1439,6 +1439,43 @@ export function applyContextDelegationAnalysis(
   return analysis;
 }
 
+function normalizeCodexJsonlForAnalysis(jsonl: string): string {
+  const rows: string[] = [];
+  for (const line of jsonl.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const event = parseJsonObject(line);
+    if (!event) continue;
+    for (const message of normalizeCodexEventToStreamMessages(event)) {
+      rows.push(JSON.stringify(message));
+    }
+  }
+  return rows.join('\n');
+}
+
+export function buildContextDelegationAnalysisLog(
+  logFile: string,
+  readText: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+): string {
+  const logText = readText(logFile);
+  const parts = [logText];
+  const rawJsonlPaths = Array.from(logText.matchAll(/^\[provider\] raw_jsonl=(.+)$/gm))
+    .map((match) => match[1]?.trim())
+    .filter((path): path is string => Boolean(path));
+
+  for (const rawJsonlPath of rawJsonlPaths) {
+    try {
+      const normalized = normalizeCodexJsonlForAnalysis(
+        readText(resolve(dirname(logFile), rawJsonlPath)),
+      );
+      if (normalized) parts.push(normalized);
+    } catch {
+      // The primary run log remains the durable analysis surface; sidecars are best-effort.
+    }
+  }
+
+  return parts.join('\n');
+}
+
 function processCheckState(status: ProcessValidation['checks'][number]['status']): WorkflowGateState {
   switch (status) {
     case 'pass':
@@ -3378,7 +3415,7 @@ async function main(): Promise<void> {
     const lifecycle = validateRunLifecycle(logFile);
     contextDelegationAnalysis = applyContextDelegationAnalysis(
       result,
-      readFileSync(logFile, 'utf8'),
+      buildContextDelegationAnalysisLog(logFile),
       (line) => appendFileSync(logFile, line),
     );
 
