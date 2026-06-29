@@ -443,6 +443,17 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
     expect(closeSection).toContain('[intelligence] no raw artifacts on disk to upload');
   });
 
+  it('uploads transcript bundles during batch finalize without blocking close', () => {
+    const closeSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
+    );
+
+    expect(closeSection).toContain('uploadBatchTranscriptBundle');
+    expect(closeSection).toContain('[intelligence] uploaded transcript bundle');
+    expect(closeSection).toContain('[intelligence] transcript bundle upload skipped');
+  });
+
   it('stores the batch completion summary as a named progress attachment', () => {
     const closeSection = AUTO_DENT_RUN_SOURCE.slice(
       AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),

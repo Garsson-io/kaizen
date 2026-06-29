@@ -25,6 +25,7 @@ export const TranscriptBundleStatusSchema = z.enum([
   'absent',
   'scrub_failed',
   'too_large',
+  'upload_failed',
   'expired',
   'unauthorized',
   'malformed',

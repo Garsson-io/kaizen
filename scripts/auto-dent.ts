@@ -131,6 +131,7 @@ const OUTER_HARNESS_RELOAD_PATHS = new Set([
   'scripts/batch-summary.ts',
   'scripts/batch-outcome.ts',
   'scripts/batch-artifacts-upload.ts',
+  'scripts/transcript-bundle-upload.ts',
   'src/lib/json-file.ts',
 ]);
 
