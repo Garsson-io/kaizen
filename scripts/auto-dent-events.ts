@@ -21,6 +21,7 @@ import type { ProcessVerdict } from './auto-dent-lifecycle.js';
 import type { PhaseProviderRecord } from './auto-dent-provider.js';
 import type { HookActivationVerdict } from './auto-dent-hook-activation.js';
 import type { WorkflowGateId, WorkflowGateState } from './workflow-gate-ledger.js';
+import type { PostMergeVerificationVerdict, TestHealthVerdict } from '../src/verdict-binding-policy.js';
 
 // Event type definitions
 
@@ -82,7 +83,13 @@ export interface RunCompleteEvent extends BaseEvent {
   tool_calls: number;
   prs_created: number;
   issues_filed: number;
+  /** Stable refs for filed issues; counts remain for backwards-compatible summaries. */
+  issues_filed_refs?: string[];
   issues_closed: number;
+  /** Stable refs for closed issues; counts remain for backwards-compatible summaries. */
+  issues_closed_refs?: string[];
+  /** Stable case/worktree ids observed during this run. */
+  cases?: string[];
   stop_requested: boolean;
   failure_class?: string;
   lifecycle_violations: number;
@@ -92,6 +99,8 @@ export interface RunCompleteEvent extends BaseEvent {
   lifecycle_critical?: number;
   /** Durable process-evidence verdict (#1149) */
   process_verdict?: ProcessVerdict;
+  /** Post-merge/deployment verification verdict (#1165). */
+  post_merge_verification?: PostMergeVerificationVerdict;
   /** Count of failed/warning process evidence checks (#1149) */
   process_issue_count?: number;
   /** Compact human-readable process evidence summary (#1149) */
@@ -121,8 +130,20 @@ export interface RunCompleteEvent extends BaseEvent {
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Review battery cost (USD) */
   review_cost_usd?: number;
+  /** Run-level test-health verdict derived from observed failed test ids (#1527). */
+  test_health?: TestHealthVerdict;
   /** Hook-activation verdict from the session init event or explicit unknown fallback (#1501). */
   hook_activation?: HookActivationVerdict;
+  /** Prompt template file name used for this run. */
+  prompt_template?: string;
+  /** SHA-256 hash of the prompt template content (first 12 chars). */
+  prompt_hash?: string;
+  /** Status of the schema-constrained final run claim (#1145). */
+  final_claim_status?: 'valid' | 'invalid' | 'missing';
+  /** Sidecar path for the persisted final claim object (#1145). */
+  final_claim_path?: string;
+  /** Warnings from final-claim parsing or claim/evidence comparison (#1145). */
+  final_claim_warnings?: string[];
   /**
    * Provider + billing mode per lifecycle phase (#1143, epic #1134).
    * Absent on older events. Keyed by phase → { provider, billing }.

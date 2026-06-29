@@ -230,13 +230,15 @@ describe('auto-dent replay fixtures', () => {
     );
   });
 
-  it('does not wire replay into auto-dent finalization in the schema PR', () => {
+  it('wires replay projection into auto-dent finalization after projection parity exists', () => {
     const runSource = readFileSync(
       new URL('./auto-dent-run.ts', import.meta.url),
       'utf8',
     );
 
-    expect(runSource).not.toContain('auto-dent-replay');
+    expect(runSource).toContain('projectReplayRuns');
+    expect(runSource).toContain('runMetricsFromReplayProjection');
+    expect(runSource).toContain('buildFinalizationReplayEvents');
   });
 
   it('projects replayed fixture events into current run-metrics fields', () => {
