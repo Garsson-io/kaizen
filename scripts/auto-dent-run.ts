@@ -24,7 +24,7 @@ import { spawn, execFileSync, execSync } from 'child_process';
 import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { createInterface } from 'readline';
-import { dirname, join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { firstHookReason } from './hook-signals.js';
 import { claimNextItem, markItem, resetAssignedItems, readPlan, themeProgress } from './auto-dent-plan.js';
@@ -1452,6 +1452,14 @@ function normalizeCodexJsonlForAnalysis(jsonl: string): string {
   return rows.join('\n');
 }
 
+function resolveContextDelegationRawJsonl(logFile: string, rawJsonlPath: string): string | null {
+  const logDir = resolve(dirname(logFile));
+  const resolved = resolve(logDir, rawJsonlPath);
+  if (dirname(resolved) !== logDir) return null;
+  if (!/^run-\d+-codex\.jsonl$/.test(basename(resolved))) return null;
+  return resolved;
+}
+
 export function buildContextDelegationAnalysisLog(
   logFile: string,
   readText: (path: string) => string = (path) => readFileSync(path, 'utf8'),
@@ -1463,9 +1471,11 @@ export function buildContextDelegationAnalysisLog(
     .filter((path): path is string => Boolean(path));
 
   for (const rawJsonlPath of rawJsonlPaths) {
+    const resolvedRawJsonl = resolveContextDelegationRawJsonl(logFile, rawJsonlPath);
+    if (!resolvedRawJsonl) continue;
     try {
       const normalized = normalizeCodexJsonlForAnalysis(
-        readText(resolve(dirname(logFile), rawJsonlPath)),
+        readText(resolvedRawJsonl),
       );
       if (normalized) parts.push(normalized);
     } catch {

@@ -4836,6 +4836,39 @@ describe('context-delegation evidence wiring (#1509)', () => {
     }
   });
 
+  it('ignores raw_jsonl pointers outside the run log directory or expected Codex sidecar shape', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'codex-context-pressure-path-'));
+    try {
+      const logFile = join(dir, 'run-1.log');
+      writeFileSync(logFile, [
+        '[provider] raw_jsonl=../../outside.jsonl',
+        '[provider] raw_jsonl=/dev/zero',
+        '[provider] raw_jsonl=run-1-codex.jsonl',
+      ].join('\n'));
+      const reads: string[] = [];
+      const logText = buildContextDelegationAnalysisLog(logFile, (path) => {
+        reads.push(path);
+        if (path === logFile) return readFileSync(path, 'utf8');
+        if (path === join(dir, 'run-1-codex.jsonl')) {
+          return JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'command_execution',
+              command: 'git status --short',
+              aggregated_output: '',
+            },
+          });
+        }
+        throw new Error(`unexpected read: ${path}`);
+      });
+
+      expect(reads).toEqual([logFile, join(dir, 'run-1-codex.jsonl')]);
+      expect(logText).toContain('"name":"Bash"');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('routes auto-dent progress evidence into process validation', () => {
     const reasonsIndex = AUTO_DENT_RUN_SOURCE.indexOf('const contextDelegationPressureReasons = contextDelegationAnalysis.pressure.reasons;');
     const helperIndex = AUTO_DENT_RUN_SOURCE.indexOf('const contextDelegationProgressEvidence = hasContextDelegationProgressEvidence(result.progressSteps, {');

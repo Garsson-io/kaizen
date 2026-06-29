@@ -65,7 +65,7 @@ interface StreamMessage {
 
 const DISCOVERY_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 const IMPLEMENTATION_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'EnterWorktree']);
-const DELEGATION_TOOLS = new Set(['Agent', 'TaskCreate']);
+const DELEGATION_TOOLS = new Set(['Agent']);
 
 function formatSubstepList(substeps: readonly string[]): string {
   if (substeps.length <= 1) return substeps.join('');
@@ -136,8 +136,6 @@ function observedDelegation(tools: ToolUse[]): ObservedContextDelegation {
   if (!delegated) return { observed: false };
   const description =
     delegated.input.description ??
-    delegated.input.subject ??
-    delegated.input.prompt ??
     'context-heavy sub-work to subagent';
   return {
     observed: true,

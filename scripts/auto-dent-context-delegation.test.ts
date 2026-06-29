@@ -128,16 +128,13 @@ describe('auto-dent context delegation pressure', () => {
     }
   });
 
-  it('records TaskCreate delegation using subject or prompt fallback evidence', () => {
-    const subjectStep = buildAutomaticContextDelegationStep(analyzeContextDelegation(logWith([
-      toolUse('TaskCreate', { subject: 'Review dimensions in parallel' }),
-    ])));
-    const promptStep = buildAutomaticContextDelegationStep(analyzeContextDelegation(logWith([
-      toolUse('TaskCreate', { prompt: 'Summarize five files without loading them into the orchestrator' }),
-    ])));
+  it('does not treat ordinary TaskCreate checklist entries as delegation evidence', () => {
+    const analysis = analyzeContextDelegation(logWith([
+      toolUse('TaskCreate', { subject: 'Write tests' }),
+    ]));
 
-    expect(subjectStep?.detail).toContain('Review dimensions in parallel');
-    expect(promptStep?.detail).toContain('Summarize five files');
+    expect(analysis.delegation.observed).toBe(false);
+    expect(buildAutomaticContextDelegationStep(analysis)).toBeUndefined();
   });
 
   it('demonstrates the synthetic before/after bounded main-thread tool volume', () => {
