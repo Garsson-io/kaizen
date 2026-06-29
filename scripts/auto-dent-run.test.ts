@@ -4642,13 +4642,15 @@ describe('mode-output progress fallback (#702)', () => {
     expect(logs.some((msg) => msg.includes('no progress issue'))).toBe(true);
   });
 
-  it('wires the fallback after runLog is available and before metrics progress update', () => {
-    const runLogIndex = AUTO_DENT_RUN_SOURCE.indexOf('const runLog = existsSync(logFile) ? readFileSync(logFile,');
+  it('wires the fallback immediately after run metadata and before review/metrics updates', () => {
+    const metadataIndex = AUTO_DENT_RUN_SOURCE.indexOf("'--- auto-dent metadata ---'");
     const fallbackIndex = AUTO_DENT_RUN_SOURCE.indexOf('postModeOutputToProgressIssue({');
+    const reviewIndex = AUTO_DENT_RUN_SOURCE.indexOf('runReviewWiring(', fallbackIndex);
     const metricsIndex = AUTO_DENT_RUN_SOURCE.indexOf('updateBatchProgressIssue(', fallbackIndex);
 
-    expect(runLogIndex).toBeGreaterThan(-1);
-    expect(fallbackIndex).toBeGreaterThan(runLogIndex);
+    expect(metadataIndex).toBeGreaterThan(-1);
+    expect(fallbackIndex).toBeGreaterThan(metadataIndex);
+    expect(reviewIndex).toBeGreaterThan(fallbackIndex);
     expect(metricsIndex).toBeGreaterThan(fallbackIndex);
   });
 });

@@ -3229,6 +3229,15 @@ async function main(): Promise<void> {
     ].join('\n'),
   );
 
+  const progressIssue = ensureBatchProgressIssue(state, stateFile);
+  postModeOutputToProgressIssue({
+    progressIssue,
+    repo: state.kaizen_repo,
+    mode: runMode,
+    runNum,
+    logFile,
+  });
+
   // Emit per-artifact events from stream results (#647)
   let pickedIssue = '';
   {
@@ -3625,16 +3634,8 @@ async function main(): Promise<void> {
   }
 
   // Post-run hygiene
-  const progressIssue = ensureBatchProgressIssue(state, stateFile);
   labelArtifacts(result, 'auto-dent');
   const runLog = existsSync(logFile) ? readFileSync(logFile, 'utf8') : undefined;
-  postModeOutputToProgressIssue({
-    progressIssue,
-    repo: state.kaizen_repo,
-    mode: runMode,
-    runNum,
-    logFile,
-  });
   const testHealth = deriveRunTestHealth({ runLog });
   const autoMergeDecision = decideAutoMergeSafety({
     prCount: result.prs.length,
