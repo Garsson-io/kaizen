@@ -132,17 +132,44 @@ See [`hook-language-boundaries.md`](hook-language-boundaries.md) for the full po
 
 ### Trampoline Pattern
 
-All enforcement hooks use a thin bash wrapper that delegates to TypeScript:
+All enforcement hooks use a thin bash wrapper that delegates to TypeScript
+through the shared `run-tsx.sh` resolver:
 
 ```bash
 #!/bin/bash
 # kaizen-some-hook-ts.sh — trampoline to TypeScript implementation
 source "$(dirname "$0")/lib/scope-guard.sh"
-KAIZEN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-exec npx --prefix "$KAIZEN_DIR" tsx "$KAIZEN_DIR/src/hooks/some-hook.ts" 2>/dev/null
+source "$(dirname "$0")/lib/run-tsx.sh" 2>/dev/null || { exit 0; }
+run_tsx "$KAIZEN_DIR" "$KAIZEN_DIR/src/hooks/some-hook.ts"
 ```
 
-The bash shim handles scope-guard and kaizen dir resolution. The TypeScript file handles all logic, reads stdin JSON, and writes stdout JSON. This makes the logic fully testable with vitest.
+The bash shim handles scope-guard and production dispatch. `run-tsx.sh`
+resolves `tsx` from the kaizen checkout, parent worktree installs, or git
+common dir through `resolve-tsx-bin.sh`; it also honors `KAIZEN_TSX_BIN` for
+deterministic test harnesses. The shim intentionally avoids `npx --prefix ...
+tsx` in production hook paths because missing dependencies produced opaque
+non-blocking hook failures (#1131) and because `npx` adds startup overhead.
+
+Current #454 measurement on this host after `npm run build`:
+
+| Launcher | Five-run wall time | Max RSS | Decision |
+|---|---:|---:|---|
+| `pr-review-loop-ts.sh` via `run-tsx.sh` shared resolver | 0.54-0.90s | 107-117 MB | Current production default |
+| Direct `npx tsx src/hooks/pr-review-loop.ts` | 0.68-0.88s | 108-114 MB | Avoid in production shims |
+| `npx --no-install tsx src/hooks/pr-review-loop.ts` | 0.62-0.65s | 112-118 MB | Similar to resolver but less worktree-aware |
+| `npx -y bun src/hooks/pr-review-loop.ts` | 0.59-0.68s | 101-103 MB | Not a production win through `npx` |
+| `node dist/hooks/pr-review-loop.js` | 0.10s | 63-65 MB | Fastest, needs build-freshness contract |
+
+Decision: keep the shared `run-tsx.sh` resolver as the production trampoline.
+It avoids `npx` overhead, works from worktrees without local `node_modules`,
+fails open with an actionable diagnostic when `tsx` is unavailable, and does
+not require Bun as an operator dependency. Precompiled Node is the measured
+fastest path, but adopting it safely requires a freshness contract so hooks do
+not silently run stale `dist` output. Track that production-runtime adoption
+decision in #1662.
+
+The TypeScript file handles all logic, reads stdin JSON, and writes stdout JSON.
+This makes the logic fully testable with vitest.
 
 ### Hook Testability (kaizen #775)
 
@@ -241,7 +268,10 @@ STATE_DIR=$(mktemp -d) CLAUDECODE=1 \
 - **Session hook registries are manifest-derived:** `SessionSimulator` loads `.claude-plugin/plugin.json` through `loadDefaultHookRegistry()`. Do not hand-maintain a parallel full hook list in E2E tests; narrow `session.hooks` only when the test intentionally exercises a focused subset.
 - **Hook subprocess tests should be deterministic in worktrees:** use `resolveTsxBin()` from `src/e2e/test-runtime.ts` for TypeScript E2E tests, pass `KAIZEN_TSX_BIN` to bash trampolines when invoking them from test harnesses, and disable advisory background noise with `HOOK_TIMING_SENTINEL_DISABLED=true` and `SEND_TELEGRAM_IPC_DISABLED=true`.
 - **Do not silently skip outcome-proof tests:** if an outcome E2E test requires `tsx`, assert that it is present and fail loudly. Skip guards are acceptable for live fixtures whose subject is explicitly optional local infrastructure.
-- **Production best-effort hooks are separate from test harness resolution:** `resolve-tsx-bin.sh` exists for harness determinism and TS hook trampolines. A few startup/advisory production hooks still use local `node_modules/.bin/tsx` plus `npx --prefix` fallback so missing dependencies cannot block a session.
+- **Production best-effort hooks use the shared resolver:** `run-tsx.sh` and
+  `resolve-tsx-bin.sh` are the TS hook trampoline contract. They resolve a
+  usable `tsx` binary without `npx`, support `KAIZEN_TSX_BIN` for tests, and
+  fail open with an actionable diagnostic when dependencies are missing.
 
 ## Anti-Patterns
 
