@@ -9,8 +9,31 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { ENFORCEMENT_COVERAGE, coverageByCommandBasename } from '../src/enforcement-coverage.js';
 
 const REPO_ROOT = join(__dirname, '..');
+
+function commandBasename(command: string): string {
+  return command.replace(/^.*\//, '');
+}
+
+function registeredHookCommandBasenames(): string[] {
+  const raw = readFileSync(join(REPO_ROOT, '.claude-plugin/plugin.json'), 'utf-8');
+  const data = JSON.parse(raw) as { hooks?: unknown };
+  const commands: string[] = [];
+  const walk = (x: unknown): void => {
+    if (Array.isArray(x)) x.forEach(walk);
+    else if (x && typeof x === 'object') {
+      const obj = x as Record<string, unknown>;
+      if (obj.type === 'command' && typeof obj.command === 'string') {
+        commands.push(commandBasename(obj.command));
+      }
+      for (const v of Object.values(obj)) walk(v);
+    }
+  };
+  walk(data.hooks ?? {});
+  return [...new Set(commands)].sort();
+}
 
 describe('kaizen self-invariants (#1063)', () => {
   it('.claude/settings.json has NO `hooks` block (single source of truth is plugin.json)', () => {
@@ -45,5 +68,41 @@ describe('kaizen self-invariants (#1063)', () => {
     };
     walk(data.hooks ?? {});
     expect(n).toBeGreaterThan(0);
+  });
+
+  it('provider enforcement coverage has one row per hook command (#1166)', () => {
+    const coverage = coverageByCommandBasename();
+    const missing = registeredHookCommandBasenames().filter(command => !coverage.has(command));
+    expect(
+      missing,
+      `Every registered hook command needs an explicit provider coverage row in src/enforcement-coverage.ts (#1166). Missing: ${missing.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('provider enforcement coverage rows are complete and uniquely keyed (#1166)', () => {
+    const seen = new Set<string>();
+    for (const row of ENFORCEMENT_COVERAGE) {
+      expect(row.hookId, 'hookId must be present').not.toBe('');
+      expect(row.commandBasename, `${row.hookId} commandBasename`).not.toBe('');
+      expect(seen.has(row.commandBasename), `${row.commandBasename} appears more than once`).toBe(false);
+      seen.add(row.commandBasename);
+      expect(row.status, `${row.hookId} status`).not.toBe('');
+      expect(row.fallbackClass, `${row.hookId} fallbackClass`).not.toBe('');
+      expect(row.fallbackArtifact, `${row.hookId} fallbackArtifact`).not.toBe('');
+      expect(row.notes, `${row.hookId} notes`).not.toBe('');
+      if (row.status === 'provider-agnostic') {
+        expect(row.claudeHookDependent, `${row.hookId} provider-agnostic row must not depend on Claude hooks`).toBe(false);
+      }
+    }
+  });
+
+  it('provider coverage doc projection lists every inventory row (#1166)', () => {
+    const doc = readFileSync(join(REPO_ROOT, 'docs/kaizen-invariants.md'), 'utf-8');
+    expect(doc).toContain('Provider Coverage Matrix');
+    for (const row of ENFORCEMENT_COVERAGE) {
+      expect(doc, `docs/kaizen-invariants.md must list ${row.hookId}`).toContain(`\`${row.hookId}\``);
+      expect(doc, `docs/kaizen-invariants.md must mention ${row.commandBasename}`).toContain(`\`${row.commandBasename}\``);
+      expect(doc, `docs/kaizen-invariants.md must include status ${row.status}`).toContain(`\`${row.status}\``);
+    }
   });
 });
