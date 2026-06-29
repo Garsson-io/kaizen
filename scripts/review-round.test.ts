@@ -108,6 +108,7 @@ describe('parseCliArgs', () => {
     expect(() => parseCliArgs(['run', '--pr', 'x/../../../.github/workflows/pwn'])).toThrow('--pr must be a PR number');
     expect(parseCliArgs(['run', '--pr', 'https://github.com/Garsson-io/kaizen/pull/1739']).pr).toBe('1739');
     expect(() => parseCliArgs(['run', '--pr', 'https://example.com/Garsson-io/kaizen/pull/1739'])).toThrow('--pr must be a PR number');
+    expect(() => parseCliArgs(['run', '--pr', '0'])).toThrow('--pr must be a positive PR number');
   });
 
   it('uses the repo from a PR URL when --repo is omitted and rejects explicit mismatches', () => {
@@ -124,6 +125,12 @@ describe('parseCliArgs', () => {
   it('rejects malformed integer flags instead of truncating them', () => {
     expect(() => parseCliArgs(['store', '--file', 'artifact.json', '--round', '7abc'])).toThrow('--round must be a positive integer');
     expect(() => parseCliArgs(['store', '--file', 'artifact.json', '--round', '1.5'])).toThrow('--round must be a positive integer');
+    expect(() => parseCliArgs(['store', '--file', 'artifact.json', '--round', ''])).toThrow('--round must be a positive integer');
+  });
+
+  it('rejects malformed issue numbers before run prefetch', () => {
+    expect(() => parseCliArgs(['run', '--issue', 'abc'])).toThrow('--issue must be a positive issue number');
+    expect(() => parseCliArgs(['run', '--issue', '0'])).toThrow('--issue must be a positive issue number');
   });
 
   it('rejects zero timeouts', () => {

@@ -157,7 +157,7 @@ function splitCsv(value: string | undefined): string[] {
 }
 
 function parsePositiveInt(value: string | undefined, flag: string): number | undefined {
-  if (!value) return undefined;
+  if (value === undefined) return undefined;
   if (!/^\d+$/.test(value)) throw new Error(`${flag} must be a positive integer`);
   const parsed = Number.parseInt(value, 10);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
@@ -167,7 +167,7 @@ function parsePositiveInt(value: string | undefined, flag: string): number | und
 }
 
 export function parseTimeoutMs(value: string | undefined): number | undefined {
-  if (!value) return undefined;
+  if (value === undefined) return undefined;
   const match = value.match(/^(\d+)(ms|s|m)?$/);
   if (!match) throw new Error(`invalid --timeout ${JSON.stringify(value)}; use values like 30000ms, 180s, or 3m`);
   const amount = Number.parseInt(match[1], 10);
@@ -255,7 +255,7 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
   return {
     command,
     pr: normalizePr(values.pr),
-    issue: values.issue,
+    issue: normalizeIssue(values.issue),
     repo,
     dimensions,
     groups,
@@ -279,7 +279,18 @@ function normalizePr(value: string | undefined): string | undefined {
   if (!/^\d+$/.test(normalized)) {
     throw new Error('--pr must be a PR number or GitHub pull request URL');
   }
+  if (Number.parseInt(normalized, 10) <= 0) {
+    throw new Error('--pr must be a positive PR number or GitHub pull request URL');
+  }
   return normalized;
+}
+
+function normalizeIssue(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(value) || Number.parseInt(value, 10) <= 0) {
+    throw new Error('--issue must be a positive issue number');
+  }
+  return value;
 }
 
 function prUrl(repo: string, pr: string): string {
