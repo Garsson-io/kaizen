@@ -48,6 +48,48 @@ Which artifacts uphold each invariant. Use this to answer "who cares about I7?"
 | **I27** test plan fully implemented | — | `kaizen-implement`, `kaizen-review-pr` | `plan-coverage`, `test-plan`, `scope-fidelity` | [#1038](https://github.com/Garsson-io/kaizen/issues/1038) |
 | **I28** review covers all dimensions | `pr-review-loop` (sentinel, partial) | `kaizen-review-pr` | all | [#1038](https://github.com/Garsson-io/kaizen/issues/1038) |
 
+## Provider Coverage Matrix
+
+Machine source: `src/enforcement-coverage.ts`. The self-invariant test compares this table to `.claude-plugin/plugin.json` so new hook commands cannot be added without declaring whether they work for Codex/external auto-dent runs.
+
+Status meanings:
+- `provider-agnostic`: works outside Claude Code hooks.
+- `partial`: Claude hook remains useful, but a CI/git/inside-harness fallback covers a terminal or reduced version of the invariant.
+- `claude-only-gap`: no provider-agnostic fallback is implemented yet.
+- `advisory`: non-blocking guidance; no terminal provider-agnostic block is claimed.
+- `infrastructure`: setup/observability plumbing, not a workflow safety gate.
+
+| Hook ID | Command | Surface | Status | Fallback |
+|---------|---------|---------|--------|----------|
+| `git-pre-push` | `.githooks/pre-push` | GitPrePush | `provider-agnostic` | `git-hook`: `src/hooks/pre-push.ts` |
+| `bump-plugin-version` | `kaizen-bump-plugin-version-ts.sh` | PreToolUse | `infrastructure` | `infrastructure-only`: manual version bump / release review |
+| `enforce-pr-review` | `kaizen-enforce-pr-review-ts.sh` | PreToolUse | `partial` | `ci-check`: Review verdict gate workflow + `/kaizen-autodent` inside-harness review step |
+| `enforce-merge-verdict` | `kaizen-enforce-merge-verdict-ts.sh` | PreToolUse | `partial` | `ci-check`: Review verdict gate workflow / branch protection |
+| `enforce-case-worktree` | `kaizen-enforce-case-worktree.sh` | PreToolUse | `claude-only-gap` | `external-validator-needed`: #1166 follow-up provider-agnostic case/worktree validator |
+| `pr-quality-checks` | `kaizen-pr-quality-checks-ts.sh` | PreToolUse | `advisory` | `advisory-only`: review dimensions |
+| `check-dirty-files` | `kaizen-check-dirty-files-ts.sh` | PreToolUse | `claude-only-gap` | `external-validator-needed`: #1166 follow-up dirty-worktree validator |
+| `enforce-plan-stored` | `kaizen-enforce-plan-stored-ts.sh` | PreToolUse | `partial` | `inside-harness-step`: `/kaizen-autodent` and `/kaizen-do` plan/test-plan evidence contract |
+| `enforce-pr-reflect` | `kaizen-enforce-pr-reflect-ts.sh` | PreToolUse | `claude-only-gap` | `external-validator-needed`: #1166 follow-up reflection/completion validator |
+| `block-git-rebase` | `kaizen-block-git-rebase.sh` | PreToolUse | `claude-only-gap` | `external-validator-needed`: #1166 follow-up git-history policy check |
+| `prehook-no-verify` | `kaizen-prehook-no-verify.sh` | PreToolUse | `partial` | `ci-check`: branch protection / required checks |
+| `block-self-plugin-enable` | `kaizen-block-self-plugin-enable.sh` | PreToolUse | `infrastructure` | `infrastructure-only`: `scripts/kaizen-self-invariants.test.ts` |
+| `search-before-file` | `kaizen-search-before-file.sh` | PreToolUse | `advisory` | `advisory-only`: `/kaizen-file-issue` duplicate-search discipline |
+| `enforce-worktree-writes` | `kaizen-enforce-worktree-writes.sh` | PreToolUse | `claude-only-gap` | `external-validator-needed`: #1166 follow-up write-location validator |
+| `enforce-case-exists` | `kaizen-enforce-case-exists.sh` | PreToolUse | `claude-only-gap` | `external-validator-needed`: #1166 follow-up case binding validator |
+| `check-wip` | `kaizen-check-wip.sh` | SessionStart | `infrastructure` | `infrastructure-only`: `/kaizen-wip` |
+| `session-cleanup` | `kaizen-session-cleanup-ts.sh` | SessionStart | `infrastructure` | `infrastructure-only`: manual cleanup / `kaizen-cleanup` |
+| `worktree-setup` | `kaizen-worktree-setup.sh` | SessionStart | `partial` | `inside-harness-step`: `/kaizen-autodent` worktree binding contract |
+| `session-snapshot` | `kaizen-session-snapshot.sh` | SessionStart | `infrastructure` | `infrastructure-only`: transcript/session artifacts |
+| `pr-review-loop` | `pr-review-loop-ts.sh` | PostToolUse | `partial` | `ci-check`: Review verdict gate workflow |
+| `kaizen-reflect` | `kaizen-reflect-ts.sh` | PostToolUse | `claude-only-gap` | `external-validator-needed`: #1166 follow-up post-run reflection validator |
+| `post-merge-clear` | `kaizen-post-merge-clear-ts.sh` | PostToolUse | `partial` | `inside-harness-step`: `/kaizen-autodent` cleanup/status evidence |
+| `pr-kaizen-clear` | `pr-kaizen-clear-ts.sh` | PostToolUse | `partial` | `inside-harness-step`: `/kaizen-autodent` workflow status ledger |
+| `pr-kaizen-clear-fallback` | `kaizen-pr-kaizen-clear-fallback.sh` | PostToolUse | `partial` | `inside-harness-step`: `/kaizen-autodent` workflow status ledger |
+| `capture-worktree-context` | `kaizen-capture-worktree-context.sh` | PostToolUse | `infrastructure` | `infrastructure-only`: `/kaizen-cleanup` and `worktree-du` |
+| `stop-gate` | `kaizen-stop-gate.sh` | Stop | `partial` | `inside-harness-step`: `/kaizen-autodent` workflow status CLI |
+| `verify-before-stop` | `kaizen-verify-before-stop.sh` | Stop | `advisory` | `advisory-only`: CI checks / PR verification section |
+| `check-cleanup-on-stop` | `kaizen-check-cleanup-on-stop.sh` | Stop | `advisory` | `advisory-only`: `/kaizen-cleanup` |
+
 ## Enforcement matrix — Artifact → Invariants (reverse index)
 
 ### Hooks
