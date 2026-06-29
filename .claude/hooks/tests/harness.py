@@ -114,6 +114,12 @@ class PostToolUseInput:
         return cls(tool_name="Bash", tool_input={"command": command},
                    stdout=stdout, stderr=stderr, exit_code=exit_code, **kwargs)
 
+    @classmethod
+    def agent(cls, prompt: str = "Run /kaizen-review-pr dimension review", stdout: str = "review complete",
+              stderr: str = "", exit_code: str = "0", **kwargs) -> "PostToolUseInput":
+        return cls(tool_name="Agent", tool_input={"prompt": prompt},
+                   stdout=stdout, stderr=stderr, exit_code=exit_code, **kwargs)
+
 
 @dataclass
 class StopInput:
