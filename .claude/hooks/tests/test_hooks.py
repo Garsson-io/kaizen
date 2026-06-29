@@ -23,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from harness import (
     HookHarness, PreToolUseInput, PostToolUseInput, StopInput,
-    PRReviewState, MockBinDir, REAL_COMMANDS,
+    PRReviewState, MockBinDir, HookResult, REAL_COMMANDS,
+    assert_post_hook_stdout_contains,
 )
 
 
@@ -377,17 +378,29 @@ class TestParallelExecution:
             "gh pr create --title test --body test",
             stdout="https://github.com/Garsson-io/kaizen/pull/99")
 
-        review_result = review_harness.run_hook("pr-review-loop-ts.sh", inp)
-        kaizen_result = review_harness.run_hook("kaizen-reflect-ts.sh", inp)
+        review_result = review_harness.run_post_hook("pr-review-loop-ts.sh", inp)
+        kaizen_result = review_harness.run_post_hook("kaizen-reflect-ts.sh", inp)
 
-        assert "SELF-REVIEW" in review_result.stdout, "pr-review-loop should fire"
-        assert "KAIZEN" in kaizen_result.stdout, "kaizen-reflect should fire"
+        assert_post_hook_stdout_contains(review_result, "SELF-REVIEW", "PostToolUse pr-review-loop")
+        assert_post_hook_stdout_contains(kaizen_result, "KAIZEN", "PostToolUse kaizen-reflect")
 
 
 # PostToolUse format tests
 
 class TestPostToolUseFormat:
     """INVARIANT: PostToolUse hooks output advisory text, not deny JSON."""
+
+    def test_post_hook_timeout_reports_diagnostic(self):
+        result = HookResult(
+            hook_path="kaizen-reflect-ts.sh",
+            stdout="",
+            stderr="TIMEOUT after 1s",
+            exit_code=124,
+            timed_out=True,
+        )
+
+        with pytest.raises(AssertionError, match="PostToolUse kaizen-reflect timed out.*KAIZEN"):
+            assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse kaizen-reflect")
 
     @pytest.mark.parametrize("hook", ["pr-review-loop-ts.sh", "kaizen-reflect-ts.sh"])
     def test_no_deny_json_in_post_hooks(self, review_harness, hook):
@@ -396,7 +409,7 @@ class TestPostToolUseFormat:
             "gh pr create --title test --body test",
             stdout="https://github.com/Garsson-io/kaizen/pull/70")
 
-        result = review_harness.run_hook(hook, inp)
+        result = review_harness.run_post_hook(hook, inp)
         assert result.exit_code == 0, f"{hook} should always exit 0"
 
         # Should not produce deny JSON
