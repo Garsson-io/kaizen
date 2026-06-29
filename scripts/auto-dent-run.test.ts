@@ -281,6 +281,8 @@ describe('buildTemplateVars', () => {
     expect(vars.candidate_manifest_path).toBe(join(tmpDir, 'run-4-candidate-tasks-manifest.json'));
     expect(vars.candidate_manifest_schema).toContain('candidates');
     expect(vars.candidate_manifest_schema).toContain('suggested_mode');
+    expect(vars.candidate_manifest_schema).toContain('"dedup"');
+    expect(vars.candidate_manifest_schema).toContain('"decision": "file_new|comment_existing|candidate_only"');
   });
 
   it('renders explore prompt with required candidate manifest artifact path', () => {
@@ -293,6 +295,10 @@ describe('buildTemplateVars', () => {
     expect(meta.prompt).toContain('Required artifact');
     expect(meta.prompt).toContain(join(tmpDir, 'run-2-candidate-tasks-manifest.json'));
     expect(meta.prompt).toContain('candidate-task manifest');
+    expect(meta.prompt).toContain('Search-before-file gate');
+    expect(meta.prompt).toContain('gh issue list --search');
+    expect(meta.prompt).toContain('comment_existing');
+    expect(meta.prompt).toContain('At most 2 candidates may use');
   });
 
   it('exposes the shared goal forcing contract as a template variable', () => {
@@ -312,14 +318,126 @@ describe('parseCandidateTaskManifest', () => {
       runTag: 'batch/run-1',
       generatedAt: '2026-06-29T00:00:00.000Z',
       candidates: [
-        { id: 'a', title: 'First', rationale: 'why', refs: ['#1'], suggested_mode: 'exploit' },
-        { id: 'b', title: 'Second', rationale: 'why', refs: [], suggested_mode: 'subtract' },
+        {
+          id: 'a',
+          title: 'First',
+          rationale: 'why',
+          refs: ['#1'],
+          suggested_mode: 'exploit',
+          dedup: {
+            query: 'First in:title repo:Garsson-io/kaizen',
+            matches: [],
+            decision: 'file_new',
+            reason: 'No existing issue matched this specific gap',
+          },
+        },
+        {
+          id: 'b',
+          title: 'Second',
+          rationale: 'why',
+          refs: ['#2'],
+          suggested_mode: 'subtract',
+          dedup: {
+            query: 'Second in:title repo:Garsson-io/kaizen',
+            matches: ['#2'],
+            decision: 'comment_existing',
+            reason: 'Existing issue covers the candidate',
+          },
+        },
       ],
     }));
 
     const parsed = parseCandidateTaskManifest(path);
 
-    expect(parsed).toEqual({ path, count: 2, warnings: [] });
+    expect(parsed).toEqual({
+      path,
+      count: 2,
+      dedupCheckedCount: 2,
+      fileNewCount: 1,
+      warnings: [],
+    });
+  });
+
+  it('warns when candidates omit dedup evidence', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-no-dedup-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      candidates: [
+        { id: 'a', title: 'First', rationale: 'why', refs: ['#1'], suggested_mode: 'exploit' },
+      ],
+    }));
+
+    const parsed = parseCandidateTaskManifest(path);
+
+    expect(parsed).toMatchObject({
+      path,
+      count: 1,
+      dedupCheckedCount: 0,
+      fileNewCount: 0,
+      warnings: [expect.stringContaining('missing dedup evidence')],
+    });
+  });
+
+  it('warns when a dedup decision is invalid', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-bad-decision-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      candidates: [
+        {
+          id: 'a',
+          title: 'First',
+          rationale: 'why',
+          refs: ['#1'],
+          suggested_mode: 'exploit',
+          dedup: {
+            query: 'First',
+            matches: [],
+            decision: 'maybe',
+            reason: 'bad',
+          },
+        },
+      ],
+    }));
+
+    const parsed = parseCandidateTaskManifest(path);
+
+    expect(parsed).toMatchObject({
+      count: 1,
+      dedupCheckedCount: 0,
+      warnings: [expect.stringContaining('invalid dedup decision')],
+    });
+  });
+
+  it('warns when an explore manifest exceeds the file-new budget', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-budget-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      candidates: [1, 2, 3].map((n) => ({
+        id: `c${n}`,
+        title: `Candidate ${n}`,
+        rationale: 'why',
+        refs: [],
+        suggested_mode: 'exploit',
+        dedup: {
+          query: `Candidate ${n}`,
+          matches: [],
+          decision: 'file_new',
+          reason: 'No duplicate found',
+        },
+      })),
+    }));
+
+    const parsed = parseCandidateTaskManifest(path);
+
+    expect(parsed).toMatchObject({
+      count: 3,
+      dedupCheckedCount: 3,
+      fileNewCount: 3,
+      warnings: [expect.stringContaining('file_new budget exceeded')],
+    });
   });
 
   it('returns zero with warning for missing or malformed manifests', () => {
@@ -2777,7 +2895,7 @@ describe('computeBanditWeights', () => {
     expect(result.explorationC).toBe(DEFAULT_BANDIT_C);
   });
 
-  it('reward semantics: explore credited by issues_filed, subtract by lines/pruned', () => {
+  it('reward semantics: explore issue-filing reward is capped, subtract uses lines/pruned', () => {
     const history: RunMetrics[] = [];
     for (let i = 0; i < 8; i++) history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: [], cost_usd: 1 }));
     // explore files lots of issues (its reward), subtract deletes lines.
@@ -2786,8 +2904,9 @@ describe('computeBanditWeights', () => {
     history.push(makeRunMetrics({ run: 10, mode: 'subtract', lines_deleted: 400, issues_pruned: 2, cost_usd: 1 }));
     const result = computeBanditWeights(history, { minRuns: 10 })!;
     const byMode = Object.fromEntries(result.details.map(d => [d.mode, d]));
-    // explore's mean reward reflects issues filed (3/play), not its zero PRs.
-    expect(byMode.explore.meanReward).toBeCloseTo(3, 5);
+    // explore's issue-filing reward is capped at 2/play so over-filing does not
+    // train the bandit to prefer backlog inflation.
+    expect(byMode.explore.meanReward).toBeCloseTo(2, 5);
     expect(byMode.subtract.meanReward).toBeGreaterThan(0);
     // exploit produced zero PRs ⇒ zero mean reward.
     expect(byMode.exploit.meanReward).toBe(0);
@@ -2827,10 +2946,15 @@ describe('modeSuccess', () => {
     expect(modeSuccess('exploit', makeRunMetrics({ prs: [] }))).toBe(0);
   });
 
-  it('explore uses candidate manifest count plus issues_filed', () => {
-    expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1', '#2', '#3'] }))).toBe(3);
+  it('explore uses dedup-checked candidate manifests plus capped issues_filed', () => {
+    expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1', '#2', '#3'] }))).toBe(2);
     expect(modeSuccess('explore', makeRunMetrics({ issues_filed: [], candidate_manifest_count: 4 }))).toBe(4);
     expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1'], candidate_manifest_count: 2 }))).toBe(3);
+    expect(modeSuccess('explore', makeRunMetrics({
+      issues_filed: ['#1', '#2', '#3'],
+      candidate_manifest_count: 4,
+      candidate_manifest_dedup_checked_count: 2,
+    }))).toBe(4);
     expect(modeSuccess('explore', makeRunMetrics({ prs: ['pr1'], issues_filed: [] }))).toBe(0);
   });
 
