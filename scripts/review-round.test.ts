@@ -155,6 +155,13 @@ describe('expandDimensionGroups', () => {
       'security',
     ]);
   });
+
+  it('keeps issue groups focused on issue/diff dimensions and excludes PR-body review', () => {
+    expect(expandDimensionGroups(['issue'], () => ['requirements', 'scope-fidelity', 'pr-description'])).toEqual([
+      'requirements',
+      'scope-fidelity',
+    ]);
+  });
 });
 
 describe('reviewResultToArtifact', () => {

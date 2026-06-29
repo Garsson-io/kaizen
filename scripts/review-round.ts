@@ -299,7 +299,7 @@ export function expandDimensionGroups(groups: string[], listPr: () => string[]):
       const needs = new Set(meta?.needs ?? []);
       const include =
         (group === 'diff' && needs.size === 1 && needs.has('diff')) ||
-        (group === 'issue' && needs.has('issue') && !needs.has('plan') && !needs.has('tests')) ||
+        (group === 'issue' && needs.has('issue') && !needs.has('plan') && !needs.has('tests') && !needs.has('pr') && !needs.has('pr_body')) ||
         (group === 'plan' && needs.has('plan')) ||
         (group === 'tests' && needs.has('tests')) ||
         (group === 'description' && dim === 'pr-description') ||

@@ -7,6 +7,7 @@ import {
   resolveRound,
   unknownFlagsForCommand,
   validateKnownFlags,
+  writeReviewSentinel,
   type CliArgs,
 } from './cli-structured-data.js';
 import {
@@ -18,6 +19,7 @@ import {
   mineRunTranscriptCandidates,
   storeFrictionCandidateReport,
   readReviewFinding,
+  listReviewDimensions,
 } from './structured-data.js';
 
 vi.mock('node:fs', () => ({
@@ -148,6 +150,18 @@ describe('handler registry', () => {
   it('registers transcript mining handlers (#1516)', () => {
     expect(handlers['mine-transcripts']).toBeTypeOf('function');
     expect(handlers['store-friction-candidates']).toBeTypeOf('function');
+  });
+});
+
+describe('writeReviewSentinel strict mode', () => {
+  it('returns false by default but throws in strict mode when sentinel data cannot be read', () => {
+    vi.mocked(listReviewDimensions).mockImplementation(() => {
+      throw new Error('dimension read failed');
+    });
+
+    expect(writeReviewSentinel('Garsson-io/kaizen', '1735', 2)).toBe(false);
+    expect(() => writeReviewSentinel('Garsson-io/kaizen', '1735', 2, { strict: true })).toThrow('write-review-sentinel: failed for PR #1735 round 2');
+    vi.mocked(listReviewDimensions).mockReturnValue(['correctness', 'security']);
   });
 });
 
