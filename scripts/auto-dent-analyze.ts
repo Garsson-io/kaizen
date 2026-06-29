@@ -32,6 +32,10 @@ import {
   hookActivationStatus,
   type HookActivationStatus,
 } from './auto-dent-hook-activation.js';
+import {
+  formatTranscriptBundleUnavailableDiagnostic,
+  readProgressIssueTranscriptBundle,
+} from './transcript-bundle-download.js';
 
 // Types
 
@@ -1024,7 +1028,7 @@ export function formatProgressIssueAnalysisDiagnostic(
   return lines.join('\n');
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const args = parseBatchArtifactCliArgs(process.argv.slice(2));
   const progressIssue = args.progressIssues[0];
 
@@ -1034,15 +1038,36 @@ function main(): void {
       process.exit(1);
     }
     try {
-      const parts = readArtifactPartsFromProgressIssue(progressIssue, args.repo);
-      console.error(formatProgressIssueAnalysisDiagnostic({
+      const bundle = await readProgressIssueTranscriptBundle({
         issueNumber: progressIssue,
         repo: args.repo,
-        parts,
-      }));
+      });
+      if (bundle.status === 'ready') {
+        try {
+          console.log(formatBatchAnalysis(analyzeBatch(bundle.batchDir)));
+        } finally {
+          bundle.cleanup();
+        }
+        return;
+      }
+
+      if (bundle.status === 'missing') {
+        const parts = readArtifactPartsFromProgressIssue(progressIssue, args.repo);
+        console.error(formatProgressIssueAnalysisDiagnostic({
+          issueNumber: progressIssue,
+          repo: args.repo,
+          parts,
+        }));
+      } else {
+        console.error(formatTranscriptBundleUnavailableDiagnostic({
+          issueNumber: progressIssue,
+          repo: args.repo,
+          result: bundle,
+        }));
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`Could not read batch-artifacts from ${args.repo}#${progressIssue}: ${message}`);
+      console.error(`Could not read progress-issue artifacts from ${args.repo}#${progressIssue}: ${message}`);
     }
     process.exit(1);
   }
@@ -1128,5 +1153,8 @@ const isDirectRun =
   process.argv[1]?.endsWith('auto-dent-analyze.js');
 
 if (isDirectRun) {
-  main();
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
 }
