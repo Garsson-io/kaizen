@@ -271,6 +271,16 @@ describe('hook runtime docs — TypeScript shim contract', () => {
     expect(hooksDesign).toMatch(/KAIZEN_TSX_BIN/);
   });
 
+  it('documents the precompiled Node freshness contract and fallback matrix', () => {
+    for (const doc of [hooksDesign, hookCatalog, languageBoundaries]) {
+      expect(doc).toMatch(/dist\/\.kaizen-hook-build/);
+    }
+    expect(hooksDesign).toMatch(/Precompiled Node/);
+    expect(hooksDesign).toMatch(/Source `tsx`/);
+    expect(hooksDesign).toMatch(/Bun/);
+    expect(hooksDesign).toMatch(/non-test `src\/\*\*\/\*\.ts`/);
+  });
+
   it('does not claim TS hook shims call npx tsx directly', () => {
     const staleDirectShimClaims = [
       /shim[^.\n]*calls `npx tsx`/i,

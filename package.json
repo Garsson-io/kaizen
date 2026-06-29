@@ -8,7 +8,7 @@
   },
   "scripts": {
     "postinstall": "git config core.hooksPath .githooks 2>/dev/null || true",
-    "build": "tsc",
+    "build": "tsc && bash scripts/write-hook-build-marker.sh",
     "check:fast": "npm run typecheck && npm run test:fast",
     "test": "timeout --kill-after=10 120 vitest run",
     "test:fast": "timeout --kill-after=10 60 vitest run --changed origin/main --passWithNoTests --exclude 'src/e2e/**' --exclude '**/*.e2e.test.ts'",

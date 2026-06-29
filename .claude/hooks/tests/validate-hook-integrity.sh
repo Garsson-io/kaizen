@@ -144,6 +144,18 @@ if [ -d "$HOOKS_DIR" ]; then
 fi
 
 echo ""
+echo "--- Lint: TS shim dynamic source targets have no literal-space suffix ---"
+if [ -d "$HOOKS_DIR" ]; then
+  BAD_TS_TARGETS=$(grep -R -nE 'run_tsx .*\$\([^)]*\)[[:space:]]+\.ts' "$HOOKS_DIR"/*.sh 2>/dev/null || true)
+  if [ -n "$BAD_TS_TARGETS" ]; then
+    echo "::error::[tsx-target] Dynamic TS hook target contains whitespace before .ts:"
+    echo "$BAD_TS_TARGETS"
+    ((ERRORS++))
+  fi
+  echo "  Checked dynamic TS shim source targets"
+fi
+
+echo ""
 echo "--- Single source of truth: settings.json AND plugin.json must not BOTH have hooks (kaizen #1063) ---"
 # Previous rule (kaizen #793) required settings.json and plugin.json to declare
 # the SAME hooks. That was the dual-load state #1063 identified as the root
