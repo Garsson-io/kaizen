@@ -29,6 +29,7 @@ import {
   readState,
 } from './auto-dent-run.js';
 import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
+import { renderCommandForDisplay } from './auto-dent-display.js';
 import type { PhaseProvider } from './auto-dent-provider.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 import { subscriptionAgentProvider } from '../src/provider-contract.js';
@@ -291,7 +292,7 @@ function commandActivity(command: string): string {
   if (/\bgh\s+pr\s+(list|view)\b/.test(command)) return 'checking GitHub PRs';
   if (/\bgit\s+worktree\b/.test(command) || /\bgit\s+status\b/.test(command)) return 'checking worktrees';
   if (/^(rg|grep|sed|cat|ls|find|jq|head|tail|wc)\b/.test(command.trim())) return 'inspecting files';
-  return `running command: ${command.trim().replace(/\s+/g, ' ').slice(0, 80)}`;
+  return `running command: ${renderCommandForDisplay(command, 80)}`;
 }
 
 export function summarizePlanningActivity(provider: PlanningProviderName, line: string): string | null {
@@ -373,6 +374,18 @@ export function appendPlanningRawOutput(
 ): boolean {
   try {
     (deps.appendFile ?? appendFileSync)(rawOutputFile, text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function initializePlanningRawOutput(
+  rawOutputFile: string,
+  deps: { writeFile?: typeof writeFileSync } = {},
+): boolean {
+  try {
+    (deps.writeFile ?? writeFileSync)(rawOutputFile, '');
     return true;
   } catch {
     return false;
@@ -647,8 +660,13 @@ async function runPlanning(
   let rawCaptureWarningPrinted = false;
 
   return new Promise((resolve) => {
-    writeFileSync(rawOutputFile, '');
-    console.log(formatPlanningFailure(provider, `raw provider output: ${rawOutputFile}`));
+    const rawCaptureAvailable = initializePlanningRawOutput(rawOutputFile);
+    if (rawCaptureAvailable) {
+      console.log(formatPlanningFailure(provider, `raw provider output: ${rawOutputFile}`));
+    } else {
+      rawCaptureWarningPrinted = true;
+      console.log(formatPlanningFailure(provider, `warning: raw provider output capture failed for ${rawOutputFile}; continuing without raw transcript`));
+    }
     const startedAt = Date.now();
     const child = spawn(command.command, command.args, {
       cwd: repoRoot,
@@ -675,6 +693,7 @@ async function runPlanning(
     }, 15_000);
 
     const appendRawOutput = (text: string) => {
+      if (!rawCaptureAvailable) return;
       if (appendPlanningRawOutput(rawOutputFile, text) || rawCaptureWarningPrinted) return;
       rawCaptureWarningPrinted = true;
       console.log(formatPlanningFailure(provider, `warning: raw provider output capture failed for ${rawOutputFile}; continuing without complete raw transcript`));

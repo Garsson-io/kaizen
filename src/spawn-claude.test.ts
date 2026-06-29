@@ -250,6 +250,7 @@ describe('spawnAgent provider adapter', () => {
       proc.stderr = new EventEmitter();
       proc.kill = vi.fn(() => {
         proc.emit('close', null);
+        return true;
       });
       return proc;
     });
@@ -265,6 +266,39 @@ describe('spawnAgent provider adapter', () => {
     expect(result.exitCode).toBe(-1);
     expect(result.rawStderr).toContain('provider timed out after 10ms');
     expect(result.rawStderr).not.toContain('missing codex terminal event');
+  });
+
+  it('does not classify a successful close as timeout when kill reports no live child', async () => {
+    vi.useFakeTimers();
+    const reviewJson = JSON.stringify({
+      dimension: 'requirements',
+      summary: 'ok',
+      findings: [],
+    });
+    vi.mocked(spawn).mockImplementation(() => {
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: vi.fn(), end: vi.fn() };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      proc.kill = vi.fn(() => false);
+      setTimeout(() => {
+        proc.stdout.emit('data', Buffer.from(codexResultPayload(reviewJson)));
+        proc.emit('close', 0);
+      }, 10);
+      return proc;
+    });
+
+    const promise = spawnAgent('review this', {
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      cwd: '/repo/kaizen',
+      timeoutMs: 10,
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await promise;
+
+    expect(result.exitCode).toBe(0);
+    expect(result.text).toBe(reviewJson);
+    expect(result.rawStderr).not.toContain('provider timed out');
   });
 
   it('fails Codex JSONL when the terminal turn failed after parseable agent text', async () => {

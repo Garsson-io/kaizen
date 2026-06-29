@@ -286,7 +286,11 @@ export const spawnAgent: SpawnClaudeFn = (prompt, opts) => {
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      try {
+        if (!child.kill()) timedOut = false;
+      } catch {
+        timedOut = false;
+      }
     }, opts.timeoutMs ?? 120_000);
     let settled = false;
 

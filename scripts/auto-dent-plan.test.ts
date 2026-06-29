@@ -16,6 +16,7 @@ import {
   buildPlanningCommand,
   buildPlanningSchemaFile,
   appendPlanningRawOutput,
+  initializePlanningRawOutput,
   clearPlanningTimers,
   titleTokens,
   deriveThemes,
@@ -348,6 +349,7 @@ describe('provider-aware planning (#1146)', () => {
     }));
 
     expect(activity).toMatch(/^running command: node x+/);
+    expect(activity).toMatch(/…$/);
     expect(activity!.length).toBeLessThanOrEqual('running command: '.length + 80);
   });
 
@@ -398,6 +400,15 @@ describe('provider-aware planning (#1146)', () => {
     })).toBe(false);
   });
 
+  it('initializes raw planning output fail-open before provider spawn', () => {
+    expect(initializePlanningRawOutput('/tmp/raw.jsonl', {
+      writeFile: vi.fn(),
+    })).toBe(true);
+    expect(initializePlanningRawOutput('/tmp/raw.jsonl', {
+      writeFile: vi.fn(() => { throw new Error('read-only log dir'); }) as any,
+    })).toBe(false);
+  });
+
   it('captures raw planning output and starts progress inside the provider wait path', () => {
     const source = readFileSync(new URL('./auto-dent-plan.ts', import.meta.url), 'utf8');
     const runPlanningStart = source.indexOf('async function runPlanning');
@@ -405,6 +416,7 @@ describe('provider-aware planning (#1146)', () => {
     const runPlanningSection = source.slice(runPlanningStart, runPlanningEnd);
 
     expect(runPlanningSection).toContain('planningRawOutputFile');
+    expect(runPlanningSection).toContain('initializePlanningRawOutput');
     expect(runPlanningSection).toContain('appendRawOutput(line +');
     expect(runPlanningSection).toContain('warning: raw provider output capture failed');
     expect(runPlanningSection).toContain('formatPlanningProgress');
