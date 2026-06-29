@@ -1,10 +1,16 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
+import { makeIgnoredTestDir } from '../src/lib/test-dirs.js';
 import type { EventEnvelope } from './auto-dent-events.js';
-import { parseEventsFile, summarizeEvents, formatPlainLanguage } from './batch-summary.js';
+import { buildArtifactsComment, parseArtifactsComment } from './batch-artifacts-upload.js';
+import {
+  parseEventsFile,
+  parseEventsJsonl,
+  summarizeEvents,
+  formatPlainLanguage,
+} from './batch-summary.js';
 
 function makeEnvelope(event: EventEnvelope['event'], timestamp?: string): EventEnvelope {
   return {
@@ -37,7 +43,7 @@ describe('parseEventsFile', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'batch-summary-'));
+    tmpDir = makeIgnoredTestDir('batch-summary');
   });
 
   it('returns empty array for non-existent file', () => {
@@ -88,6 +94,40 @@ describe('parseEventsFile', () => {
     const source = readFileSync(new URL('./batch-summary.ts', import.meta.url), 'utf8');
 
     expect(source).not.toContain('JSON.parse(line)');
+  });
+});
+
+describe('progress issue artifact event parsing', () => {
+  it('summarizes events from a generated batch-artifacts comment without a local events file', () => {
+    const events = [
+      makeCompleteEvent({ batch_id: 'cloud-batch', run_num: 1, cost_usd: 2, prs_created: 1 }),
+      makeEnvelope({
+        type: 'run.issue_picked',
+        run_id: 'cloud-batch/run-1',
+        batch_id: 'cloud-batch',
+        run_num: 1,
+        issue: '#688',
+        title: 'Cloud artifacts',
+        labels: ['horizon/observability'],
+      }),
+    ];
+    const body = buildArtifactsComment(
+      {
+        batchId: 'cloud-batch',
+        eventsJsonl: events.map(e => JSON.stringify(e)).join('\n'),
+        stateJson: null,
+        summary: null,
+      },
+      '2026-06-29T00:00:00Z',
+    );
+
+    const parts = parseArtifactsComment(body);
+    const summary = summarizeEvents(parseEventsJsonl(parts.eventsJsonl!));
+
+    expect(summary.batch_id).toBe('cloud-batch');
+    expect(summary.total_runs).toBe(1);
+    expect(summary.total_prs).toBe(1);
+    expect(summary.horizon_distribution).toEqual({ 'horizon/observability': 1 });
   });
 });
 
@@ -472,7 +512,7 @@ describe('process verdict distribution (#1149)', () => {
   });
 
   it('CLI output includes hook activation health for a synthetic batch with bounded subprocess cost', () => {
-    const tmpDir = mkdtempSync(join(tmpdir(), 'batch-summary-cli-'));
+    const tmpDir = makeIgnoredTestDir('batch-summary-cli');
     const hook = (status: string, degraded: boolean) => ({
       provider: 'claude',
       expected: true,

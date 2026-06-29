@@ -1,9 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { makeIgnoredTestDir } from '../src/lib/test-dirs.js';
 import {
   buildArtifactsComment,
+  parseArtifactsComment,
   readArtifactParts,
   type ArtifactParts,
   BATCH_ARTIFACTS_ATTACHMENT,
@@ -29,7 +30,7 @@ afterEach(() => {
   while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });
 });
 function freshBatchDir(): string {
-  const d = mkdtempSync(join(tmpdir(), 'batch-artifacts-'));
+  const d = makeIgnoredTestDir('batch-artifacts');
   tmpDirs.push(d);
   return d;
 }
@@ -110,6 +111,28 @@ describe('buildArtifactsComment', () => {
     );
     expect(body.length).toBeLessThanOrEqual(ARTIFACTS_BODY_BUDGET);
     expect(body).toContain('## Batch Artifacts: `sticky-lark`'); // header always survives
+  });
+});
+
+describe('parseArtifactsComment', () => {
+  it('round-trips generated artifact comments into raw parts', () => {
+    const body = buildArtifactsComment(makeParts(), NOW);
+
+    const parts = parseArtifactsComment(body);
+
+    expect(parts.batchId).toBe('sticky-lark');
+    expect(parts.eventsJsonl).toContain('{"kind":"run_complete","run":1}');
+    expect(parts.stateJson).toContain('"batch_id": "sticky-lark"');
+    expect(parts.summary).toBe('Runs: 3\nPRs: 1');
+  });
+
+  it('rejects truncated events.jsonl instead of returning partial telemetry', () => {
+    const huge = Array.from({ length: 4000 }, (_, i) => `{"kind":"run_complete","run":${i}}`).join(
+      '\n',
+    );
+    const body = buildArtifactsComment(makeParts({ eventsJsonl: huge }), NOW);
+
+    expect(() => parseArtifactsComment(body)).toThrow(/truncated events\.jsonl/);
   });
 });
 
