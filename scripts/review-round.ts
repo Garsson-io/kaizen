@@ -430,6 +430,12 @@ export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
       artifact.result.failedDimensions.join(', '),
     );
   }
+  if (artifact.result.failedDimensionFailures.length > 0) {
+    throw new Error(
+      `Refusing to store authoritative review round: provider failure records present for dimensions ` +
+      artifact.result.failedDimensionFailures.map((failure) => failure.dimension).join(', '),
+    );
+  }
   if (artifact.result.missingCount > 0) {
     throw new Error(
       `Refusing to store authoritative review round: ${artifact.result.missingCount} MISSING findings present`,

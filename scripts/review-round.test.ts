@@ -3,6 +3,7 @@ import {
   assertArtifactStoreable,
   buildHelp,
   expandDimensionGroups,
+  formatDimensionProgress,
   formatRecoveryCommands,
   parseCliArgs,
   parseTimeoutMs,
@@ -55,6 +56,15 @@ function baseArtifact(overrides: Partial<ReviewRoundArtifact> = {}): ReviewRound
     },
     ...overrides,
   };
+}
+
+function makeReviewRoundGhMock(diff = 'diff'): ReturnType<typeof vi.fn> {
+  return vi.fn((args: string[]) => {
+    if (args[0] === 'issue') return JSON.stringify({ title: 'Issue title', body: 'Issue body' });
+    if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ title: 'PR title', body: 'PR body', headRefOid: 'c'.repeat(40), url: 'https://github.com/Garsson-io/kaizen/pull/1735' });
+    if (args[0] === 'pr' && args[1] === 'diff') return diff;
+    throw new Error(`unexpected gh call ${args.join(' ')}`);
+  });
 }
 
 describe('parseCliArgs', () => {
@@ -179,12 +189,7 @@ describe('runReviewRound', () => {
       failedDimensionFailures: [{ dimension: 'security', provider, failureClass: 'codex_review_failed' }],
       skippedDimensions: [],
     });
-    const gh = vi.fn((args: string[]) => {
-      if (args[0] === 'issue') return JSON.stringify({ title: 'Issue title', body: 'Issue body' });
-      if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ title: 'PR title', body: 'PR body', headRefOid: 'c'.repeat(40), url: 'https://github.com/Garsson-io/kaizen/pull/1735' });
-      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/file b/file';
-      throw new Error(`unexpected gh call ${args.join(' ')}`);
-    });
+    const gh = makeReviewRoundGhMock('diff --git a/file b/file');
 
     const artifact = await runReviewRound(
       parseCliArgs([
@@ -234,12 +239,7 @@ describe('runReviewRound', () => {
       failedDimensionFailures: [],
       skippedDimensions: [],
     });
-    const gh = vi.fn((args: string[]) => {
-      if (args[0] === 'issue') return JSON.stringify({ title: 'Issue title', body: 'Issue body' });
-      if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ title: 'PR title', body: 'PR body', headRefOid: 'c'.repeat(40), url: 'https://github.com/Garsson-io/kaizen/pull/1735' });
-      if (args[0] === 'pr' && args[1] === 'diff') return 'diff';
-      throw new Error(`unexpected gh call ${args.join(' ')}`);
-    });
+    const gh = makeReviewRoundGhMock();
 
     const artifact = await runReviewRound(
       parseCliArgs(['run', '--pr', '1735', '--issue', '1732', '--repo', 'Garsson-io/kaizen', '--dimensions', 'security']),
@@ -259,12 +259,7 @@ describe('runReviewRound', () => {
 
   it('writes a failure artifact when reviewBattery throws', async () => {
     const writeArtifact = vi.fn();
-    const gh = vi.fn((args: string[]) => {
-      if (args[0] === 'issue') return JSON.stringify({ title: 'Issue title', body: 'Issue body' });
-      if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ title: 'PR title', body: 'PR body', headRefOid: 'c'.repeat(40), url: 'https://github.com/Garsson-io/kaizen/pull/1735' });
-      if (args[0] === 'pr' && args[1] === 'diff') return 'diff';
-      throw new Error(`unexpected gh call ${args.join(' ')}`);
-    });
+    const gh = makeReviewRoundGhMock();
 
     await expect(runReviewRound(
       parseCliArgs(['run', '--pr', '1735', '--issue', '1732', '--repo', 'Garsson-io/kaizen', '--dimensions', 'security', '--provider', 'codex']),
@@ -284,6 +279,31 @@ describe('runReviewRound', () => {
     expect(artifact.result.verdict).toBe('fail');
     expect(artifact.result.failedDimensions).toEqual(['security']);
     expect(artifact.result.error).toBe('provider timeout');
+  });
+
+  it('writes a failure artifact when prefetch JSON parsing fails', async () => {
+    const writeArtifact = vi.fn();
+    const gh = vi.fn((args: string[]) => {
+      if (args[0] === 'issue') return 'not json';
+      throw new Error(`unexpected gh call ${args.join(' ')}`);
+    });
+
+    await expect(runReviewRound(
+      parseCliArgs(['run', '--pr', '1735', '--issue', '1732', '--repo', 'Garsson-io/kaizen', '--dimensions', 'security', '--provider', 'codex']),
+      {
+        reviewBattery: vi.fn(),
+        listPrDimensions: vi.fn(),
+        gh: gh as any,
+        retrievePlan: vi.fn(),
+        retrieveTestPlan: vi.fn(),
+        writeArtifact,
+        now: () => '2026-06-30T10:00:00.000Z',
+      },
+    )).rejects.toThrow('invalid JSON');
+
+    const [, artifact] = writeArtifact.mock.calls[0];
+    expect(artifact.result.failedDimensions).toEqual(['security']);
+    expect(artifact.result.error).toContain('invalid JSON');
   });
 });
 
@@ -321,6 +341,19 @@ describe('assertArtifactStoreable', () => {
     expect(() => assertArtifactStoreable(artifact)).toThrow(/provider failures/);
   });
 
+  it('fails closed when provider failure records exist even if failedDimensions is empty', () => {
+    const artifact = baseArtifact({
+      requestedDimensions: ['security'],
+      result: {
+        ...baseArtifact().result,
+        failedDimensions: [],
+        failedDimensionFailures: [{ dimension: 'security', provider, failureClass: 'codex_review_failed' }],
+      },
+    });
+
+    expect(() => assertArtifactStoreable(artifact)).toThrow(/provider failure records/);
+  });
+
   it('fails closed when requested dimensions are missing from the artifact results', () => {
     const artifact = baseArtifact({
       requestedDimensions: ['security', 'test-quality'],
@@ -341,6 +374,7 @@ describe('storeReviewArtifact', () => {
       storeReviewBatch: vi.fn().mockReturnValue({ urls: ['u1'], summaryUrl: 'summary-url' }),
       rerunReviewVerdictGate: vi.fn().mockReturnValue({ action: 'rerun', runId: 123, message: 'rerun requested' }),
       writeReviewSentinel: vi.fn(),
+      writeAttachment: vi.fn(),
     };
 
     const artifact = baseArtifact({ requestedDimensions: ['security'] });
@@ -370,6 +404,7 @@ describe('storeReviewArtifact', () => {
       storeReviewBatch: vi.fn(),
       rerunReviewVerdictGate: vi.fn(),
       writeReviewSentinel: vi.fn(),
+      writeAttachment: vi.fn(),
     };
 
     const result = await storeReviewArtifact(baseArtifact({ requestedDimensions: ['security'] }), { dryRun: true, rerunGate: true, round: 7 }, deps);
@@ -444,6 +479,37 @@ describe('help text', () => {
 });
 
 describe('formatRecoveryCommands', () => {
+  it('prints final progress for pass, partial, missing, absent, and provider-failed dimensions', () => {
+    const artifact = baseArtifact({
+      requestedDimensions: ['security', 'requirements', 'test-quality', 'dry', 'tooling-fitness'],
+      result: {
+        ...baseArtifact().result,
+        failedDimensions: ['tooling-fitness'],
+        dimensions: [
+          baseArtifact().result.dimensions[0],
+          {
+            dimension: 'requirements',
+            verdict: 'fail',
+            summary: 'partial',
+            findings: [{ requirement: 'R', status: 'PARTIAL', detail: 'partial' }],
+          },
+          {
+            dimension: 'test-quality',
+            verdict: 'fail',
+            summary: 'missing',
+            findings: [{ requirement: 'T', status: 'MISSING', detail: 'missing' }],
+          },
+        ],
+      },
+    });
+
+    expect(formatDimensionProgress(artifact)).toContain('security: PASS');
+    expect(formatDimensionProgress(artifact)).toContain('requirements: PARTIAL (1)');
+    expect(formatDimensionProgress(artifact)).toContain('test-quality: MISSING (1)');
+    expect(formatDimensionProgress(artifact)).toContain('dry: MISSING');
+    expect(formatDimensionProgress(artifact)).toContain('tooling-fitness: PROVIDER_FAILED');
+  });
+
   it('prints a tailored rerun command for missing dimensions', () => {
     const artifact = baseArtifact({
       requestedDimensions: ['security', 'requirements'],
@@ -481,12 +547,7 @@ describe('runAndStoreReviewRound', () => {
   });
 
   it('runs first and stores only the returned passable artifact', async () => {
-    const gh = vi.fn((args: string[]) => {
-      if (args[0] === 'issue') return JSON.stringify({ title: 'Issue title', body: 'Issue body' });
-      if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ title: 'PR title', body: 'PR body', headRefOid: 'c'.repeat(40), url: 'https://github.com/Garsson-io/kaizen/pull/1735' });
-      if (args[0] === 'pr' && args[1] === 'diff') return 'diff';
-      throw new Error(`unexpected gh call ${args.join(' ')}`);
-    });
+    const gh = makeReviewRoundGhMock();
     const runDeps = {
       reviewBattery: vi.fn().mockResolvedValue({
         verdict: 'pass',
