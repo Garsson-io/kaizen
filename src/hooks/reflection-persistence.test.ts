@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { makeIgnoredTestDir } from '../lib/test-dirs.js';
 import {
   buildReflectionRecord,
   persistReflection,
@@ -14,9 +15,7 @@ const REFLECTION_PERSISTENCE_SOURCE = readFileSync(
 );
 
 function makeReflectionTestDir(suffix: string): string {
-  const base = join(process.cwd(), 'data', 'test-tmp');
-  mkdirSync(base, { recursive: true });
-  return mkdtempSync(join(base, `reflection-${suffix}-`));
+  return makeIgnoredTestDir(`reflection-${suffix}`);
 }
 
 describe('json-lines helper source invariant', () => {
