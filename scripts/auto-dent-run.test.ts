@@ -1688,6 +1688,52 @@ describe('processStreamMessage', () => {
     expect(result.cost).toBe(2.5);
   });
 
+  it('records best-known cost from non-result stream messages', () => {
+    const result = makeRunResult();
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          usage: {
+            total_cost_usd: 1.25,
+          },
+          content: [],
+        },
+      },
+      result,
+      Date.now(),
+    );
+    expect(result.cost).toBe(1.25);
+  });
+
+  it('lets terminal result cost override earlier stream cost', () => {
+    const result = makeRunResult();
+    processStreamMessage(
+      {
+        type: 'assistant',
+        message: {
+          usage: {
+            total_cost_usd: 1.25,
+          },
+          content: [],
+        },
+      },
+      result,
+      Date.now(),
+    );
+    processStreamMessage(
+      {
+        type: 'result',
+        subtype: 'success',
+        total_cost_usd: 2.5,
+        result: 'All done',
+      },
+      result,
+      Date.now(),
+    );
+    expect(result.cost).toBe(2.5);
+  });
+
   it('extracts artifacts from result text', () => {
     const result = makeRunResult();
     processStreamMessage(
@@ -3138,6 +3184,40 @@ describe('buildRunMetrics', () => {
     });
   });
 
+  it('flags timed-out zero-cost runs that used tools', () => {
+    const metrics = buildRunMetrics({
+      runNum: 6,
+      runStartEpoch: 1742681000,
+      duration: 600,
+      exitCode: 124,
+      runMode: 'exploit',
+      result: makeRunResult({
+        cost: 0,
+        toolCalls: 3,
+        timedOut: true,
+      }),
+    });
+
+    expect(metrics.cost_integrity_warnings).toEqual(['timeout_zero_cost_with_tool_calls']);
+  });
+
+  it('does not flag zero-cost runs without tool usage evidence', () => {
+    const metrics = buildRunMetrics({
+      runNum: 7,
+      runStartEpoch: 1742681000,
+      duration: 30,
+      exitCode: 0,
+      runMode: 'exploit',
+      result: makeRunResult({
+        cost: 0,
+        toolCalls: 0,
+        timedOut: true,
+      }),
+    });
+
+    expect(metrics.cost_integrity_warnings).toBeUndefined();
+  });
+
   it('adds persisted metadata without duplicating the base mapping', () => {
     const metrics = buildRunMetrics({
       runNum: 4,
@@ -3327,6 +3407,33 @@ describe('buildRunMetrics', () => {
       status: 'unknown',
       degraded: true,
     });
+  });
+
+  it('emits cost integrity warnings on run.complete from normalized run metrics', () => {
+    const result = makeRunResult({ cost: 0, toolCalls: 2, timedOut: true });
+    const metrics = buildRunMetrics({
+      runNum: 9,
+      runStartEpoch: 1742681400,
+      duration: 600,
+      exitCode: 124,
+      runMode: 'exploit',
+      result,
+    });
+
+    const event = buildRunCompleteEvent({
+      runId: 'batch/run-9',
+      batchId: 'batch',
+      runNum: 9,
+      duration: 600,
+      exitCode: 124,
+      result,
+      runMode: 'exploit',
+      outcome: 'failure',
+      runMetricsForOutcome: metrics,
+      lifecycleViolationCount: 0,
+    });
+
+    expect(event.cost_integrity_warnings).toEqual(['timeout_zero_cost_with_tool_calls']);
   });
 
   it('emits context-delegation pressure diagnostics on run.complete telemetry', () => {

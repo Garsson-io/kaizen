@@ -61,6 +61,7 @@ All cross-run state lives in `logs/auto-dent/<batch-id>/state.json`. Key fields:
 | `stop_reason` | string | Why the batch stopped (empty while running) |
 | `progress_issue` | string | GitHub issue URL for batch progress tracking |
 | `run_history` | RunMetrics[] | Per-run duration, cost, tool calls, exit code |
+| `cost_integrity_warnings` | string[] per run | Data-integrity warnings for cost attribution, such as timeout kills that leave a tool-using run at `$0.00` |
 | `review_verdict` | `"pass"\|"fail"\|"error"\|"skipped"` per run | Requirements review verdict for the PR produced by this run; `"fail"` blocks auto-merge |
 | `review_cost_usd` | number per run | Cost of the requirements review for this run (typically $0.10–0.20) |
 
