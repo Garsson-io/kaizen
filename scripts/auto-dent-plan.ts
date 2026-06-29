@@ -17,7 +17,7 @@
  */
 
 import { spawn } from 'child_process';
-import { appendFileSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { closeSync, constants, openSync, readFileSync, writeFileSync, existsSync, writeSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { z } from 'zod';
@@ -370,26 +370,60 @@ export function clearPlanningTimers(
 export function appendPlanningRawOutput(
   rawOutputFile: string,
   text: string,
-  deps: { appendFile?: typeof appendFileSync } = {},
+  deps: {
+    openFile?: typeof openSync;
+    writeFile?: typeof writeSync;
+    closeFile?: typeof closeSync;
+  } = {},
 ): boolean {
+  let fd: number | undefined;
   try {
-    (deps.appendFile ?? appendFileSync)(rawOutputFile, text);
+    const noFollow = constants.O_NOFOLLOW ?? 0;
+    fd = (deps.openFile ?? openSync)(rawOutputFile, constants.O_WRONLY | constants.O_APPEND | noFollow);
+    (deps.writeFile ?? writeSync)(fd, text);
     return true;
   } catch {
     return false;
+  } finally {
+    if (fd !== undefined) {
+      try { (deps.closeFile ?? closeSync)(fd); } catch { /* fail-open capture only */ }
+    }
   }
 }
 
 export function initializePlanningRawOutput(
   rawOutputFile: string,
-  deps: { writeFile?: typeof writeFileSync } = {},
+  deps: {
+    openFile?: typeof openSync;
+    closeFile?: typeof closeSync;
+  } = {},
 ): boolean {
+  let fd: number | undefined;
+  const noFollow = constants.O_NOFOLLOW ?? 0;
   try {
-    (deps.writeFile ?? writeFileSync)(rawOutputFile, '');
+    fd = (deps.openFile ?? openSync)(
+      rawOutputFile,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow,
+      0o600,
+    );
     return true;
-  } catch {
-    return false;
+  } catch (err: any) {
+    if (err?.code !== 'EEXIST') return false;
+    try {
+      fd = (deps.openFile ?? openSync)(rawOutputFile, constants.O_WRONLY | constants.O_APPEND | noFollow);
+      return true;
+    } catch {
+      return false;
+    }
+  } finally {
+    if (fd !== undefined) {
+      try { (deps.closeFile ?? closeSync)(fd); } catch { /* fail-open capture only */ }
+    }
   }
+}
+
+export function formatPlanningStderrRawLine(text: string): string {
+  return JSON.stringify({ stream: 'stderr', data: text }) + '\n';
 }
 
 /**
@@ -717,7 +751,7 @@ async function runPlanning(
 
     child.stderr?.on('data', (data: Buffer) => {
       stderrBytes += data.length;
-      appendRawOutput(data.toString());
+      appendRawOutput(formatPlanningStderrRawLine(data.toString('utf8')));
     });
 
     child.on('close', () => {

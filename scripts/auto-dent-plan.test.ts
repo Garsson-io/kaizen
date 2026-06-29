@@ -22,6 +22,7 @@ import {
   deriveThemes,
   ensureThemes,
   extractPlanningText,
+  formatPlanningStderrRawLine,
   formatPlanningProgress,
   formatPlanningFailure,
   planningRawOutputFile,
@@ -392,21 +393,45 @@ describe('provider-aware planning (#1146)', () => {
   });
 
   it('captures raw planning output fail-open inside stream callbacks', () => {
+    const openFile = vi.fn(() => 7);
+    const writeFile = vi.fn();
+    const closeFile = vi.fn();
+
     expect(appendPlanningRawOutput('/tmp/raw.jsonl', 'ok', {
-      appendFile: vi.fn(),
+      openFile: openFile as any,
+      writeFile: writeFile as any,
+      closeFile: closeFile as any,
     })).toBe(true);
+
+    expect(openFile).toHaveBeenCalledWith('/tmp/raw.jsonl', expect.any(Number));
+    expect(writeFile).toHaveBeenCalledWith(7, 'ok');
+    expect(closeFile).toHaveBeenCalledWith(7);
     expect(appendPlanningRawOutput('/tmp/raw.jsonl', 'boom', {
-      appendFile: vi.fn(() => { throw new Error('disk full'); }) as any,
+      openFile: vi.fn(() => { throw new Error('disk full'); }) as any,
     })).toBe(false);
   });
 
   it('initializes raw planning output fail-open before provider spawn', () => {
+    const openFile = vi.fn(() => 8);
+    const closeFile = vi.fn();
+
     expect(initializePlanningRawOutput('/tmp/raw.jsonl', {
-      writeFile: vi.fn(),
+      openFile: openFile as any,
+      closeFile: closeFile as any,
     })).toBe(true);
+
+    expect(openFile).toHaveBeenCalledWith('/tmp/raw.jsonl', expect.any(Number), 0o600);
+    expect(closeFile).toHaveBeenCalledWith(8);
     expect(initializePlanningRawOutput('/tmp/raw.jsonl', {
-      writeFile: vi.fn(() => { throw new Error('read-only log dir'); }) as any,
+      openFile: vi.fn(() => { throw new Error('read-only log dir'); }) as any,
     })).toBe(false);
+  });
+
+  it('keeps planning stderr raw capture JSONL parseable', () => {
+    expect(JSON.parse(formatPlanningStderrRawLine('bad\nnews'))).toEqual({
+      stream: 'stderr',
+      data: 'bad\nnews',
+    });
   });
 
   it('captures raw planning output and starts progress inside the provider wait path', () => {
