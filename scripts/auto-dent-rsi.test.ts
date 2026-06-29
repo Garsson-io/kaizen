@@ -2,7 +2,9 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
   buildRsiImprovementProposalSet,
+  computeRsiCrossRunImprovement,
   evaluateRsiProposalOutcome,
+  formatRsiProposalSetSummary,
   readRsiImprovementProposals,
   writeRsiImprovementProposalsForBatch,
   writeRsiImprovementProposalsAttachment,
@@ -136,6 +138,10 @@ describe('buildRsiImprovementProposalSet', () => {
       degradation_verdict: 'degraded',
       degradation_score: 0.82,
     });
+    expect(proposalSet.cross_run_improvement).toMatchObject({
+      verdict: 'insufficient_data',
+      batches_analyzed: 1,
+    });
 
     const explore = proposalSet.proposals.find((p) => p.target.path === 'prompts/explore-gaps.md');
     expect(explore).toBeDefined();
@@ -216,6 +222,24 @@ describe('buildRsiImprovementProposalSet', () => {
     expect(proposalSet.diagnostics[0]).toBe('3 proposal(s) generated from 5 signal(s).');
   });
 
+  it('groups same-target signals into one proposal instead of duplicating prompt patches', () => {
+    const proposalSet = buildRsiImprovementProposalSet(
+      state({
+        reflection_insights: [
+          'Explore mode keeps rediscovering manifest candidates',
+          'Manifest scout ignores candidate-task evidence',
+        ],
+      }),
+      outcome(),
+      { generatedAt: '2026-06-29T12:00:00.000Z' },
+    );
+
+    expect(proposalSet.proposals).toHaveLength(1);
+    expect(proposalSet.proposals[0].target.path).toBe('prompts/explore-gaps.md');
+    expect(proposalSet.proposals[0].source_signals).toHaveLength(2);
+    expect(proposalSet.proposals[0].gepa_feedback?.textual_feedback).toHaveLength(2);
+  });
+
   it('routes review/proof signals and process fallback signals to distinct targets', () => {
     const proposalSet = buildRsiImprovementProposalSet(
       state({
@@ -237,6 +261,88 @@ describe('buildRsiImprovementProposalSet', () => {
     expect(processTarget?.target.path).toBe('scripts/auto-dent-run.ts');
     expect(processTarget?.proof_required.commands).not.toContain('npx vitest run src/e2e/skill-change.test.ts');
     expect(processTarget?.proof_required.policy_refs).toEqual(['I22']);
+  });
+
+  it('adds degrading cross-run improvement as a proposal signal', () => {
+    const prior = outcome({
+      batch_id: 'batch-before',
+      batch_start: 500,
+      success_rate: 0.75,
+      review_fail_rate: 0.05,
+      avg_cost_per_success: 2,
+      degradation_signal: { ...degradedSignal, verdict: 'healthy', score: 0.05 },
+    });
+
+    const proposalSet = buildRsiImprovementProposalSet(
+      state(),
+      outcome({
+        batch_id: 'batch-after',
+        batch_start: 1_000,
+        success_rate: 0.5,
+        review_fail_rate: 0.2,
+        avg_cost_per_success: 4,
+        degradation_signal: { ...degradedSignal, verdict: 'watch', score: 0.3 },
+      }),
+      { generatedAt: '2026-06-29T12:00:00.000Z', priorOutcomes: [prior] },
+    );
+
+    expect(proposalSet.cross_run_improvement).toMatchObject({
+      verdict: 'degrading',
+      previous_batch_id: 'batch-before',
+      latest_batch_id: 'batch-after',
+    });
+    expect(proposalSet.cross_run_improvement.success_rate_delta).toBeCloseTo(-0.25);
+    expect(proposalSet.cross_run_improvement.review_fail_rate_delta).toBeCloseTo(0.15);
+    expect(proposalSet.proposals.some((p) => p.failure_pattern.includes('Cross-run RSI improvement metric degraded'))).toBe(true);
+  });
+});
+
+describe('computeRsiCrossRunImprovement', () => {
+  it('requires two outcomes before emitting a trend verdict', () => {
+    expect(computeRsiCrossRunImprovement([outcome()])).toMatchObject({
+      verdict: 'insufficient_data',
+      batches_analyzed: 1,
+      previous_batch_id: null,
+    });
+  });
+
+  it('classifies later metric improvements', () => {
+    const trend = computeRsiCrossRunImprovement([
+      outcome({
+        batch_id: 'batch-before',
+        batch_start: 1,
+        success_rate: 0.5,
+        review_fail_rate: 0.25,
+        avg_cost_per_success: 5,
+        degradation_signal: { ...degradedSignal, verdict: 'watch', score: 0.5 },
+      }),
+      outcome({
+        batch_id: 'batch-after',
+        batch_start: 2,
+        success_rate: 0.7,
+        review_fail_rate: 0.1,
+        avg_cost_per_success: 3,
+        degradation_signal: { ...degradedSignal, verdict: 'healthy', score: 0.2 },
+      }),
+    ]);
+
+    expect(trend.verdict).toBe('improving');
+    expect(trend.success_rate_delta).toBeCloseTo(0.2);
+    expect(trend.review_fail_rate_delta).toBeCloseTo(-0.15);
+    expect(trend.avg_cost_per_success_delta).toBeCloseTo(-2);
+    expect(trend.degradation_score_delta).toBeCloseTo(-0.3);
+  });
+
+  it('classifies later metric regressions', () => {
+    const trend = computeRsiCrossRunImprovement([
+      outcome({ batch_id: 'batch-before', batch_start: 1, success_rate: 0.7, review_fail_rate: 0.1, avg_cost_per_success: 3 }),
+      outcome({ batch_id: 'batch-after', batch_start: 2, success_rate: 0.4, review_fail_rate: 0.3, avg_cost_per_success: 5 }),
+    ]);
+
+    expect(trend.verdict).toBe('degrading');
+    expect(trend.success_rate_delta).toBeCloseTo(-0.3);
+    expect(trend.review_fail_rate_delta).toBeCloseTo(0.2);
+    expect(trend.avg_cost_per_success_delta).toBeCloseTo(2);
   });
 });
 
@@ -353,6 +459,7 @@ describe('RSI proposal attachment helpers', () => {
       expect.any(String),
     );
     const parsed = RsiImprovementProposalSetSchema.parse(JSON.parse(writtenContent));
+    expect(parsed.cross_run_improvement.verdict).toBe('insufficient_data');
     expect(parsed.proposals[0]).toMatchObject({
       target: { path: 'prompts/explore-gaps.md' },
       acceptance: { baseline: { success_rate: 0.5 } },
@@ -390,5 +497,22 @@ describe('RSI proposal attachment helpers', () => {
     ghReturns(JSON.stringify({ url: 'https://github.com/Garsson-io/kaizen/issues/1717#issuecomment-1', body }));
 
     expect(readRsiImprovementProposals('1717', 'Garsson-io/kaizen')).toEqual(proposalSet);
+  });
+});
+
+describe('formatRsiProposalSetSummary', () => {
+  it('prints the cross-run verdict and proposal targets for operators', () => {
+    const proposalSet = buildRsiImprovementProposalSet(
+      state({ reflection_insights: ['Explore prompt needs manifest follow-through'] }),
+      outcome(),
+      { generatedAt: '2026-06-29T12:00:00.000Z' },
+    );
+
+    const summary = formatRsiProposalSetSummary(proposalSet);
+
+    expect(summary).toContain('RSI proposal set for batch-rsi');
+    expect(summary).toContain('Cross-run improvement: insufficient_data');
+    expect(summary).toContain('prompts/explore-gaps.md');
+    expect(summary).toContain('proof: Show the prompt/skill patch changes');
   });
 });

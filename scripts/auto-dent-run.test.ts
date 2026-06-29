@@ -473,7 +473,10 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
     );
 
     expect(closeSection).toContain('writeRsiImprovementProposalsForBatch(issueNum, kaizenRepo, state, outcome');
+    expect(closeSection).toContain('readBatchOutcomesFromGithub(kaizenRepo, { excludeBatchId: state.batch_id })');
+    expect(closeSection).toContain('priorOutcomes');
     expect(closeSection).toContain('[intelligence] stored RSI improvement proposals');
+    expect(closeSection).toContain('cross-run ${rsiWrite.crossRunVerdict}');
     expect(closeSection).toContain('[intelligence] RSI proposal write skipped');
   });
 

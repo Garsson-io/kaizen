@@ -7,6 +7,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { readAttachment, writeAttachment } from '../src/section-editor.js';
 import type { BatchOutcome } from './batch-outcome.js';
@@ -27,6 +29,18 @@ const RsiMetricSnapshotSchema = z.object({
   prs: z.number(),
   issues_closed: z.number(),
   cost_usd: z.number(),
+});
+
+const RsiCrossRunImprovementSchema = z.object({
+  verdict: z.enum(['insufficient_data', 'improving', 'steady', 'degrading']),
+  batches_analyzed: z.number(),
+  previous_batch_id: z.string().nullable(),
+  latest_batch_id: z.string().nullable(),
+  success_rate_delta: z.number().nullable(),
+  review_fail_rate_delta: z.number().nullable(),
+  avg_cost_per_success_delta: z.number().nullable(),
+  degradation_score_delta: z.number().nullable(),
+  summary: z.string(),
 });
 
 const RsiTargetSchema = z.object({
@@ -79,6 +93,7 @@ export const RsiImprovementProposalSetSchema = z.object({
     run_count: z.number(),
   }),
   baseline: RsiMetricSnapshotSchema,
+  cross_run_improvement: RsiCrossRunImprovementSchema,
   proposals: z.array(RsiImprovementProposalSchema),
   diagnostics: z.array(z.string()),
 });
@@ -92,6 +107,7 @@ export const RsiProposalEvaluationSchema = z.object({
 });
 
 export type RsiMetricSnapshot = z.infer<typeof RsiMetricSnapshotSchema>;
+export type RsiCrossRunImprovement = z.infer<typeof RsiCrossRunImprovementSchema>;
 export type RsiImprovementProposal = z.infer<typeof RsiImprovementProposalSchema>;
 export type RsiImprovementProposalSet = z.infer<typeof RsiImprovementProposalSetSchema>;
 export type RsiProposalEvaluation = z.infer<typeof RsiProposalEvaluationSchema>;
@@ -99,11 +115,13 @@ export type RsiProposalEvaluation = z.infer<typeof RsiProposalEvaluationSchema>;
 export interface BuildRsiImprovementProposalSetOptions {
   generatedAt?: string;
   maxProposals?: number;
+  priorOutcomes?: BatchOutcome[];
 }
 
 export interface RsiImprovementProposalWriteResult {
   status: 'written' | 'skipped';
   proposalCount: number;
+  crossRunVerdict?: RsiCrossRunImprovement['verdict'];
   url?: string;
   reason?: string;
 }
@@ -114,6 +132,15 @@ function stableId(parts: string[]): string {
 
 function nonEmptyUnique(values: string[]): string[] {
   return [...new Set(values.map((v) => v.trim()).filter(Boolean))];
+}
+
+function nullableDelta(after: number | null, before: number | null): number | null {
+  if (after === null || before === null) return null;
+  return after - before;
+}
+
+function outcomeSortKey(outcome: BatchOutcome): string {
+  return `${String(outcome.batch_start).padStart(16, '0')}:${outcome.batch_id}`;
 }
 
 export function metricSnapshotFromOutcome(outcome: BatchOutcome): RsiMetricSnapshot {
@@ -130,6 +157,63 @@ export function metricSnapshotFromOutcome(outcome: BatchOutcome): RsiMetricSnaps
   };
 }
 
+export function computeRsiCrossRunImprovement(outcomes: BatchOutcome[]): RsiCrossRunImprovement {
+  const ordered = [...outcomes].sort((a, b) => outcomeSortKey(a).localeCompare(outcomeSortKey(b)));
+  if (ordered.length < 2) {
+    return RsiCrossRunImprovementSchema.parse({
+      verdict: 'insufficient_data',
+      batches_analyzed: ordered.length,
+      previous_batch_id: null,
+      latest_batch_id: ordered[0]?.batch_id ?? null,
+      success_rate_delta: null,
+      review_fail_rate_delta: null,
+      avg_cost_per_success_delta: null,
+      degradation_score_delta: null,
+      summary: 'Need at least two batch outcomes before cross-run RSI improvement can be measured.',
+    });
+  }
+
+  const previous = ordered[ordered.length - 2];
+  const latest = ordered[ordered.length - 1];
+  const previousSnapshot = metricSnapshotFromOutcome(previous);
+  const latestSnapshot = metricSnapshotFromOutcome(latest);
+  const successRateDelta = latestSnapshot.success_rate - previousSnapshot.success_rate;
+  const reviewFailRateDelta = latestSnapshot.review_fail_rate - previousSnapshot.review_fail_rate;
+  const costDelta = nullableDelta(latestSnapshot.avg_cost_per_success, previousSnapshot.avg_cost_per_success);
+  const degradationScoreDelta = nullableDelta(latestSnapshot.degradation_score, previousSnapshot.degradation_score);
+
+  let score = 0;
+  if (successRateDelta >= 0.05) score += 1;
+  if (successRateDelta <= -0.05) score -= 1;
+  if (reviewFailRateDelta <= -0.05) score += 1;
+  if (reviewFailRateDelta >= 0.05) score -= 1;
+  if (costDelta !== null && costDelta <= -0.5) score += 1;
+  if (costDelta !== null && costDelta >= 0.5) score -= 1;
+  if (degradationScoreDelta !== null && degradationScoreDelta <= -0.1) score += 1;
+  if (degradationScoreDelta !== null && degradationScoreDelta >= 0.1) score -= 1;
+
+  const verdict = score > 0 ? 'improving' : score < 0 ? 'degrading' : 'steady';
+  const summary = [
+    `${latest.batch_id} vs ${previous.batch_id}`,
+    `success_rate ${successRateDelta >= 0 ? '+' : ''}${successRateDelta.toFixed(2)}`,
+    `review_fail_rate ${reviewFailRateDelta >= 0 ? '+' : ''}${reviewFailRateDelta.toFixed(2)}`,
+    costDelta === null ? 'avg_cost_per_success n/a' : `avg_cost_per_success ${costDelta >= 0 ? '+' : ''}${costDelta.toFixed(2)}`,
+    degradationScoreDelta === null ? 'degradation_score n/a' : `degradation_score ${degradationScoreDelta >= 0 ? '+' : ''}${degradationScoreDelta.toFixed(2)}`,
+  ].join('; ');
+
+  return RsiCrossRunImprovementSchema.parse({
+    verdict,
+    batches_analyzed: ordered.length,
+    previous_batch_id: previous.batch_id,
+    latest_batch_id: latest.batch_id,
+    success_rate_delta: successRateDelta,
+    review_fail_rate_delta: reviewFailRateDelta,
+    avg_cost_per_success_delta: costDelta,
+    degradation_score_delta: degradationScoreDelta,
+    summary,
+  });
+}
+
 function repeatedFailureSignals(history: RunMetrics[]): string[] {
   const counts = new Map<string, number>();
   for (const run of history) {
@@ -144,7 +228,11 @@ function repeatedFailureSignals(history: RunMetrics[]): string[] {
     .map(([failureClass, count]) => `${count} runs ended with failure class "${failureClass}"`);
 }
 
-function collectSignals(state: BatchState, outcome: BatchOutcome): string[] {
+function collectSignals(
+  state: BatchState,
+  outcome: BatchOutcome,
+  crossRunImprovement: RsiCrossRunImprovement,
+): string[] {
   const signals: string[] = [];
   signals.push(...nonEmptyUnique(state.reflection_insights ?? []));
   signals.push(...repeatedFailureSignals(state.run_history ?? []));
@@ -153,6 +241,9 @@ function collectSignals(state: BatchState, outcome: BatchOutcome): string[] {
     signals.push(
       `Long-horizon degradation signal: ${degradation.verdict} score ${degradation.score.toFixed(2)} - ${degradation.reasons.join('; ')}`,
     );
+  }
+  if (crossRunImprovement.verdict === 'degrading') {
+    signals.push(`Cross-run RSI improvement metric degraded: ${crossRunImprovement.summary}`);
   }
   return nonEmptyUnique(signals);
 }
@@ -215,13 +306,14 @@ function acceptanceCriteria(baseline: RsiMetricSnapshot): RsiImprovementProposal
   };
 }
 
-function proposalForSignal(
-  signal: string,
+function proposalForSignals(
+  signals: string[],
   baseline: RsiMetricSnapshot,
   batchId: string,
 ): RsiImprovementProposal {
-  const target = targetForSignal(signal);
-  const id = `rsi-${stableId([batchId, target.path, signal])}`;
+  const target = targetForSignal(signals[0]);
+  const failurePattern = signals.join(' | ');
+  const id = `rsi-${stableId([batchId, target.path, ...signals])}`;
   const kind = proposalKindForTarget(target);
   const promptTarget = target.kind === 'prompt' ? target : undefined;
 
@@ -230,16 +322,35 @@ function proposalForSignal(
     status: 'proposed',
     kind,
     target,
-    source_signals: [signal],
-    failure_pattern: signal,
+    source_signals: signals,
+    failure_pattern: failurePattern,
     proposed_change:
-      `Patch ${target.path} so future auto-dent runs explicitly handle this observed pattern: ${signal}`,
+      `Patch ${target.path} so future auto-dent runs explicitly handle these observed patterns: ${failurePattern}`,
     proof_required: proofRequirementForTarget(target),
     acceptance: acceptanceCriteria(baseline),
     ...(promptTarget
-      ? { gepa_feedback: { prompt_target: promptTarget, textual_feedback: [signal] } }
+      ? { gepa_feedback: { prompt_target: promptTarget, textual_feedback: signals } }
       : {}),
   };
+}
+
+function proposalsForSignals(
+  signals: string[],
+  baseline: RsiMetricSnapshot,
+  batchId: string,
+  maxProposals: number,
+): RsiImprovementProposal[] {
+  const byTargetPath = new Map<string, string[]>();
+  for (const signal of signals) {
+    const target = targetForSignal(signal);
+    const existing = byTargetPath.get(target.path);
+    if (existing) existing.push(signal);
+    else byTargetPath.set(target.path, [signal]);
+  }
+
+  return [...byTargetPath.values()]
+    .slice(0, Math.max(0, maxProposals))
+    .map((targetSignals) => proposalForSignals(targetSignals, baseline, batchId));
 }
 
 export function buildRsiImprovementProposalSet(
@@ -248,14 +359,16 @@ export function buildRsiImprovementProposalSet(
   opts: BuildRsiImprovementProposalSetOptions = {},
 ): RsiImprovementProposalSet {
   const baseline = metricSnapshotFromOutcome(outcome);
-  const signals = collectSignals(state, outcome);
+  const crossRunImprovement = computeRsiCrossRunImprovement([...(opts.priorOutcomes ?? []), outcome]);
+  const signals = collectSignals(state, outcome, crossRunImprovement);
   const maxProposals = opts.maxProposals ?? 3;
-  const proposals = signals
-    .slice(0, Math.max(0, maxProposals))
-    .map((signal) => proposalForSignal(signal, baseline, outcome.batch_id));
+  const proposals = proposalsForSignals(signals, baseline, outcome.batch_id, maxProposals);
   const diagnostics = proposals.length === 0
     ? ['No actionable RSI proposal signals: no reflection insights, non-healthy degradation signal, or repeated failure class.']
-    : [`${proposals.length} proposal(s) generated from ${signals.length} signal(s).`];
+    : [
+      `${proposals.length} proposal(s) generated from ${signals.length} signal(s).`,
+      `Cross-run RSI metric: ${crossRunImprovement.verdict} (${crossRunImprovement.summary})`,
+    ];
 
   return RsiImprovementProposalSetSchema.parse({
     schema_version: RSI_IMPROVEMENT_SCHEMA_VERSION,
@@ -267,6 +380,7 @@ export function buildRsiImprovementProposalSet(
       run_count: outcome.totals.runs,
     },
     baseline,
+    cross_run_improvement: crossRunImprovement,
     proposals,
     diagnostics,
   });
@@ -367,17 +481,26 @@ export function writeRsiImprovementProposalsForBatch(
   deps: {
     write?: typeof writeAttachment;
     generatedAt?: string;
+    priorOutcomes?: BatchOutcome[];
   } = {},
 ): RsiImprovementProposalWriteResult {
   try {
-    const proposalSet = buildRsiImprovementProposalSet(state, outcome, { generatedAt: deps.generatedAt });
+    const proposalSet = buildRsiImprovementProposalSet(state, outcome, {
+      generatedAt: deps.generatedAt,
+      priorOutcomes: deps.priorOutcomes,
+    });
     const url = writeRsiImprovementProposalsAttachment(
       issueNumber,
       repo,
       proposalSet,
       deps.write ?? writeAttachment,
     );
-    return { status: 'written', proposalCount: proposalSet.proposals.length, url };
+    return {
+      status: 'written',
+      proposalCount: proposalSet.proposals.length,
+      crossRunVerdict: proposalSet.cross_run_improvement.verdict,
+      url,
+    };
   } catch (err) {
     return {
       status: 'skipped',
@@ -397,4 +520,102 @@ export function readRsiImprovementProposals(
   );
   if (!attachment) return null;
   return RsiImprovementProposalSetSchema.parse(JSON.parse(attachment.content));
+}
+
+export function formatRsiProposalSetSummary(proposalSet: RsiImprovementProposalSet): string {
+  const lines = [
+    `RSI proposal set for ${proposalSet.batch_id}`,
+    `Generated: ${proposalSet.generated_at}`,
+    `Cross-run improvement: ${proposalSet.cross_run_improvement.verdict} - ${proposalSet.cross_run_improvement.summary}`,
+    `Proposals: ${proposalSet.proposals.length}`,
+  ];
+
+  for (const proposal of proposalSet.proposals) {
+    lines.push(
+      `- ${proposal.id}: ${proposal.kind} -> ${proposal.target.path}`,
+      `  signals: ${proposal.source_signals.join(' | ')}`,
+      `  proof: ${proposal.proof_required.behavioral_proof}`,
+    );
+  }
+
+  if (proposalSet.proposals.length === 0) {
+    lines.push(`Diagnostics: ${proposalSet.diagnostics.join(' | ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+function parseCliArgs(args: string[]): Map<string, string> {
+  const parsed = new Map<string, string>();
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg.startsWith('--')) continue;
+    const next = args[i + 1];
+    if (!next || next.startsWith('--')) {
+      parsed.set(arg.slice(2), 'true');
+      continue;
+    }
+    parsed.set(arg.slice(2), next);
+    i += 1;
+  }
+  return parsed;
+}
+
+function loadProposalSet(args: Map<string, string>): RsiImprovementProposalSet {
+  const file = args.get('file');
+  if (file) {
+    return RsiImprovementProposalSetSchema.parse(JSON.parse(readFileSync(file, 'utf8')));
+  }
+  const issue = args.get('issue');
+  const repo = args.get('repo');
+  if (!issue || !repo) {
+    throw new Error('summary requires --file or both --issue and --repo');
+  }
+  const proposalSet = readRsiImprovementProposals(issue, repo);
+  if (!proposalSet) {
+    throw new Error(`No ${RSI_IMPROVEMENT_PROPOSALS_ATTACHMENT} attachment found on ${repo}#${issue}`);
+  }
+  return proposalSet;
+}
+
+function runCli(argv: string[]): void {
+  const [command, ...rest] = argv;
+  const args = parseCliArgs(rest);
+
+  if (command === 'summary') {
+    console.log(formatRsiProposalSetSummary(loadProposalSet(args)));
+    return;
+  }
+
+  if (command === 'evaluate') {
+    const proposalSet = loadProposalSet(args);
+    const afterOutcomeFile = args.get('after-outcome-file');
+    if (!afterOutcomeFile) {
+      throw new Error('evaluate requires --after-outcome-file');
+    }
+    const proposalId = args.get('proposal-id') ?? proposalSet.proposals[0]?.id;
+    const proposal = proposalSet.proposals.find((candidate) => candidate.id === proposalId);
+    if (!proposal) {
+      throw new Error(`Proposal not found: ${proposalId ?? '(none)'}`);
+    }
+    const afterOutcome = JSON.parse(readFileSync(afterOutcomeFile, 'utf8')) as BatchOutcome;
+    console.log(JSON.stringify(evaluateRsiProposalOutcome(proposal, afterOutcome), null, 2));
+    return;
+  }
+
+  throw new Error([
+    'Usage:',
+    '  npx tsx scripts/auto-dent-rsi.ts summary --issue <N> --repo <owner/repo>',
+    '  npx tsx scripts/auto-dent-rsi.ts summary --file <proposal-set.json>',
+    '  npx tsx scripts/auto-dent-rsi.ts evaluate --file <proposal-set.json> --after-outcome-file <batch-outcome.json> [--proposal-id <id>]',
+  ].join('\n'));
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  try {
+    runCli(process.argv.slice(2));
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+  }
 }

@@ -50,6 +50,7 @@ import {
   computeSteeringRecommendations,
   deriveBanditPriorFromOutcomes,
   type BanditPrior,
+  type BatchOutcome,
 } from './batch-outcome.js';
 import {
   writeRsiImprovementProposalsForBatch,
@@ -3219,12 +3220,19 @@ export function closeBatchProgressIssue(
   // before/after metrics. Best-effort like batch-outcome; proposal generation
   // must never block finalization.
   if (outcome) {
+    let priorOutcomes: BatchOutcome[] = [];
+    try {
+      priorOutcomes = readBatchOutcomesFromGithub(kaizenRepo, { excludeBatchId: state.batch_id });
+    } catch (err) {
+      console.log(`  [intelligence] RSI cross-run metric limited to current batch: ${(err as Error).message}`);
+    }
     const rsiWrite = writeRsiImprovementProposalsForBatch(issueNum, kaizenRepo, state, outcome, {
       write: deps.writeAttachment ?? writeAttachment,
+      priorOutcomes,
     });
     if (rsiWrite.status === 'written') {
       console.log(
-        `  [intelligence] stored RSI improvement proposals on #${issueNum} (${rsiWrite.proposalCount} proposal(s))`,
+        `  [intelligence] stored RSI improvement proposals on #${issueNum} (${rsiWrite.proposalCount} proposal(s), cross-run ${rsiWrite.crossRunVerdict})`,
       );
     } else {
       console.log(`  [intelligence] RSI proposal write skipped: ${rsiWrite.reason}`);

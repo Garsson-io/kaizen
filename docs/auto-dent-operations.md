@@ -328,8 +328,24 @@ After a batch completes:
    - `rsi-improvement-proposals` (`scripts/auto-dent-rsi.ts`) — bounded RSI
      proposal set built from reflection/degradation signals. Each proposal names
      the target prompt/skill/process surface, behavioral proof requirements,
-     baseline metrics, and accept/reject criteria for later batch outcomes
-     (#1158).
+     baseline metrics, a cross-run improvement verdict, and accept/reject
+     criteria for later batch outcomes (#1158). Inspect it with:
+     ```bash
+     npx tsx scripts/auto-dent-rsi.ts summary --issue <progress-issue> \
+       --repo Garsson-io/kaizen
+     ```
+
+     To close the loop after applying one proposal, evaluate the next
+     `batch-outcome` against the stored baseline:
+     ```bash
+     npx tsx scripts/auto-dent-rsi.ts evaluate \
+       --file rsi-improvement-proposals.json \
+       --after-outcome-file next-batch-outcome.json
+     ```
+
+     The `summary` command can read directly from GitHub (`--issue/--repo`) or
+     from a saved JSON file (`--file`). The evaluator intentionally reads files
+     so review evidence can pin the exact before/after artifacts used.
    - `batch-artifacts` (`scripts/batch-artifacts-upload.ts`) — the RAW forensic
      dump: `events.jsonl` + `state.json` inlined, size-capped to GitHub's 65,536-char
      comment limit, truncated head+tail with a pointer to the on-disk copy when a
