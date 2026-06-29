@@ -520,6 +520,13 @@ export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
   if (missingDimensions.length > 0) {
     throw new Error(`Refusing to store authoritative review round: missing requested dimensions ${missingDimensions.join(', ')}`);
   }
+  const requested = new Set(artifact.requestedDimensions);
+  const unexpectedDimensions = artifact.result.dimensions
+    .map((dimension) => dimension.dimension)
+    .filter((dimension) => !requested.has(dimension));
+  if (unexpectedDimensions.length > 0) {
+    throw new Error(`Refusing to store authoritative review round: unrequested dimensions present ${unexpectedDimensions.join(', ')}`);
+  }
   for (const dimension of artifact.result.dimensions) {
     const validation = validateReviewFindingPayload(normalizeDimensionReview(dimension));
     if (!validation.ok) {

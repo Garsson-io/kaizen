@@ -479,6 +479,26 @@ describe('assertArtifactStoreable', () => {
     expect(() => assertArtifactStoreable(artifact)).toThrow(/missing requested dimensions/);
   });
 
+  it('fails closed when result dimensions were not requested', () => {
+    const artifact = baseArtifact({
+      requestedDimensions: ['security'],
+      result: {
+        ...baseArtifact().result,
+        dimensions: [
+          baseArtifact().result.dimensions[0],
+          {
+            dimension: 'requirements',
+            verdict: 'pass',
+            summary: 'Unexpected extra dimension.',
+            findings: [{ requirement: 'Requirement trace', status: 'DONE', detail: 'ok' }],
+          },
+        ],
+      },
+    });
+
+    expect(() => assertArtifactStoreable(artifact)).toThrow(/unrequested dimensions present requirements/);
+  });
+
   it('fails closed for zero-dimension authoritative artifacts', () => {
     expect(() => assertArtifactStoreable(baseArtifact({
       requestedDimensions: [],
