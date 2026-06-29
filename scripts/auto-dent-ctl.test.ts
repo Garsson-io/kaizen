@@ -591,6 +591,47 @@ describe('buildBatchReflection', () => {
     expect(reflection.avgCostPerPr).toBeCloseTo(3.25);
   });
 
+  it('keeps the expensive cost-per-PR recommendation for ordinary guidance', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        guidance: 'pick small isolated issues and ship them independently',
+        run: 2,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 4.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'] }),
+          makeRunMetrics({ run: 2, cost_usd: 4.0, prs: ['https://github.com/Garsson-io/kaizen/pull/101'] }),
+        ],
+      }),
+    });
+
+    const reflection = buildBatchReflection(batch);
+    const costInsight = reflection.insights.find((i) => i.message.includes('$4.00/PR'));
+
+    expect(costInsight).toBeDefined();
+    expect(costInsight?.message).toContain('consider simpler issues');
+  });
+
+  it('reframes expensive cost-per-PR when guidance asks for bundled complete work', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        guidance: 'find meaningful tasks, bunch them together into one bigger useful task, finish it to completion perfectly',
+        run: 2,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 4.0, prs: ['https://github.com/Garsson-io/kaizen/pull/100'], issues_closed: ['#10', '#11'] }),
+          makeRunMetrics({ run: 2, cost_usd: 4.0, prs: ['https://github.com/Garsson-io/kaizen/pull/101'], issues_closed: ['#12', '#13'] }),
+        ],
+      }),
+    });
+
+    const reflection = buildBatchReflection(batch);
+    const simplerIssuesAdvice = reflection.insights.find((i) => i.message.includes('consider simpler issues'));
+    const bundledCostInsight = reflection.insights.find((i) => i.message.includes('bundling guidance'));
+
+    expect(simplerIssuesAdvice).toBeUndefined();
+    expect(bundledCostInsight).toBeDefined();
+    expect(bundledCostInsight?.message).toContain('$4.00/PR');
+    expect(bundledCostInsight?.message).toContain('issues closed');
+  });
+
   it('surfaces explore to exploit conversion in reflection comments', () => {
     const batch = makeBatchInfo({
       state: makeBatchState({

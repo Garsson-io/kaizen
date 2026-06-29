@@ -71,29 +71,29 @@ describe('parseKnownFailures', () => {
 
 describe('isKnownFailure / unownedFailures', () => {
   const entries: KnownFailure[] = [
-    { test: 'test_hooks.py::TestPRLifecycle::test_full_lifecycle', issue: 1481, reason: 'tracked' },
-    { test: 'flaky_suite.py', issue: 1200, reason: 'whole-file flake' },
+    { test: 'hook-wrapper-live.test.ts > PR lifecycle > full lifecycle', issue: 1481, reason: 'tracked' },
+    { test: 'flaky-suite.test.ts', issue: 1200, reason: 'whole-file flake' },
   ];
 
-  it('matches an exact nodeid', () => {
-    expect(isKnownFailure('x/test_hooks.py::TestPRLifecycle::test_full_lifecycle', entries)?.issue).toBe(1481);
+  it('matches an exact test id', () => {
+    expect(isKnownFailure('x/hook-wrapper-live.test.ts > PR lifecycle > full lifecycle', entries)?.issue).toBe(1481);
   });
 
   it('matches any failure in a file-scoped entry', () => {
-    expect(isKnownFailure('a/flaky_suite.py::TestX::test_y', entries)?.issue).toBe(1200);
+    expect(isKnownFailure('a/flaky-suite.test.ts > TestX > test y', entries)?.issue).toBe(1200);
   });
 
   it('does not match an unrelated failure', () => {
-    expect(isKnownFailure('test_other.py::test_z', entries)).toBeUndefined();
+    expect(isKnownFailure('other.test.ts > test z', entries)).toBeUndefined();
   });
 
   it('returns only the unowned failures', () => {
     const failing = [
-      'flaky_suite.py::TestX::test_y',
-      'test_other.py::test_z',
-      'test_hooks.py::TestPRLifecycle::test_full_lifecycle',
+      'flaky-suite.test.ts > TestX > test y',
+      'other.test.ts > test z',
+      'hook-wrapper-live.test.ts > PR lifecycle > full lifecycle',
     ];
-    expect(unownedFailures(failing, entries)).toEqual(['test_other.py::test_z']);
+    expect(unownedFailures(failing, entries)).toEqual(['other.test.ts > test z']);
   });
 
   it('treats an empty registry as: everything is unowned', () => {

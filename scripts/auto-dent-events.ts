@@ -77,6 +77,8 @@ export interface RunCompleteEvent extends BaseEvent {
   duration_ms: number;
   exit_code: number;
   cost_usd: number;
+  /** Cost data-integrity warnings detected from incomplete/ambiguous provider streams. */
+  cost_integrity_warnings?: string[];
   tool_calls: number;
   prs_created: number;
   issues_filed: number;

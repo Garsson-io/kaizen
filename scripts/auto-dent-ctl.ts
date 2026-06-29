@@ -407,6 +407,19 @@ export interface BuildBatchReflectionOptions {
   drySweepReport?: DrySweepReport | null;
 }
 
+function guidanceSignalsBundledWork(guidance: string): boolean {
+  const text = guidance.toLowerCase();
+  return [
+    /\bbunch(?:ed|ing)?\b/,
+    /\bbundl(?:e|ed|es|ing)\b/,
+    /\bone\s+(?:big|bigger|large|larger)\s+(?:task|pr|change)\b/,
+    /\blarger\s+(?:complete\s+)?(?:task|pr|change)\b/,
+    /\bfinish(?:ed|ing)?\s+(?:it\s+)?to\s+completion\b/,
+    /\bcompleteness\s+beats\b/,
+    /\bcomplete\s+pr\b/,
+  ].some((pattern) => pattern.test(text));
+}
+
 /**
  * Build a batch reflection from state data.
  * Analyzes run history to find patterns, efficiency anomalies, and recommendations.
@@ -525,10 +538,17 @@ export function buildBatchReflection(
         message: `Efficient: $${avgCostPerPr.toFixed(2)}/PR is below the $1.50 target`,
       });
     } else if (avgCostPerPr > 3.0) {
-      insights.push({
-        type: 'recommendation',
-        message: `Expensive: $${avgCostPerPr.toFixed(2)}/PR is above the $3.00 threshold — consider simpler issues`,
-      });
+      if (guidanceSignalsBundledWork(s.guidance)) {
+        insights.push({
+          type: 'recommendation',
+          message: `High cost/PR: $${avgCostPerPr.toFixed(2)}/PR is above the $3.00 threshold, but aligned with bundling guidance — evaluate issues closed and completeness before simplifying scope`,
+        });
+      } else {
+        insights.push({
+          type: 'recommendation',
+          message: `Expensive: $${avgCostPerPr.toFixed(2)}/PR is above the $3.00 threshold — consider simpler issues`,
+        });
+      }
     }
   }
 

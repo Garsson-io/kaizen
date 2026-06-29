@@ -207,6 +207,33 @@ describe('normalizeCodexEventToStreamMessages (#1488)', () => {
     expect(ctx).toMatchObject({ lastActivity: expect.stringContaining('gh pr create') });
   });
 
+  it('does not treat PR URLs from non-create command output as created PRs', () => {
+    const messages = normalizeCodexEventToStreamMessages({
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        command: 'gh pr list --repo Garsson-io/kaizen --state open',
+        aggregated_output: [
+          'https://github.com/Garsson-io/kaizen/pull/1026 fix: rename stale refs',
+          'https://github.com/Garsson-io/kaizen/pull/10 old referenced PR',
+          'https://github.com/test/test/pull/1 external fixture',
+        ].join('\n'),
+        exit_code: 0,
+        status: 'completed',
+      },
+    });
+
+    const result = makeRunResult();
+    const ctx = {};
+    for (const message of messages) {
+      processStreamMessage(message, result, Date.now(), ctx);
+    }
+
+    expect(result.toolCalls).toBe(1);
+    expect(result.prs).toEqual([]);
+    expect(ctx).toMatchObject({ lastActivity: expect.stringContaining('gh pr list') });
+  });
+
   it('turns Codex final messages into canonical result messages for final claim parsing', () => {
     const claim = {
       schema_version: 1,

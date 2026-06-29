@@ -492,8 +492,8 @@ async function handleStoreIteration(a: CliArgs): Promise<void> {
  * Refuses unless `KAIZEN_TEST_RUNNER=1`, so this can never be a production
  * fabrication bypass of the review gate (#1019/#1212 class). It reuses the same
  * `writeSentinelRecord` SSOT and `expectedPrReviewDimensions()` the validator
- * uses, so the Python harness carries zero knowledge of the sentinel format —
- * the drift that caused #1481 cannot recur.
+ * uses, so the hook lifecycle runner carries zero knowledge of the sentinel
+ * format — the drift that caused #1481 cannot recur.
  */
 async function handleEmitTestReviewSentinel(a: CliArgs): Promise<void> {
   if (process.env.KAIZEN_TEST_RUNNER !== '1') {

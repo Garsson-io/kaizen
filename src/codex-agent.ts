@@ -148,6 +148,10 @@ export function normalizeCodexFinalTextToStreamMessages(text: string): AutoDentS
   return text ? [resultText(text)] : [];
 }
 
+function isPrCreateCommand(command: string): boolean {
+  return /\bgh\s+pr\s+create\b/.test(command);
+}
+
 /**
  * Normalize provider-specific Codex JSONL rows into the same stream-json shape
  * that auto-dent's stream processor already consumes for Claude.
@@ -188,7 +192,7 @@ export function normalizeCodexEventToStreamMessages(event: unknown): AutoDentStr
             content: [{ type: 'tool_result', content: output }],
           },
         };
-        const prUrl = extractPrUrl(output);
+        const prUrl = isPrCreateCommand(command) ? extractPrUrl(output) : undefined;
         if (prUrl) {
           toolResult.tool_use_result = {
             gitOperation: {

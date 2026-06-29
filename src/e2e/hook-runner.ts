@@ -9,7 +9,16 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readdirSync, chmodSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -123,6 +132,18 @@ export function bashPost(
   );
 }
 
+export function agentPost(
+  prompt = "Run /kaizen-review-pr dimension review",
+  opts?: { stdout?: string; stderr?: string; exitCode?: string; cwd?: string; sessionId?: string },
+): PostToolUseEvent {
+  return postToolUse(
+    "Agent",
+    { prompt },
+    { stdout: opts?.stdout ?? "review complete", stderr: opts?.stderr, exitCode: opts?.exitCode },
+    opts,
+  );
+}
+
 export function writePre(filePath: string, opts?: { cwd?: string; sessionId?: string }): PreToolUseEvent {
   return preToolUse("Write", { file_path: filePath, content: "test content" }, opts);
 }
@@ -180,6 +201,25 @@ export function denyReason(result: HookResult): string {
   }
 }
 
+export function assertPostHookStdoutContains(result: HookResult, expected: string, context: string): void {
+  if (result.timedOut) {
+    throw new Error(
+      `${context} timed out before emitting ${JSON.stringify(expected)}. ` +
+      `hook=${result.hookPath}, exit=${result.exitCode}, stderr=${JSON.stringify(result.stderr)}. ` +
+      "PostToolUse hooks are advisory and can be slow under fleet load; " +
+      "increase the timeout option if this bounded test budget is too low.",
+    );
+  }
+  if (!result.stdout.includes(expected)) {
+    throw new Error(
+      `${context} did not emit ${JSON.stringify(expected)}. ` +
+      `hook=${result.hookPath}, exit=${result.exitCode}, ` +
+      `stdout=${JSON.stringify(result.stdout.slice(0, 500))}, ` +
+      `stderr=${JSON.stringify(result.stderr.slice(0, 500))}`,
+    );
+  }
+}
+
 // ── Hook Runner ──
 
 export interface RunHookOptions {
@@ -188,12 +228,56 @@ export interface RunHookOptions {
   cwd?: string;
 }
 
+export interface IsolatedHookEnv {
+  stateDir: string;
+  auditDir: string;
+  env: Record<string, string>;
+  cleanup: () => void;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function repoRoot(): string {
+  return process.cwd();
+}
+
+export function createIsolatedHookEnv(): IsolatedHookEnv {
+  const root = mkdtempSync(join(tmpdir(), "hook-harness-"));
+  const stateDir = join(root, "state");
+  const auditDir = join(root, "audit");
+  mkdirSync(stateDir);
+  mkdirSync(auditDir);
+
+  const env: Record<string, string> = {
+    STATE_DIR: stateDir,
+    AUDIT_DIR: auditDir,
+    AUDIT_LOG: join(auditDir, "no-action.log"),
+    DEBUG_LOG: "/dev/null",
+    HOOK_TIMING_SENTINEL_DISABLED: "true",
+    SEND_TELEGRAM_IPC_DISABLED: "true",
+    KAIZEN_TEST_RUNNER: "1",
+  };
+  const localTsx = join(repoRoot(), "node_modules", ".bin", "tsx");
+  if (existsSync(localTsx)) {
+    env.KAIZEN_TSX_BIN = localTsx;
+  }
+
+  return {
+    stateDir,
+    auditDir,
+    env,
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
 export function runHook(
   hookPath: string,
-  event: HookEvent,
+  event: HookEvent | string,
   opts?: RunHookOptions,
 ): HookResult {
-  const json = JSON.stringify(event);
+  const json = typeof event === "string" ? event : JSON.stringify(event);
   const timeout = opts?.timeout ?? 15000;
   const cwd = opts?.cwd ?? process.cwd();
 
@@ -240,19 +324,38 @@ export function createMockDir(): MockDir {
 
 export function addGitMock(
   mockDir: MockDir,
-  opts?: { branch?: string; isWorktree?: boolean; statusOutput?: string },
+  opts?: {
+    branch?: string;
+    diffOutput?: string;
+    isWorktree?: boolean;
+    remoteUrl?: string;
+    simulateMainCheckout?: boolean;
+    statusOutput?: string;
+  },
 ): void {
   const branch = opts?.branch ?? "wt/test-branch";
-  const gitDirLine = opts?.isWorktree === false
+  const simulateMainCheckout = opts?.simulateMainCheckout ?? opts?.isWorktree === false;
+  const gitDirLine = simulateMainCheckout
     ? 'echo ".git"; exit 0'
     : '/usr/bin/git rev-parse --git-dir 2>/dev/null';
+  const statusOutput = opts?.statusOutput ?? "";
+  const diffOutput = opts?.diffOutput ?? "";
+  const contentDirty = statusOutput.trim() ? 1 : 0;
+  const remoteUrl = opts?.remoteUrl ?? "https://github.com/Garsson-io/test-project.git";
   const script = `#!/bin/bash
 if echo "$@" | grep -q "rev-parse --abbrev-ref"; then
   echo "${branch}"
   exit 0
 fi
 if echo "$@" | grep -q "status --porcelain"; then
-  printf '%s' '${opts?.statusOutput ?? ""}'
+  printf '%s' ${shellQuote(statusOutput)}
+  exit 0
+fi
+if echo "$@" | grep -q "diff --quiet HEAD"; then
+  exit ${contentDirty}
+fi
+if echo "$@" | grep -q "diff --name-only"; then
+  printf '%s' ${shellQuote(diffOutput)}
   exit 0
 fi
 if echo "$@" | grep -q "rev-parse --git-common-dir"; then
@@ -263,10 +366,11 @@ if echo "$@" | grep -q "rev-parse --git-dir"; then
   ${gitDirLine}
 fi
 if echo "$@" | grep -q "remote get-url"; then
-  echo "https://github.com/Garsson-io/test-project.git"
+  echo "${remoteUrl}"
   exit 0
 fi
-if echo "$@" | grep -q "diff --name-only"; then
+if echo "$@" | grep -q "log -1 --format=%P HEAD"; then
+  echo "mock-parent-sha"
   exit 0
 fi
 if echo "$@" | grep -q "rev-parse --show-toplevel"; then
@@ -279,15 +383,24 @@ fi
   chmodSync(join(mockDir.path, "git"), 0o755);
 }
 
-export function addGhMock(mockDir: MockDir, opts?: { prState?: string }): void {
+export function addGhMock(
+  mockDir: MockDir,
+  opts?: { prDiffOutput?: string; prState?: string; prViewBody?: string },
+): void {
   const state = opts?.prState ?? "OPEN";
+  const prDiffOutput = opts?.prDiffOutput ?? "diff --git a/src/test.ts b/src/test.ts";
+  const prViewBody = opts?.prViewBody;
   const script = `#!/bin/bash
 if echo "$@" | grep -q "pr view"; then
-  echo "${state}"
+  if [ ${prViewBody === undefined ? "1" : "0"} -eq 1 ]; then
+    echo "${state}"
+  else
+    printf '%s' ${shellQuote(prViewBody ?? "")}
+  fi
   exit 0
 fi
 if echo "$@" | grep -q "pr diff"; then
-  echo "diff --git a/src/test.ts b/src/test.ts"
+  printf '%s' ${shellQuote(prDiffOutput)}
   exit 0
 fi
 if echo "$@" | grep -q "issue"; then
@@ -307,11 +420,20 @@ export interface StateDir {
   hasFile: (pattern: string) => boolean;
   fileCount: (pattern: string) => number;
   createReviewState: (prUrl: string, opts?: { round?: number; status?: string; branch?: string }) => void;
+  createReviewSentinel: (prUrl: string, round: number | string) => void;
   createKaizenState: (prUrl: string, opts?: { status?: string; branch?: string }) => void;
+  readReviewState: (prUrl: string) => Record<string, string> | undefined;
+  reviewStateExists: (prUrl: string) => boolean;
+  stateCount: () => number;
+}
+
+function stateKey(prUrl: string): string {
+  return prUrl.replace("https://github.com/", "").replace("/pull/", "_").replace(/\//g, "_");
 }
 
 export function createStateDir(): StateDir {
   const dir = mkdtempSync(join(tmpdir(), "hook-state-"));
+  const reviewStatePath = (prUrl: string) => join(dir, stateKey(prUrl));
   return {
     path: dir,
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
@@ -330,14 +452,70 @@ export function createStateDir(): StateDir {
       }
     },
     createReviewState: (prUrl: string, opts) => {
-      const key = prUrl.replace("https://github.com/", "").replace("/pull/", "_").replace(/\//g, "_");
       const content = `PR_URL=${prUrl}\nROUND=${opts?.round ?? 1}\nSTATUS=${opts?.status ?? "needs_review"}\nBRANCH=${opts?.branch ?? "wt/test-branch"}\n`;
-      writeFileSync(join(dir, key), content);
+      writeFileSync(reviewStatePath(prUrl), content);
+      chmodSync(reviewStatePath(prUrl), 0o600);
+    },
+    createReviewSentinel: (prUrl: string, round: number | string) => {
+      const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/.exec(prUrl);
+      if (!match) {
+        throw new Error(`createReviewSentinel: cannot parse PR URL: ${prUrl}`);
+      }
+      const [, repo, pr] = match;
+      const localTsx = join(repoRoot(), "node_modules", ".bin", "tsx");
+      const command = existsSync(localTsx) ? localTsx : "npx";
+      const args = existsSync(localTsx)
+        ? [
+            "src/cli-structured-data.ts",
+            "emit-test-review-sentinel",
+            "--repo",
+            repo,
+            "--pr",
+            pr,
+            "--round",
+            String(round),
+          ]
+        : [
+            "tsx",
+            "src/cli-structured-data.ts",
+            "emit-test-review-sentinel",
+            "--repo",
+            repo,
+            "--pr",
+            pr,
+            "--round",
+            String(round),
+          ];
+      const result = spawnSync(command, args, {
+        cwd: repoRoot(),
+        encoding: "utf-8",
+        env: { ...process.env, STATE_DIR: dir, KAIZEN_TEST_RUNNER: "1" },
+        timeout: 30000,
+      });
+      if (result.status !== 0) {
+        throw new Error(
+          `emit-test-review-sentinel failed (${result.status}): ${result.stdout}${result.stderr}`,
+        );
+      }
     },
     createKaizenState: (prUrl: string, opts) => {
-      const key = prUrl.replace("https://github.com/", "").replace("/pull/", "_").replace(/\//g, "_");
+      const key = stateKey(prUrl);
       const content = `PR_URL=${prUrl}\nSTATUS=${opts?.status ?? "needs_pr_kaizen"}\nBRANCH=${opts?.branch ?? "wt/test-branch"}\n`;
       writeFileSync(join(dir, `pr-kaizen-${key}`), content);
     },
+    readReviewState: (prUrl: string) => {
+      const filePath = reviewStatePath(prUrl);
+      if (!existsSync(filePath)) return undefined;
+      const result: Record<string, string> = {};
+      for (const line of readFileSync(filePath, "utf-8").trim().split("\n")) {
+        const [key, ...rest] = line.split("=");
+        if (key && rest.length > 0) {
+          result[key] = rest.join("=");
+        }
+      }
+      return result;
+    },
+    reviewStateExists: (prUrl: string) => existsSync(reviewStatePath(prUrl)),
+    stateCount: () => readdirSync(dir).length,
   };
 }
