@@ -126,7 +126,9 @@ Migration approach per script:
 - Create TypeScript module in `src/hooks/`
 - Port logic with proper types and error handling
 - Add vitest tests (replacing hand-rolled bash tests)
-- Thin bash wrapper (`-ts.sh`) calls `npx tsx` — registered in `plugin.json`
+- Thin bash wrapper (`-ts.sh`) sources `.claude/hooks/lib/run-tsx.sh` and calls
+  `run_tsx "$KAIZEN_DIR" "$KAIZEN_DIR/src/hooks/<hook>.ts"` — registered in
+  `plugin.json`
 - Old bash scripts deleted after migration is wired up
 
 ### Phase 4: Evaluate escalation to L2
@@ -152,8 +154,16 @@ Migration approach per script:
 
 ## Design Decisions
 
-**Q: Should TypeScript hooks use `tsx` (dev) or compiled JS (prod)?**
-A: `tsx` — hooks aren't latency-sensitive, and it avoids build step complexity. If startup becomes a problem, compile as an optimization later.
+**Q: Should TypeScript hooks use `tsx` (dev), Bun, or compiled JS (prod)?**
+A: Use the shared `run-tsx.sh` resolver for production hook shims. It resolves
+repo-local or parent-checkout `tsx` without `npx`, works in worktrees where the
+current checkout lacks `node_modules`, and fails open with an actionable
+diagnostic if dependencies are unavailable. A #454 measurement on this host put
+the real `pr-review-loop-ts.sh` resolver path at 0.54-0.90s, direct `npx tsx`
+at 0.68-0.88s, `npx -y bun` at 0.59-0.68s, and precompiled
+`node dist/hooks/pr-review-loop.js` at 0.10s. Keep the resolver as the default
+until #1662 defines a build-freshness contract for precompiled hooks or a
+standard production Bun installation path.
 
 **Q: Should we migrate `claude-wt.sh`?**
 A: Not yet. It's L2-L3 boundary — orchestration but mostly delegating. Migrate when it breaks or grows.
