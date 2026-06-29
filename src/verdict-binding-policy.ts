@@ -1,6 +1,7 @@
 export type ReviewVerdict = 'pass' | 'fail' | 'skipped';
 export type ProcessVerdict = 'pass' | 'process-incomplete' | 'fail-open-warning';
 export type LifecycleHealth = 'clean' | 'degraded' | 'critical';
+export type PostMergeVerificationVerdict = 'pass' | 'fail' | 'skipped' | 'not-applicable';
 /**
  * Test-health verdict (#1481/#1518). `unowned-failures` means the run observed a
  * failing test that is NOT owned by an OPEN tracking issue in the known-failures
@@ -14,6 +15,7 @@ export interface QualityVerdictSignals {
   reviewVerdict?: ReviewVerdict;
   processVerdict?: ProcessVerdict;
   lifecycleHealth?: LifecycleHealth;
+  postMergeVerification?: PostMergeVerificationVerdict;
   testHealth?: TestHealthVerdict;
 }
 
@@ -46,6 +48,10 @@ export function qualityVerdictBlockReasons(
 
   if (signals.lifecycleHealth === 'critical') {
     reasons.push('lifecycle health critical');
+  }
+
+  if (signals.postMergeVerification === 'fail') {
+    reasons.push('post-merge verification fail');
   }
 
   // #1518: an observed test failure that no OPEN issue owns blocks merge. This

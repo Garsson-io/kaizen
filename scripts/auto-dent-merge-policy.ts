@@ -1,6 +1,7 @@
 import {
   qualityVerdictBlockReasons,
   type LifecycleHealth,
+  type PostMergeVerificationVerdict,
   type ProcessVerdict,
   type ReviewVerdict,
   type TestHealthVerdict,
@@ -24,6 +25,7 @@ export interface AutoMergeSafetySignals {
   reviewVerdict?: ReviewVerdict;
   processVerdict?: ProcessVerdict;
   lifecycleHealth?: LifecycleHealth;
+  postMergeVerification?: PostMergeVerificationVerdict;
   /**
    * Test-health verdict for the run (#1481/#1518). `unowned-failures` blocks the
    * merge; `pass`/`unknown`/absent do not. Consumed via the shared

@@ -176,6 +176,21 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       ],
       terminalCritical: true,
     },
+    {
+      id: 'post-merge-verification-verdict',
+      label: 'Post-merge verification verdict',
+      producer: 'scripts/auto-dent-run.ts: derivePostMergeVerification() from merge state and test-health',
+      producerSignatures: [
+        'scripts/auto-dent-run.ts:function:derivePostMergeVerification',
+        'scripts/auto-dent-run.ts:field:post_merge_verification',
+        'src/verdict-binding-policy.ts:type:PostMergeVerificationVerdict',
+      ],
+      sourceEvidence: [
+        { file: 'scripts/auto-dent-run.ts', tokens: ['derivePostMergeVerification', 'post_merge_verification'] },
+        { file: 'src/verdict-binding-policy.ts', tokens: ['PostMergeVerificationVerdict', 'postMergeVerification'] },
+      ],
+      terminalCritical: true,
+    },
   ],
   nonTerminalVerdictProducers: [
     {
@@ -319,9 +334,9 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       id: 'run-success-stamp',
       label: 'Run-success stamp',
       terminalAction: 'Emit run.complete outcome=success/empty_success/failure/stop',
-      consumedVerdicts: ['review-battery-verdict', 'process-evidence-verdict', 'lifecycle-health-verdict'],
+      consumedVerdicts: ['review-battery-verdict', 'process-evidence-verdict', 'lifecycle-health-verdict', 'post-merge-verification-verdict'],
       enforcingConsumer: 'deriveRunOutcome() consumes hasHardQualityFailure() before success is stamped',
-      failureModeBlocked: 'A run with review FAIL, process-incomplete, or critical lifecycle gaps cannot be recorded as success.',
+      failureModeBlocked: 'A run with review FAIL, process-incomplete, critical lifecycle gaps, or failed post-merge verification cannot be recorded as success.',
       sourceEvidence: [
         { file: 'scripts/auto-dent-run.ts', tokens: ['deriveRunOutcome', 'hasHardQualityFailure'] },
         { file: 'src/verdict-binding-policy.ts', tokens: ['qualityVerdictBlockReasons', 'hasHardQualityFailure'] },
@@ -368,9 +383,9 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       id: 'merge',
       label: 'Merge',
       terminalAction: 'Direct gh pr merge and auto-dent auto-merge queueing',
-      consumedVerdicts: ['review-round-verdict', 'review-battery-verdict', 'process-evidence-verdict', 'lifecycle-health-verdict', 'hook-activation-verdict', 'test-health-verdict'],
+      consumedVerdicts: ['review-round-verdict', 'review-battery-verdict', 'process-evidence-verdict', 'lifecycle-health-verdict', 'hook-activation-verdict', 'test-health-verdict', 'post-merge-verification-verdict'],
       enforcingConsumer: 'enforce-merge-verdict blocks direct FAIL merges; decideAutoMergeSafety blocks unsafe auto-merge queueing, including degraded/unknown hook-activation (#1220), unowned test failures (#1518), and workflow gate ledger repair states (#1533)',
-      failureModeBlocked: 'A PR with FAIL review/process/lifecycle verdicts, an invalid/blocked/pending workflow gate, a degraded run where kaizen hooks did not load (or no system.init was seen on a hook-expecting provider), or a run that observed a failing test owned by no open issue cannot be merged or queued by the normal paths.',
+      failureModeBlocked: 'A PR with FAIL review/process/lifecycle/post-merge verdicts, an invalid/blocked/pending workflow gate, a degraded run where kaizen hooks did not load (or no system.init was seen on a hook-expecting provider), or a run that observed a failing test owned by no open issue cannot be merged or queued by the normal paths.',
       sourceEvidence: [
         { file: 'src/hooks/enforce-merge-verdict.ts', tokens: ['deriveStoredRoundVerdict', "verdict === 'FAIL'", 'MERGE BLOCKED'] },
         { file: 'scripts/auto-dent-merge-policy.ts', tokens: ['qualityVerdictBlockReasons', 'decideAutoMergeSafety', 'workflowGateBlockReasons', 'hookActivationBlockReasons', 'testHealth'] },

@@ -70,7 +70,7 @@ import {
 import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
-import { hasHardQualityFailure } from '../src/verdict-binding-policy.js';
+import { hasHardQualityFailure, type PostMergeVerificationVerdict } from '../src/verdict-binding-policy.js';
 import { extractPlanText } from '../src/structured-data.js';
 import { gh } from '../src/lib/gh-exec.js';
 
@@ -326,6 +326,8 @@ export interface RunMetrics {
   lifecycle_health?: LifecycleHealth;
   /** Durable process-evidence verdict (#1149) */
   process_verdict?: ProcessVerdict;
+  /** Post-merge/deployment verification verdict (#1165). */
+  post_merge_verification?: PostMergeVerificationVerdict;
   /** Count of failed/warning process evidence checks (#1149) */
   process_issue_count?: number;
   /** Compact process evidence summary (#1149) */
@@ -1296,6 +1298,7 @@ export interface RunOutcomeSignals {
   reviewVerdict?: 'pass' | 'fail' | 'skipped';
   processVerdict?: ProcessVerdict;
   lifecycleHealth?: LifecycleHealth;
+  postMergeVerification?: PostMergeVerificationVerdict;
 }
 
 /**
@@ -1330,6 +1333,16 @@ export function deriveRunOutcome(signals: RunOutcomeSignals): RunOutcome {
   if (signals.exitCode !== 0) return 'failure';
   if (hasHardQualityFailure(signals)) return 'failure';
   return signals.artifactCount > 0 ? 'success' : 'empty_success';
+}
+
+export function derivePostMergeVerification(
+  mergeStatuses: string[],
+  testHealth?: 'pass' | 'unowned-failures' | 'unknown',
+): PostMergeVerificationVerdict {
+  if (mergeStatuses.length === 0) return 'not-applicable';
+  if (!mergeStatuses.some((status) => status === 'merged')) return 'skipped';
+  if (testHealth === 'unowned-failures') return 'fail';
+  return 'pass';
 }
 
 export interface BuildRunCompleteEventInput {
@@ -3407,13 +3420,14 @@ async function main(): Promise<void> {
 
   // Lifecycle validation (#639, #1103) — observability + steering, never a hard
   // block. Beyond ordering, this detects critical gaps (PR without IMPLEMENT,
-  // MERGE without PR) and phantom claims (TEST result=pass with count=0) — the
+  // MERGE without PR, DEPLOY without MERGE) and phantom claims (TEST result=pass with count=0) — the
   // "verify outcomes, not commands" category (#943, #950).
   let lifecycleViolationCount = 0;
   let lifecycleHealth: LifecycleHealth = 'clean';
   let lifecycleCriticalCount = 0;
   let lifecycleSteeringNote: string | null = null;
   let processVerdict: ProcessVerdict = 'fail-open-warning';
+  let postMergeVerification: PostMergeVerificationVerdict = 'not-applicable';
   let processIssueCount = 0;
   let processSummary = 'fail-open-warning: process validator did not run';
   let workflowGateStates: Partial<Record<WorkflowGateId, WorkflowGateState>> = {};
@@ -3421,6 +3435,8 @@ async function main(): Promise<void> {
   let workflowRepairState: 'not_required' | 'repair_scheduled' | 'merge_ready' | 'blocked_with_reason' | 'repair_budget_exhausted' = 'not_required';
   let workflowRepairPrompt: string | undefined;
   let contextDelegationAnalysis: ContextDelegationAnalysis | undefined;
+  const runLog = existsSync(logFile) ? readFileSync(logFile, 'utf8') : undefined;
+  const testHealth = deriveRunTestHealth({ runLog });
   try {
     const lifecycle = validateRunLifecycle(logFile);
     contextDelegationAnalysis = applyContextDelegationAnalysis(
@@ -3432,7 +3448,7 @@ async function main(): Promise<void> {
     // External evidence cross-check (#1138, epic #1134): the markers above are
     // the agent's self-report; here we judge them against the outcomes the
     // harness extracted independently (PRs, cases, filed/closed issues, the
-    // review verdict). A run that *claims* PR/MERGE/REFLECT without durable
+    // review verdict). A run that *claims* PR/MERGE/DEPLOY/REFLECT without durable
     // evidence is process-incomplete. Provider-independent — the same evidence
     // is assembled for a Codex run.
     const evidence: LifecycleEvidence = {
@@ -3455,6 +3471,7 @@ async function main(): Promise<void> {
     const contextDelegationProgressEvidence = hasContextDelegationProgressEvidence(result.progressSteps, {
       allowNotApplicable: contextDelegationPressureReasons.length === 0,
     });
+    postMergeVerification = derivePostMergeVerification(mergeStatuses, testHealth);
     const intentionalNoOp =
       exitCode === 0 &&
       result.stopRequested &&
@@ -3484,6 +3501,7 @@ async function main(): Promise<void> {
         state.provider === 'codex' ||
         Boolean(result.hookActivation && !result.hookActivation.degraded),
       mergeReadiness,
+      postMergeVerification,
     };
     const processValidation = validateProcessEvidence(lifecycle, processEvidence);
     workflowGateStates = workflowGateStatesFromProcess(processValidation);
@@ -3588,7 +3606,7 @@ async function main(): Promise<void> {
       // A critical marker problem takes precedence over an evidence note.
       lifecycleSteeringNote =
         `Prior run had a CRITICAL lifecycle problem (${summary}). ` +
-        `Do not emit PR/MERGE without a real IMPLEMENT, and never emit TEST result=pass with count=0 — run the tests.`;
+        `Do not emit PR/MERGE/DEPLOY without the prerequisite real work, and never emit TEST result=pass with count=0 — run the tests.`;
     } else if (lifecycle.health === 'degraded') {
       console.log(`  ${color.yellow('[lifecycle]')} ${summary}`);
       appendFileSync(logFile, `\nlifecycle_violations=${lifecycle.violations.length}: ${summary}\n`);
@@ -3661,6 +3679,7 @@ async function main(): Promise<void> {
       reviewVerdict,
       processVerdict,
       lifecycleHealth,
+      postMergeVerification,
     });
     events.emit(buildRunCompleteEvent({
       runId,
@@ -3726,14 +3745,13 @@ async function main(): Promise<void> {
 
   // Post-run hygiene
   labelArtifacts(result, 'auto-dent');
-  const runLog = existsSync(logFile) ? readFileSync(logFile, 'utf8') : undefined;
-  const testHealth = deriveRunTestHealth({ runLog });
   const autoMergeDecision = decideAutoMergeSafety({
     prCount: result.prs.length,
     reviewRequired: !state.test_task,
     reviewVerdict,
     processVerdict,
     lifecycleHealth,
+    postMergeVerification,
     // Bind the hook-activation verdict (#843/#1500) to the merge decision (#1220):
     // a run whose kaizen hooks did not load (degraded), or one where no
     // `system.init` was observed on a hook-expecting provider, is not merge-ready.
@@ -3891,6 +3909,7 @@ async function main(): Promise<void> {
       lifecycle_violations: lifecycleViolationCount,
       lifecycle_health: lifecycleHealth,
       process_verdict: processVerdict,
+      post_merge_verification: postMergeVerification,
       process_issue_count: processIssueCount,
       process_summary: processSummary,
       workflow_gate_states: workflowGateStates,

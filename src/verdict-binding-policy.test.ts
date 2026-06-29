@@ -24,6 +24,13 @@ describe('qualityVerdictBlockReasons — test-health (#1481/#1518)', () => {
     expect(qualityVerdictBlockReasons({ reviewVerdict: 'fail' })).toContain('review verdict fail');
     expect(qualityVerdictBlockReasons({ processVerdict: 'process-incomplete' })).toContain('process verdict process-incomplete');
     expect(qualityVerdictBlockReasons({ lifecycleHealth: 'critical' })).toContain('lifecycle health critical');
+    expect(qualityVerdictBlockReasons({ postMergeVerification: 'fail' })).toContain('post-merge verification fail');
     expect(qualityVerdictBlockReasons({ reviewVerdict: 'pass' })).toEqual([]);
+  });
+
+  it('does not block on pass / skipped / absent post-merge verification', () => {
+    expect(qualityVerdictBlockReasons({ postMergeVerification: 'pass' })).toEqual([]);
+    expect(qualityVerdictBlockReasons({ postMergeVerification: 'skipped' })).toEqual([]);
+    expect(qualityVerdictBlockReasons({})).toEqual([]);
   });
 });

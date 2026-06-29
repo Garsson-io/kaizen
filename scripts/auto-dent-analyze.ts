@@ -188,7 +188,7 @@ function categorizeToolPhase(
 }
 
 // Phase lifecycle — the expected progression for a productive exploit run
-const EXPECTED_PHASES = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
+const EXPECTED_PHASES = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'];
 // Explore/reflect/subtract/contemplate modes may have different phase expectations,
 // but the core lifecycle is a good baseline for all modes.
 

@@ -73,7 +73,7 @@ function makeRunResult(): RunResult {
 }
 
 const KNOWN_PHASES = new Set([
-  'PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DECOMPOSE', 'REFLECT', 'STOP',
+  'PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'DECOMPOSE', 'REFLECT', 'STOP',
 ]);
 
 function extractPhasesFromLog(logLines: string[]): Array<{ phase: string; line: string }> {
@@ -339,7 +339,7 @@ export function phaseCount(capture: StreamCapture, phase: string): number {
  * Phases must appear in this relative order (gaps are OK, reversals are not).
  * DECOMPOSE and STOP can appear at any point after EVALUATE.
  */
-const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
+const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'];
 
 /** Phases that can appear at any position (after at least PICK) */
 const FLOATING_PHASES = new Set(['DECOMPOSE', 'STOP']);
