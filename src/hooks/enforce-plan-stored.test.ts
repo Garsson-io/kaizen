@@ -217,6 +217,18 @@ describe('checkPlanBeforeEdit', () => {
       expect(result.allowed).toBe(false);
       expect(result.reason).toMatch(/No plan or test plan stored/);
     });
+
+    it('scope conflict → message says the stored plan conflicts with the issue scope (#1161)', () => {
+      const result = checkPlanBeforeEdit(
+        'src/thing.ts',
+        makeDeps({ retrievePlan: () => `${GOOD_PLAN}\n\nCloses #1056` }),
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toEqual(['scope-conflict']);
+      expect(result.reason).toContain('conflicts with this issue scope');
+      expect(result.reason).toContain('#1056');
+      expect(result.reason).not.toMatch(/test plan is missing/);
+    });
   });
 
   it('allows non-source files even without plan', () => {
@@ -377,6 +389,18 @@ describe('checkPlanBeforePr', () => {
 
   it('allows when plan + testplan exist and PR body contains populated Impact proof', () => {
     expect(checkPlanBeforePr(ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`), makeDeps()).allowed).toBe(true);
+  });
+
+  it('DENIES PR creation when the stored plan closes a different issue (#1161)', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`),
+      makeDeps({ retrievePlan: () => `${GOOD_PLAN}\n\nCloses #1056` }),
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['scope-conflict']);
+    expect(result.reason).toContain('scope-conflicting close target');
+    expect(result.reason).toContain('#1056');
   });
 
   it('allows populated Impact proof supplied through --body-file', () => {
