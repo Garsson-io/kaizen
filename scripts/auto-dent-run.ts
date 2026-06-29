@@ -211,6 +211,11 @@ import { createDefaultGitExec } from '../src/hooks/lib/git-state.js';
 import { runStalePrTriageMaintenance } from './stale-pr-triage.js';
 import { runBacklogHealthMaintenance } from './backlog-health.js';
 import { gh as ghArgs } from '../src/lib/gh-exec.js';
+import {
+  formatProviderWorkspaceResolution,
+  resolveProviderWorkspaceRoot,
+  type ProviderWorkspaceResolution,
+} from './auto-dent-provider-workspace.js';
 
 // Types
 
@@ -810,6 +815,17 @@ function getRepoRoot(): string {
     return gitCommonDir.replace(/\/\.git$/, '');
   } catch {
     return resolve(dirname(new URL(import.meta.url).pathname), '..');
+  }
+}
+
+function getInvocationWorktreeRoot(): string {
+  try {
+    return execSync(
+      'git rev-parse --path-format=absolute --show-toplevel',
+      { encoding: 'utf8' },
+    ).trim();
+  } catch {
+    return getRepoRoot();
   }
 }
 
@@ -2172,12 +2188,37 @@ interface ProviderRunResult {
   promptMeta: PromptMetadata;
 }
 
+function providerWorkspaceFailureResult(
+  input: {
+    logFile: string;
+    result: RunResult;
+    mode: string;
+    modeReason: string;
+    promptMeta: PromptMetadata;
+    workspace: Exclude<ProviderWorkspaceResolution, { ok: true }>;
+  },
+): ProviderRunResult {
+  input.result.stopRequested = true;
+  appendFileSync(
+    input.logFile,
+    `\n[provider-workspace] ${formatProviderWorkspaceResolution(input.workspace)}\n`,
+  );
+  return {
+    exitCode: 1,
+    duration: 0,
+    result: input.result,
+    mode: input.mode,
+    modeReason: input.modeReason,
+    promptMeta: input.promptMeta,
+  };
+}
+
 async function runCodex(
   input: {
     state: BatchState;
     runNum: number;
     logFile: string;
-    repoRoot: string;
+    providerRoot: string;
     stateFile: string;
     prompt: string;
     promptMeta: PromptMetadata;
@@ -2200,6 +2241,7 @@ async function runCodex(
 
   appendFileSync(input.logFile, `[provider] codex subscription-cli\n`);
   appendFileSync(input.logFile, `[provider] version=${version}\n`);
+  appendFileSync(input.logFile, `[provider] workspace=${input.providerRoot}\n`);
   appendFileSync(input.logFile, `[provider] raw_jsonl=${rawFile}\n`);
   writeFileSync(rawFile, '');
 
@@ -2208,8 +2250,8 @@ async function runCodex(
     let raw = '';
     const progressCheckpoint = { signature: runProgressCheckpointSignature(input.result) };
     const ctx: StreamContext = { provider: 'codex' };
-    const child = spawn('codex', buildCodexExecArgs(input.repoRoot), {
-      cwd: input.repoRoot,
+    const child = spawn('codex', buildCodexExecArgs(input.providerRoot), {
+      cwd: input.providerRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -2293,6 +2335,7 @@ async function runClaude(
   runNum: number,
   logFile: string,
   repoRoot: string,
+  invocationRoot: string,
   stateFile: string,
 ): Promise<{ exitCode: number; duration: number; result: RunResult; mode: string; modeReason: string; bandit?: BanditResult; promptMeta: PromptMetadata }> {
   const result: RunResult = {
@@ -2363,13 +2406,35 @@ async function runClaude(
   const candidateManifestPath = modeSelection.mode === 'explore'
     ? candidateTaskManifestPath(logDir, runNum)
     : undefined;
+  const providerWorkspace = resolveProviderWorkspaceRoot({
+    repoRoot,
+    invocationRoot,
+    assignedIssue: promptMeta.claimedPlanIssue,
+    knownCases: [
+      ...state.cases,
+      state.last_case,
+      state.last_worktree,
+      ...result.cases,
+    ].filter(Boolean),
+  });
+  appendFileSync(logFile, `[provider-workspace] ${formatProviderWorkspaceResolution(providerWorkspace)}\n`);
+  if (!providerWorkspace.ok) {
+    return providerWorkspaceFailureResult({
+      logFile,
+      result,
+      mode: modeSelection.mode,
+      modeReason: modeSelection.reason,
+      promptMeta,
+      workspace: providerWorkspace,
+    });
+  }
 
   if (shouldRunCodexProvider(state)) {
     const codexResult = await runCodex({
       state,
       runNum,
       logFile,
-      repoRoot,
+      providerRoot: providerWorkspace.providerRoot,
       stateFile,
       prompt,
       promptMeta,
@@ -2420,9 +2485,15 @@ async function runClaude(
     const progressCheckpoint = { signature: runProgressCheckpointSignature(result) };
 
     const child = spawn('claude', args, {
-      cwd: repoRoot,
+      cwd: providerWorkspace.providerRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, KAIZEN_RUN_TAG: agentRunTag, KAIZEN_RUN_ID: agentRunId },
+      env: {
+        ...process.env,
+        KAIZEN_RUN_TAG: agentRunTag,
+        KAIZEN_RUN_ID: agentRunId,
+        KAIZEN_PROVIDER_WORKSPACE: providerWorkspace.providerRoot,
+        KAIZEN_PROVIDER_ISSUE: providerWorkspace.issue != null ? String(providerWorkspace.issue) : '',
+      },
     });
 
     const cleanup = (...timers: (ReturnType<typeof setInterval> | ReturnType<typeof setTimeout> | undefined)[]) => {
@@ -2896,6 +2967,7 @@ async function main(): Promise<void> {
   }
 
   const repoRoot = getRepoRoot();
+  const invocationRoot = getInvocationWorktreeRoot();
   const state = readState(stateFile);
   const logDir = dirname(stateFile);
   const runNum = state.run + 1;
@@ -2930,6 +3002,7 @@ async function main(): Promise<void> {
       runNum,
       logFile,
       repoRoot,
+      invocationRoot,
       stateFile,
     );
   } finally {
