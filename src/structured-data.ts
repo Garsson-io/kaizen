@@ -7,6 +7,7 @@
  * Naming conventions (attachment names):
  *   review/r{N}/{dimension}  — per-dimension findings for round N
  *   review/r{N}/summary      — overall round N assessment
+ *   review/active-round      — authoritative review round pointer
  *   plan                     — implementation plan
  *   testplan                 — test plan
  *   metadata                 — YAML structured metadata (connected issues, PR number, etc.)
@@ -113,6 +114,7 @@ export function extractPlanText(text: string): string | undefined {
 export type { ReviewFinding, ReviewFindingData } from './review-finding-contract.js';
 
 const STATUS_ICON: Record<string, string> = { DONE: '✅', PARTIAL: '⚠️', MISSING: '❌' };
+const ACTIVE_REVIEW_ROUND_ATTACHMENT = 'review/active-round';
 
 function extractSummaryRoundVerdict(summary: string): RoundVerdict | null {
   const meta = parseJsonMetaComment(summary);
@@ -312,7 +314,35 @@ export function storeReviewSummary(
     content = `${derived}\n\n### Reviewer notes (non-authoritative — verdict above is derived from findings)\n\n${trimmed}`;
   }
 
-  return writeAttachment(target, `review/r${round}/summary`, content);
+  const summaryUrl = writeAttachment(target, `review/r${round}/summary`, content);
+  storeActiveReviewRound(target, round);
+  return summaryUrl;
+}
+
+/**
+ * Store the active review round marker used by verdict consumers.
+ */
+export function storeActiveReviewRound(target: AttachmentTarget, round: number): string {
+  if (!Number.isSafeInteger(round) || round < 1) {
+    throw new Error(`store-active-review-round: expected a positive integer round, got ${round}`);
+  }
+  return writeAttachment(
+    target,
+    ACTIVE_REVIEW_ROUND_ATTACHMENT,
+    `<!-- meta:${JSON.stringify({ round })} -->\nActive review round: r${round}`,
+  );
+}
+
+/**
+ * Read the active review round marker, or null when absent/malformed.
+ */
+export function readActiveReviewRound(target: AttachmentTarget): number | null {
+  const attachment = readAttachment(target, ACTIVE_REVIEW_ROUND_ATTACHMENT);
+  if (!attachment) return null;
+
+  const meta = parseJsonMetaComment(attachment.content);
+  const round = meta && typeof meta === 'object' ? (meta as { round?: unknown }).round : undefined;
+  return typeof round === 'number' && Number.isSafeInteger(round) && round >= 1 ? round : null;
 }
 
 /**
@@ -360,6 +390,20 @@ export function readReviewSummary(target: AttachmentTarget, round: number): stri
  */
 export function latestReviewRound(target: AttachmentTarget): number {
   const rounds = listReviewRounds(target);
+  return rounds.length > 0 ? rounds[rounds.length - 1] : 0;
+}
+
+/**
+ * Get the authoritative review round for verdict consumers.
+ *
+ * A newer clean active round can intentionally supersede an older higher-numbered
+ * failed round. If the marker is missing or points at data that is no longer
+ * present, fall back to the numeric latest round.
+ */
+export function authoritativeReviewRound(target: AttachmentTarget): number {
+  const active = readActiveReviewRound(target);
+  const rounds = listReviewRounds(target);
+  if (active !== null && rounds.includes(active)) return active;
   return rounds.length > 0 ? rounds[rounds.length - 1] : 0;
 }
 
