@@ -2486,6 +2486,77 @@ export function cleanGuidanceForTitle(guidance: string): string {
     .trim();
 }
 
+function formatGuidanceBlockquote(guidance: string): string[] {
+  const normalized = guidance.replace(/\r\n?/g, '\n').trim();
+  if (!normalized) return ['> _No guidance provided._'];
+  return normalized.split('\n').map((line) => `> ${line.trim() || ' '}`);
+}
+
+function formatProgressIssueModeDistribution(history: RunMetrics[]): string {
+  if (history.length === 0) return 'none yet';
+  const modeDist = computeModeDistribution(history);
+  const rendered = Object.entries(modeDist)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([mode, count]) => `${mode} x${count}`)
+    .join(', ');
+  return rendered || 'none yet';
+}
+
+function formatDurationHoursMinutes(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safe / 3600);
+  const mins = Math.floor((safe % 3600) / 60);
+  return `${hours}h ${mins}m`;
+}
+
+export function formatBatchProgressIssueBody(
+  state: BatchState,
+  nowEpoch = Math.floor(Date.now() / 1000),
+): string {
+  const history = state.run_history ?? [];
+  const totalCost = history.reduce((sum, run) => sum + run.cost_usd, 0);
+  const maxRuns = state.max_runs > 0 ? String(state.max_runs) : 'unlimited';
+  const startedAt = new Date(state.batch_start * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+  const guidanceTitle = cleanGuidanceForTitle(state.guidance) || state.batch_id;
+
+  return [
+    `## Auto-Dent Batch: ${guidanceTitle}`,
+    '',
+    '### Guidance',
+    '',
+    ...formatGuidanceBlockquote(state.guidance),
+    '',
+    '### Scoreboard',
+    '',
+    '| Metric | Value |',
+    '|--------|-------|',
+    `| Runs | ${state.run} of ${maxRuns} |`,
+    `| PRs created | ${state.prs.length} |`,
+    `| Issues filed | ${state.issues_filed.length} |`,
+    `| Issues closed | ${state.issues_closed.length} |`,
+    `| Total cost | $${totalCost.toFixed(2)} |`,
+    `| Wall time | ${formatDurationHoursMinutes(nowEpoch - state.batch_start)} |`,
+    `| Modes used | ${formatProgressIssueModeDistribution(history)} |`,
+    '',
+    '<details>',
+    '<summary>Batch config</summary>',
+    '',
+    `| Field | Value |`,
+    `|-------|-------|`,
+    `| **Batch ID** | \`${state.batch_id}\` |`,
+    `| **Max runs** | ${state.max_runs || 'unlimited'} |`,
+    `| **Budget/run** | ${state.budget ? '$' + state.budget : 'none'} |`,
+    `| **Max budget** | ${state.max_budget ? '$' + state.max_budget : 'none'} |`,
+    `| **Cooldown** | ${state.cooldown}s |`,
+    `| **Max failures** | ${state.max_failures} |`,
+    `| **Started** | ${startedAt} |`,
+    '',
+    '</details>',
+    '',
+    '_Run-by-run updates are stored as named kaizen attachments. Auto-managed by auto-dent._',
+  ].join('\n');
+}
+
 // Batch progress issue management
 
 type ProgressAttachmentWriter = typeof writeAttachment;
@@ -2572,29 +2643,7 @@ export function ensureBatchProgressIssue(
 
   const cleanGuidance = cleanGuidanceForTitle(state.guidance);
   const title = `[Auto-Dent] ${truncateAtWordBoundary(cleanGuidance, 70)} (${state.batch_id})`;
-  const startedAt = new Date(state.batch_start * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
-  const body = [
-    `## Auto-Dent Batch`,
-    '',
-    `> **Guidance:** ${state.guidance}`,
-    '',
-    '<details>',
-    '<summary>Batch config</summary>',
-    '',
-    `| Field | Value |`,
-    `|-------|-------|`,
-    `| **Batch ID** | \`${state.batch_id}\` |`,
-    `| **Max runs** | ${state.max_runs || 'unlimited'} |`,
-    `| **Budget/run** | ${state.budget ? '$' + state.budget : 'none'} |`,
-    `| **Max budget** | ${state.max_budget ? '$' + state.max_budget : 'none'} |`,
-    `| **Cooldown** | ${state.cooldown}s |`,
-    `| **Max failures** | ${state.max_failures} |`,
-    `| **Started** | ${startedAt} |`,
-    '',
-    '</details>',
-    '',
-    '_Run-by-run updates are stored as named kaizen attachments. Auto-managed by auto-dent._',
-  ].join('\n');
+  const body = formatBatchProgressIssueBody(state);
 
   let url = '';
   try {

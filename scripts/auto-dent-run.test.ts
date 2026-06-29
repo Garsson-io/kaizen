@@ -58,6 +58,7 @@ import {
   type PromptMetadata,
   validateRunLifecycle,
   findExistingProgressIssue,
+  formatBatchProgressIssueBody,
   ensureBatchProgressIssue,
   updateBatchProgressIssue,
   extractModeOutput,
@@ -4362,6 +4363,73 @@ describe('formatBatchFooter', () => {
   });
 });
 
+describe('formatBatchProgressIssueBody', () => {
+  it('renders a dashboard header, guidance section, empty scoreboard, and config details', () => {
+    const state = makeBatchState({
+      run: 0,
+      max_runs: 10,
+      progress_issue: undefined,
+      run_history: [],
+    });
+
+    const body = formatBatchProgressIssueBody(state, 1742681100);
+
+    expect(body).toContain('## Auto-Dent Batch: improve hooks reliability');
+    expect(body).toContain('### Guidance');
+    expect(body).toContain('> improve hooks reliability');
+    expect(body).toContain('### Scoreboard');
+    expect(body).toContain('| Runs | 0 of 10 |');
+    expect(body).toContain('| PRs created | 0 |');
+    expect(body).toContain('| Issues filed | 0 |');
+    expect(body).toContain('| Issues closed | 0 |');
+    expect(body).toContain('| Total cost | $0.00 |');
+    expect(body).toContain('| Wall time | 0h 5m |');
+    expect(body).toContain('| Modes used | none yet |');
+    expect(body).toContain('<summary>Batch config</summary>');
+    expect(body).toContain('_Run-by-run updates are stored as named kaizen attachments.');
+  });
+
+  it('keeps multiline guidance out of markdown table cells', () => {
+    const state = makeBatchState({
+      guidance: 'Priority 1: hooks\nPriority 2: tests\r\nPriority 3: docs',
+      run_history: [],
+    });
+
+    const body = formatBatchProgressIssueBody(state, 1742680800);
+
+    expect(body).toContain('> Priority 1: hooks\n> Priority 2: tests\n> Priority 3: docs');
+    expect(body).not.toContain('| **Guidance** |');
+    expect(body).not.toContain('| Priority 1: hooks');
+    expect(body).not.toContain('\\n');
+    expect(body).not.toContain('\\r');
+  });
+
+  it('renders scoreboard data from run history and batch state', () => {
+    const state = makeBatchState({
+      run: 3,
+      max_runs: 5,
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1', 'https://github.com/Garsson-io/kaizen/pull/2'],
+      issues_filed: ['#10', '#11', '#12'],
+      issues_closed: ['#10'],
+      run_history: [
+        makeRunMetrics({ run: 1, mode: 'exploit', cost_usd: 1.25, prs: ['pr1'], issues_filed: ['#10'], issues_closed: [] }),
+        makeRunMetrics({ run: 2, mode: 'explore', cost_usd: 0.5, prs: [], issues_filed: ['#11', '#12'], issues_closed: [] }),
+        makeRunMetrics({ run: 3, mode: 'exploit', cost_usd: 2, prs: ['pr2'], issues_filed: [], issues_closed: ['#10'] }),
+      ],
+    });
+
+    const body = formatBatchProgressIssueBody(state, 1742688000);
+
+    expect(body).toContain('| Runs | 3 of 5 |');
+    expect(body).toContain('| PRs created | 2 |');
+    expect(body).toContain('| Issues filed | 3 |');
+    expect(body).toContain('| Issues closed | 1 |');
+    expect(body).toContain('| Total cost | $3.75 |');
+    expect(body).toContain('| Wall time | 2h 0m |');
+    expect(body).toContain('| Modes used | exploit x2, explore x1 |');
+  });
+});
+
 describe('run state checkpointing', () => {
   it('checkpoints run identity and heartbeat before provider work finishes', () => {
     const dir = mkdtempSync(join(tmpdir(), 'run-checkpoint-start-'));
@@ -5105,6 +5173,11 @@ describe('ensureBatchProgressIssue', () => {
     expect(gh.mock.calls[0][0].slice(0, 2)).toEqual(['issue', 'list']);
     expect(gh.mock.calls[1][0].slice(0, 2)).toEqual(['issue', 'create']);
     expect(gh.mock.calls[1][0]).toContain('--body');
+    const bodyArg = gh.mock.calls[1][0][gh.mock.calls[1][0].indexOf('--body') + 1];
+    expect(bodyArg).toContain('### Scoreboard');
+    expect(bodyArg).toContain('| Runs | 0 of 5 |');
+    expect(bodyArg).toContain('### Guidance');
+    expect(bodyArg).not.toContain('| **Guidance** |');
     const saved = readState(stateFile);
     expect(saved.progress_issue).toBe(newUrl);
   });
