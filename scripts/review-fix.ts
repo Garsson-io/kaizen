@@ -7,9 +7,9 @@
  *   npx tsx scripts/review-fix.ts --pr <url> --issue <num> --repo <owner/repo> --dry-run
  *
  * Flow:
- *   1. REVIEW: Run requirements battery (claude -p) → structured findings
+ *   1. REVIEW: Run requirements battery with the selected provider → structured findings
  *   2. If PASS → done
- *   3. If gaps → FIX: Spawn claude -p session that:
+ *   3. If gaps → FIX: Spawn the selected fix provider session that:
  *      a. Reads the issue
  *      b. Reads the PR diff
  *      c. Checks out the PR branch
@@ -22,7 +22,7 @@
  * --dry-run: review only, print the fix prompt, don't spawn fix session
  */
 
-import { spawn as asyncSpawn, spawnSync, execSync } from 'node:child_process';
+import { spawn as asyncSpawn, spawnSync, execFileSync } from 'node:child_process';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import {
@@ -39,10 +39,12 @@ import {
 import { addSection, writeAttachment } from '../src/section-editor.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 import { readJsonValueFile, writeJsonObjectFile } from '../src/lib/json-file.js';
+import { buildSpawnAgentCommand, parseSpawnAgentProvider } from '../src/spawn-claude.js';
+import { subscriptionAgentProvider } from '../src/provider-contract.js';
 import { ghExec } from './auto-dent-github.js';
-import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
+import { assessCodexRun, parseCodexJsonl } from './auto-dent-codex.js';
 import {
-  CAPABILITY_INVENTORY,
+  PROVIDER_CAPABILITIES,
   validateProviderPlan,
   type ProviderCapability,
   type PlanValidation,
@@ -166,17 +168,18 @@ export type PrefetchResult = {
 
 export interface RunFixLoopDeps {
   prefetch?: (prUrl: string, issueNum: string, repo: string) => PrefetchResult;
-  launchFix?: (prompt: string, logDir: string, round: number, provider: ReviewFixProvider) => { pid: number; logFile: string; promptFile: string; provider?: ReviewFixProvider };
+  launchFix?: (prompt: string, logDir: string, round: number, provider: ReviewFixProvider, repoRoot?: string) => { pid: number; logFile: string; promptFile: string; provider?: ReviewFixProvider };
   checkFix?: (logFile: string, pid: number, provider?: ReviewFixProvider) => { done: boolean; success: boolean; costUsd: number; output: string };
-  runReview?: (params: { dimensions: string[]; prUrl: string; issueNum: string; repo: string; timeoutMs: number; reviewProvider?: ReviewProvider }) => Promise<BatteryResult>;
-  getStateDir?: () => string;
+  runReview?: (params: { dimensions: string[]; prUrl: string; issueNum: string; repo: string; cwd?: string; timeoutMs: number; reviewProvider?: ReviewProvider }) => Promise<BatteryResult>;
+  getStateDir?: (cwd?: string) => string;
+  providerInventory?: readonly ProviderCapability[];
 }
 
 // ── State persistence ───────────────────────────────────────────────
 
 export type ReviewFixProvider = ReviewProvider;
 
-const DEFAULT_REVIEW_FIX_PROVIDER: ReviewFixProvider = { provider: 'claude', billing: 'subscription-cli' };
+const DEFAULT_REVIEW_FIX_PROVIDER: ReviewFixProvider = subscriptionAgentProvider('claude');
 
 export function defaultReviewFixProviders(): {
   reviewProvider: ReviewFixProvider;
@@ -190,7 +193,7 @@ export function defaultReviewFixProviders(): {
 
 export function validateReviewFixProviderPlan(
   providers: { reviewProvider: ReviewFixProvider; fixProvider: ReviewFixProvider },
-  inventory: readonly ProviderCapability[] = CAPABILITY_INVENTORY,
+  inventory: readonly ProviderCapability[] = PROVIDER_CAPABILITIES,
 ): PlanValidation {
   return validateProviderPlan({
     review: providers.reviewProvider.provider,
@@ -199,9 +202,8 @@ export function validateReviewFixProviderPlan(
 }
 
 function parseProviderName(value: string, flag: string): ReviewFixProvider {
-  if (value === 'claude' || value === 'codex') {
-    return { provider: value, billing: 'subscription-cli' };
-  }
+  const provider = parseSpawnAgentProvider(value);
+  if (provider) return provider;
   console.error(`Invalid ${flag}: "${value}". Valid providers: claude, codex. API-token-only repair strategies are not subscription-compatible.`);
   process.exit(1);
 }
@@ -219,16 +221,17 @@ export function buildFixProviderCommand(input: {
   provider: ReviewFixProvider;
   repoRoot?: string;
 }): FixProviderCommand {
-  if (input.provider.provider === 'claude') {
-    return {
-      command: 'claude',
-      args: ['-p', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--model', 'sonnet'],
-    };
-  }
-  return {
-    command: 'codex',
-    args: buildCodexExecArgs(input.repoRoot ?? process.cwd()),
-  };
+  const command = buildSpawnAgentCommand({
+    provider: input.provider,
+    cwd: input.repoRoot,
+    model: 'sonnet',
+    outputFormat: 'stream-json',
+    verbose: true,
+    codexSandbox: 'workspace-write',
+    codexBypassApprovalsAndSandbox: false,
+    codexUseProvidedCwd: true,
+  });
+  return { command: command.command, args: command.args };
 }
 
 function normalizeRoundProvider(
@@ -318,12 +321,12 @@ export function resolveStateDir(gitCommonDir: string, cwd: string = process.cwd(
   return join(mainRoot, '.claude', 'review-fix');
 }
 
-function stateDir(): string {
+function stateDir(cwd: string = process.cwd()): string {
   let gitCommonDir = '.git';
   try {
-    gitCommonDir = execSync('git rev-parse --git-common-dir', { encoding: 'utf8' }).trim();
+    gitCommonDir = execFileSync('git', ['-C', cwd, 'rev-parse', '--git-common-dir'], { encoding: 'utf8' }).trim();
   } catch { /* not in a git repo — fall back to CWD */ }
-  const dir = resolveStateDir(gitCommonDir);
+  const dir = resolveStateDir(gitCommonDir, cwd);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -463,6 +466,7 @@ export interface CliArgs {
   maxRounds: number;
   budgetCap: number;
   resume: boolean;
+  cwd?: string;
   transition?: string;
   clearReviewGate?: string;
   stateDir?: string;
@@ -478,6 +482,7 @@ export function parseArgs(argv = process.argv): CliArgs {
   const defaults = defaultReviewFixProviders();
   let reviewProvider = defaults.reviewProvider;
   let fixProvider = defaults.fixProvider;
+  let cwd: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -490,6 +495,7 @@ export function parseArgs(argv = process.argv): CliArgs {
       case '--resume': resume = true; break;
       case '--max-rounds': maxRounds = parseInt(args[++i] ?? '3', 10); break;
       case '--budget': budgetCap = parseFloat(args[++i] ?? '2'); break;
+      case '--cwd': cwd = args[++i]; break;
       case '--transition': transition = args[++i] ?? ''; break;
       case '--clear-review-gate': clearReviewGateBranch = args[++i] ?? ''; break;
       case '--state-dir': stateDirArg = args[++i] ?? ''; break;
@@ -549,6 +555,7 @@ Options:
                   Review provider to record/pass to the review battery (default: claude)
   --fix-provider claude|codex
                   Fix provider for spawned repair sessions (default: claude)
+  --cwd DIR       Repository/worktree root for provider subprocesses (default: current directory)
 
 State is saved to .claude/review-fix/pr-<N>.json after each phase.
 Use --resume to pick up where you left off after a crash/timeout.
@@ -566,7 +573,7 @@ Example:
     process.exit(1);
   }
 
-  return { prUrl, issueNum, repo, reviewProvider, fixProvider, dryRun, maxRounds, budgetCap, resume };
+  return { prUrl, issueNum, repo, reviewProvider, fixProvider, dryRun, maxRounds, budgetCap, resume, cwd };
 }
 
 // ── Pre-fetch context ───────────────────────────────────────────────
@@ -659,7 +666,7 @@ Be surgical. Fix gaps, don't refactor. Minimum viable fix for each finding.`;
  * The caller should save these to state and exit.
  * On --resume, call checkFixResult() to see if it's done.
  */
-function launchFix(prompt: string, logDir: string, round: number, provider: ReviewFixProvider): { pid: number; logFile: string; promptFile: string; provider: ReviewFixProvider } {
+function launchFix(prompt: string, logDir: string, round: number, provider: ReviewFixProvider, repoRoot = process.cwd()): { pid: number; logFile: string; promptFile: string; provider: ReviewFixProvider } {
   const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
   const promptFile = join(logDir, `fix-round${round}-${timestamp}.prompt.txt`);
   const logFile = join(logDir, `fix-round${round}-${timestamp}.log`);
@@ -670,11 +677,17 @@ function launchFix(prompt: string, logDir: string, round: number, provider: Revi
   const out = openSync(logFile, 'w');
   const err = openSync(logFile + '.stderr', 'w');
   const stdin = openSync(promptFile, 'r');
-  const command = buildFixProviderCommand({ provider, repoRoot: process.cwd() });
+  const command = buildFixProviderCommand({ provider, repoRoot });
 
   const child = asyncSpawn(command.command, command.args, {
+    cwd: repoRoot,
     detached: true,
     stdio: [stdin, out, err],
+  });
+  child.on('error', (spawnError) => {
+    const message = `Provider spawn error: ${spawnError.message}\n`;
+    writeFileSync(logFile, message, { flag: 'a' });
+    writeFileSync(logFile + '.stderr', message, { flag: 'a' });
   });
 
   child.unref();
@@ -700,11 +713,13 @@ function launchFix(prompt: string, logDir: string, round: number, provider: Revi
 export function checkFixResult(logFile: string, pid: number, provider: ReviewFixProvider = DEFAULT_REVIEW_FIX_PROVIDER): { done: boolean; success: boolean; costUsd: number; output: string } {
   // Check if process is still running
   let running = false;
-  try {
-    process.kill(pid, 0); // signal 0 = check if alive
-    running = true;
-  } catch {
-    running = false;
+  if (pid > 0) {
+    try {
+      process.kill(pid, 0); // signal 0 = check if alive
+      running = true;
+    } catch {
+      running = false;
+    }
   }
 
   if (!existsSync(logFile)) {
@@ -712,6 +727,8 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
   }
 
   const stdout = readFileSync(logFile, 'utf8');
+  const stderrFile = logFile + '.stderr';
+  const stderr = existsSync(stderrFile) ? readFileSync(stderrFile, 'utf8').slice(0, 500) : '';
 
   // If process is still running and log is empty, nothing has happened yet
   if (running && !stdout.trim()) {
@@ -721,20 +738,24 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
   // Parse provider-specific JSONL — look for the final result message.
   if (provider.provider === 'codex') {
     const parsedCodex = parseCodexJsonl(stdout);
+    const assessment = assessCodexRun(parsedCodex);
     const output = parsedCodex.finalText || parsedCodex.text;
-    if (output || (!running && parsedCodex.events.length > 0)) {
+    if (running && !assessment.hasTerminalEvent) {
+      return { done: false, success: false, costUsd: 0, output: '' };
+    }
+    if (assessment.hasTerminalEvent) {
       return {
         done: true,
-        success: parsedCodex.malformedLines.length === 0,
+        success: assessment.failureNotes.length === 0,
         costUsd: 0,
-        output,
+        output: output || stderr,
       };
     }
     if (running) {
       return { done: false, success: false, costUsd: 0, output: '' };
     }
     const malformed = parsedCodex.malformedLines.slice(0, 3).join('\n');
-    return { done: true, success: false, costUsd: 0, output: malformed || stdout.slice(0, 500) };
+    return { done: true, success: false, costUsd: 0, output: malformed || output || stderr || stdout.slice(0, 500) };
   }
 
   const parsed = parseStreamJsonResult(stdout);
@@ -747,8 +768,6 @@ export function checkFixResult(logFile: string, pid: number, provider: ReviewFix
     return { done: false, success: false, costUsd: 0, output: '' };
   }
   // Process exited without a result line — failure
-  const stderrFile = logFile + '.stderr';
-  const stderr = existsSync(stderrFile) ? readFileSync(stderrFile, 'utf8').slice(0, 500) : '';
   console.log(`  Fix stderr: ${stderr}`);
   return { done: true, success: false, costUsd: 0, output: stdout.slice(0, 500) };
 }
@@ -761,19 +780,21 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
   const doCheckFix = deps.checkFix ?? checkFixResult;
   const doRunReview = deps.runReview ?? reviewBattery;
   const doStateDir = deps.getStateDir ?? stateDir;
+  const repoRoot = opts.cwd ?? process.cwd();
+  const stateDirPath = doStateDir(repoRoot);
   const providerDefaults = defaultReviewFixProviders();
   const requestedProviders = {
     reviewProvider: opts.reviewProvider ?? providerDefaults.reviewProvider,
     fixProvider: opts.fixProvider ?? providerDefaults.fixProvider,
   };
-  const providerValidation = validateReviewFixProviderPlan(requestedProviders);
+  const providerValidation = validateReviewFixProviderPlan(requestedProviders, deps.providerInventory);
   if (!providerValidation.ok) {
     throw new Error(`Provider plan rejected: ${providerValidation.violations.map((v) => v.reason).join('; ')}`);
   }
 
   // Resume or start fresh
   let state: ReviewFixState;
-  const existing = loadState(opts.prUrl, doStateDir());
+  const existing = loadState(opts.prUrl, stateDirPath);
   if (opts.resume && existing && !existing.outcome) {
     state = normalizeReviewFixState(existing);
     console.log(`\n=== review-fix: RESUMING ===`);
@@ -801,11 +822,11 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
   console.log(`  Review provider: ${providerLabel(state.reviewProvider ?? providerDefaults.reviewProvider)}`);
   console.log(`  Fix provider: ${providerLabel(state.fixProvider ?? providerDefaults.fixProvider)}`);
 
-  const statePath = join(doStateDir(), stateKey(opts.prUrl) + '.json');
+  const statePath = join(stateDirPath, stateKey(opts.prUrl) + '.json');
   const ctx = doPrefetch(opts.prUrl, opts.issueNum, opts.repo);
   state.prBranch = ctx.prBranch;
   state.isMerged = ctx.isMerged;
-  saveState(state, doStateDir());
+  saveState(state, stateDirPath);
   console.log(`  State: ${statePath}`);
   console.log('');
 
@@ -820,7 +841,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
 
     if (action === 'reset') {
       console.log('  Warning: fix_running phase but no activeFix record — resetting to review');
-      saveState(state, doStateDir());
+      saveState(state, stateDirPath);
     } else if (action === 'wait') {
       console.log(`  Fix session still running (PID ${pid})`);
       console.log(`  Monitor: tail -f ${logFile}`);
@@ -829,7 +850,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
     } else {
       const lastFix = state.rounds[state.rounds.length - 1];
       console.log(`  Fix session completed | Cost: $${lastFix?.fixCost.toFixed(2)} | Success: ${lastFix?.verdict === 'fixed'}`);
-      saveState(state, doStateDir());
+      saveState(state, stateDirPath);
     }
   }
 
@@ -839,7 +860,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
   for (let round = state.currentRound; round <= maxRounds; round++) {
     state.currentRound = round;
     state.phase = 'needs_review';
-    saveState(state, doStateDir());
+    saveState(state, stateDirPath);
 
     // ── REVIEW ──
     console.log(`--- Round ${round}/${maxRounds}: REVIEW ---`);
@@ -850,6 +871,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       prUrl: opts.prUrl,
       issueNum: opts.issueNum,
       repo: opts.repo,
+      cwd: repoRoot,
       timeoutMs: 180_000,
       reviewProvider: state.reviewProvider,
     });
@@ -877,7 +899,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
         fixCost: 0,
         reviewProvider: battery.reviewProvider ?? state.reviewProvider,
       });
-      saveState(state, doStateDir());
+      saveState(state, stateDirPath);
       continue;
     }
 
@@ -887,7 +909,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       reviewProvider: battery.reviewProvider ?? state.reviewProvider,
       findings: allFindings,
     });
-    saveState(state, doStateDir());
+    saveState(state, stateDirPath);
 
     // ── PASS? ──
     if (battery.verdict === 'pass') {
@@ -895,7 +917,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       console.log(formatBatteryReport(battery));
       state.outcome = 'pass';
       state.phase = 'done';
-      saveState(state, doStateDir());
+      saveState(state, stateDirPath);
       // Update PR body Validation section and store review report as attachment (best effort)
       try {
         const prNum = opts.prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '';
@@ -913,7 +935,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       console.log(`\nBudget exceeded ($${state.totalCostUsd.toFixed(2)} >= $${opts.budgetCap})`);
       state.outcome = 'budget_exceeded';
       state.phase = 'done';
-      saveState(state, doStateDir());
+      saveState(state, stateDirPath);
       return state;
     }
 
@@ -923,7 +945,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       console.log(buildFixPrompt(opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged));
       state.outcome = 'dry_run';
       state.phase = 'done';
-      saveState(state, doStateDir());
+      saveState(state, stateDirPath);
       return state;
     }
 
@@ -940,7 +962,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       console.log(`\nVerdict is fail but no actionable code gaps (${reason}). Run with --resume to retry.`);
       state.outcome = 'no_actionable_gaps';
       state.phase = 'done';
-      saveState(state, doStateDir());
+      saveState(state, stateDirPath);
       return state;
     }
 
@@ -950,7 +972,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       console.log(formatBatteryReport(battery));
       state.outcome = 'max_rounds';
       state.phase = 'done';
-      saveState(state, doStateDir());
+      saveState(state, stateDirPath);
       return state;
     }
 
@@ -960,14 +982,14 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       opts.issueNum, opts.repo, opts.prUrl, ctx.prBranch, ctx.issueBody, allFindings, ctx.isMerged,
     );
     const fixProvider = state.fixProvider ?? providerDefaults.fixProvider;
-    const fixInfo = doLaunchFix(fixPrompt, doStateDir(), round, fixProvider);
+    const fixInfo = doLaunchFix(fixPrompt, stateDirPath, round, fixProvider, repoRoot);
     state.phase = 'fix_running';
     state.activeFix = { ...fixInfo, provider: fixInfo.provider ?? fixProvider };
-    saveState(state, doStateDir());
+    saveState(state, stateDirPath);
 
     console.log(`\n  Fix session is running in the background.`);
     console.log(`  Run \`tail -f ${fixInfo.logFile}\` to observe.`);
-    console.log(`  Run \`npx tsx scripts/review-fix.ts --pr ${opts.prUrl} --issue ${opts.issueNum} --repo ${opts.repo} --resume\` when done.`);
+    console.log(`  Run \`npx tsx scripts/review-fix.ts --pr ${opts.prUrl} --issue ${opts.issueNum} --repo ${opts.repo}${opts.cwd ? ` --cwd ${opts.cwd}` : ''} --resume\` when done.`);
     return state;
   }
 
@@ -1003,17 +1025,17 @@ async function main() {
   }
   const startTime = Date.now();
   const state = await runFixLoop(opts);
-  finish(state, startTime);
+  finish(state, startTime, opts.cwd);
 }
 
-function finish(state: ReviewFixState, startTime: number) {
+function finish(state: ReviewFixState, startTime: number, cwd?: string) {
   const duration = ((Date.now() - startTime) / 1000).toFixed(0);
   console.log(`\n=== review-fix summary ===`);
   console.log(`Outcome: ${state.outcome}`);
   console.log(`Rounds: ${state.rounds.length}`);
   console.log(`Total cost: $${state.totalCostUsd.toFixed(2)}`);
   console.log(`Duration: ${duration}s`);
-  console.log(`State: ${join(stateDir(), stateKey(state.prUrl) + '.json')}`);
+  console.log(`State: ${join(stateDir(cwd), stateKey(state.prUrl) + '.json')}`);
   console.log('');
   console.log('| Round | Phase | Verdict | Gaps | Review$ | Fix$ |');
   console.log('|-------|-------|---------|------|---------|------|');

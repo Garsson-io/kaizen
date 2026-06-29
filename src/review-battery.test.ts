@@ -63,6 +63,10 @@ function streamJsonPayload(text: string, costUsd: number): string {
   return `${assistant}\n${result}\n`;
 }
 
+function codexJsonlPayload(text: string): string {
+  return JSON.stringify({ type: 'result', final_message: text }) + '\n';
+}
+
 /** Build a minimal DimensionMeta for unit tests. */
 function makeMeta(name: string, needs: string[] = ['diff']): DimensionMeta {
   return { name, description: '', applies_to: 'pr', needs: needs as any, high_when: [], low_when: [], file: `review-${name}.md` };
@@ -703,17 +707,25 @@ describe('spawnReview', () => {
     expect(review?.provider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
   });
 
-  it('classifies explicit Codex review as unsupported without calling Claude', async () => {
+  it('can explicitly request Codex review through the provider adapter', async () => {
+    const text = JSON.stringify({
+      dimension: 'requirements',
+      summary: 'all good',
+      findings: [],
+    });
+    mockClaude(codexJsonlPayload(text));
+
     const { review, provider, failureClass } = await spawnReview({
       dimension: 'requirements',
       repo: 'test/test',
       reviewProvider: { provider: 'codex', billing: 'subscription-cli' },
     });
 
-    expect(review).toBeNull();
+    expect(review).not.toBeNull();
     expect(provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
-    expect(failureClass).toBe('codex_review_unsupported');
-    expect(vi.mocked(spawn)).not.toHaveBeenCalled();
+    expect(review?.provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(failureClass).toBeUndefined();
+    expect(vi.mocked(spawn)).toHaveBeenCalledWith('codex', expect.arrayContaining(['exec', '--json']), expect.any(Object));
   });
 
   it('returns null review when claude exits non-zero', async () => {
@@ -748,8 +760,8 @@ describe('spawnReview', () => {
   it('delegates stream-json row parsing to the shared JSONL helper', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/spawn-claude.ts'), 'utf8');
     const parsingBlock = source.slice(
-      source.indexOf('// Parse text and cost from stream-json JSONL output.'),
-      source.indexOf('resolve({ text, costUsd, durationMs, exitCode: code ?? -1 });'),
+      source.indexOf('function parseClaudeStreamResult'),
+      source.indexOf('function parseAgentResult'),
     );
 
     expect(parsingBlock).toContain('parseJsonLines');
@@ -801,21 +813,28 @@ describe('reviewBattery', () => {
     expect(result.dimensions[0].provider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
   });
 
-  it('classifies Codex review provider failures separately', async () => {
+  it('runs explicit Codex review provider through the shared spawn seam', async () => {
+    mockClaude([{
+      stdout: codexJsonlPayload(JSON.stringify({
+        dimension: 'requirements',
+        summary: 'ok',
+        findings: [{ requirement: 'R1', status: 'DONE', detail: 'ok' }],
+      })),
+    }]);
+
     const result = await reviewBattery({
       dimensions: ['requirements'],
       reviewProvider: { provider: 'codex', billing: 'subscription-cli' },
     });
 
-    expect(result.failedDimensions).toEqual(['requirements']);
-    expect(result.failedDimensionFailures).toEqual([
-      {
-        dimension: 'requirements',
-        provider: { provider: 'codex', billing: 'subscription-cli' },
-        failureClass: 'codex_review_unsupported',
-      },
-    ]);
-    expect(result.verdict).toBe('fail');
+    expect(result.verdict).toBe('pass');
+    expect(result.failedDimensions).toEqual([]);
+    expect(result.dimensions[0].provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+      'codex',
+      expect.arrayContaining(['exec', '--json']),
+      expect.any(Object),
+    );
   });
 
   const passingOutput = streamJsonPayload(
@@ -1052,6 +1071,29 @@ describe('spawnBatchReview', () => {
     const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(results[0].costUsd).toBeCloseTo(0.10);
     expect(results[1].costUsd).toBeCloseTo(0.10);
+  });
+
+  it('runs Codex batch review through the shared provider adapter', async () => {
+    const batchText = [
+      `\`\`\`json\n${JSON.stringify({ dimension: 'correctness', summary: 'ok', findings: [] })}\n\`\`\``,
+      `\`\`\`json\n${JSON.stringify({ dimension: 'security', summary: 'gap', findings: [{ requirement: 'S1', status: 'MISSING', detail: 'missing' }] })}\n\`\`\``,
+    ].join('\n\n');
+    mockClaudeOnce(codexJsonlPayload(batchText));
+
+    const results = await spawnBatchReview({
+      dimensions: ['correctness', 'security'],
+      repo: 'test/test',
+      reviewProvider: { provider: 'codex', billing: 'subscription-cli' },
+    });
+
+    expect(results).toHaveLength(2);
+    expect(results[0].review?.dimension).toBe('correctness');
+    expect(results[0].review?.provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(results[1].review?.dimension).toBe('security');
+    expect(results[1].review?.verdict).toBe('fail');
+    expect(results[1].provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(results[0].costUsd).toBe(0);
+    expect(vi.mocked(spawn)).toHaveBeenCalledWith('codex', expect.arrayContaining(['exec', '--json']), expect.any(Object));
   });
 
   it('returns all nulls when claude fails', async () => {

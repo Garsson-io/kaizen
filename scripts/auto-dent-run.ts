@@ -49,7 +49,13 @@ import {
   deriveBanditPriorFromOutcomes,
   type BanditPrior,
 } from './batch-outcome.js';
-import { phaseProvidersForAgentProvider, type PhaseProviderRecord, type Provider } from './auto-dent-provider.js';
+import {
+  isAcceptedSubscriptionCompatibleCapability,
+  phaseProvidersForAgentProvider,
+  type PhaseProviderRecord,
+  type Provider,
+  type ProviderCapability,
+} from './auto-dent-provider.js';
 import { computeExploreExploitConversion, formatExploreExploitConversion } from './auto-dent-explore-conversion.js';
 import {
   buildKaizenCycleSteps,
@@ -70,6 +76,7 @@ import {
 import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
+import { subscriptionAgentProvider } from '../src/provider-contract.js';
 import { hasHardQualityFailure, type PostMergeVerificationVerdict } from '../src/verdict-binding-policy.js';
 import { extractPlanText } from '../src/structured-data.js';
 import { gh } from '../src/lib/gh-exec.js';
@@ -179,10 +186,13 @@ import {
 } from './auto-dent-stream.js';
 import { degradedRunLogBanner, unknownHookActivationVerdict, type HookActivationVerdict } from './auto-dent-hook-activation.js';
 import {
+  assessCodexRun,
+  assessCodexRunFields,
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
   normalizeCodexEventToStreamMessages,
   normalizeCodexFinalTextToStreamMessages,
+  normalizeCodexProcessExitCode,
   parseCodexJsonl,
 } from './auto-dent-codex.js';
 import {
@@ -2363,6 +2373,17 @@ interface ProviderRunResult {
   promptMeta: PromptMetadata;
 }
 
+export function normalizeCodexRunExitCode(
+  exitCode: number,
+  malformedLineCount: number,
+  hasTerminalEvent = true,
+  hasFailedTerminalEvent = false,
+): number {
+  return normalizeCodexProcessExitCode(exitCode, {
+    ...assessCodexRunFields({ malformedLineCount, hasTerminalEvent, hasFailedTerminalEvent }),
+  });
+}
+
 function providerWorkspaceFailureResult(
   input: {
     logFile: string;
@@ -2425,7 +2446,10 @@ async function runCodex(
     let raw = '';
     const progressCheckpoint = { signature: runProgressCheckpointSignature(input.result) };
     const ctx: StreamContext = { provider: 'codex' };
-    const child = spawn('codex', buildCodexExecArgs(input.providerRoot), {
+    const child = spawn('codex', buildCodexExecArgs(input.providerRoot, {
+      sandbox: 'workspace-write',
+      bypassApprovalsAndSandbox: false,
+    }), {
       cwd: input.providerRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -2487,8 +2511,9 @@ async function runCodex(
       }
 
       const duration = Math.floor((Date.now() - runStart) / 1000);
+      const assessment = assessCodexRun(parsed);
       resolvePromise({
-        exitCode,
+        exitCode: normalizeCodexProcessExitCode(exitCode, assessment),
         duration,
         result: input.result,
         mode: input.mode,
@@ -3044,8 +3069,19 @@ function phaseProvidersForState(state: BatchState): PhaseProviderRecord {
   return phaseProvidersForAgentProvider(state.provider);
 }
 
-export function shouldRunCodexProvider(state: Pick<BatchState, 'provider'>): boolean {
-  return state.provider === 'codex';
+export function shouldRunCodexProvider(
+  state: Pick<BatchState, 'provider'>,
+  inventory?: readonly ProviderCapability[],
+): boolean {
+  const provider = state.provider ?? 'claude';
+  if (provider !== 'codex') return false;
+  const capabilities = inventory ?? undefined;
+  if (!capabilities) return phaseProvidersForAgentProvider(provider).implementation?.provider === 'codex';
+  return capabilities.some((cap) =>
+    cap.provider === 'codex' &&
+    cap.phase === 'implementation' &&
+    isAcceptedSubscriptionCompatibleCapability(cap)
+  );
 }
 
 // Lifecycle validation — implementation lives in ./auto-dent-lifecycle.ts.
@@ -3070,6 +3106,8 @@ export interface ReviewWiringInput {
   prs: string[];
   pickedIssue: string;
   repo: string;
+  repoRoot: string;
+  provider?: Provider;
   totalBudget: number;
   implementationCost: number;
   runId: string;
@@ -3106,6 +3144,9 @@ export async function runReviewWiring(
     for (const prUrl of input.prs) {
       // #899: Shared event fields to avoid repetition
       const reviewEventBase = { run_id: input.runId, batch_id: input.batchId, run_num: input.runNum, pr_url: prUrl };
+      const phaseProviders = phaseProvidersForAgentProvider((input.provider ?? 'claude') as any);
+      const reviewProvider = subscriptionAgentProvider(phaseProviders.review?.provider === 'codex' ? 'codex' : 'claude');
+      const fixProvider = subscriptionAgentProvider(phaseProviders.fix?.provider === 'codex' ? 'codex' : 'claude');
 
       deps.emit({
         ...reviewEventBase,
@@ -3119,7 +3160,9 @@ export async function runReviewWiring(
         prUrl,
         issueNum: input.pickedIssue,
         repo: input.repo,
+        cwd: input.repoRoot,
         timeoutMs: 120_000,
+        reviewProvider,
       });
       reviewCostUsd += batteryResult.costUsd;
 
@@ -3160,7 +3203,10 @@ export async function runReviewWiring(
           } as AutoDentEvent);
 
           try {
-            const reviewFixProviders = defaultReviewFixProviders();
+            const reviewFixProviders = {
+              reviewProvider,
+              fixProvider,
+            };
             const fixState = await deps.runFixLoop({
               prUrl,
               issueNum: input.pickedIssue,
@@ -3171,6 +3217,7 @@ export async function runReviewWiring(
               maxRounds: 2, // fix loop runs up to 2 fix+re-review rounds internally
               budgetCap: remainingBudget,
               resume: false, // fresh run within auto-dent; not crash recovery
+              cwd: input.repoRoot,
             });
             const fixCost = fixState.totalCostUsd ?? 0;
             reviewCostUsd += fixCost;
@@ -3389,6 +3436,8 @@ async function main(): Promise<void> {
       prs: result.prs,
       pickedIssue: pickedIssue ?? '',
       repo: state.kaizen_repo || state.host_repo || '',
+      repoRoot,
+      provider: state.provider,
       totalBudget: parseFloat(state.budget) || 2,
       implementationCost: result.cost ?? 0,
       runId,

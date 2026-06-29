@@ -11,10 +11,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { z } from 'zod';
 import {
-  CAPABILITY_INVENTORY,
   PHASES,
   PhaseProviderRecordSchema,
   PlanValidationSchema,
+  PROVIDER_CAPABILITIES,
   type PhaseProvider,
   type PhaseProviderRecord,
   type PlanValidation,
@@ -92,6 +92,14 @@ function pp(provider: Provider, billing: PhaseProvider['billing']): PhaseProvide
 const CLAUDE = pp('claude', 'subscription-cli');
 const CODEX = pp('codex', 'subscription-cli');
 const VALIDATOR = pp('provider-independent', 'local-only');
+const CODEX_MAINLINE_CLAUDE_REVIEW_PHASES: PhaseProviderRecord = {
+  planning: CODEX,
+  implementation: CODEX,
+  review: CLAUDE,
+  fix: CODEX,
+  reflection: CODEX,
+  validation: VALIDATOR,
+};
 
 export function providerComparisonScenarios(): ProviderComparisonScenario[] {
   return [
@@ -109,17 +117,10 @@ export function providerComparisonScenarios(): ProviderComparisonScenario[] {
       },
     },
     {
-      id: 'codex-only',
-      label: 'Codex only',
-      description: 'Codex handles every agent phase; validation remains provider-independent.',
-      phaseProviders: {
-        planning: CODEX,
-        implementation: CODEX,
-        review: CODEX,
-        fix: CODEX,
-        reflection: CODEX,
-        validation: VALIDATOR,
-      },
+      id: 'codex-mainline-claude-review',
+      label: 'Codex mainline + Claude review',
+      description: 'Codex handles planning, implementation, fix, and reflection; Claude remains the accepted unattended review provider; validation remains provider-independent.',
+      phaseProviders: CODEX_MAINLINE_CLAUDE_REVIEW_PHASES,
     },
     {
       id: 'claude-plan-review-codex-implement',
@@ -136,23 +137,16 @@ export function providerComparisonScenarios(): ProviderComparisonScenario[] {
     },
     {
       id: 'codex-plan-implement-provider-validation',
-      label: 'Codex planning/implementation + provider-independent validation',
-      description: 'Codex owns planning, implementation, fix, and reflection; provider-independent validation is the trust boundary.',
-      phaseProviders: {
-        planning: CODEX,
-        implementation: CODEX,
-        review: CODEX,
-        fix: CODEX,
-        reflection: CODEX,
-        validation: VALIDATOR,
-      },
+      label: 'Codex planning/implementation + Claude review',
+      description: 'Codex owns planning, implementation, fix, and reflection; Claude review and provider-independent validation are the trust boundaries.',
+      phaseProviders: CODEX_MAINLINE_CLAUDE_REVIEW_PHASES,
     },
   ];
 }
 
 export function validateProviderComparisonScenario(
   scenario: ProviderComparisonScenario,
-  inventory: readonly ProviderCapability[] = CAPABILITY_INVENTORY,
+  inventory: readonly ProviderCapability[] = PROVIDER_CAPABILITIES,
 ): PlanValidation {
   const validation = validateProviderPlan(phaseProviderRecordToProviderPlan(scenario.phaseProviders), inventory);
   return {
@@ -238,19 +232,19 @@ export function defaultProviderComparisonResults(): ProviderComparisonResult[] {
       ['Mature baseline with strongest review/reflection ergonomics.'],
     ),
     result(
-      'codex-only',
-      'process-incomplete',
-      'missing-review-evidence',
+      'codex-mainline-claude-review',
+      'pass',
+      null,
       {
-        processPassRate: 0,
+        processPassRate: 1,
         emptySuccessRate: 0,
-        processIncompleteRate: 1,
-        reviewQuality: 'weak',
+        processIncompleteRate: 0,
+        reviewQuality: 'strong',
         costSignal: 'available',
-        hookRejections: 1,
+        hookRejections: 0,
         operatorInspectability: 'medium',
       },
-      ['Codex implementation is strong, but review evidence is not yet equivalent to the kaizen review battery.'],
+      ['Codex handles edit-heavy phases while Claude keeps the unattended review trust boundary.'],
     ),
     result(
       'claude-plan-review-codex-implement',
@@ -269,18 +263,18 @@ export function defaultProviderComparisonResults(): ProviderComparisonResult[] {
     ),
     result(
       'codex-plan-implement-provider-validation',
-      'fail-open-warning',
-      'review-quality-unknown',
+      'pass',
+      null,
       {
         processPassRate: 1,
         emptySuccessRate: 0,
         processIncompleteRate: 0,
-        reviewQuality: 'adequate',
+        reviewQuality: 'strong',
         costSignal: 'available',
         hookRejections: 0,
         operatorInspectability: 'medium',
       },
-      ['Provider-independent validation works, but review quality is weaker than Claude-backed review.'],
+      ['Provider-independent validation and Claude review keep the trust boundaries while Codex handles planning and edits.'],
     ),
   ];
 }

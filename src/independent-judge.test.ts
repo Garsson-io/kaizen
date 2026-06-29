@@ -22,11 +22,11 @@ import type { SpawnClaudeFn } from './spawn-claude.js';
 // A fake spawn that returns a canned YAML reply and records every call.
 function fakeSpawn(reply: string, opts: { exitCode?: number; costUsd?: number } = {}): {
   spawn: SpawnClaudeFn;
-  calls: string[];
+  calls: Array<{ prompt: string; opts: Parameters<SpawnClaudeFn>[1] }>;
 } {
-  const calls: string[] = [];
-  const spawn: SpawnClaudeFn = async (prompt) => {
-    calls.push(prompt);
+  const calls: Array<{ prompt: string; opts: Parameters<SpawnClaudeFn>[1] }> = [];
+  const spawn: SpawnClaudeFn = async (prompt, spawnOpts) => {
+    calls.push({ prompt, opts: spawnOpts });
     return { text: reply, costUsd: opts.costUsd ?? 0.01, durationMs: 1, exitCode: opts.exitCode ?? 0 };
   };
   return { spawn, calls };
@@ -177,6 +177,19 @@ describe('independentJudge — end to end with injected spawn', () => {
     expect(r.totalCostUsd).toBeCloseTo(0.03);
   });
 
+  it('passes the requested provider through the shared spawn seam', async () => {
+    const { spawn, calls } = fakeSpawn(PASS_YAML);
+    const r = await independentJudge({
+      artifact: 'a diff',
+      charter: 'red-team',
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      spawn,
+    });
+
+    expect(r.verdict).toBe('pass');
+    expect(calls[0].opts.provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+  });
+
   it('one FAIL among passes blocks the panel (any-blocks default)', async () => {
     let i = 0;
     const replies = [PASS_YAML, FAIL_YAML, PASS_YAML];
@@ -225,9 +238,11 @@ describe('DRY guard — one spawn loop in the repo', () => {
     expect(src).not.toContain("spawn('claude'");
   });
 
-  it('independent-judge imports the shared spawnClaude and defines no spawn loop', () => {
+  it('independent-judge defaults to the shared provider-aware spawn adapter', () => {
     const src = readFileSync(resolve(__dirname, 'independent-judge.ts'), 'utf8');
-    expect(src).toContain("from './spawn-claude.js'");
+    expect(src).toContain("import { spawnAgent, type SpawnAgentProvider, type SpawnClaudeFn } from './spawn-claude.js'");
+    expect(src).toContain('const spawn = req.spawn ?? spawnAgent');
+    expect(src).not.toContain('const spawn = req.spawn ?? spawnClaude');
     expect(src).not.toContain("spawn('claude'");
   });
 });

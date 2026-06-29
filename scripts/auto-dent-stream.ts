@@ -23,6 +23,7 @@ import {
   renderToolUse,
 } from './auto-dent-display.js';
 import { parseHookOutputs, type HookOutput } from '../src/hooks/lib/gate-signal.js';
+import { parsePhaseMarkers, type PhaseMarker } from '../src/phase-marker.js';
 import type { Provider } from './auto-dent-provider.js';
 import {
   evaluateHookActivation,
@@ -31,6 +32,8 @@ import {
   unknownHookActivationVerdict,
   type HookActivationVerdict,
 } from './auto-dent-hook-activation.js';
+
+export { parsePhaseMarkers, type PhaseMarker } from '../src/phase-marker.js';
 
 // ANSI color helpers (graceful degradation when NO_COLOR is set or not a TTY)
 
@@ -89,38 +92,6 @@ export function formatToolUse(
   input: Record<string, any>,
 ): string {
   return renderToolUse(name, input);
-}
-
-// Structured phase marker parsing
-// Agents emit: AUTO_DENT_PHASE: <PHASE> | key=value | key=value ...
-
-export interface PhaseMarker {
-  phase: string;
-  fields: Record<string, string>;
-}
-
-export function parsePhaseMarkers(text: string): PhaseMarker[] {
-  const markers: PhaseMarker[] = [];
-
-  for (const match of text.matchAll(
-    /^AUTO_DENT_PHASE:\s*(\w+)(?:\s*\|(.+))?$/gm,
-  )) {
-    const phase = match[1];
-    const fields: Record<string, string> = {};
-
-    if (match[2]) {
-      for (const pair of match[2].split('|')) {
-        const eqIdx = pair.indexOf('=');
-        if (eqIdx > 0) {
-          fields[pair.slice(0, eqIdx).trim()] = pair.slice(eqIdx + 1).trim();
-        }
-      }
-    }
-
-    markers.push({ phase, fields });
-  }
-
-  return markers;
 }
 
 export function formatPhaseMarker(marker: PhaseMarker): string {

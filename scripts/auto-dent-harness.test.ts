@@ -13,8 +13,10 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, readdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { tmpdir } from 'os';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import {
+  buildLiveProbeCommand,
+  normalizeLiveProbeExitCode,
   replayLog,
   runLiveProbe,
   runStream,
@@ -33,21 +35,29 @@ import {
 } from './auto-dent-harness.js';
 import { summarizeEvents } from './batch-summary.js';
 import { scoreBatch } from './auto-dent-score.js';
+import { normalizeCodexEventToStreamMessages } from './auto-dent-codex.js';
+import { parseReviewOutput } from '../src/review-battery.js';
+import { resolveProjectRoot } from '../src/lib/resolve-project-root.js';
 
 // Resolve repo root (works from worktrees too)
 function getRepoRoot(): string {
   try {
-    const gitCommonDir = execSync(
-      'git rev-parse --path-format=absolute --git-common-dir',
+    return execFileSync(
+      'git',
+      ['-C', dirname(new URL(import.meta.url).pathname), 'rev-parse', '--path-format=absolute', '--git-common-dir'],
       { encoding: 'utf8' },
-    ).trim();
-    return gitCommonDir.replace(/\/\.git$/, '');
+    ).trim().replace(/\/\.git$/, '');
   } catch {
     return resolve(dirname(new URL(import.meta.url).pathname), '..');
   }
 }
 
+function getWorktreeRoot(): string {
+  return resolveProjectRoot(dirname(new URL(import.meta.url).pathname));
+}
+
 const REPO_ROOT = getRepoRoot();
+const WORKTREE_ROOT = getWorktreeRoot();
 const LOGS_DIR = join(REPO_ROOT, 'logs/auto-dent');
 
 // Replay tests — feed real captured logs through the pipeline
@@ -162,6 +172,83 @@ describe('replay: edge cases', () => {
     expect(liveSection).toContain('parseJsonObject');
     expect(liveSection).not.toContain('JSON.parse(line)');
   });
+
+  it('keeps live probe spawn error messages visible to callers', () => {
+    const source = readFileSync(new URL('./auto-dent-harness.ts', import.meta.url), 'utf8');
+    const liveSection = source.slice(
+      source.indexOf('export async function runLiveProbe'),
+      source.indexOf('// Assertion helpers'),
+    );
+
+    expect(liveSection).toContain("child.on('error', (err)");
+    expect(liveSection).toContain('logLines.push(`[provider-error] ${err.message}`)');
+    expect(liveSection).toContain("child.stderr?.on('data', (data: Buffer)");
+    expect(liveSection).toContain('logLines.push(`[provider-stderr] ${line}`)');
+  });
+
+  it('builds provider-correct live probe commands without hardcoding Claude (#1580)', () => {
+    expect(buildLiveProbeCommand({
+      provider: 'claude',
+      prompt: 'emit a marker',
+      cwd: '/repo/kaizen',
+      maxBudget: 0.05,
+      extraArgs: ['--model', 'haiku'],
+    })).toEqual({
+      provider: 'claude',
+      command: 'claude',
+      args: [
+        '-p',
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        '--max-budget-usd',
+        '0.05',
+        '--model',
+        'haiku',
+      ],
+    });
+
+    expect(buildLiveProbeCommand({
+      provider: 'codex',
+      prompt: 'emit a marker',
+      cwd: '/repo/kaizen',
+      maxBudget: 0.05,
+      extraArgs: [],
+    })).toEqual({
+      provider: 'codex',
+      command: 'codex',
+      args: [
+        'exec',
+        '--json',
+        '--cd',
+        '/repo/kaizen',
+        '--sandbox',
+        'read-only',
+        '--color',
+        'never',
+        '-',
+      ],
+    });
+  });
+
+  it('fails Codex live probes that emit malformed JSONL despite a zero provider exit (#1580)', () => {
+    expect(normalizeLiveProbeExitCode('codex', 0, 1, true)).toBe(1);
+    expect(normalizeLiveProbeExitCode('codex', 0, 0, true)).toBe(0);
+    expect(normalizeLiveProbeExitCode('codex', 2, 1, true)).toBe(2);
+    expect(normalizeLiveProbeExitCode('claude', 0, 1, true)).toBe(0);
+  });
+
+  it('fails Codex live probes that exit without terminal result evidence (#1580)', () => {
+    expect(normalizeLiveProbeExitCode('codex', 0, 0, false)).toBe(1);
+    expect(normalizeLiveProbeExitCode('codex', 2, 0, false)).toBe(2);
+    expect(normalizeLiveProbeExitCode('claude', 0, 0, false)).toBe(0);
+  });
+
+  it('fails Codex live probes that end with a failed terminal turn (#1580)', () => {
+    expect(normalizeLiveProbeExitCode('codex', 0, 0, true, true)).toBe(1);
+    expect(normalizeLiveProbeExitCode('codex', 2, 0, true, true)).toBe(2);
+    expect(normalizeLiveProbeExitCode('claude', 0, 0, true, true)).toBe(0);
+  });
 });
 
 // Synthetic stream tests — verify phase marker extraction
@@ -197,6 +284,40 @@ describe('synthetic: DECOMPOSE phase marker', () => {
     expect(phaseCount(capture, 'PICK')).toBe(1);
     expect(phaseCount(capture, 'PR')).toBe(1);
     expect(capture.result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/999');
+  });
+});
+
+describe('synthetic: Codex lifecycle and review proof (#1580)', () => {
+  it('normalizes Codex JSONL into valid lifecycle and review evidence', () => {
+    const codexEvents = [
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: PICK | issue=#1580 | title=provider switching' } },
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: EVALUATE | verdict=proceed' } },
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: IMPLEMENT | case=260629-0105-k1580 | branch=case/k1580' } },
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: TEST | result=pass | count=7' } },
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: PR | url=https://github.com/Garsson-io/kaizen/pull/1580' } },
+      { item: { type: 'agent_message', text: 'AUTO_DENT_PHASE: REFLECT | issues_filed=0' } },
+      { type: 'result', final_message: 'AUTO_DENT_PHASE: STOP | reason=synthetic codex proof complete' },
+    ];
+    const streamMessages = codexEvents.flatMap((event) => normalizeCodexEventToStreamMessages(event));
+    const capture = runStream(streamMessages);
+
+    expect(capture.phases.map((phase) => phase.phase)).toEqual([
+      'PICK',
+      'EVALUATE',
+      'IMPLEMENT',
+      'TEST',
+      'PR',
+      'REFLECT',
+      'STOP',
+    ]);
+    expect(validateLifecycle(capture).valid).toBe(true);
+
+    const review = parseReviewOutput(JSON.stringify({
+      dimension: 'requirements',
+      summary: 'codex review evidence parsed',
+      findings: [{ requirement: 'R1', status: 'DONE', detail: 'Codex provider path produced structured review evidence' }],
+    }), 'requirements');
+    expect(review?.verdict).toBe('pass');
   });
 });
 
@@ -607,6 +728,7 @@ describe('RunResult: field completeness', () => {
 // Live smoke test — spawns a real bounded claude session
 
 const LIVE = process.env.LIVE_PROBE === '1';
+const LIVE_CODEX = process.env.LIVE_PROBE_CODEX === '1';
 
 describe('live: smoke test', () => {
   // Skip by default — requires claude CLI and API credits
@@ -615,16 +737,16 @@ describe('live: smoke test', () => {
   testFn('pipeline smoke test — phase markers round-trip through real claude', async () => {
     const capture = await runLiveProbe({
       prompt: SMOKE_TEST_PROMPT,
-      cwd: REPO_ROOT,
+      cwd: WORKTREE_ROOT,
       maxBudget: 0.05,
       timeoutMs: 30_000,
     });
 
     // Claude should have exited cleanly
-    expect(capture.exitCode).toBe(0);
+    expect(capture.exitCode, `raw log: ${capture.logFile}\n${capture.logLines.slice(0, 20).join('\n')}`).toBe(0);
 
     // Should have emitted phase markers
-    expect(capture.phases.length).toBeGreaterThanOrEqual(1);
+    expect(capture.phases.length, `raw log: ${capture.logFile}`).toBeGreaterThanOrEqual(1);
 
     // Should have requested stop
     expect(capture.result.stopRequested).toBe(true);
@@ -633,6 +755,25 @@ describe('live: smoke test', () => {
     // Cost should be minimal
     expect(capture.result.cost).toBeLessThan(0.10);
 
-    console.log(`Live probe completed in ${capture.durationMs}ms, cost $${capture.result.cost.toFixed(3)}, ${capture.phases.length} phases`);
+    console.log(`Live probe completed in ${capture.durationMs}ms, cost $${capture.result.cost.toFixed(3)}, ${capture.phases.length} phases, log ${capture.logFile}`);
   }, 60_000); // 60s timeout for vitest
+});
+
+describe('live: Codex smoke test', () => {
+  const testFn = LIVE_CODEX ? it : it.skip;
+
+  testFn('pipeline smoke test — phase markers round-trip through real codex', async () => {
+    const capture = await runLiveProbe({
+      provider: 'codex',
+      prompt: 'Emit exactly one line: AUTO_DENT_PHASE: STOP | reason=codex smoke test. Do not edit files.',
+      cwd: WORKTREE_ROOT,
+      timeoutMs: 30_000,
+    });
+
+    expect(capture.exitCode, `raw log: ${capture.logFile}\n${capture.logLines.slice(0, 20).join('\n')}`).toBe(0);
+    expect(capture.phases.length, `raw log: ${capture.logFile}`).toBeGreaterThanOrEqual(1);
+    expect(capture.result.stopRequested, `raw log: ${capture.logFile}`).toBe(true);
+    expect(capture.result.stopReason).toContain('codex smoke test');
+    console.log(`Codex live probe completed in ${capture.durationMs}ms, ${capture.phases.length} phases, log ${capture.logFile}`);
+  }, 60_000);
 });

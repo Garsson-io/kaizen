@@ -8,6 +8,7 @@
  * Usage:
  *   npx tsx src/cli-independent-judge.ts judge --charter mock-defeat --artifact-file diff.patch
  *   git diff origin/main | npx tsx src/cli-independent-judge.ts judge --charter red-team,staff-engineer
+ *   ROOT="$(git -C "$PWD" rev-parse --show-toplevel)" && git -C "$ROOT" diff origin/main | npx tsx "$ROOT/src/cli-independent-judge.ts" judge --provider codex --cwd "$ROOT"
  *   npx tsx src/cli-independent-judge.ts charters        # list the charter library
  *
  * Exit code: 0 if the panel verdict is PASS, 1 if FAIL — so a gate can branch on `$?`.
@@ -20,7 +21,7 @@ import {
   type JudgeRequest,
 } from './independent-judge.js';
 import { CHARTERS, CHARTER_NAMES, isCharterName, type CharterName } from './judge-charters.js';
-import type { SpawnClaudeFn } from './spawn-claude.js';
+import { parseSpawnAgentProvider, type SpawnAgentProvider, type SpawnClaudeFn } from './spawn-claude.js';
 
 function getFlag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
@@ -49,6 +50,14 @@ function parseCharters(raw: string | undefined): CharterName | CharterName[] {
   return names.length === 1 ? (names[0] as CharterName) : (names as CharterName[]);
 }
 
+function parseProvider(raw: string | undefined): SpawnAgentProvider | undefined {
+  if (!raw) return undefined;
+  const parsed = parseSpawnAgentProvider(raw);
+  if (parsed) return parsed;
+  console.error(`Unknown provider "${raw}". Valid: claude, codex`);
+  process.exit(2);
+}
+
 function cmdCharters(): void {
   for (const name of CHARTER_NAMES) {
     const c = CHARTERS[name];
@@ -70,6 +79,8 @@ export async function cmdJudge(argv: string[], spawn?: SpawnClaudeFn): Promise<n
     aggregate: aggregate ?? 'any-blocks',
     artifactKind: getFlag(argv, 'kind'),
     model: getFlag(argv, 'model'),
+    provider: parseProvider(getFlag(argv, 'provider')),
+    cwd: getFlag(argv, 'cwd') ?? process.cwd(),
     spawn,
   };
 

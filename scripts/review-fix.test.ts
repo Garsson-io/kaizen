@@ -29,6 +29,7 @@ import {
   type ReviewFixState,
 } from './review-fix.js';
 import { DATA_GAP_PREFIX, type BatteryResult } from '../src/review-battery.js';
+import type { ProviderCapability } from './auto-dent-provider.js';
 
 // ── parseStreamJsonResult ────────────────────────────────────────────
 
@@ -306,8 +307,7 @@ describe('provider-aware review-fix loop (#1148)', () => {
       '--cd',
       '/repo',
       '--sandbox',
-      'danger-full-access',
-      '--dangerously-bypass-approvals-and-sandbox',
+      'workspace-write',
       '--color',
       'never',
       '-',
@@ -438,6 +438,77 @@ describe('checkFixResult (integration: real temp files)', () => {
       expect(r.output).toContain('Fix committed and pushed');
     } finally { teardown(); }
   });
+
+  it('keeps running Codex fixes pending until a terminal result event appears', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      const lines = [
+        JSON.stringify({ item: { type: 'agent_message', text: 'still working' } }),
+      ];
+      writeFileSync(logFile, lines.join('\n') + '\n');
+      const r = checkFixResult(logFile, process.pid, { provider: 'codex', billing: 'subscription-cli' });
+      expect(r.done).toBe(false);
+      expect(r.success).toBe(false);
+    } finally { teardown(); }
+  });
+
+  it('marks completed Codex fix logs with failed turns as unsuccessful', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      const lines = [
+        JSON.stringify({ item: { type: 'agent_message', text: 'looks fixed' } }),
+        JSON.stringify({ type: 'turn.failed', error: { message: 'usage limit' } }),
+      ];
+      writeFileSync(logFile, lines.join('\n') + '\n');
+      const r = checkFixResult(logFile, DEAD_PID, { provider: 'codex', billing: 'subscription-cli' });
+      expect(r.done).toBe(true);
+      expect(r.success).toBe(false);
+      expect(r.output).toContain('looks fixed');
+    } finally { teardown(); }
+  });
+
+  it('includes Codex fix stderr when stdout has no JSONL result', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      writeFileSync(logFile, '');
+      writeFileSync(logFile + '.stderr', 'not authenticated\n');
+      const r = checkFixResult(logFile, DEAD_PID, { provider: 'codex', billing: 'subscription-cli' });
+      expect(r.done).toBe(true);
+      expect(r.success).toBe(false);
+      expect(r.output).toContain('not authenticated');
+    } finally { teardown(); }
+  });
+
+  it('treats pid 0 provider-spawn-error logs as completed failures', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      writeFileSync(logFile, 'Provider spawn error: spawn codex ENOENT\n');
+      writeFileSync(logFile + '.stderr', 'Provider spawn error: spawn codex ENOENT\n');
+      const r = checkFixResult(logFile, 0, { provider: 'codex', billing: 'subscription-cli' });
+      expect(r.done).toBe(true);
+      expect(r.success).toBe(false);
+      expect(r.output).toContain('spawn codex ENOENT');
+    } finally { teardown(); }
+  });
+});
+
+describe('launchFix subprocess error visibility', () => {
+  it('records async spawn errors in both fix stdout and stderr logs', () => {
+    const source = readFileSync(new URL('./review-fix.ts', import.meta.url), 'utf8');
+    const launchSection = source.slice(
+      source.indexOf('function launchFix'),
+      source.indexOf('/**\n * Check if a detached fix session has completed.', source.indexOf('function launchFix')),
+    );
+
+    expect(launchSection).toContain("child.on('error', (spawnError)");
+    expect(launchSection).toContain('cwd: repoRoot');
+    expect(launchSection).toContain('Provider spawn error: ${spawnError.message}');
+    expect(launchSection).toContain("writeFileSync(logFile + '.stderr', message, { flag: 'a' })");
+  });
 });
 
 // ── stateKey ─────────────────────────────────────────────────────────
@@ -550,6 +621,7 @@ describe('parseArgs', () => {
       '--budget', '3.5',
       '--review-provider', 'claude',
       '--fix-provider', 'codex',
+      '--cwd', '/repo/worktree',
     ]);
     expect(result.prUrl).toBe('https://github.com/org/repo/pull/1');
     expect(result.issueNum).toBe('42');
@@ -560,6 +632,7 @@ describe('parseArgs', () => {
     expect(result.budgetCap).toBeCloseTo(3.5);
     expect(result.reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
     expect(result.fixProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(result.cwd).toBe('/repo/worktree');
   });
 
   it('exits 1 when --pr is missing', () => {
@@ -848,6 +921,10 @@ describe('runFixLoop', () => {
   it('review-failed path: records the attempted review provider even when no dimensions return', async () => {
     const dir = setup();
     try {
+      const codexReviewInventory: ProviderCapability[] = [
+        { provider: 'codex', phase: 'review', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'test accepts experimental codex review' },
+        { provider: 'claude', phase: 'fix', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'test fix provider' },
+      ];
       const emptyBattery: BatteryResult = {
         verdict: 'fail',
         costUsd: 0,
@@ -869,6 +946,7 @@ describe('runFixLoop', () => {
         runReview: async () => emptyBattery,
         launchFix: vi.fn(),
         getStateDir: () => dir,
+        providerInventory: codexReviewInventory,
       });
 
       expect(state.rounds[0].verdict).toBe('review_failed');

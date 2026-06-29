@@ -2,12 +2,14 @@
  * auto-dent-hook-activation — prove kaizen hooks actually loaded in a spawned
  * Claude session, and loudly degrade when they did not (#843).
  *
- * Auto-dent spawns `claude -p` sessions. The kaizen hook layer registers ONLY
- * through `.claude-plugin/plugin.json` (self-dogfood rule #1063), so if the
- * kaizen plugin is not loaded, ZERO kaizen hooks fire — no review gate, no
- * dirty-file check, no stop gate. Log evidence shows this is flaky: across
- * batches, 95 runs started with `plugins:[]` and 303 with the plugin loaded.
- * A silent `plugins:[]` run shipped 25 PRs with no review (batch jolly-marsupial).
+ * Auto-dent can spawn Claude or Codex sessions. Claude claims Claude Code hook
+ * support through `.claude-plugin/plugin.json` (self-dogfood rule #1063), so if
+ * the kaizen plugin is not loaded in a Claude run, ZERO kaizen hooks fire — no
+ * review gate, no dirty-file check, no stop gate. Codex has no Claude Code hook
+ * runtime, so missing plugins are expected there rather than degraded. Log
+ * evidence shows the Claude path is flaky: across batches, 95 runs started with
+ * `plugins:[]` and 303 with the plugin loaded. A silent `plugins:[]` run shipped
+ * 25 PRs with no review (batch jolly-marsupial).
  *
  * The stream-json `system.init` event is ground truth for what actually loaded
  * this session (unlike static on-disk config, which the flaky split proves can

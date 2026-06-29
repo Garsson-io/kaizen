@@ -58,7 +58,9 @@ import {
   extractModeOutput,
   postModeOutputToProgressIssue,
   extractPlanText,
+  normalizeCodexRunExitCode,
   populateCrossBatchSteering,
+  runReviewWiring,
   shouldRunCodexProvider,
   attachRunTranscripts,
   applyContextDelegationAnalysis,
@@ -70,6 +72,7 @@ import {
 } from './auto-dent-provider-workspace.js';
 import { deriveRunTestHealth } from './auto-dent-test-health.js';
 import * as github from './auto-dent-github.js';
+import type { ProviderCapability } from './auto-dent-provider.js';
 import { makeBatchState, makeRunResult } from './auto-dent-test-utils.js';
 import { decideAutoMergeSafety } from './auto-dent-merge-policy.js';
 
@@ -2039,6 +2042,98 @@ describe('BatchState provider field (#1144)', () => {
     expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex', test_task: true }))).toBe(true);
     expect(shouldRunCodexProvider(makeBatchState({ provider: 'claude', test_task: false }))).toBe(false);
     expect(shouldRunCodexProvider(makeBatchState({ provider: undefined, test_task: false }))).toBe(false);
+  });
+
+  it('consults runtime provider capabilities before dispatching Codex implementation (#1580)', () => {
+    const inventory: ProviderCapability[] = [
+      { provider: 'claude', phase: 'planning', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'claude', phase: 'implementation', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'claude', phase: 'review', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'claude', phase: 'fix', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'claude', phase: 'reflection', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'provider-independent', phase: 'validation', billingMode: 'local-only', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+      { provider: 'codex', phase: 'implementation', billingMode: 'subscription-cli', fit: 'avoid', acceptedForUnattended: false, rationale: 'disabled' },
+    ];
+
+    expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex' }), inventory)).toBe(false);
+  });
+
+  it('does not require unrelated lifecycle phases when checking Codex implementation dispatch (#1580)', () => {
+    const inventory: ProviderCapability[] = [
+      { provider: 'codex', phase: 'implementation', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'available' },
+    ];
+
+    expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex' }), inventory)).toBe(true);
+    expect(shouldRunCodexProvider(makeBatchState({ provider: 'codex' }), [])).toBe(false);
+  });
+
+  it('fails Codex runs that emit malformed JSONL despite a zero provider exit (#1580)', () => {
+    expect(normalizeCodexRunExitCode(0, 1, true)).toBe(1);
+    expect(normalizeCodexRunExitCode(0, 0, true)).toBe(0);
+    expect(normalizeCodexRunExitCode(2, 1, true)).toBe(2);
+  });
+
+  it('fails Codex runs that exit without terminal result evidence (#1580)', () => {
+    expect(normalizeCodexRunExitCode(0, 0, false)).toBe(1);
+    expect(normalizeCodexRunExitCode(3, 0, false)).toBe(3);
+  });
+
+  it('fails Codex runs that end with a failed terminal turn (#1580)', () => {
+    expect(normalizeCodexRunExitCode(0, 0, true, true)).toBe(1);
+    expect(normalizeCodexRunExitCode(3, 0, true, true)).toBe(3);
+  });
+});
+
+describe('runReviewWiring provider selection (#1580)', () => {
+  it('derives auto-dent review/fix providers from runtime phase providers', async () => {
+    const runFixCalls: any[] = [];
+    const reviewBatteryMock = vi.fn(async (opts: any) => {
+      expect(opts.cwd).toBe('/repo/worktree');
+      return {
+        verdict: 'fail',
+        costUsd: 0.1,
+        durationMs: 1,
+        missingCount: 1,
+        partialCount: 0,
+        failedDimensions: [],
+        dimensions: [{
+          dimension: 'requirements',
+          verdict: 'fail',
+          findings: [{ requirement: 'R1', status: 'MISSING', detail: 'gap' }],
+          summary: 'gap',
+        }],
+      };
+    });
+    const runFixLoopMock = vi.fn(async (opts: any) => {
+      runFixCalls.push(opts);
+      return { totalCostUsd: 0.2, currentRound: 1, outcome: 'pass' };
+    });
+
+    await runReviewWiring({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1588'],
+      pickedIssue: '1580',
+      repo: 'Garsson-io/kaizen',
+      repoRoot: '/repo/worktree',
+      provider: 'codex',
+      totalBudget: 2,
+      implementationCost: 0.1,
+      runId: 'run-1',
+      batchId: 'batch-1',
+      runNum: 1,
+    }, {
+      reviewBattery: reviewBatteryMock as any,
+      runFixLoop: runFixLoopMock as any,
+      listPrDimensions: () => ['requirements'],
+      formatBatteryReport: () => 'report',
+      emit: vi.fn(),
+      appendLog: vi.fn(),
+      writeAttachment: vi.fn(() => 'https://github.com/Garsson-io/kaizen/pull/1588#issuecomment-1') as any,
+      ghExec: vi.fn(),
+    });
+
+    expect(runFixCalls[0].reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(runFixCalls[0].fixProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(runFixCalls[0].cwd).toBe('/repo/worktree');
   });
 });
 
@@ -4520,7 +4615,9 @@ describe('provider workspace contract', () => {
     const runCodexSection = source.slice(runCodexStart, runCodexEnd);
 
     expect(runCodexSection).toContain('providerRoot: string');
-    expect(runCodexSection).toContain('buildCodexExecArgs(input.providerRoot)');
+    expect(runCodexSection).toContain('buildCodexExecArgs(input.providerRoot, {');
+    expect(runCodexSection).toContain("sandbox: 'workspace-write'");
+    expect(runCodexSection).toContain('bypassApprovalsAndSandbox: false');
     expect(runCodexSection).toContain('cwd: input.providerRoot');
     expect(runCodexSection).not.toContain('buildCodexExecArgs(input.repoRoot)');
   });

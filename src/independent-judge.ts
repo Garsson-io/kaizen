@@ -12,7 +12,7 @@
  * Structural independence: `JudgeRequest` has NO field for producer context. The judge can only
  * ever receive `artifact` (+ config). Independence is enforced by the type, not by discipline.
  *
- * Spawn is the shared `spawnClaude` primitive (src/spawn-claude.ts) — the same one the review
+ * Spawn is the shared provider-aware primitive (src/spawn-claude.ts) — the same one the review
  * battery uses; we do not reimplement the spawn loop (DRY mandate).
  */
 
@@ -24,7 +24,7 @@ import {
   type CharterName,
   isCharterName,
 } from './judge-charters.js';
-import { spawnClaude, type SpawnClaudeFn } from './spawn-claude.js';
+import { spawnAgent, type SpawnAgentProvider, type SpawnClaudeFn } from './spawn-claude.js';
 
 // ── Verdict schema (I29 — Zod + YAML, no hand-rolled parsing) ─────────
 
@@ -80,7 +80,9 @@ export interface JudgeRequest {
   model?: string;
   timeoutMs?: number;
   cwd?: string;
-  /** Injectable spawn for tests (zero cost, deterministic). Defaults to the real `claude -p`. */
+  /** Agent provider for the fresh judge process. Defaults to Claude for compatibility. */
+  provider?: SpawnAgentProvider;
+  /** Injectable spawn for tests (zero cost, deterministic). Defaults to the real provider spawn. */
   spawn?: SpawnClaudeFn;
 }
 
@@ -218,7 +220,7 @@ export function resolveCharterPlan(req: JudgeRequest): CharterName[] {
 /**
  * Spawn fresh, independent judges over an artifact and return an aggregated verdict.
  *
- * Each judge is a separate `claude -p` process with no shared context — it sees only the
+ * Each judge is a separate provider process with no shared context — it sees only the
  * artifact and its charter. The producing run physically cannot feed its own rationalization
  * to the judge of its own gate edit (#1212 hazard) because there is no input for it.
  */
@@ -230,7 +232,7 @@ export async function independentJudge(req: JudgeRequest): Promise<JudgePanelRes
   for (const name of plan) {
     if (!isCharterName(name)) throw new Error(`independentJudge: unknown charter "${name}"`);
   }
-  const spawn = req.spawn ?? spawnClaude;
+  const spawn = req.spawn ?? spawnAgent;
   const aggregate = req.aggregate ?? 'any-blocks';
 
   const votes = await Promise.all(
@@ -242,6 +244,7 @@ export async function independentJudge(req: JudgeRequest): Promise<JudgePanelRes
           cwd: req.cwd,
           timeoutMs: req.timeoutMs,
           model: req.model,
+          provider: req.provider,
         });
         if (exitCode !== 0) {
           return parseJudgeReply('', name, costUsd); // non-zero exit → default-to-reject

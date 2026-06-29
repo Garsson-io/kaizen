@@ -16,7 +16,8 @@ import { resolve, dirname, basename } from 'node:path';
 import { readYamlFrontmatter, stripYamlFrontmatter } from './lib/frontmatter.js';
 import { firstMarkdownFence, markdownFences } from './lib/markdown-fence.js';
 import { resolveProjectRoot, type GitRunner } from './lib/resolve-project-root.js';
-import { spawnClaude } from './spawn-claude.js';
+import { spawnAgent, type SpawnAgentProvider } from './spawn-claude.js';
+import { subscriptionAgentProvider } from './provider-contract.js';
 import { retrievePlan, issueTarget } from './structured-data.js';
 import {
   normalizeFindingStatus,
@@ -57,12 +58,9 @@ export interface DimensionReview {
 
 export type ReviewFailureClass =
   | 'claude_review_failed'
-  | 'codex_review_unsupported';
+  | 'codex_review_failed';
 
-export interface ReviewProvider {
-  provider: 'claude' | 'codex';
-  billing: 'subscription-cli';
-}
+export type ReviewProvider = SpawnAgentProvider;
 
 export interface ReviewDimensionFailure {
   dimension: string;
@@ -113,7 +111,7 @@ export const BUDGET_CAP_USD = 2.0;
 export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
 
 export function selectReviewProvider(provider?: ReviewProvider): ReviewProvider {
-  return provider ?? { provider: 'claude', billing: 'subscription-cli' };
+  return provider ?? subscriptionAgentProvider('claude');
 }
 
 function providerLabel(provider: ReviewProvider): string {
@@ -447,7 +445,7 @@ export interface SpawnReviewOptions {
   prDiffStat?: string;
   /** Additional prompt variables for reflection or specialized dimensions. */
   extraVars?: Record<string, string>;
-  /** Working directory for the claude -p call */
+  /** Working directory for the provider call */
   cwd?: string;
   /** Timeout in ms (default: 120000) */
   timeoutMs?: number;
@@ -455,16 +453,19 @@ export interface SpawnReviewOptions {
   reviewProvider?: ReviewProvider;
 }
 
-// ── Claude Subprocess Helper ─────────────────────────────────────────
-// The `claude -p` spawn loop lives in the shared `spawnClaude` primitive
+// ── Agent Subprocess Helper ──────────────────────────────────────────
+// The provider-aware spawn loop lives in the shared `spawnAgent` primitive
 // (src/spawn-claude.ts) so the review battery and the independence-by-spawn
-// judge share one implementation (#1231 DRY mandate). `runClaude` is a thin
-// local alias kept for call-site readability.
+// judge share one implementation (#1231/#1580 DRY mandate).
 
-const runClaude = spawnClaude;
+const runAgent = spawnAgent;
+
+function reviewFailureClass(provider: ReviewProvider): ReviewFailureClass {
+  return provider.provider === 'codex' ? 'codex_review_failed' : 'claude_review_failed';
+}
 
 /**
- * Spawn a single review agent via `claude -p`.
+ * Spawn a single review agent via the selected provider.
  * Returns the parsed DimensionReview, or null if the review failed.
  */
 export async function spawnReview(opts: SpawnReviewOptions): Promise<{
@@ -475,16 +476,7 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{
   failureClass?: ReviewFailureClass;
 }> {
   const provider = selectReviewProvider(opts.reviewProvider);
-  if (provider.provider === 'codex') {
-    console.error(`  [review:${provider.provider}] ${opts.dimension}: unsupported review provider`);
-    return {
-      review: null,
-      costUsd: 0,
-      durationMs: 0,
-      provider,
-      failureClass: 'codex_review_unsupported',
-    };
-  }
+  const failureClass = reviewFailureClass(provider);
 
   const vars: Record<string, string> = {
     ...(opts.extraVars ?? {}),
@@ -502,17 +494,18 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{
     prompt = loadReviewPrompt(opts.dimension, vars);
   } catch (e: any) {
     console.error(`  [review] failed to load prompt for ${opts.dimension}: ${e.message}`);
-    return { review: null, costUsd: 0, durationMs: 0, provider, failureClass: 'claude_review_failed' };
+    return { review: null, costUsd: 0, durationMs: 0, provider, failureClass };
   }
 
-  const { text, costUsd, durationMs, exitCode } = await runClaude(prompt, {
+  const { text, costUsd, durationMs, exitCode } = await runAgent(prompt, {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
+    provider,
   });
 
   if (exitCode !== 0) {
-    console.error(`  [review] claude -p failed for ${opts.dimension}: exit ${exitCode}`);
-    return { review: null, costUsd: 0, durationMs, provider, failureClass: 'claude_review_failed' };
+    console.error(`  [review:${provider.provider}] failed for ${opts.dimension}: exit ${exitCode}`);
+    return { review: null, costUsd: 0, durationMs, provider, failureClass };
   }
 
   const review = parseReviewOutput(text, opts.dimension);
@@ -522,7 +515,7 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{
     costUsd,
     durationMs,
     provider,
-    failureClass: review ? undefined : 'claude_review_failed',
+    failureClass: review ? undefined : failureClass,
   };
 }
 
@@ -534,7 +527,7 @@ export interface SpawnBatchReviewOptions extends Omit<SpawnReviewOptions, 'dimen
 
 /**
  * Parse all DimensionReview JSON blocks from a batch response.
- * A batch prompt asks claude to output one ```json block per dimension.
+ * A batch prompt asks the selected provider to output one ```json block per dimension.
  * Returns all successfully parsed reviews (may be fewer than requested).
  */
 export function parseAllReviewOutputs(raw: string, expectedDimensions: string[]): DimensionReview[] {
@@ -566,7 +559,7 @@ export function groupByDataNeeds(
 }
 
 /**
- * Spawn multiple review dimensions in a single `claude -p` call.
+ * Spawn multiple review dimensions in a single provider call.
  * Prompts are concatenated; the LLM outputs one ```json block per dimension.
  * Cost is split evenly across dimensions.
  */
@@ -580,16 +573,7 @@ export async function spawnBatchReview(
   failureClass?: ReviewFailureClass;
 }>> {
   const provider = selectReviewProvider(opts.reviewProvider);
-  if (provider.provider === 'codex') {
-    console.error(`  [review:${provider.provider}] batch: unsupported review provider`);
-    return opts.dimensions.map(() => ({
-      review: null,
-      costUsd: 0,
-      durationMs: 0,
-      provider,
-      failureClass: 'codex_review_unsupported',
-    }));
-  }
+  const failureClass = reviewFailureClass(provider);
 
   const vars: Record<string, string> = {
     ...(opts.extraVars ?? {}),
@@ -614,7 +598,7 @@ export async function spawnBatchReview(
   }
 
   if (prompts.length === 0) {
-    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs: 0, provider, failureClass: 'claude_review_failed' }));
+    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs: 0, provider, failureClass }));
   }
 
   const batchPrompt =
@@ -622,14 +606,15 @@ export async function spawnBatchReview(
     `For each dimension, output a separate \`\`\`json block with the "dimension" field set to the dimension name.\n\n` +
     prompts.join('\n\n---\n\n');
 
-  const { text, costUsd, durationMs, exitCode } = await runClaude(batchPrompt, {
+  const { text, costUsd, durationMs, exitCode } = await runAgent(batchPrompt, {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
+    provider,
   });
 
   if (exitCode !== 0) {
-    console.error(`  [review] batch claude -p failed: exit ${exitCode}`);
-    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs, provider, failureClass: 'claude_review_failed' }));
+    console.error(`  [review:${provider.provider}] batch failed: exit ${exitCode}`);
+    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs, provider, failureClass }));
   }
 
   const reviews = parseAllReviewOutputs(text, loadedDims);
@@ -643,7 +628,7 @@ export async function spawnBatchReview(
       costUsd: costPerDim,
       durationMs,
       provider,
-      failureClass: review ? undefined : 'claude_review_failed' as const,
+      failureClass: review ? undefined : failureClass,
     };
   });
 }
@@ -680,7 +665,7 @@ export interface BatteryOptions {
 /**
  * Run a battery of review dimensions in parallel.
  * - Auto-skips dims that need 'plan' data when no planText is provided.
- * - Batches dims with identical data needs into one claude call.
+ * - Batches dims with identical data needs into one selected-provider call.
  * - Logs per-dim timing and surfaces failed dims explicitly.
  */
 export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult> {
