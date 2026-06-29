@@ -32,6 +32,7 @@ All environment setup, mock creation, state management helpers, and decision ext
 | Assertions | `test-helpers.sh`: assert_eq, assert_contains, assert_not_contains, assert_ok, assert_fails | Good — sourced by all bash tests |
 | Integration harness | `harness.sh`: run_single_hook, build_*_input, validate_deny_output | Good — used by integration tests |
 | Python harness | `harness.py`: HookHarness, MockBinDir, PRReviewState | Good — used by test_hooks.py |
+| Python PostToolUse timeout contract | `harness.py`: `run_post_hook()` plus `assert_post_hook_stdout_contains()` | Good — use for PostToolUse tests so slow advisory hooks report timeout diagnostics instead of ambiguous missing-output failures |
 | Mock creation (harness) | `harness.sh`: setup_gh_git_mocks, setup_mock_dir | Good — but only used by harness-based tests |
 
 ### Needs Building
@@ -189,6 +190,22 @@ bash .claude/hooks/tests/run-all-tests.sh
 ```
 
 **Pass criteria:** Same pass/fail counts as before. Zero regressions.
+
+### Python PostToolUse tests
+
+When adding Python lifecycle coverage for a PostToolUse hook, use:
+
+```python
+result = harness.run_post_hook("kaizen-reflect-ts.sh", post_tool_use_input)
+assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse kaizen-reflect")
+```
+
+`run_post_hook()` uses `KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS` when set, or
+30 seconds by default. `assert_post_hook_stdout_contains()` checks
+`HookResult.timed_out` before checking stdout, so a slow advisory hook reports
+which hook timed out and what output was expected. Do not hand-roll
+`assert "KAIZEN" in result.stdout` for PostToolUse hooks; that reintroduces the
+#1120 false-red failure mode under fleet load.
 
 ## 8. Open Questions (Resolved)
 

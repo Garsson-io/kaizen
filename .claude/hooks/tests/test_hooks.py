@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from harness import (
     HookHarness, PreToolUseInput, PostToolUseInput, StopInput,
     PRReviewState, MockBinDir, HookResult, REAL_COMMANDS,
-    assert_post_hook_stdout_contains,
+    _env_int, assert_post_hook_stdout_contains,
 )
 
 
@@ -390,6 +390,13 @@ class TestParallelExecution:
 class TestPostToolUseFormat:
     """INVARIANT: PostToolUse hooks output advisory text, not deny JSON."""
 
+    def test_post_hook_timeout_budget_env_parsing(self, monkeypatch):
+        monkeypatch.setenv("KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS", "45")
+        assert _env_int("KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS", 30) == 45
+
+        monkeypatch.setenv("KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS", "not-an-int")
+        assert _env_int("KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS", 30) == 30
+
     def test_post_hook_timeout_reports_diagnostic(self):
         result = HookResult(
             hook_path="kaizen-reflect-ts.sh",
@@ -401,6 +408,22 @@ class TestPostToolUseFormat:
 
         with pytest.raises(AssertionError, match="PostToolUse kaizen-reflect timed out.*KAIZEN"):
             assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse kaizen-reflect")
+
+    def test_run_post_hook_timeout_reports_real_subprocess_diagnostic(self, tmp_path):
+        hook = tmp_path / "slow-post-hook.sh"
+        hook.write_text("#!/bin/bash\nsleep 1\necho KAIZEN\n")
+        hook.chmod(0o755)
+
+        h = HookHarness(hooks_dir=tmp_path, settings_path=tmp_path / "settings.json")
+        try:
+            result = h.run_post_hook("slow-post-hook.sh", PostToolUseInput.bash("gh pr create"), timeout=0.01)
+
+            assert result.timed_out
+            assert result.exit_code == 124
+            with pytest.raises(AssertionError, match="PostToolUse slow hook timed out.*KAIZEN.*slow-post-hook.sh"):
+                assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse slow hook")
+        finally:
+            h.cleanup()
 
     @pytest.mark.parametrize("hook", ["pr-review-loop-ts.sh", "kaizen-reflect-ts.sh"])
     def test_no_deny_json_in_post_hooks(self, review_harness, hook):

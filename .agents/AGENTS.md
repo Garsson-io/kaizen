@@ -34,7 +34,7 @@ Kaizen provides enforcement hooks, reflection workflows, and dev workflow skills
 | `.agents/kaizen/verification.md` | Verification discipline |
 | `.claude/hooks/` | All enforcement hooks (kaizen- prefixed) |
 | `.claude/hooks/lib/` | Shared hook libraries |
-| `.claude/hooks/tests/` | Hook test infrastructure |
+| `.claude/hooks/tests/` | Hook test infrastructure. In Python `test_hooks.py`, PostToolUse hook tests use `HookHarness.run_post_hook()` plus `assert_post_hook_stdout_contains()` so slow advisory hooks fail with timeout diagnostics instead of ambiguous missing-output assertions. |
 | `src/hooks/` | TypeScript hooks |
 | `src/hooks/lib/gate-manager.ts` | Unified stop gate — read/format/clear all pending gates |
 | `src/hooks/stop-gate.ts` | Unified stop hook entry point (replaces 3 bash stop hooks) |

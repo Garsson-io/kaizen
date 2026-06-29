@@ -40,7 +40,7 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-DEFAULT_HOOK_TIMEOUT_SECONDS = _env_int("KAIZEN_HOOK_TEST_TIMEOUT_SECONDS", 10)
+DEFAULT_HOOK_TIMEOUT_SECONDS = 10
 DEFAULT_POST_TOOL_USE_TIMEOUT_SECONDS = _env_int("KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS", 30)
 
 
@@ -272,7 +272,7 @@ class HookHarness:
         """Set an environment variable override for all hook runs."""
         self.env_overrides[key] = value
 
-    def run_hook(self, hook_name: str, input_data, timeout: Optional[int] = None) -> HookResult:
+    def run_hook(self, hook_name: str, input_data, timeout: Optional[float] = None) -> HookResult:
         """Run a single hook with given input."""
         timeout = timeout if timeout is not None else DEFAULT_HOOK_TIMEOUT_SECONDS
         hook_path = self.hooks_dir / hook_name
@@ -309,12 +309,12 @@ class HookHarness:
                 timed_out=True,
             )
 
-    def run_post_hook(self, hook_name: str, input_data, timeout: Optional[int] = None) -> HookResult:
+    def run_post_hook(self, hook_name: str, input_data, timeout: Optional[float] = None) -> HookResult:
         """Run a PostToolUse hook with the post-hook budget used by fleet-sensitive tests."""
         timeout = timeout if timeout is not None else DEFAULT_POST_TOOL_USE_TIMEOUT_SECONDS
         return self.run_hook(hook_name, input_data, timeout=timeout)
 
-    def run_all_hooks(self, event: str, tool_name: str, input_data, timeout: Optional[int] = None) -> MultiHookResult:
+    def run_all_hooks(self, event: str, tool_name: str, input_data, timeout: Optional[float] = None) -> MultiHookResult:
         """Run all configured hooks for event+tool (sequentially, unlike Claude Code's parallel)."""
         timeout = timeout if timeout is not None else DEFAULT_HOOK_TIMEOUT_SECONDS
         hooks = self._get_hooks_for_event(event, tool_name)
