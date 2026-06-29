@@ -122,10 +122,13 @@ This gate binds the stored review verdict to the irreversible merge step.`,
 
   if (verdict === null) {
     return {
-      action: 'warn',
-      message:
-        `[enforce-merge-verdict] No stored review rounds found for ${prRef}; ` +
-        `merge-verdict gate is advisory for this invocation.`,
+      action: 'deny',
+      message: `MERGE BLOCKED: No stored review rounds found for ${prRef}.
+
+Run /kaizen-review-pr for this PR, store findings for every applicable
+dimension, and store the derived review summary before merging.
+
+This gate requires a durable authoritative review verdict on the PR itself.`,
     };
   }
 
@@ -182,13 +185,18 @@ async function main(): Promise<void> {
   }
 
   const result = checkMergeVerdict(input.tool_input?.command ?? '');
+  const reason = result.bypassed
+    ? 'override'
+    : result.action === 'deny'
+      ? result.verdict === null ? 'missing_review_verdict' : 'fail_verdict'
+      : result.action;
   traceHookEvent('enforce-merge-verdict', {
     action: result.action,
     bypassed: result.bypassed ?? false,
     pr: result.target?.pr,
     repo: result.target?.repo,
     verdict: result.verdict,
-    reason: result.bypassed ? 'override' : result.action === 'deny' ? 'fail_verdict' : result.action,
+    reason,
   });
   if (result.action === 'deny') {
     process.stdout.write(JSON.stringify({

@@ -93,8 +93,11 @@ describe('decideMergeGate', () => {
     expect(decideMergeGate('PASS_WITH_PARTIALS', { override: false, target }).action).toBe('allow');
   });
 
-  it('warns without blocking when no review data exists', () => {
-    expect(decideMergeGate(null, { override: false, target }).action).toBe('warn');
+  it('denies without stored review data', () => {
+    const result = decideMergeGate(null, { override: false, target });
+    expect(result.action).toBe('deny');
+    expect(result.message).toContain('No stored review rounds found');
+    expect(result.message).toContain('MERGE BLOCKED');
   });
 
   it('allows FAIL under an explicit override and marks it bypassed', () => {
@@ -140,11 +143,11 @@ describe('checkMergeVerdict', () => {
     }).action).toBe('allow');
   });
 
-  it('warns when there are no review rounds', () => {
+  it('blocks when there are no review rounds', () => {
     expect(checkMergeVerdict('gh pr merge 999 --repo Garsson-io/kaizen', {
       readVerdict: noDataReader,
       env: {},
-    }).action).toBe('warn');
+    }).action).toBe('deny');
   });
 
   it('honours the explicit override env on FAIL', () => {
