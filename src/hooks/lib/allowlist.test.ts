@@ -109,6 +109,11 @@ describe('isReviewCommand', () => {
     expect(isReviewCommand('npm test')).toBe(true);
   });
 
+  it('allows manual review-fix state commands during needs_review (#929/#961)', () => {
+    expect(isReviewCommand('npx tsx scripts/review-fix.ts --transition needs_review --pr https://github.com/org/repo/pull/1 --repo org/repo')).toBe(true);
+    expect(isReviewCommand('npx tsx scripts/review-fix.ts --clear-review-gate feat/manual-review --state-dir /tmp/state')).toBe(true);
+  });
+
   it('blocks non-review commands', () => {
     expect(isReviewCommand('gh pr create --title "test"')).toBe(false);
     expect(isReviewCommand('git push')).toBe(false);
