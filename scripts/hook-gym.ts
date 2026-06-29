@@ -4,9 +4,9 @@
  *
  * Usage:
  *   npx tsx scripts/hook-gym.ts --list
- *   npx tsx scripts/hook-gym.ts --run probe-hooks --host-repo Garsson-io/kaizen-test-fixture
+ *   npx tsx scripts/hook-gym.ts --run probe-hooks [--host-repo Garsson-io/kaizen-test-fixture]
  *   npx tsx scripts/hook-gym.ts --run probe-hooks --dry-run
- *   npx tsx scripts/hook-gym.ts --run-all --host-repo Garsson-io/kaizen-test-fixture
+ *   npx tsx scripts/hook-gym.ts --run-all [--host-repo Garsson-io/kaizen-test-fixture]
  *   npx tsx scripts/hook-gym.ts --validate-fixture <path> --scenario <name>
  *   npx tsx scripts/hook-gym.ts --replay <fixture> --scenario <name>
  *   npx tsx scripts/hook-gym.ts --replay-hooks <fixture> --scenario <name>
@@ -17,7 +17,7 @@ import { writeFileSync } from 'node:fs';
 import { SCENARIOS, getScenario, renderPrompt } from './hook-gym-scenarios.js';
 import { SEVERITY_WEIGHT } from './hook-gym-schema.js';
 import { validateFixtureFile, formatValidationReport } from './hook-gym-validate.js';
-import { FixtureRepo, getHostRepo, type RunResult } from './hook-gym-harness.js';
+import { FixtureRepo, getHostRepo, runAll, runScenario, type RunResult } from './hook-gym-harness.js';
 import { extractToolActionsFromFile, replayFixture, formatFixture } from './hook-gym-replay.js';
 
 function getFlag(flag: string): string | undefined {
@@ -72,6 +72,15 @@ function cmdDryRun(scenarioName: string, hostRepo: string): void {
   console.log(rendered);
 }
 
+function selfRunOpts(hostRepo: string, model?: string, debug?: boolean) {
+  return {
+    model,
+    debug,
+    cwd: process.cwd(),
+    hostRepo,
+  };
+}
+
 async function cmdRun(scenarioName: string, hostRepo: string, model?: string, debug?: boolean): Promise<void> {
   const scenario = getScenario(scenarioName);
   if (!scenario) {
@@ -84,17 +93,14 @@ async function cmdRun(scenarioName: string, hostRepo: string, model?: string, de
   let result: RunResult;
 
   if (isSelf) {
-    // Self-dogfood: run in CWD, no clone needed
-    // TODO: implement self-dogfood path via harness
-    console.error('Self-dogfood mode not yet supported via harness. Use --host-repo.');
-    process.exit(1);
-  }
-
-  const fixture = await FixtureRepo.create(hostRepo);
-  try {
-    result = await fixture.run(scenario, { model, debug });
-  } finally {
-    await fixture.cleanup();
+    result = await runScenario(scenario, selfRunOpts(hostRepo, model, debug));
+  } else {
+    const fixture = await FixtureRepo.create(hostRepo);
+    try {
+      result = await fixture.run(scenario, { model, debug });
+    } finally {
+      await fixture.cleanup();
+    }
   }
   process.exit(result.passed ? 0 : 1);
 }
@@ -102,8 +108,8 @@ async function cmdRun(scenarioName: string, hostRepo: string, model?: string, de
 async function cmdRunAll(hostRepo: string, model?: string, debug?: boolean): Promise<void> {
   const isSelf = hostRepo === getHostRepo();
   if (isSelf) {
-    console.error('Self-dogfood mode not yet supported via harness. Use --host-repo.');
-    process.exit(1);
+    const { allPassed } = await runAll(SCENARIOS, selfRunOpts(hostRepo, model, debug));
+    process.exit(allPassed ? 0 : 1);
   }
 
   const fixture = await FixtureRepo.create(hostRepo);
@@ -139,9 +145,9 @@ async function main(): Promise<void> {
 
 Usage:
   npx tsx scripts/hook-gym.ts --list
-  npx tsx scripts/hook-gym.ts --run <name> --host-repo <owner/repo>
+  npx tsx scripts/hook-gym.ts --run <name> [--host-repo <owner/repo>]
   npx tsx scripts/hook-gym.ts --run <name> --dry-run
-  npx tsx scripts/hook-gym.ts --run-all --host-repo <owner/repo>
+  npx tsx scripts/hook-gym.ts --run-all [--host-repo <owner/repo>]
   npx tsx scripts/hook-gym.ts --validate-fixture <path> --scenario <name>
   npx tsx scripts/hook-gym.ts --replay <fixture> --scenario <name>
   npx tsx scripts/hook-gym.ts --replay-hooks <fixture> --scenario <name>
@@ -155,7 +161,7 @@ Replay layers (PR 5):
 
 Options:
   --model <model>    Override scenario model (haiku, sonnet, opus)
-  --host-repo <r>    Target repo (default: kaizen.config.json)
+  --host-repo <r>    Target repo (default: kaizen.config.json; self runs use the current checkout)
   --debug            Print raw hook event JSON
   --dry-run          Show prompt without spawning agent
   --output <path>    Output path for --extract (default: stdout)`);

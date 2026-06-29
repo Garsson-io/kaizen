@@ -11,9 +11,11 @@
  * would always pass — this is why the level is Integration not Unit.
  */
 
-import { beforeAll, describe, it, expect } from 'vitest';
+import { afterEach, beforeAll, describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { buildTypeScriptSubprocess } from './test-typescript-runner.js';
 
 const REPO_ROOT = resolve(__dirname, '..');
@@ -22,9 +24,18 @@ const CLI_RUNNER = buildTypeScriptSubprocess(CLI, { startDir: __dirname });
 
 type CliResult = { stdout: string; stderr: string; status: number };
 
-function runCli(args: string[]): CliResult {
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function runCli(args: string[], env: NodeJS.ProcessEnv = {}): CliResult {
   const result = spawnSync(CLI_RUNNER.command, [...CLI_RUNNER.args, ...args], {
     cwd: REPO_ROOT,
+    env: { ...process.env, ...env },
     encoding: 'utf-8',
     timeout: 30000,
   });
@@ -33,6 +44,21 @@ function runCli(args: string[]): CliResult {
     stderr: result.stderr ?? '',
     status: result.status ?? -1,
   };
+}
+
+function fakeClaudePath(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'hook-gym-fake-claude-'));
+  tempDirs.push(dir);
+  const script = join(dir, 'claude');
+  writeFileSync(script, `#!/usr/bin/env bash
+cat <<'JSON'
+{"type":"system","subtype":"hook_started","hook_id":"h1","hook_name":"SessionStart:startup","hook_event":"SessionStart","uuid":"u1","session_id":"s1"}
+{"type":"system","subtype":"hook_response","hook_id":"h1","hook_name":"SessionStart:startup","hook_event":"SessionStart","output":"","stdout":"","stderr":"","exit_code":0,"outcome":"success","uuid":"u1","session_id":"s1"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"fake claude completed"}]}}
+JSON
+`, { mode: 0o755 });
+  chmodSync(script, 0o755);
+  return dir;
 }
 
 describe('hook-gym CLI — --list (B8)', () => {
@@ -152,6 +178,32 @@ describe('hook-gym CLI — implemented commands reject bad input', () => {
   });
 });
 
+describe('hook-gym CLI — self-dogfood live dispatch (#1179)', () => {
+  it('default self --run reaches the runner instead of the unsupported self-mode exit', () => {
+    const fakeBin = fakeClaudePath();
+    const { stdout, stderr } = runCli(
+      ['--run', 'probe-hooks', '--model', 'haiku'],
+      { PATH: `${fakeBin}:${process.env.PATH ?? ''}` },
+    );
+
+    expect(stderr).not.toContain('Self-dogfood mode not yet supported');
+    expect(stdout).toContain('[run] probe-hooks');
+    expect(stdout).toContain(`cwd=${REPO_ROOT}`);
+  });
+
+  it('default self --run-all reaches scenario execution instead of the unsupported self-mode exit', () => {
+    const fakeBin = fakeClaudePath();
+    const { stdout, stderr } = runCli(
+      ['--run-all', '--model', 'haiku'],
+      { PATH: `${fakeBin}:${process.env.PATH ?? ''}` },
+    );
+
+    expect(stderr).not.toContain('Self-dogfood mode not yet supported');
+    expect(stdout).toContain('[run] Running');
+    expect(stdout).toContain(`cwd=${REPO_ROOT}`);
+  });
+});
+
 describe('hook-gym CLI — --help', () => {
   it('prints usage and exits 0', () => {
     const { stdout, status } = runCli(['--help']);
@@ -160,5 +212,6 @@ describe('hook-gym CLI — --help', () => {
     expect(stdout).toContain('--list');
     expect(stdout).toContain('--run');
     expect(stdout).toContain('--validate-fixture');
+    expect(stdout).toContain('[--host-repo');
   });
 });
