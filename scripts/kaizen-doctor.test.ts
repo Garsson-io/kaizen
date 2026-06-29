@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +11,7 @@ import {
   checkRestartNeeded,
   checkHookExecSmoke,
   checkHookSyntaxSmoke,
+  checkDevLinkOverride,
   checkSingleRegistrationPath,
   checkCodexReadiness,
   runAllChecks,
@@ -192,6 +193,50 @@ describe('checkStalePluginCache', () => {
     writeFileSync(join(home, '.claude/plugins/installed_plugins.json'), JSON.stringify({ plugins: {} }));
     const r = checkStalePluginCache({ projectRoot: proj, homeDir: home });
     expect(r.status).toBe('PASS');
+  });
+});
+
+describe('checkDevLinkOverride (#1064)', () => {
+  let proj: string, home: string;
+  beforeEach(() => { proj = makeProject(); home = makeHome(); });
+  afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+
+  function installRecord(installPath: string): void {
+    writeFileSync(join(home, '.claude/plugins/installed_plugins.json'),
+      JSON.stringify({ plugins: { 'kaizen@kaizen': [{ installPath, projectPath: proj }] } }));
+  }
+
+  it('PASS when kaizen is not installed for this project', () => {
+    writeFileSync(join(home, '.claude/plugins/installed_plugins.json'), JSON.stringify({ plugins: {} }));
+
+    const r = checkDevLinkOverride({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('PASS');
+    expect(r.detail).toContain('no dev override active');
+  });
+
+  it('PASS when install path is a normal cache directory', () => {
+    const installPath = join(home, '.claude/plugins/cache/kaizen/kaizen/1.2.3');
+    mkdirSync(installPath, { recursive: true });
+    installRecord(installPath);
+
+    const r = checkDevLinkOverride({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('PASS');
+    expect(r.detail).toContain('inactive');
+  });
+
+  it('WARN when install path is symlinked to this worktree', () => {
+    const installPath = join(home, '.claude/plugins/cache/kaizen/kaizen/1.2.3');
+    mkdirSync(join(installPath, '..'), { recursive: true });
+    symlinkSync(proj, installPath);
+    installRecord(installPath);
+
+    const r = checkDevLinkOverride({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('WARN');
+    expect(r.detail).toContain('dev override active');
+    expect(r.detail).toContain(proj);
   });
 });
 
@@ -688,6 +733,7 @@ describe('runAllChecks + exitCodeFor', () => {
       'plugin-double-install',
       'dangling-hook-paths',
       'stale-plugin-cache',
+      'dev-link-override',
       'restart-needed',
       'hook-exec-smoke',
       'hook-syntax-smoke',

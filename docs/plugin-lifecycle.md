@@ -71,6 +71,23 @@ scripts/kaizen-uninstall-plugin.sh --plugin x@y   # other plugin
 
 The script is idempotent — safe to run multiple times. It removes the `enabledPlugins` entry, the `installed_plugins.json` record, and the cache dir; then prints a loud restart banner. **Always restart Claude Code after running it.**
 
+## Contributing to kaizen
+
+Kaizen contributors sometimes need to edit a hook in this working tree and test it through the same plugin-loaded path that Claude Code already registered. Use the dev-link helper for that loop:
+
+```bash
+scripts/kaizen-dev-link.sh status
+scripts/kaizen-dev-link.sh enable
+# edit .claude/hooks/foo.sh, then trigger the same tool call again
+scripts/kaizen-dev-link.sh disable
+```
+
+`enable` moves the active `kaizen@kaizen` install directory from `~/.claude/plugins/cache/kaizen/kaizen/<version>` to a backup next to it, then replaces that install path with a symlink to the current working tree. Claude Code keeps invoking the already-registered cache path, but the files underneath now come from your checkout, so hook body edits hot-reload on the next invocation without publishing, `/plugin update`, or restart.
+
+Run `disable` before normal user testing. It removes the symlink and restores the backed-up cache directory. `kaizen-doctor` reports `[WARN] dev-link-override` while the override is active so it does not get left on accidentally.
+
+Do not use dev-link to test plugin manifest changes, hook path renames, marketplace changes, or install/uninstall behavior. Those still require the normal plugin lifecycle and a Claude Code restart because the in-memory hook registry is loaded at session start.
+
 ## Why the error message is so unhelpful
 
 `Failed with non-blocking status code: No stderr output` is emitted by the Claude Code harness when a registered hook exits non-zero and produces no stderr. When the registered path is missing, the shell's `file not found` diagnostic is suppressed, so the harness has nothing to display. The result is an unactionable error on every tool call. A fix for this belongs upstream in `anthropics/claude-code`; until then, `kaizen-doctor` is the mechanical substitute.

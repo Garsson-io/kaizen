@@ -33,6 +33,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { readJsonValueFile } from '../src/lib/json-file.js';
 import { KAIZEN_PLUGIN_SOURCE } from '../src/kaizen-plugin-identity.js';
+import { checkDevLinkStatus } from './kaizen-dev-link.js';
 
 export type CheckStatus = 'PASS' | 'WARN' | 'FAIL';
 
@@ -284,6 +285,42 @@ export function checkStalePluginCache(opts: DoctorOpts): CheckResult {
       ? `installed_plugins and cache consistent for "${plugin}".`
       : `"${plugin}" not installed, no cache.`,
   };
+}
+
+/** Check: contributor dev-link override is visible so it is not left on
+ * accidentally. This is WARN, not FAIL: active dev links are intentional local
+ * development state, but they should be loud in doctor output. */
+export function checkDevLinkOverride(opts: DoctorOpts): CheckResult {
+  try {
+    const status = checkDevLinkStatus({
+      homeDir: opts.homeDir,
+      projectRoot: opts.projectRoot,
+      plugin: opts.pluginName ?? DEFAULT_PLUGIN,
+    });
+    if (status.active) {
+      return {
+        name: 'dev-link-override',
+        status: 'WARN',
+        detail: `dev override active: ${status.installPath} -> ${status.targetPath}. Run scripts/kaizen-dev-link.sh disable before normal user testing.`,
+        data: status,
+      };
+    }
+    return {
+      name: 'dev-link-override',
+      status: 'PASS',
+      detail: status.state === 'inactive'
+        ? `inactive for "${status.plugin}".`
+        : `no dev override active for "${status.plugin}" (${status.state}).`,
+      data: status,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      name: 'dev-link-override',
+      status: 'WARN',
+      detail: `could not inspect dev override state: ${message}`,
+    };
+  }
 }
 
 /** Normalize a project root for snapshot-keying. Uses realpath when possible
@@ -685,6 +722,7 @@ export function runAllChecks(opts: DoctorOpts): CheckResult[] {
     checkPluginDoubleInstall(opts),
     checkDanglingHookPaths(opts),
     checkStalePluginCache(opts),
+    checkDevLinkOverride(opts),
     checkRestartNeeded(opts),
     checkHookExecSmoke(opts),
     checkHookSyntaxSmoke(opts),
