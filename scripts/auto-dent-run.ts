@@ -3404,6 +3404,10 @@ async function main(): Promise<void> {
           : mergeStatuses.some((status) => status === 'closed') ? 'not-ready'
             : mergeStatuses.every((status) => status === 'merged' || status === 'auto_queued') ? 'ready'
               : 'unknown';
+    const contextDelegationPressureReasons = contextDelegationAnalysis.pressure.reasons;
+    const contextDelegationProgressEvidence = hasContextDelegationProgressEvidence(result.progressSteps, {
+      allowNotApplicable: contextDelegationPressureReasons.length === 0,
+    });
     const intentionalNoOp =
       exitCode === 0 &&
       result.stopRequested &&
@@ -3424,8 +3428,8 @@ async function main(): Promise<void> {
         step.phase === 'DRY' || step.phase === 'DRY-REFACTOR' || /dry|refactor|simplification/i.test(`${step.phase} ${step.detail}`),
       ),
       contextDelegationEvidence: Boolean(state.test_task) ||
-        hasContextDelegationProgressEvidence(result.progressSteps),
-      contextDelegationPressureReasons: contextDelegationAnalysis.pressure.reasons,
+        contextDelegationProgressEvidence,
+      contextDelegationPressureReasons,
       meetRealityEvidence: Boolean(state.test_task) || result.progressSteps?.some((step) =>
         step.phase === 'MEET-REALITY' || /meet reality|dogfood|tried|observed output/i.test(`${step.phase} ${step.detail}`),
       ),

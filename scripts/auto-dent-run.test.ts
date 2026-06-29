@@ -4803,14 +4803,19 @@ describe('workflow gate repair scheduling (#1533)', () => {
 
 describe('context-delegation evidence wiring (#1509)', () => {
   it('routes auto-dent progress evidence into process validation', () => {
-    const helperIndex = AUTO_DENT_RUN_SOURCE.indexOf('hasContextDelegationProgressEvidence(result.progressSteps)');
-    const evidenceFieldIndex = AUTO_DENT_RUN_SOURCE.indexOf('contextDelegationEvidence: Boolean(state.test_task) ||');
+    const reasonsIndex = AUTO_DENT_RUN_SOURCE.indexOf('const contextDelegationPressureReasons = contextDelegationAnalysis.pressure.reasons;');
+    const helperIndex = AUTO_DENT_RUN_SOURCE.indexOf('const contextDelegationProgressEvidence = hasContextDelegationProgressEvidence(result.progressSteps, {');
+    const pressureOptionIndex = AUTO_DENT_RUN_SOURCE.indexOf('allowNotApplicable: contextDelegationPressureReasons.length === 0');
+    const evidenceFieldIndex = AUTO_DENT_RUN_SOURCE.indexOf('contextDelegationEvidence: Boolean(state.test_task) ||\n        contextDelegationProgressEvidence,');
     const validationIndex = AUTO_DENT_RUN_SOURCE.indexOf('validateProcessEvidence(lifecycle, processEvidence)');
 
+    expect(reasonsIndex).toBeGreaterThanOrEqual(0);
     expect(helperIndex).toBeGreaterThanOrEqual(0);
+    expect(pressureOptionIndex).toBeGreaterThan(helperIndex);
     expect(evidenceFieldIndex).toBeGreaterThanOrEqual(0);
     expect(validationIndex).toBeGreaterThanOrEqual(0);
-    expect(helperIndex).toBeGreaterThan(evidenceFieldIndex);
+    expect(helperIndex).toBeGreaterThan(reasonsIndex);
+    expect(evidenceFieldIndex).toBeGreaterThan(helperIndex);
     expect(helperIndex).toBeLessThan(validationIndex);
   });
 

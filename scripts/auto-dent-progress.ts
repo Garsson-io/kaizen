@@ -166,7 +166,9 @@ export function formatProgressStepsMarkdown(result: AutoDentProgressResult, repo
 
 export function hasContextDelegationProgressEvidence(
   steps: RunProgressStep[] | undefined,
+  options: { allowNotApplicable?: boolean } = {},
 ): boolean {
+  const allowNotApplicable = options.allowNotApplicable ?? true;
   const implementationIndex = steps?.findIndex((step) => [
     'IMPLEMENT',
     'TEST',
@@ -182,11 +184,12 @@ export function hasContextDelegationProgressEvidence(
     if (implementationIndex !== -1 && index > implementationIndex) return false;
     const state = step.state.trim().toLowerCase().replace(/_/g, '-');
     const hasDetail = step.detail.trim().length > 0;
+    const isNotApplicable = state === 'not applicable' || state === 'not-applicable';
     if (step.phase === 'DELEGATE') {
-      return hasDetail && (state === 'done' || state === 'delegated' || state === 'not applicable' || state === 'not-applicable');
+      return hasDetail && (state === 'done' || state === 'delegated' || (allowNotApplicable && isNotApplicable));
     }
     if (step.phase === 'CONTEXT-DELEGATION') {
-      return hasDetail && (state === 'done' || state === 'not applicable' || state === 'not-applicable');
+      return hasDetail && (state === 'done' || (allowNotApplicable && isNotApplicable));
     }
     return false;
   }));

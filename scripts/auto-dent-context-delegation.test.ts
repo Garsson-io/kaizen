@@ -90,6 +90,13 @@ describe('auto-dent context delegation pressure', () => {
   });
 
   it('stays quiet for empty, malformed, and below-threshold logs', () => {
+    const empty = analyzeContextDelegation('');
+    expect(empty.pressure.required).toBe(false);
+    expect(empty.pressure.mainThreadToolCalls).toBe(0);
+    expect(empty.pressure.discoveryToolCalls).toBe(0);
+    expect(empty.delegation.observed).toBe(false);
+    expect(buildAutomaticContextDelegationStep(empty)).toBeUndefined();
+
     const analysis = analyzeContextDelegation(logWith([
       'not-json',
       ...Array.from({ length: 9 }, (_, i) => toolUse('Read', { file_path: `src/file-${i}.ts` })),
