@@ -31,6 +31,7 @@ import {
   banditExplorationC,
   modeSuccess,
   parseCandidateTaskManifest,
+  derivePostMergeVerification,
   deriveRunOutcome,
   buildRunMetrics,
   buildRunCompleteEvent,
@@ -2069,7 +2070,7 @@ describe('e2e: full workflow through stream pipeline', () => {
 
     expect(capture.result.toolCalls).toBe(3);
     expectToolLogged(capture, 'Read /src/index.ts', 'Grep "TODO"', 'Edit /src/index.ts');
-    for (const phase of ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']) {
+    for (const phase of ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT']) {
       expectNoPhase(capture, phase);
     }
   });
@@ -3029,6 +3030,10 @@ describe('deriveRunOutcome — verdict binding (#1224, meta #1227)', () => {
     expect(deriveRunOutcome({ ...cleanWin, lifecycleHealth: 'critical' })).toBe('failure');
   });
 
+  it('post-merge verification fail alone blocks success', () => {
+    expect(deriveRunOutcome({ ...cleanWin, postMergeVerification: 'fail' })).toBe('failure');
+  });
+
   it('a quality-failed run with no artifacts is failure, not empty_success', () => {
     expect(
       deriveRunOutcome({ ...cleanWin, artifactCount: 0, processVerdict: 'process-incomplete' }),
@@ -3049,6 +3054,17 @@ describe('deriveRunOutcome — verdict binding (#1224, meta #1227)', () => {
 
   it('lifecycle degraded alone does NOT block (too broad to gate on)', () => {
     expect(deriveRunOutcome({ ...cleanWin, lifecycleHealth: 'degraded' })).toBe('success');
+  });
+
+  it('post-merge verification pass preserves a clean win', () => {
+    expect(deriveRunOutcome({ ...cleanWin, postMergeVerification: 'pass' })).toBe('success');
+  });
+
+  it('derives post-merge verification from merge status and test health', () => {
+    expect(derivePostMergeVerification([], 'pass')).toBe('not-applicable');
+    expect(derivePostMergeVerification(['auto_queued'], 'pass')).toBe('skipped');
+    expect(derivePostMergeVerification(['merged'], 'unowned-failures')).toBe('fail');
+    expect(derivePostMergeVerification(['merged'], 'pass')).toBe('pass');
   });
 
   it('skipped review is legitimate ⇒ success', () => {
@@ -4057,6 +4073,7 @@ describe('validateRunLifecycle', () => {
       'AUTO_DENT_PHASE: TEST | result=pass | count=5',
       'AUTO_DENT_PHASE: PR | url=https://example.com/pr/1',
       'AUTO_DENT_PHASE: MERGE | url=https://example.com/pr/1 | status=queued',
+      'AUTO_DENT_PHASE: DEPLOY | status=pass | evidence=post-merge checks passed',
       'AUTO_DENT_PHASE: REFLECT | issues_filed=0',
     ].join('\n'));
 
@@ -4064,7 +4081,7 @@ describe('validateRunLifecycle', () => {
     expect(result.valid).toBe(true);
     expect(result.violations).toEqual([]);
     expect(result.phasesMissing).toEqual([]);
-    expect(result.phasesPresent).toEqual(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']);
+    expect(result.phasesPresent).toEqual(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT']);
   });
 
   it('detects ordering violations', () => {
@@ -4116,7 +4133,7 @@ describe('validateRunLifecycle', () => {
     const result = validateRunLifecycle(logFile);
     expect(result.valid).toBe(true);
     expect(result.phasesPresent).toEqual([]);
-    expect(result.phasesMissing).toEqual(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']);
+    expect(result.phasesMissing).toEqual(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT']);
   });
 
   it('handles phases mixed with JSON stream messages', () => {

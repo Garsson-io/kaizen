@@ -471,7 +471,8 @@ describe('computeRunCompleteness', () => {
       { offsetSec: 30, phase: 'TEST' },
       { offsetSec: 40, phase: 'PR' },
       { offsetSec: 50, phase: 'MERGE' },
-      { offsetSec: 60, phase: 'REFLECT' },
+      { offsetSec: 60, phase: 'DEPLOY' },
+      { offsetSec: 70, phase: 'REFLECT' },
     ];
 
     const result = computeRunCompleteness(phases);
@@ -488,10 +489,11 @@ describe('computeRunCompleteness', () => {
     ];
 
     const result = computeRunCompleteness(phases);
-    expect(result.score).toBeCloseTo(3 / 7);
+    expect(result.score).toBeCloseTo(3 / 8);
     expect(result.phasesMissing).toContain('EVALUATE');
     expect(result.phasesMissing).toContain('TEST');
     expect(result.phasesMissing).toContain('MERGE');
+    expect(result.phasesMissing).toContain('DEPLOY');
     expect(result.phasesMissing).toContain('REFLECT');
     expect(result.orderedCorrectly).toBe(true);
   });
@@ -510,7 +512,7 @@ describe('computeRunCompleteness', () => {
   it('returns zero score for empty phases', () => {
     const result = computeRunCompleteness([]);
     expect(result.score).toBe(0);
-    expect(result.phasesMissing).toHaveLength(7);
+    expect(result.phasesMissing).toHaveLength(8);
     expect(result.orderedCorrectly).toBe(true);
   });
 
@@ -521,7 +523,7 @@ describe('computeRunCompleteness', () => {
     ];
 
     const result = computeRunCompleteness(phases);
-    expect(result.score).toBeCloseTo(1 / 7);
+    expect(result.score).toBeCloseTo(1 / 8);
     expect(result.phasesPresent).toContain('STOP');
   });
 });
@@ -630,8 +632,8 @@ describe('generateRecommendations', () => {
 
   it('recommends phase clarity for low completeness', () => {
     const runs = [
-      makeMinimalRun({ completeness: { score: 0.3, phasesPresent: ['PICK', 'IMPLEMENT'], phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'], orderedCorrectly: true } }),
-      makeMinimalRun({ completeness: { score: 0.3, phasesPresent: ['PICK', 'IMPLEMENT'], phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'], orderedCorrectly: true } }),
+      makeMinimalRun({ completeness: { score: 0.25, phasesPresent: ['PICK', 'IMPLEMENT'], phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'], orderedCorrectly: true } }),
+      makeMinimalRun({ completeness: { score: 0.25, phasesPresent: ['PICK', 'IMPLEMENT'], phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'], orderedCorrectly: true } }),
     ];
     const recs = generateRecommendations(runs, 30, []);
     expect(recs.some(r => r.includes('completeness'))).toBe(true);
@@ -702,7 +704,7 @@ function makeMinimalRunAnalysis(overrides: Partial<RunAnalysis> = {}): RunAnalys
     topPatterns: [],
     toolEvents: [],
     phaseEvents: [],
-    completeness: { score: 0.71, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR'], phasesMissing: ['MERGE', 'REFLECT'], orderedCorrectly: true },
+    completeness: { score: 0.63, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR'], phasesMissing: ['MERGE', 'DEPLOY', 'REFLECT'], orderedCorrectly: true },
     wastePatterns: [],
     totalWastedCalls: 0,
     ...overrides,
@@ -724,9 +726,9 @@ describe('detectRunRegression', () => {
 
   it('detects consecutive failures when 3+ runs have no PR/MERGE', () => {
     const noPRCompleteness: RunCompleteness = {
-      score: 0.29,
+      score: 0.25,
       phasesPresent: ['PICK', 'IMPLEMENT'],
-      phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'],
+      phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'],
       orderedCorrectly: true,
     };
     const prior = [
@@ -744,15 +746,15 @@ describe('detectRunRegression', () => {
 
   it('does not flag consecutive failures when recent run had PR', () => {
     const noPRCompleteness: RunCompleteness = {
-      score: 0.29,
+      score: 0.25,
       phasesPresent: ['PICK', 'IMPLEMENT'],
-      phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'],
+      phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'],
       orderedCorrectly: true,
     };
     const withPRCompleteness: RunCompleteness = {
-      score: 0.71,
+      score: 0.63,
       phasesPresent: ['PICK', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'],
-      phasesMissing: ['EVALUATE', 'REFLECT'],
+      phasesMissing: ['EVALUATE', 'DEPLOY', 'REFLECT'],
       orderedCorrectly: true,
     };
     const prior = [
@@ -794,12 +796,12 @@ describe('detectRunRegression', () => {
 
   it('detects completeness drop', () => {
     const prior = [
-      makeMinimalRunAnalysis({ runFile: 'run-1.log', completeness: { score: 0.86, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'], phasesMissing: ['REFLECT'], orderedCorrectly: true } }),
-      makeMinimalRunAnalysis({ runFile: 'run-2.log', completeness: { score: 0.86, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'], phasesMissing: ['REFLECT'], orderedCorrectly: true } }),
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', completeness: { score: 0.75, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'], phasesMissing: ['DEPLOY', 'REFLECT'], orderedCorrectly: true } }),
+      makeMinimalRunAnalysis({ runFile: 'run-2.log', completeness: { score: 0.75, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'], phasesMissing: ['DEPLOY', 'REFLECT'], orderedCorrectly: true } }),
     ];
     const current = makeMinimalRunAnalysis({
       runFile: 'run-3.log',
-      completeness: { score: 0.14, phasesPresent: ['PICK'], phasesMissing: ['EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'], orderedCorrectly: true },
+      completeness: { score: 0.13, phasesPresent: ['PICK'], phasesMissing: ['EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'], orderedCorrectly: true },
     });
 
     const result = detectRunRegression(2, current, prior);

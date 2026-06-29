@@ -53,6 +53,7 @@ describe('validateRunLifecycle — back-compat (ordering + presence)', () => {
       'AUTO_DENT_PHASE: TEST | result=pass | count=5',
       'AUTO_DENT_PHASE: PR | url=https://example.com/pr/1',
       'AUTO_DENT_PHASE: MERGE | url=https://example.com/pr/1 | status=queued',
+      'AUTO_DENT_PHASE: DEPLOY | status=pass | evidence=post-merge checks passed on main',
       'AUTO_DENT_PHASE: REFLECT | issues_filed=0',
     ]);
     const r = validateRunLifecycle(f);
@@ -63,6 +64,20 @@ describe('validateRunLifecycle — back-compat (ordering + presence)', () => {
     expect(r.phantomPhases).toEqual([]);
     expect(r.health).toBe('clean');
     expect(r.phasesPresent).toEqual(LIFECYCLE_ORDER);
+  });
+
+  it('places DEPLOY after MERGE as the explicit post-merge verification phase', () => {
+    expect(LIFECYCLE_ORDER).toEqual([
+      'PICK',
+      'EVALUATE',
+      'DELEGATE',
+      'IMPLEMENT',
+      'TEST',
+      'PR',
+      'MERGE',
+      'DEPLOY',
+      'REFLECT',
+    ]);
   });
 
   it('detects ordering violations (valid=false) and classifies degraded', () => {
@@ -152,9 +167,23 @@ describe('validateRunLifecycle — critical gaps (claim to ship without building
     expect(r.criticalGaps).toEqual([]);
   });
 
-  it('REQUIRED_PREDECESSORS encodes PR<=IMPLEMENT and MERGE<=PR', () => {
+  it('flags DEPLOY without MERGE as a critical gap', () => {
+    const f = write([
+      'AUTO_DENT_PHASE: PICK | issue=#1',
+      'AUTO_DENT_PHASE: IMPLEMENT | case=c',
+      'AUTO_DENT_PHASE: TEST | result=pass | count=2',
+      'AUTO_DENT_PHASE: PR | url=u',
+      'AUTO_DENT_PHASE: DEPLOY | status=pass | evidence=post-merge checks passed on main',
+    ]);
+    const r = validateRunLifecycle(f);
+    expect(r.criticalGaps).toContainEqual({ phase: 'DEPLOY', requires: 'MERGE' });
+    expect(r.health).toBe('critical');
+  });
+
+  it('REQUIRED_PREDECESSORS encodes PR<=IMPLEMENT, MERGE<=PR, and DEPLOY<=MERGE', () => {
     expect(REQUIRED_PREDECESSORS.PR).toBe('IMPLEMENT');
     expect(REQUIRED_PREDECESSORS.MERGE).toBe('PR');
+    expect(REQUIRED_PREDECESSORS.DEPLOY).toBe('MERGE');
   });
 });
 
@@ -401,6 +430,7 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     meetRealityEvidence: true,
     hookProviderEvidence: true,
     mergeReadiness: 'ready',
+    postMergeVerification: 'pass',
     ...over,
   });
 
@@ -478,11 +508,50 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
 
   it('can pass with durable plan, implementation, PR, test, review, reflection, and merge-readiness evidence', () => {
     const result = validateProcessEvidence(
-      validationWith(['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']),
-      fullEvidence(),
+      validationWith(['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT']),
+      fullEvidence({ postMergeVerification: 'pass' } as any),
     );
     expect(result.verdict).toBe('pass');
     expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
+  });
+
+  it('fails when a PR/MERGE run has no post-merge verification evidence', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR', 'MERGE']),
+      fullEvidence({ postMergeVerification: undefined } as any),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'pr-ci-merge-cleanup',
+      status: 'fail',
+      reason: expect.stringMatching(/post-merge|deploy/i),
+    }));
+  });
+
+  it('fails when post-merge verification reports failure', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY']),
+      fullEvidence({ postMergeVerification: 'fail' } as any),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'pr-ci-merge-cleanup',
+      status: 'fail',
+      reason: expect.stringMatching(/post-merge|deploy/i),
+    }));
+  });
+
+  it('fails when DEPLOY is claimed with skipped post-merge verification', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY']),
+      fullEvidence({ postMergeVerification: 'skipped' } as any),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'pr-ci-merge-cleanup',
+      status: 'fail',
+      reason: 'DEPLOY was claimed but post-merge verification was skipped',
+    }));
   });
 
   it('checks for missing context-delegation evidence when a PR exists', () => {
@@ -687,6 +756,7 @@ describe('adversarial false-success fixtures (#1150)', () => {
     meetRealityEvidence: true,
     hookProviderEvidence: true,
     mergeReadiness: 'ready',
+    postMergeVerification: 'pass',
     ...over,
   });
 
