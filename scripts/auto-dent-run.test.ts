@@ -59,6 +59,7 @@ import {
   validateRunLifecycle,
   findExistingProgressIssue,
   formatBatchProgressIssueBody,
+  formatRunProgressAttachment,
   ensureBatchProgressIssue,
   updateBatchProgressIssue,
   extractModeOutput,
@@ -5188,6 +5189,83 @@ describe('updateBatchProgressIssue', () => {
     vi.restoreAllMocks();
   });
 
+  describe('formatRunProgressAttachment', () => {
+    it('renders a readable narrative from structured run data', () => {
+      const body = formatRunProgressAttachment({
+        runNum: 3,
+        exitCode: 0,
+        duration: 3661,
+        mode: 'exploit',
+        kaizenRepo: 'Garsson-io/kaizen',
+        result: makeRunResult({
+          pickedIssue: '#1225',
+          pickedIssueTitle: 'redo CI proof gate',
+          prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+          reviewVerdict: 'pass',
+          reviewUrls: ['https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2'],
+          issuesFiled: ['#1300'],
+          issuesClosed: ['#1225'],
+          cases: ['case/260629-k1225-redo-ci-proof'],
+          cost: 1.25,
+          toolCalls: 42,
+          progressSteps: [
+            {
+              phase: 'PICK',
+              state: 'selected',
+              detail: '#1225 — redo CI proof gate',
+              url: 'https://github.com/Garsson-io/kaizen/issues/1225',
+            },
+            {
+              phase: 'REVIEW',
+              state: 'pass',
+              detail: 'round 1 passed',
+              url: 'https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2',
+            },
+          ],
+        }),
+      });
+
+      expect(body).toContain('### Run #3 - pass');
+      expect(body).toContain('exploit mode completed with PR https://github.com/Garsson-io/kaizen/pull/1227');
+      expect(body).toContain('### Outcome');
+      expect(body).toContain('- **Issue:** https://github.com/Garsson-io/kaizen/issues/1225 — redo CI proof gate');
+      expect(body).toContain('- **PR:** https://github.com/Garsson-io/kaizen/pull/1227');
+      expect(body).toContain('- **Review:** pass (https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2)');
+      expect(body).toContain('- **Issues filed:** #1300');
+      expect(body).toContain('- **Issues closed:** #1225');
+      expect(body).toContain('- **Cases:** `case/260629-k1225-redo-ci-proof`');
+      expect(body).toContain('### Run Metrics');
+      expect(body).toContain('| Duration | 61m 1s |');
+      expect(body).toContain('| Cost | $1.25 |');
+      expect(body).toContain('| Tool calls | 42 |');
+      expect(body).toContain('### Work Cycle');
+      expect(body).toContain('#### Kaizen Work Cycle');
+      expect(body).toContain('| REVIEW | pass | round 1 passed | https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2 |');
+      expect(body).not.toContain('| **Issue worked** |');
+    });
+
+    it('renders no-pr and stop-requested runs without losing stop evidence', () => {
+      const body = formatRunProgressAttachment({
+        runNum: 4,
+        exitCode: 0,
+        duration: 75,
+        kaizenRepo: 'Garsson-io/kaizen',
+        result: makeRunResult({
+          stopRequested: true,
+          stopReason: 'budget exhausted',
+          cost: 0.50,
+          toolCalls: 8,
+        }),
+      });
+
+      expect(body).toContain('### Run #4 - no-pr');
+      expect(body).toContain('completed without a PR');
+      expect(body).toContain('- **Issue:** unknown');
+      expect(body).toContain('- **STOP requested:** budget exhausted');
+      expect(body).toContain('| Duration | 1m 15s |');
+    });
+  });
+
   it('stores issue, PR, review, and structured work-cycle artifacts in a named attachment', () => {
     const writeAttachment = vi.fn(() => 'https://github.com/Garsson-io/kaizen/issues/1226#issuecomment-1');
     const result = makeRunResult({
@@ -5231,9 +5309,12 @@ describe('updateBatchProgressIssue', () => {
     expect(writeAttachment.mock.calls[0][0]).toEqual({ kind: 'issue', number: '1226', repo: 'Garsson-io/kaizen' });
     expect(writeAttachment.mock.calls[0][1]).toBe('progress/run-1');
     const body = writeAttachment.mock.calls[0][2];
-    expect(body).toContain('| **Issue worked** | https://github.com/Garsson-io/kaizen/issues/1225 — redo CI proof gate |');
-    expect(body).toContain('| **PR generated** | https://github.com/Garsson-io/kaizen/pull/1227 |');
-    expect(body).toContain('| **Review state** | fail (https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2) |');
+    expect(body).toContain('### Run #1 - fail (exit 1)');
+    expect(body).toContain('### Outcome');
+    expect(body).toContain('- **Issue:** https://github.com/Garsson-io/kaizen/issues/1225 — redo CI proof gate');
+    expect(body).toContain('- **PR:** https://github.com/Garsson-io/kaizen/pull/1227');
+    expect(body).toContain('- **Review:** fail (https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2)');
+    expect(body).not.toContain('| **Issue worked** |');
     expect(body).toContain('#### Kaizen Work Cycle');
     expect(body).toContain('| PLAN | not observed | - | - |');
     expect(body).toContain('| CASE | not observed | - | - |');
