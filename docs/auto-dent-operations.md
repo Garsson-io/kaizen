@@ -334,6 +334,13 @@ After a batch completes:
        --repo Garsson-io/kaizen --name batch-artifacts
      ```
 
+   Full `run-*.log` transcript bundles are intentionally not carried by the
+   capped `batch-artifacts` comment. The cloud transport decision for compressed
+   transcript logs is documented in
+   [`docs/auto-dent-transcript-transport.md`](auto-dent-transcript-transport.md);
+   that contract uses GitHub Actions artifacts for the complete scrubbed bundle
+   and keeps the progress issue as a small manifest/index.
+
 4. **OpenTelemetry GenAI traces** — JSONL remains the durable source of truth.
    To mirror completed runs to an OTLP/GenAI-compatible HTTP collector, set:
    ```bash
