@@ -308,6 +308,16 @@ describe('workflow skills — simplification/refactor impact is first-class', ()
     expect(s).toMatch(/competing mechanisms/i);
   });
 
+  it('kaizen-implement and workflow tasks make context delegation evidence visible', () => {
+    const skill = read('.agents/skills/kaizen-implement/SKILL.md');
+    const workflowTasks = read('.agents/kaizen/workflow-tasks.md');
+
+    expect(skill).toMatch(/Context delegation evidence before review/i);
+    expect(skill).toMatch(/Delegate context-heavy/i);
+    expect(workflowTasks).toMatch(/Context delegation evidence/i);
+    expect(workflowTasks).toMatch(/Delegate broad\/context-heavy sub-work/i);
+  });
+
   it('kaizen-review-pr documents the simplification-impact data-needs grouping', () => {
     const s = read('.agents/skills/kaizen-review-pr/SKILL.md');
     expect(s).toMatch(/`\[diff, issue, plan\]`: simplification-impact/);

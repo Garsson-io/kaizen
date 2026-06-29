@@ -28,6 +28,7 @@ describe('workflow gate ledger schema (#1533)', () => {
       'worktree-case',
       'implementation-tests',
       'dry-refactor',
+      'context-delegation',
       'meet-reality',
       'review-requirements-impact',
       'reflection',
@@ -114,6 +115,7 @@ describe('workflow gate ledger schema (#1533)', () => {
     expect(verdict.invalidGateIds).toContain('hook-provider-activation');
     expect(verdict.missingGateIds).toContain('review-requirements-impact');
     expect(verdict.missingGateIds).toContain('dry-refactor');
+    expect(verdict.missingGateIds).toContain('context-delegation');
     expect(verdict.repairRequired).toBe(true);
 
     const repair = buildEvidenceRepairRequest(ledger, { maxAttempts: 3, attempt: 1 });

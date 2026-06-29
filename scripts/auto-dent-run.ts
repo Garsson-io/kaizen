@@ -56,6 +56,7 @@ import {
   formatIssueForDisplay,
   formatIssueUrl,
   formatProgressStepsMarkdown,
+  hasContextDelegationProgressEvidence,
   formatReviewForDisplay,
   upsertProgressStep,
   type RunProgressStep,
@@ -3387,6 +3388,8 @@ async function main(): Promise<void> {
       dryRefactorEvidence: Boolean(state.test_task) || result.progressSteps?.some((step) =>
         step.phase === 'DRY' || step.phase === 'DRY-REFACTOR' || /dry|refactor|simplification/i.test(`${step.phase} ${step.detail}`),
       ),
+      contextDelegationEvidence: Boolean(state.test_task) ||
+        hasContextDelegationProgressEvidence(result.progressSteps),
       meetRealityEvidence: Boolean(state.test_task) || result.progressSteps?.some((step) =>
         step.phase === 'MEET-REALITY' || /meet reality|dogfood|tried|observed output/i.test(`${step.phase} ${step.detail}`),
       ),

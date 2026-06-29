@@ -16,6 +16,12 @@ import {
   type LifecycleEvidence,
   type ProcessEvidence,
 } from './auto-dent-lifecycle.js';
+import {
+  hasContextDelegationProgressEvidence,
+  upsertProgressStep,
+  type AutoDentProgressResult,
+  type RunProgressStep,
+} from './auto-dent-progress.js';
 
 /**
  * The lifecycle validator turns the agent's AUTO_DENT_PHASE claims into a
@@ -42,6 +48,7 @@ describe('validateRunLifecycle — back-compat (ordering + presence)', () => {
     const f = logWith([
       'AUTO_DENT_PHASE: PICK | issue=#1 | title=test',
       'AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=ok',
+      'AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated search to explorer subagent',
       'AUTO_DENT_PHASE: IMPLEMENT | case=test-case',
       'AUTO_DENT_PHASE: TEST | result=pass | count=5',
       'AUTO_DENT_PHASE: PR | url=https://example.com/pr/1',
@@ -63,12 +70,12 @@ describe('validateRunLifecycle — back-compat (ordering + presence)', () => {
       'AUTO_DENT_PHASE: PICK | issue=#1',
       'AUTO_DENT_PHASE: IMPLEMENT | case=c',
       'AUTO_DENT_PHASE: TEST | result=pass | count=3',
-      'AUTO_DENT_PHASE: EVALUATE | verdict=proceed',
+      'AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated search to explorer subagent',
       'AUTO_DENT_PHASE: PR | url=u',
     ]);
     const r = validateRunLifecycle(f);
     expect(r.valid).toBe(false);
-    expect(r.violations).toContainEqual({ phase: 'EVALUATE', after: 'TEST' });
+    expect(r.violations).toContainEqual({ phase: 'DELEGATE', after: 'TEST' });
     // ordering-only problem (no gaps/phantoms) => degraded, not critical
     expect(r.criticalGaps).toEqual([]);
     expect(r.phantomPhases).toEqual([]);
@@ -167,6 +174,7 @@ describe('validateRunLifecycle — phantom test claims (verify outcomes not clai
   const fullExcept = (testLine: string) => [
     'AUTO_DENT_PHASE: PICK | issue=#1',
     'AUTO_DENT_PHASE: EVALUATE | verdict=proceed',
+    'AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated search to explorer subagent',
     'AUTO_DENT_PHASE: IMPLEMENT | case=c',
     testLine,
     'AUTO_DENT_PHASE: PR | url=u',
@@ -389,6 +397,7 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     reviewEvidence: true,
     reflectionEvidence: true,
     dryRefactorEvidence: true,
+    contextDelegationEvidence: true,
     meetRealityEvidence: true,
     hookProviderEvidence: true,
     mergeReadiness: 'ready',
@@ -474,6 +483,69 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     );
     expect(result.verdict).toBe('pass');
     expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
+  });
+
+  it('checks for missing context-delegation evidence when a PR exists', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({ contextDelegationEvidence: false }),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'context-delegation',
+      status: 'fail',
+    }));
+  });
+
+  it('derives the context-delegation process gate from ordered progress evidence', () => {
+    const processResult = (steps: RunProgressStep[]) => validateProcessEvidence(
+      validationWith(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({
+        contextDelegationEvidence: hasContextDelegationProgressEvidence(steps),
+      }),
+    );
+
+    expect(processResult([
+      { phase: 'DELEGATE', state: 'done', detail: 'delegated search to explorer subagent' },
+      { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+    ]).checks).toContainEqual(expect.objectContaining({
+      id: 'context-delegation',
+      status: 'pass',
+    }));
+
+    for (const steps of [
+      [
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+        { phase: 'DELEGATE', state: 'done', detail: 'late delegated search' },
+      ],
+      [
+        { phase: 'DELEGATE', state: 'fail', detail: 'did not delegate' },
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+      ],
+      [
+        { phase: 'DELEGATE', state: 'done', detail: '' },
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+      ],
+    ] satisfies RunProgressStep[][]) {
+      expect(processResult(steps).checks).toContainEqual(expect.objectContaining({
+        id: 'context-delegation',
+        status: 'fail',
+      }));
+    }
+
+    const mergedHistory: AutoDentProgressResult = {
+      prs: [],
+      cases: [],
+      stopRequested: false,
+      progressSteps: [],
+    };
+    upsertProgressStep(mergedHistory, { phase: 'DELEGATE', state: 'fail', detail: 'not delegated yet' });
+    upsertProgressStep(mergedHistory, { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' });
+    upsertProgressStep(mergedHistory, { phase: 'DELEGATE', state: 'done', detail: 'late delegated search' });
+    expect(processResult(mergedHistory.progressSteps).checks).toContainEqual(expect.objectContaining({
+      id: 'context-delegation',
+      status: 'fail',
+    }));
   });
 
   it('treats an intentional STOP/no-op before implementation as process-complete', () => {
@@ -567,6 +639,7 @@ describe('adversarial false-success fixtures (#1150)', () => {
     reviewEvidence: true,
     reflectionEvidence: true,
     dryRefactorEvidence: true,
+    contextDelegationEvidence: true,
     meetRealityEvidence: true,
     hookProviderEvidence: true,
     mergeReadiness: 'ready',

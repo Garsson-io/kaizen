@@ -659,6 +659,26 @@ describe('phase markers surface from all text sources (#1492)', () => {
     expect(out.match(/\[IMPLEMENT\]/g)?.length).toBe(1);
   });
 
+  it('turns context delegation markers into progress evidence', () => {
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+    const out = captureConsole(() =>
+      processStreamMessage(
+        assistantText('AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated transcript mining to explorer subagent'),
+        result,
+        Date.now(),
+        ctx,
+      ),
+    );
+
+    expect(out).toContain('[DELEGATE]');
+    expect(result.progressSteps).toContainEqual({
+      phase: 'DELEGATE',
+      state: 'done',
+      detail: 'delegated transcript mining to explorer subagent',
+    });
+  });
+
   it('captures contemplation recs from authoritative text but not from tool output', () => {
     const fromText = makeRunResult();
     ingestRunText('CONTEMPLATION_REC: pivot to observability', fromText, '0m00s', {}, { control: true });

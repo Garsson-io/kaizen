@@ -48,6 +48,8 @@ describe('kaizen workflow forcing driver', () => {
     }
     expect(directive).toContain('related-area DRY/refactor pass');
     expect(directive).toContain('reduce competing mechanisms, schemas, and drift');
+    expect(directive).toContain('delegate context-heavy sub-work');
+    expect(directive).toContain('record context-delegation evidence');
     expect(directive).toContain('meet reality');
     expect(directive).toContain('observe outputs and side effects');
   });
@@ -60,6 +62,9 @@ describe('kaizen workflow forcing driver', () => {
     expect(contract).toContain('Do not finish this run');
     expect(contract).toContain('review/requirements/impact gates');
     expect(contract).toContain('related-area DRY/refactor pass');
+    expect(contract).toContain('delegate context-heavy sub-work');
+    expect(contract).toContain('context-delegation evidence');
+    expect(contract).toContain('AUTO_DENT_PHASE: DELEGATE | status=not-applicable | evidence=<why>');
     expect(contract).toContain('meet reality');
   });
 
@@ -87,6 +92,7 @@ describe('kaizen workflow forcing driver', () => {
       'worktree-case',
       'implementation-tests',
       'dry-refactor',
+      'context-delegation',
       'meet-reality',
       'review-requirements-impact',
       'reflection',
@@ -136,24 +142,31 @@ describe('kaizen workflow forcing driver', () => {
   it('merges explicit stage evidence over collected evidence for reusable status calls', () => {
     const evidence = mergeWorkflowEvidence(
       { implementation: 'branch has commits ahead of origin/main', meetReality: 'pending dogfood run' },
-      { meetReality: 'done: CLI output inspected', dryRefactor: 'done: shared workflow schema reused' },
+      {
+        meetReality: 'done: CLI output inspected',
+        dryRefactor: 'done: shared workflow schema reused',
+        contextDelegation: 'done: delegated broad code search to explorer subagent',
+      },
     );
     const status = buildWorkflowStatus({ mode: 'manual', evidence });
 
     expect(status.stages.find((stage) => stage.id === 'implementation-tests')?.state).toBe('done');
     expect(status.stages.find((stage) => stage.id === 'meet-reality')?.state).toBe('done');
     expect(status.stages.find((stage) => stage.id === 'dry-refactor')?.state).toBe('done');
+    expect(status.stages.find((stage) => stage.id === 'context-delegation')?.state).toBe('done');
   });
 
   it('parses CLI evidence flags into the same reusable evidence schema', () => {
     const evidence = parseCliEvidenceOverrides({
       'dry-refactor': 'done: duplicate schemas removed',
+      'context-delegation': 'done: delegated transcript mining to subagent',
       'meet-reality': 'done: status output inspected',
       review: 'blocked: waiting on PR review',
     });
 
     expect(evidence).toEqual({
       dryRefactor: 'done: duplicate schemas removed',
+      contextDelegation: 'done: delegated transcript mining to subagent',
       meetReality: 'done: status output inspected',
       review: 'blocked: waiting on PR review',
     });
@@ -166,6 +179,8 @@ describe('kaizen workflow forcing driver', () => {
       'exploit',
       '--dry-refactor',
       'done: shared workflow driver reused',
+      '--context-delegation',
+      'done: delegated broad search to explorer subagent',
       '--meet-reality',
       'done: CLI output inspected',
     ]);
@@ -174,6 +189,8 @@ describe('kaizen workflow forcing driver', () => {
     expect(result.stdout).toContain('## Kaizen Workflow Status');
     expect(result.stdout).toContain('plan/test-plan gate');
     expect(result.stdout).toContain('shared workflow driver reused');
+    expect(result.stdout).toContain('delegated broad search');
+    expect(result.stdout).toContain('| context delegation | done |');
     expect(result.stdout).toContain('CLI output inspected');
     expect(result.stdout).toContain('| meet reality | done |');
     expect(result.stdout).toContain('pending');
@@ -185,6 +202,8 @@ describe('kaizen workflow forcing driver', () => {
       '--mode',
       'manual',
       '--dry-refactor',
+      'done: cwd invariant',
+      '--context-delegation',
       'done: cwd invariant',
       '--meet-reality',
       'done: cwd invariant',

@@ -13,6 +13,7 @@ Current gates:
 - `worktree-case`
 - `implementation-tests`
 - `dry-refactor`
+- `context-delegation`
 - `meet-reality`
 - `review-requirements-impact`
 - `reflection`

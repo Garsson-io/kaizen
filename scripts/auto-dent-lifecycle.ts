@@ -1,7 +1,7 @@
 // Auto-dent run lifecycle validation.
 //
 // The agent emits AUTO_DENT_PHASE markers as it moves through the pipeline
-// (PICK -> EVALUATE -> IMPLEMENT -> TEST -> PR -> MERGE -> REFLECT). Those
+// (PICK -> EVALUATE -> DELEGATE -> IMPLEMENT -> TEST -> PR -> MERGE -> REFLECT). Those
 // markers are *claims*. This module turns the claims into a verified, classified
 // signal so the harness can see — and steer on — when a run's narrative doesn't
 // hold together:
@@ -21,7 +21,7 @@ import { parsePhaseMarkers } from './auto-dent-stream.js';
 import type { WorkflowGateId } from './workflow-gate-ledger.js';
 
 /** Canonical phase order. Phases not in this list (floating) are ignored for ordering. */
-export const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
+export const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
 
 /** Phases that can appear anywhere without breaking ordering. */
 export const FLOATING_PHASES = new Set(['DECOMPOSE', 'STOP']);
@@ -196,6 +196,8 @@ export interface ProcessEvidence {
   reflectionEvidence?: boolean;
   /** Related-area DRY/refactor pass evidence exists. */
   dryRefactorEvidence?: boolean;
+  /** Context-heavy sub-work delegation or explicit not-applicable evidence exists. */
+  contextDelegationEvidence?: boolean;
   /** Meet-reality evidence exists. */
   meetRealityEvidence?: boolean;
   /** Hook/provider activation or external substitute evidence exists. */
@@ -340,6 +342,15 @@ export function validateProcessEvidence(
     'a PR exists or was claimed without related-area DRY/refactor evidence',
     'related-area DRY/refactor evidence exists',
     'record the related-area simplification sweep or the explicit reason no refactor was warranted',
+  );
+  addCheck(
+    checks,
+    'context-delegation',
+    needsPr,
+    evidence.contextDelegationEvidence,
+    'a PR exists or was claimed without context-delegation evidence',
+    'context-delegation evidence exists',
+    'record context-heavy sub-work delegated to subagents or the explicit reason delegation was not applicable',
   );
   addCheck(
     checks,

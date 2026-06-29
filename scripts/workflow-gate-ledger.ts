@@ -38,6 +38,11 @@ export const CANONICAL_WORKFLOW_GATES = [
     repairInstruction: 'record the related-area simplification sweep or the explicit reason no refactor was warranted',
   },
   {
+    id: 'context-delegation',
+    label: 'context delegation',
+    repairInstruction: 'record context-heavy sub-work delegated to subagents or the explicit reason delegation was not applicable',
+  },
+  {
     id: 'meet-reality',
     label: 'meet reality',
     repairInstruction: 'try the PR/workflow against reality and record observed outputs and side effects',
@@ -78,6 +83,7 @@ const evidenceTypeSchema = z.enum([
   'implementation',
   'test',
   'dry-refactor',
+  'context-delegation',
   'meet-reality',
   'review',
   'requirements',
