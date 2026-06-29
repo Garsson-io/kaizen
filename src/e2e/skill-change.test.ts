@@ -218,6 +218,7 @@ describe("kaizen-do — /goal workflow driver", () => {
       "worktree/case gate",
       "implementation with tests",
       "related-area DRY/refactor pass",
+      "context delegation",
       "meet reality",
       "review/requirements/impact gates",
       "reflection gate",
@@ -226,6 +227,7 @@ describe("kaizen-do — /goal workflow driver", () => {
       expect(skill).toContain(phrase);
     }
     expect(skill).toContain("reduce competing mechanisms, schemas, and drift");
+    expect(skill).toContain("delegate context-heavy");
     expect(skill).toContain("observe outputs and side effects");
   });
 
@@ -265,6 +267,7 @@ describe("kaizen-autodent — inside-harness auto-dent workflow", () => {
       "worktree/case",
       "commits and tests",
       "related-area DRY/refactor",
+      "context delegation",
       "meet-reality output",
       "review/requirements/impact",
       "reflection evidence",

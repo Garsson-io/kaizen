@@ -24,7 +24,7 @@ import type { WorkflowGateId } from './workflow-gate-ledger.js';
 export const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
 
 /** Phases that can appear anywhere without breaking ordering. */
-export const FLOATING_PHASES = new Set(['DECOMPOSE', 'STOP']);
+export const FLOATING_PHASES = new Set(['DECOMPOSE', 'DELEGATE', 'STOP']);
 
 /**
  * Phases that, when present, require an earlier phase to also be present.
@@ -196,6 +196,8 @@ export interface ProcessEvidence {
   reflectionEvidence?: boolean;
   /** Related-area DRY/refactor pass evidence exists. */
   dryRefactorEvidence?: boolean;
+  /** Context-heavy sub-work delegation or explicit not-applicable evidence exists. */
+  contextDelegationEvidence?: boolean;
   /** Meet-reality evidence exists. */
   meetRealityEvidence?: boolean;
   /** Hook/provider activation or external substitute evidence exists. */
@@ -340,6 +342,15 @@ export function validateProcessEvidence(
     'a PR exists or was claimed without related-area DRY/refactor evidence',
     'related-area DRY/refactor evidence exists',
     'record the related-area simplification sweep or the explicit reason no refactor was warranted',
+  );
+  addCheck(
+    checks,
+    'context-delegation',
+    needsPr,
+    evidence.contextDelegationEvidence,
+    'a PR exists or was claimed without context-delegation evidence',
+    'context-delegation evidence exists',
+    'record context-heavy sub-work delegated to subagents or the explicit reason delegation was not applicable',
   );
   addCheck(
     checks,

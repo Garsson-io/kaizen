@@ -56,6 +56,7 @@ const PHASE_STYLE: Record<string, (t: string) => string> = {
   PICK: color.cyan,
   PLAN: color.blue,
   EVALUATE: color.yellow,
+  DELEGATE: color.cyan,
   IMPLEMENT: color.magenta,
   TEST: color.green,
   PR: color.green,
@@ -314,6 +315,12 @@ function progressStepFromMarker(marker: PhaseMarker): RunProgressStep | null {
         phase: 'EVALUATE',
         state: f.verdict || 'seen',
         detail: f.reason || '',
+      };
+    case 'DELEGATE':
+      return {
+        phase: 'DELEGATE',
+        state: f.status || f.result || 'seen',
+        detail: f.reason || f.evidence || f.detail || '',
       };
     case 'IMPLEMENT':
       return {

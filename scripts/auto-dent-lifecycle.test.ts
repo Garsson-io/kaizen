@@ -389,6 +389,7 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     reviewEvidence: true,
     reflectionEvidence: true,
     dryRefactorEvidence: true,
+    contextDelegationEvidence: true,
     meetRealityEvidence: true,
     hookProviderEvidence: true,
     mergeReadiness: 'ready',
@@ -474,6 +475,18 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     );
     expect(result.verdict).toBe('pass');
     expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
+  });
+
+  it('checks for missing context-delegation evidence when a PR exists', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({ contextDelegationEvidence: false }),
+    );
+    expect(result.verdict).toBe('process-incomplete');
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'context-delegation',
+      status: 'fail',
+    }));
   });
 
   it('treats an intentional STOP/no-op before implementation as process-complete', () => {
@@ -567,6 +580,7 @@ describe('adversarial false-success fixtures (#1150)', () => {
     reviewEvidence: true,
     reflectionEvidence: true,
     dryRefactorEvidence: true,
+    contextDelegationEvidence: true,
     meetRealityEvidence: true,
     hookProviderEvidence: true,
     mergeReadiness: 'ready',

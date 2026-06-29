@@ -21,6 +21,7 @@ export const PROGRESS_PHASE_ORDER = [
   'PICK',
   'PLAN',
   'EVALUATE',
+  'DELEGATE',
   'CASE',
   'IMPLEMENT',
   'TEST',
@@ -106,6 +107,7 @@ export function buildKaizenCycleSteps(
     },
     { phase: 'PLAN', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
     { phase: 'EVALUATE', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
+    { phase: 'DELEGATE', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
     {
       phase: 'CASE',
       state: synthetic ? 'not applicable' : result.cases.length > 0 ? 'created' : 'not observed',
@@ -160,6 +162,17 @@ export function formatProgressStepsMarkdown(result: AutoDentProgressResult, repo
     lines.push(`| ${step.phase} | ${step.state} | ${step.detail || '-'} | ${step.url || '-'} |`);
   }
   return lines.join('\n');
+}
+
+export function hasContextDelegationProgressEvidence(
+  steps: RunProgressStep[] | undefined,
+): boolean {
+  return Boolean(steps?.some((step) =>
+    step.phase === 'DELEGATE' ||
+    step.phase === 'CONTEXT-DELEGATION' ||
+    /context[- ]delegation|context-heavy|subagent|delegat|explorer agent|worker agent|parallel research/i
+      .test(`${step.phase} ${step.detail}`),
+  ));
 }
 
 export function upsertProgressStep(

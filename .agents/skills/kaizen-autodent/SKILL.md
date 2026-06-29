@@ -72,6 +72,7 @@ Use this table to verify progress. It is a view over the shared workflow contrac
 | worktree/case | branch, worktree path, case or worktree-scoped `kaizen.issue` binding |
 | commits and tests | source/test commits plus command, result, count, and output source |
 | related-area DRY/refactor | evidence that competing mechanisms/schemas/drift were reduced, or reason no refactor was warranted |
+| context delegation | delegated context-heavy sub-work, or explicit reason delegation was not applicable |
 | meet-reality output | real CLI, hook, prompt, PR, status, or workflow output showing the behavior changed |
 | review/requirements/impact | stored review findings, requirements verdict, impact proof, and fix-loop state |
 | reflection evidence | durable reflection, issue/comment, or explicit no-action reason |
@@ -91,6 +92,7 @@ When the inside-harness loop has evidence the CLI cannot infer, pass it explicit
 ```bash
 npx tsx scripts/kaizen-workflow-driver.ts status --issue <N> --repo "$ISSUES_REPO" --mode manual \
   --dry-refactor "done: reused /kaizen-do and workflow gate ledger" \
+  --context-delegation "done: delegated broad issue/code search to subagents" \
   --meet-reality "done: status output inspected" \
   --hook-provider-activation "not applicable: hook-independent run; durable external evidence used"
 ```
