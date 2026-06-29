@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S npx tsx
 /**
  * review-round.ts - Focused authoritative review-round operator CLI.
  *
@@ -7,7 +7,7 @@
  * attachments, and rerun-review-verdict-gate handles the PR-attached check.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { parseArgs as parseNodeArgs } from 'node:util';
 import { z } from 'zod';
@@ -32,6 +32,7 @@ import { writeAttachment } from '../src/section-editor.js';
 import { buildCappedBody } from '../src/capped-attachment.js';
 import { gh } from '../src/lib/gh-exec.js';
 import { parseGithubPrUrl } from '../src/lib/github-pr.js';
+import { readJsonValueFile, writeJsonValueFile } from '../src/lib/json-file.js';
 import { shellQuote } from '../src/lib/shell-quote.js';
 import {
   parseSubscriptionAgentProvider,
@@ -146,6 +147,7 @@ interface RunReviewRoundDeps {
 }
 
 const DEFAULT_PROVIDER = subscriptionAgentProvider('claude');
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 function splitCsv(value: string | undefined): string[] {
   return (value ?? '')
@@ -169,11 +171,14 @@ export function parseTimeoutMs(value: string | undefined): number | undefined {
   const match = value.match(/^(\d+)(ms|s|m)?$/);
   if (!match) throw new Error(`invalid --timeout ${JSON.stringify(value)}; use values like 30000ms, 180s, or 3m`);
   const amount = Number.parseInt(match[1], 10);
-  if (amount <= 0) throw new Error('--timeout must be positive');
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('--timeout must be a safe positive integer');
   const unit = match[2] ?? 'ms';
-  if (unit === 'm') return amount * 60_000;
-  if (unit === 's') return amount * 1000;
-  return amount;
+  const multiplier = unit === 'm' ? 60_000 : unit === 's' ? 1000 : 1;
+  const parsed = amount * multiplier;
+  if (!Number.isSafeInteger(parsed) || parsed > MAX_TIMEOUT_MS) {
+    throw new Error(`--timeout must be <= ${MAX_TIMEOUT_MS}ms`);
+  }
+  return parsed;
 }
 
 export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
@@ -229,11 +234,20 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
     throw new Error('--debug cannot be combined with --dry-run');
   }
 
+  const parsedPrUrl = parseGithubPrUrl(values.pr);
+  let repo = values.repo ?? process.env.GITHUB_REPOSITORY;
+  if (parsedPrUrl) {
+    if (values.repo && values.repo !== parsedPrUrl.repo) {
+      throw new Error(`--pr URL repo ${parsedPrUrl.repo} does not match --repo ${values.repo}`);
+    }
+    repo = values.repo ?? parsedPrUrl.repo;
+  }
+
   return {
     command,
     pr: normalizePr(values.pr),
     issue: values.issue,
-    repo: values.repo ?? process.env.GITHUB_REPOSITORY,
+    repo,
     dimensions: splitCsv(values.dimensions),
     groups: splitCsv(values.group),
     allPrDimensions: values['all-pr'] === true,
@@ -412,7 +426,7 @@ const ArtifactSchema = z.object({
 
 export function writeArtifact(path: string, artifact: ReviewRoundArtifact): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+  writeJsonValueFile(path, artifact);
 }
 
 export function defaultArtifactPath(pr: string, nowIso: string): string {
@@ -424,7 +438,8 @@ export function defaultArtifactPath(pr: string, nowIso: string): string {
 }
 
 export function readArtifact(path: string): ReviewRoundArtifact {
-  const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+  const parsed = readJsonValueFile(path);
+  if (parsed === null) throw new Error(`Invalid or unreadable review-round artifact: ${path}`);
   return ArtifactSchema.parse(parsed) as ReviewRoundArtifact;
 }
 

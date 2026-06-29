@@ -1,4 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   assertArtifactStoreable,
   buildHelp,
@@ -7,16 +11,22 @@ import {
   formatRecoveryCommands,
   parseCliArgs,
   parseTimeoutMs,
+  readArtifact,
   reviewResultToArtifact,
   runAndStoreReviewRound,
   runReviewRound,
   storeDebugArtifact,
   storeReviewArtifact,
+  writeArtifact,
   type ReviewRoundArtifact,
 } from './review-round.js';
 import { shellQuote } from '../src/lib/shell-quote.js';
 
 const provider = { provider: 'codex' as const, billing: 'subscription-cli' as const };
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function baseArtifact(overrides: Partial<ReviewRoundArtifact> = {}): ReviewRoundArtifact {
   return {
@@ -99,14 +109,30 @@ describe('parseCliArgs', () => {
     expect(() => parseCliArgs(['run', '--pr', 'https://example.com/Garsson-io/kaizen/pull/1739'])).toThrow('--pr must be a PR number');
   });
 
+  it('uses the repo from a PR URL when --repo is omitted and rejects explicit mismatches', () => {
+    vi.stubEnv('GITHUB_REPOSITORY', 'Different/repo');
+
+    expect(parseCliArgs(['run', '--pr', 'https://github.com/Garsson-io/kaizen/pull/1739']).repo).toBe('Garsson-io/kaizen');
+    expect(() => parseCliArgs([
+      'run',
+      '--pr', 'https://github.com/Garsson-io/kaizen/pull/1739',
+      '--repo', 'Other/repo',
+    ])).toThrow('--pr URL repo Garsson-io/kaizen does not match --repo Other/repo');
+  });
+
   it('rejects malformed integer flags instead of truncating them', () => {
     expect(() => parseCliArgs(['store', '--file', 'artifact.json', '--round', '7abc'])).toThrow('--round must be a positive integer');
     expect(() => parseCliArgs(['store', '--file', 'artifact.json', '--round', '1.5'])).toThrow('--round must be a positive integer');
   });
 
   it('rejects zero timeouts', () => {
-    expect(() => parseTimeoutMs('0')).toThrow('--timeout must be positive');
-    expect(() => parseTimeoutMs('0s')).toThrow('--timeout must be positive');
+    expect(() => parseTimeoutMs('0')).toThrow('--timeout must be a safe positive integer');
+    expect(() => parseTimeoutMs('0s')).toThrow('--timeout must be a safe positive integer');
+  });
+
+  it('rejects unsafe and timer-overflowing timeouts', () => {
+    expect(() => parseTimeoutMs('999999999999999999999999m')).toThrow('--timeout must be a safe positive integer');
+    expect(() => parseTimeoutMs('2147483648ms')).toThrow('--timeout must be <= 2147483647ms');
   });
 
   it('rejects debug dry-run storage because debug storage writes a GitHub attachment', () => {
@@ -411,6 +437,48 @@ describe('assertArtifactStoreable', () => {
   });
 });
 
+describe('artifact files', () => {
+  it('round-trips the durable run artifact into the store path', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'review-round-'));
+    try {
+      const path = join(dir, 'artifact.json');
+      const artifact = baseArtifact({ requestedDimensions: ['security'] });
+      writeArtifact(path, artifact);
+
+      const deps = {
+        nextReviewRound: vi.fn().mockReturnValue(4),
+        storeReviewBatch: vi.fn().mockReturnValue({ urls: ['u1'], summaryUrl: 'summary-url' }),
+        rerunReviewVerdictGate: vi.fn(),
+        writeReviewSentinel: vi.fn(),
+        writeAttachment: vi.fn(),
+      };
+      await storeReviewArtifact(readArtifact(path), { round: 4 }, deps);
+
+      expect(deps.storeReviewBatch).toHaveBeenCalledWith(
+        { kind: 'pr', number: '1735', repo: 'Garsson-io/kaizen' },
+        4,
+        [{
+          dimension: 'security',
+          verdict: 'pass',
+          summary: 'Security looks good.',
+          findings: [{ requirement: 'No shell injection', status: 'DONE', detail: 'Uses arg arrays.' }],
+        }],
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unreadable or invalid artifact JSON', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'review-round-'));
+    try {
+      expect(() => readArtifact(join(dir, 'missing.json'))).toThrow('Invalid or unreadable review-round artifact');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('storeReviewArtifact', () => {
   it('stores a passable artifact into the existing structured review contract', async () => {
     const deps = {
@@ -538,6 +606,16 @@ describe('help text', () => {
     expect(help).toContain('run-and-store');
     expect(help).toContain('--group diff,tests');
   });
+
+  it('renders help through the executable CLI entrypoint', () => {
+    const result = spawnSync('npx', ['tsx', 'scripts/review-round.ts', '--help'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('review-round - run and store focused authoritative review rounds');
+  });
 });
 
 describe('formatRecoveryCommands', () => {
@@ -654,6 +732,16 @@ describe('runAndStoreReviewRound', () => {
 
     expect(result.stored.summaryUrl).toBe('s');
     expect(runDeps.writeArtifact).toHaveBeenCalled();
-    expect(storeDeps.storeReviewBatch).toHaveBeenCalled();
+    expect(storeDeps.storeReviewBatch).toHaveBeenCalledWith(
+      { kind: 'pr', number: '1735', repo: 'Garsson-io/kaizen' },
+      2,
+      [{
+        dimension: 'security',
+        verdict: 'pass',
+        summary: 'Security looks good.',
+        findings: [{ requirement: 'No shell injection', status: 'DONE', detail: 'Uses arg arrays.' }],
+      }],
+    );
+    expect(runDeps.writeArtifact.mock.invocationCallOrder[0]).toBeLessThan(storeDeps.storeReviewBatch.mock.invocationCallOrder[0]);
   });
 });

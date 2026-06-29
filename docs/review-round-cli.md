@@ -101,6 +101,23 @@ authoritative record. Once an artifact is inspected and passes the store guard,
 If the artifact is useful review evidence for humans, attach or quote the
 relevant excerpt in the PR body or a PR comment before cleaning up the worktree.
 
+## Test Ladder
+
+Default CI should stay cheap and deterministic:
+
+1. Unit tests cover argument parsing, dimension selection, artifact
+   serialization, store refusal, debug storage, and recovery commands.
+2. A subprocess smoke test runs `npx tsx scripts/review-round.ts --help` so the
+   executable CLI entrypoint is exercised without GitHub writes.
+3. Full repo health still runs `npm run typecheck`, `npm test`, `npm run build`,
+   and `npm run test:hooks`.
+
+Provider-backed smoke runs are optional and operator-triggered because they can
+take minutes and depend on subscription CLI availability. When one is needed,
+write it to an explicit `logs/review/*.json` path, inspect the artifact before
+storage, and keep the raw artifact path in the PR evidence so a timeout or
+provider failure can be diagnosed without rerunning the full battery.
+
 ## Recovery Output
 
 After `run`, the CLI prints per-dimension status and a copy-pasteable next
