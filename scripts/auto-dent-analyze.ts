@@ -21,6 +21,11 @@ import { execSync } from 'child_process';
 import { readState, type BatchState } from './auto-dent-run.js';
 import { renderToolInputSummary } from './auto-dent-display.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
+import { parseBatchArtifactCliArgs } from './batch-artifacts-cli.js';
+import {
+  readArtifactPartsFromProgressIssue,
+  type ArtifactParts,
+} from './batch-artifacts-upload.js';
 import {
   computeHookActivationCounts,
   formatHookActivationDistribution,
@@ -970,8 +975,79 @@ export function formatBatchAnalysis(batch: BatchAnalysis): string {
 
 // CLI
 
+export interface ProgressIssueAnalysisDiagnosticInput {
+  issueNumber: string;
+  repo: string;
+  parts: ArtifactParts | null;
+}
+
+export function formatProgressIssueAnalysisDiagnostic(
+  input: ProgressIssueAnalysisDiagnosticInput,
+): string {
+  const { issueNumber, repo, parts } = input;
+  const lines = [
+    `auto-dent-analyze cannot analyze progress issue #${issueNumber} directly.`,
+    '',
+    'This tool analyzes run transcript logs (`run-*.log`) to compute cold-start, tool-pattern, and waste metrics.',
+  ];
+
+  if (!parts) {
+    lines.push(
+      '',
+      `No batch-artifacts attachment was found on ${repo}#${issueNumber}.`,
+    );
+  } else {
+    const eventCount = parts.eventsJsonl
+      ? parts.eventsJsonl.split('\n').filter(l => l.trim()).length
+      : 0;
+    const available = [
+      parts.eventsJsonl ? `events.jsonl (${eventCount} events)` : null,
+      parts.stateJson ? 'state.json' : null,
+      parts.summary ? 'batch summary' : null,
+    ].filter(Boolean);
+    lines.push(
+      '',
+      `Found batch-artifacts for batch \`${parts.batchId}\`: ${available.length ? available.join(', ') : 'no analyzable artifacts'}.`,
+      'Those artifacts do not include the run transcript logs required by auto-dent-analyze.',
+    );
+  }
+
+  lines.push(
+    '',
+    'Use the JSONL artifact analyzers for progress-issue data:',
+    `- npx tsx scripts/batch-summary.ts --progress-issue ${issueNumber} --repo ${repo}`,
+    `- npx tsx scripts/batch-trends.ts --progress-issue ${issueNumber} --repo ${repo}`,
+    '',
+    'To make auto-dent-analyze cloud-backed, upload compressed run logs to the progress issue and teach this tool to read them.',
+  );
+
+  return lines.join('\n');
+}
+
 function main(): void {
-  const target = process.argv[2];
+  const args = parseBatchArtifactCliArgs(process.argv.slice(2));
+  const progressIssue = args.progressIssues[0];
+
+  if (progressIssue) {
+    if (!args.repo) {
+      console.error('Usage: --progress-issue requires --repo <owner/repo> or GITHUB_REPOSITORY');
+      process.exit(1);
+    }
+    try {
+      const parts = readArtifactPartsFromProgressIssue(progressIssue, args.repo);
+      console.error(formatProgressIssueAnalysisDiagnostic({
+        issueNumber: progressIssue,
+        repo: args.repo,
+        parts,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Could not read batch-artifacts from ${args.repo}#${progressIssue}: ${message}`);
+    }
+    process.exit(1);
+  }
+
+  const target = args.positional[0];
 
   if (!target || target === '--help') {
     console.log(`auto-dent-analyze — Cold-start and efficiency analysis
@@ -980,11 +1056,15 @@ Usage:
   auto-dent-analyze.ts <batch-dir>         Analyze all runs in a batch
   auto-dent-analyze.ts <log-file>          Analyze a single run log
   auto-dent-analyze.ts --all               Analyze all batches
+  auto-dent-analyze.ts --progress-issue N --repo owner/repo
+                                           Explain why progress-issue artifacts
+                                           are not sufficient for transcript analysis
 
 Examples:
   npx tsx scripts/auto-dent-analyze.ts logs/auto-dent/batch-260323-0003-072b
   npx tsx scripts/auto-dent-analyze.ts logs/auto-dent/batch-260323-0003-072b/run-1-260322220305.log
-  npx tsx scripts/auto-dent-analyze.ts --all`);
+  npx tsx scripts/auto-dent-analyze.ts --all
+  npx tsx scripts/auto-dent-analyze.ts --progress-issue 688 --repo Garsson-io/kaizen`);
     process.exit(0);
   }
 

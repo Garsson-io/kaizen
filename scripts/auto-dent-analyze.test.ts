@@ -5,10 +5,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { basename, join } from 'path';
-import { tmpdir } from 'os';
+import { makeIgnoredTestDir } from '../src/lib/test-dirs.js';
 import {
   analyzeRunLog,
   analyzeBatch,
@@ -18,6 +18,7 @@ import {
   generateRecommendations,
   detectRunRegression,
   detectBatchRegressions,
+  formatProgressIssueAnalysisDiagnostic,
   formatRegressionReports,
   formatRunAnalysis,
   formatBatchAnalysis,
@@ -71,14 +72,14 @@ function initMsg(): string {
 // Helpers
 
 function createTmpLog(lines: string[]): string {
-  const dir = mkdtempSync(join(tmpdir(), 'analyze-test-'));
+  const dir = makeIgnoredTestDir('auto-dent-analyze-log');
   const logPath = join(dir, 'run-1-test.log');
   writeFileSync(logPath, lines.join('\n') + '\n');
   return logPath;
 }
 
 function createTmpBatch(runLogs: string[][]): string {
-  const dir = mkdtempSync(join(tmpdir(), 'analyze-batch-'));
+  const dir = makeIgnoredTestDir('auto-dent-analyze-batch');
   for (let i = 0; i < runLogs.length; i++) {
     const logPath = join(dir, `run-${i + 1}-test.log`);
     writeFileSync(logPath, runLogs[i].join('\n') + '\n');
@@ -326,6 +327,39 @@ describe('analyzeBatch', () => {
 
     const result = analyzeBatch(batchDir);
     expect(result.batchId).toBe(basename(batchDir));
+  });
+});
+
+describe('progress issue artifact diagnostic', () => {
+  it('explains why uploaded JSONL artifacts are insufficient for transcript analysis', () => {
+    const output = formatProgressIssueAnalysisDiagnostic({
+      issueNumber: '1641',
+      repo: 'Garsson-io/kaizen',
+      parts: {
+        batchId: 'cloud-batch',
+        eventsJsonl: '{"event":{"type":"run.complete"}}\n{"event":{"type":"run.start"}}',
+        stateJson: '{"batch_id":"cloud-batch"}',
+        summary: 'Batch summary',
+      },
+    });
+
+    expect(output).toContain('cannot analyze progress issue #1641 directly');
+    expect(output).toContain('run transcript logs');
+    expect(output).toContain('events.jsonl (2 events)');
+    expect(output).toContain('state.json');
+    expect(output).toContain('batch-summary.ts --progress-issue 1641 --repo Garsson-io/kaizen');
+    expect(output).toContain('upload compressed run logs');
+  });
+
+  it('reports missing batch-artifacts attachment distinctly', () => {
+    const output = formatProgressIssueAnalysisDiagnostic({
+      issueNumber: '1641',
+      repo: 'Garsson-io/kaizen',
+      parts: null,
+    });
+
+    expect(output).toContain('No batch-artifacts attachment was found');
+    expect(output).toContain('batch-trends.ts --progress-issue 1641 --repo Garsson-io/kaizen');
   });
 });
 
