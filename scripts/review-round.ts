@@ -40,6 +40,7 @@ import {
   type SubscriptionAgentProvider,
 } from '../src/provider-contract.js';
 import { validateReviewFindingPayload } from '../src/review-finding-contract.js';
+import { deriveVerdictFromFindings } from '../src/review-finding-contract.js';
 import { writeReviewSentinel } from '../src/cli-structured-data.js';
 import { rerunReviewVerdictGate, type RerunResult } from './rerun-review-verdict-gate.js';
 
@@ -490,6 +491,9 @@ export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
   if (artifact.result.error) {
     throw new Error(`Refusing to store authoritative review round: artifact contains provider/run error: ${artifact.result.error}`);
   }
+  if (artifact.result.skippedDimensions.length > 0) {
+    throw new Error(`Refusing to store authoritative review round: skipped dimensions present ${artifact.result.skippedDimensions.join(', ')}`);
+  }
   if (artifact.result.failedDimensions.length > 0) {
     throw new Error(
       `Refusing to store authoritative review round: provider failures in dimensions ` +
@@ -528,7 +532,14 @@ export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
     throw new Error(`Refusing to store authoritative review round: unrequested dimensions present ${unexpectedDimensions.join(', ')}`);
   }
   for (const dimension of artifact.result.dimensions) {
-    const validation = validateReviewFindingPayload(normalizeDimensionReview(dimension));
+    const normalized = normalizeDimensionReview(dimension);
+    const derivedVerdict = deriveVerdictFromFindings(normalized.findings);
+    if (normalized.verdict !== derivedVerdict) {
+      throw new Error(
+        `Refusing to store authoritative review round: ${dimension.dimension} verdict ${normalized.verdict} does not match findings-derived verdict ${derivedVerdict}`,
+      );
+    }
+    const validation = validateReviewFindingPayload(normalized);
     if (!validation.ok) {
       throw new Error(`Refusing to store authoritative review round: ${dimension.dimension} payload invalid: ${validation.error}`);
     }
@@ -713,7 +724,12 @@ export async function runReviewRound(
       result,
       nowIso,
     });
-    deps.writeArtifact(outPath, artifact);
+    try {
+      deps.writeArtifact(outPath, artifact);
+    } catch (writeErr) {
+      const writeMessage = writeErr instanceof Error ? writeErr.message : String(writeErr);
+      throw new AggregateError([err, writeErr], `Review round failed and failure artifact write failed: ${message}; artifact write: ${writeMessage}`);
+    }
     throw err;
   }
 }

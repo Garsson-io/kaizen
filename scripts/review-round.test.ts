@@ -336,6 +336,25 @@ describe('runReviewRound', () => {
     expect(artifact.result.error).toBe('provider timeout');
   });
 
+  it('preserves the review failure when writing the failure artifact also fails', async () => {
+    const gh = makeReviewRoundGhMock();
+
+    await expect(runReviewRound(
+      parseCliArgs(['run', '--pr', '1735', '--issue', '1732', '--repo', 'Garsson-io/kaizen', '--dimensions', 'security', '--provider', 'codex']),
+      {
+        reviewBattery: vi.fn().mockRejectedValue(new Error('provider timeout')),
+        listPrDimensions: vi.fn(),
+        gh: gh as any,
+        retrievePlan: vi.fn().mockReturnValue('stored plan'),
+        retrieveTestPlan: vi.fn().mockReturnValue('stored test plan'),
+        writeArtifact: vi.fn().mockImplementation(() => {
+          throw new Error('disk full');
+        }),
+        now: () => '2026-06-30T10:00:00.000Z',
+      },
+    )).rejects.toThrow('Review round failed and failure artifact write failed: provider timeout; artifact write: disk full');
+  });
+
   it('writes a failure artifact when prefetch JSON parsing fails', async () => {
     const writeArtifact = vi.fn();
     const gh = vi.fn((args: string[]) => {
@@ -465,6 +484,35 @@ describe('assertArtifactStoreable', () => {
     });
 
     expect(() => assertArtifactStoreable(artifact)).toThrow(/artifact contains provider\/run error/);
+  });
+
+  it('fails closed when skipped dimensions are present', () => {
+    const artifact = baseArtifact({
+      requestedDimensions: ['security'],
+      result: {
+        ...baseArtifact().result,
+        skippedDimensions: ['security'],
+      },
+    });
+
+    expect(() => assertArtifactStoreable(artifact)).toThrow(/skipped dimensions present security/);
+  });
+
+  it('fails closed when a dimension verdict does not match its findings', () => {
+    const artifact = baseArtifact({
+      requestedDimensions: ['security'],
+      result: {
+        ...baseArtifact().result,
+        dimensions: [{
+          dimension: 'security',
+          verdict: 'fail',
+          summary: 'Contradictory verdict.',
+          findings: [{ requirement: 'R', status: 'DONE', detail: 'ok' }],
+        }],
+      },
+    });
+
+    expect(() => assertArtifactStoreable(artifact)).toThrow(/security verdict fail does not match findings-derived verdict pass/);
   });
 
   it('fails closed when requested dimensions are missing from the artifact results', () => {
