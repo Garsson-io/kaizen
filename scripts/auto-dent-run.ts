@@ -2427,7 +2427,7 @@ export function closeBatchProgressIssue(
   kaizenRepo: string,
   state: BatchState,
   batchDir?: string,
-  deps: { writeAttachment?: ProgressAttachmentWriter } = {},
+  deps: { writeAttachment?: ProgressAttachmentWriter; gh?: (args: string[]) => string } = {},
 ): void {
   if (!progressIssue || !kaizenRepo) return;
   const issueNum = parseProgressIssueNumber(progressIssue);
@@ -2564,8 +2564,12 @@ export function closeBatchProgressIssue(
     console.log(`  [stale-pr] triage maintenance skipped: ${(err as Error).message}`);
   }
 
-  ghExec(`gh issue close ${issueNum} --repo ${kaizenRepo} --reason completed`);
-  console.log(`  [hygiene] closed batch progress issue`);
+  try {
+    (deps.gh ?? gh)(['issue', 'close', issueNum, '--repo', kaizenRepo, '--reason', 'completed']);
+    console.log(`  [hygiene] closed batch progress issue`);
+  } catch (err) {
+    console.log(`  [hygiene] progress issue close skipped: ${(err as Error).message}`);
+  }
 }
 
 // Execute Claude
@@ -3170,7 +3174,7 @@ export function postModeOutputToProgressIssue(input: {
   runNum: number;
   logFile: string;
   readLog?: (path: string) => string;
-  gh?: (args: string[]) => string;
+  writeAttachment?: ProgressAttachmentWriter;
   log?: (msg: string) => void;
 }): void {
   if (!MODE_OUTPUT_FALLBACK_MODES.has(input.mode)) return;
@@ -3214,9 +3218,13 @@ export function postModeOutputToProgressIssue(input: {
     '',
     output,
   ].join('\n');
-  const runGh = input.gh ?? ((args) => gh(args));
+  const write = input.writeAttachment ?? writeAttachment;
   try {
-    const url = runGh(['issue', 'comment', issueNum, '--repo', input.repo, '--body', body]);
+    const url = write(
+      { kind: 'issue', number: issueNum, repo: input.repo },
+      `mode-output/${input.mode}/run-${input.runNum}`,
+      body,
+    );
     log(`  [hygiene] posted ${input.mode} output fallback to progress issue${url ? `: ${url}` : ''}`);
   } catch (err) {
     log(`  [hygiene] ${input.mode} output fallback skipped: ${(err as Error).message}`);

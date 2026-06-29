@@ -240,6 +240,16 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
     expect(closeSection).toContain("'progress/batch-complete'");
     expect(closeSection).toContain('writeProgressAttachment');
   });
+
+  it('closes the progress issue with argv-based gh execution', () => {
+    const closeSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
+    );
+
+    expect(closeSection).toContain("(deps.gh ?? gh)(['issue', 'close', issueNum");
+    expect(closeSection).toContain('progress issue close skipped');
+  });
 });
 
 describe('buildTemplateVars', () => {
@@ -5074,8 +5084,8 @@ describe('mode-output progress fallback (#702)', () => {
     expect(output).not.toContain('auto-dent metadata');
   });
 
-  it('posts harness-owned explore output to the progress issue', () => {
-    const commands: string[][] = [];
+  it('stores harness-owned explore output as a named attachment', () => {
+    const writeAttachment = vi.fn(() => 'https://github.com/Garsson-io/kaizen/issues/7020#issuecomment-1');
 
     postModeOutputToProgressIssue({
       progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
@@ -5084,23 +5094,21 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 3,
       logFile: '/logs/run-3.log',
       readLog: () => exploreLog,
-      gh: (args) => {
-        commands.push(args);
-        return 'https://github.com/Garsson-io/kaizen/issues/7020#issuecomment-1';
-      },
+      writeAttachment,
       log: () => {},
     });
 
-    expect(commands).toHaveLength(1);
-    expect(commands[0].slice(0, 5)).toEqual(['issue', 'comment', '7020', '--repo', 'Garsson-io/kaizen']);
-    const body = commands[0][commands[0].indexOf('--body') + 1];
+    expect(writeAttachment).toHaveBeenCalledOnce();
+    expect(writeAttachment.mock.calls[0][0]).toEqual({ kind: 'issue', number: '7020', repo: 'Garsson-io/kaizen' });
+    expect(writeAttachment.mock.calls[0][1]).toBe('mode-output/explore/run-3');
+    const body = writeAttachment.mock.calls[0][2];
     expect(body).toContain('### explore run #3 — analysis fallback');
     expect(body).toContain('Candidate analysis');
     expect(body).toContain('File #11 for missing fallback');
   });
 
-  it('posts reflect output from codex final text blocks', () => {
-    const commands: string[][] = [];
+  it('stores reflect output from codex final text blocks', () => {
+    const writeAttachment = vi.fn(() => '');
     const reflectLog = [
       '[provider] codex subscription-cli',
       '--- codex final text ---',
@@ -5118,14 +5126,13 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 4,
       logFile: '/logs/run-4.log',
       readLog: () => reflectLog,
-      gh: (args) => {
-        commands.push(args);
-        return '';
-      },
+      writeAttachment,
       log: () => {},
     });
 
-    const body = commands[0][commands[0].indexOf('--body') + 1];
+    expect(writeAttachment).toHaveBeenCalledOnce();
+    expect(writeAttachment.mock.calls[0][1]).toBe('mode-output/reflect/run-4');
+    const body = writeAttachment.mock.calls[0][2];
     expect(body).toContain('### reflect run #4 — analysis fallback');
     expect(body).toContain('REFLECTION_INSIGHT: progress issue fallback is missing');
     expect(body).toContain('Detailed reflection body.');
@@ -5133,7 +5140,7 @@ describe('mode-output progress fallback (#702)', () => {
   });
 
   it('does not post for exploit mode', () => {
-    const commands: string[][] = [];
+    const writeAttachment = vi.fn();
 
     postModeOutputToProgressIssue({
       progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
@@ -5142,18 +5149,15 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 5,
       logFile: '/logs/run-5.log',
       readLog: () => exploreLog,
-      gh: (args) => {
-        commands.push(args);
-        return '';
-      },
+      writeAttachment,
       log: () => {},
     });
 
-    expect(commands).toHaveLength(0);
+    expect(writeAttachment).not.toHaveBeenCalled();
   });
 
   it('deduplicates contemplate when the agent already posted to the progress issue', () => {
-    const commands: string[][] = [];
+    const writeAttachment = vi.fn();
     const logs: string[] = [];
 
     postModeOutputToProgressIssue({
@@ -5163,19 +5167,16 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 6,
       logFile: '/logs/run-6.log',
       readLog: () => 'Strategic output\nReflection complete (posted to progress issue).',
-      gh: (args) => {
-        commands.push(args);
-        return '';
-      },
+      writeAttachment,
       log: (msg) => logs.push(msg),
     });
 
-    expect(commands).toHaveLength(0);
+    expect(writeAttachment).not.toHaveBeenCalled();
     expect(logs.some((msg) => msg.includes('already posted'))).toBe(true);
   });
 
   it('fails open when the log cannot be read', () => {
-    const commands: string[][] = [];
+    const writeAttachment = vi.fn();
     const logs: string[] = [];
 
     expect(() => postModeOutputToProgressIssue({
@@ -5185,19 +5186,16 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 7,
       logFile: '/logs/missing.log',
       readLog: () => { throw new Error('ENOENT'); },
-      gh: (args) => {
-        commands.push(args);
-        return '';
-      },
+      writeAttachment,
       log: (msg) => logs.push(msg),
     })).not.toThrow();
 
-    expect(commands).toHaveLength(0);
+    expect(writeAttachment).not.toHaveBeenCalled();
     expect(logs.some((msg) => msg.includes('skipped'))).toBe(true);
   });
 
   it('fails open without a progress issue or repository', () => {
-    const commands: string[][] = [];
+    const writeAttachment = vi.fn();
     const logs: string[] = [];
 
     postModeOutputToProgressIssue({
@@ -5207,15 +5205,29 @@ describe('mode-output progress fallback (#702)', () => {
       runNum: 8,
       logFile: '/logs/run-8.log',
       readLog: () => exploreLog,
-      gh: (args) => {
-        commands.push(args);
-        return '';
-      },
+      writeAttachment,
       log: (msg) => logs.push(msg),
     });
 
-    expect(commands).toHaveLength(0);
+    expect(writeAttachment).not.toHaveBeenCalled();
     expect(logs.some((msg) => msg.includes('no progress issue'))).toBe(true);
+  });
+
+  it('fails open when the mode-output attachment write fails', () => {
+    const logs: string[] = [];
+
+    expect(() => postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'explore',
+      runNum: 9,
+      logFile: '/logs/run-9.log',
+      readLog: () => exploreLog,
+      writeAttachment: () => { throw new Error('write failed'); },
+      log: (msg) => logs.push(msg),
+    })).not.toThrow();
+
+    expect(logs.some((msg) => msg.includes('write failed'))).toBe(true);
   });
 
   it('wires the fallback immediately after run metadata and before review/metrics updates', () => {
