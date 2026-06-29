@@ -167,7 +167,15 @@ export function extractBranchPushUrl(text: string): string | null {
   return m ? m[0] : null;
 }
 
-export function extractArtifacts(text: string, result: RunResult): void {
+export interface ExtractArtifactOptions {
+  allowPrSummary?: boolean;
+}
+
+export function extractArtifacts(
+  text: string,
+  result: RunResult,
+  options: ExtractArtifactOptions = {},
+): void {
   for (const output of parseHookOutputs(text)) {
     updateProgressFromHookOutput(output, result);
   }
@@ -196,8 +204,10 @@ export function extractArtifacts(text: string, result: RunResult): void {
       }
     }
   }
-  for (const m of text.matchAll(/^\s*(?:\*\*)?PRs created:\s*(?:\*\*)?\s*(https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+)/gmi)) {
-    pushPr(result, m[1]);
+  if (options.allowPrSummary) {
+    for (const m of text.matchAll(/^\s*(?:\*\*)?PRs created:\s*(?:\*\*)?\s*(https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+)/gmi)) {
+      pushPr(result, m[1]);
+    }
   }
   // A GitHub branch-push helper URL is NOT a PR (#1492). Surface it as a
   // distinct "branch pushed — PR pending" signal so a pushed branch is not
@@ -575,9 +585,9 @@ export function ingestRunText(
   result: RunResult,
   elapsed: string,
   ctx?: StreamContext,
-  opts: { control?: boolean } = {},
+  opts: { control?: boolean; allowPrSummary?: boolean } = {},
 ): void {
-  extractArtifacts(text, result);
+  extractArtifacts(text, result, { allowPrSummary: opts.allowPrSummary });
   emitPhaseMarkers(text, elapsed, ctx);
   const pushUrl = extractBranchPushUrl(text);
   if (pushUrl) {
@@ -711,7 +721,7 @@ export function processStreamMessage(
       updateStreamCost(msg, result, { terminal: true });
       if (msg.result) {
         // Final result is agent-authoritative → control signals honoured.
-        ingestRunText(msg.result, result, elapsed, ctx, { control: true });
+        ingestRunText(msg.result, result, elapsed, ctx, { control: true, allowPrSummary: true });
         const claimResult = parseFinalRunClaim(msg.result);
         result.finalClaimStatus = claimResult.status;
         result.finalClaim = claimResult.claim;

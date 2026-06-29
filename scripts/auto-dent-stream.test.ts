@@ -748,7 +748,7 @@ describe('branch-push helper URLs vs real PRs (#1492)', () => {
     extractArtifacts('https://github.com/o/r/pull/new/case-x', result);
     expect(result.progressSteps?.find((s) => s.phase === 'PR')?.state).toBe('branch-pushed');
 
-    extractArtifacts('PRs created: https://github.com/o/r/pull/123', result);
+    extractArtifacts('PRs created: https://github.com/o/r/pull/123', result, { allowPrSummary: true });
     expect(result.prs).toContain('https://github.com/o/r/pull/123');
     const prStep = result.progressSteps?.find((s) => s.phase === 'PR');
     expect(prStep?.state).toBe('created');
