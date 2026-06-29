@@ -52,6 +52,10 @@ import {
   type BanditPrior,
 } from './batch-outcome.js';
 import {
+  buildRsiImprovementProposalSet,
+  writeRsiImprovementProposalsAttachment,
+} from './auto-dent-rsi.js';
+import {
   isAcceptedSubscriptionCompatibleCapability,
   phaseProvidersForAgentProvider,
   type PhaseProviderRecord,
@@ -3125,6 +3129,7 @@ export function formatBatchCompletionAttachment(input: FormatBatchCompletionAtta
     '### Durable Attachments',
     '',
     `- **Machine outcome:** \`batch-outcome\` on #${progressIssueNumber}`,
+    `- **RSI proposals:** \`rsi-improvement-proposals\` on #${progressIssueNumber}`,
     `- **Raw artifacts:** ${batchDir ? `\`batch-artifacts\` on #${progressIssueNumber}` : 'not uploaded for this close path'}`,
   );
 
@@ -3201,12 +3206,34 @@ export function closeBatchProgressIssue(
   // batch-outcome attachment BEFORE closing, so future batches can read back what
   // this batch measured instead of starting blind. Best-effort — a failed write
   // must never block batch close (this runs on abnormal exits too).
+  let outcome: ReturnType<typeof buildBatchOutcome> | null = null;
   try {
-    const outcome = buildBatchOutcome(state, batchScore, Math.floor(Date.now() / 1000));
+    outcome = buildBatchOutcome(state, batchScore, Math.floor(Date.now() / 1000));
     writeBatchOutcomeAttachment(issueNum, kaizenRepo, outcome);
     console.log(`  [intelligence] stored batch-outcome attachment on #${issueNum}`);
   } catch (err) {
     console.log(`  [intelligence] batch-outcome write skipped: ${(err as Error).message}`);
+  }
+
+  // Recursive self-improvement (#1158): convert reflection/degradation evidence
+  // into bounded prompt/skill/process proposals with proof requirements and
+  // before/after metrics. Best-effort like batch-outcome; proposal generation
+  // must never block finalization.
+  if (outcome) {
+    try {
+      const proposals = buildRsiImprovementProposalSet(state, outcome);
+      writeRsiImprovementProposalsAttachment(
+        issueNum,
+        kaizenRepo,
+        proposals,
+        deps.writeAttachment ?? writeAttachment,
+      );
+      console.log(
+        `  [intelligence] stored RSI improvement proposals on #${issueNum} (${proposals.proposals.length} proposal(s))`,
+      );
+    } catch (err) {
+      console.log(`  [intelligence] RSI proposal write skipped: ${(err as Error).message}`);
+    }
   }
 
   // Durable RAW artifacts (#696, epic #842): inline the on-disk events.jsonl +

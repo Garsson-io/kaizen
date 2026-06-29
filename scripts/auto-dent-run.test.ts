@@ -335,6 +335,7 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
       expect(body).toContain('- **Merged PRs:** 1/2');
       expect(body).toContain('### Durable Attachments');
       expect(body).toContain('- **Machine outcome:** `batch-outcome` on #1226');
+      expect(body).toContain('- **RSI proposals:** `rsi-improvement-proposals` on #1226');
       expect(body).toContain('- **Raw artifacts:** `batch-artifacts` on #1226');
       expect(body).not.toContain('\n**PRs:**');
     });
@@ -364,6 +365,7 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
       expect(body).toContain('- **PRs:** none');
       expect(body).toContain('- **Issues filed:** none');
       expect(body).toContain('- **Issues closed:** none');
+      expect(body).toContain('- **RSI proposals:** `rsi-improvement-proposals` on #1226');
       expect(body).toContain('- **Raw artifacts:** not uploaded for this close path');
     });
 
@@ -462,6 +464,18 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
 
     expect(closeSection).toContain("'progress/batch-complete'");
     expect(closeSection).toContain('writeProgressAttachment');
+  });
+
+  it('stores RSI improvement proposals during batch finalize without blocking close', () => {
+    const closeSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
+    );
+
+    expect(closeSection).toContain('buildRsiImprovementProposalSet(state, outcome)');
+    expect(closeSection).toContain('writeRsiImprovementProposalsAttachment');
+    expect(closeSection).toContain('[intelligence] stored RSI improvement proposals');
+    expect(closeSection).toContain('[intelligence] RSI proposal write skipped');
   });
 
   it('wires the formatted batch completion retrospective to the stable attachment key', () => {
