@@ -641,6 +641,36 @@ describe('storeReviewArtifact', () => {
     );
   });
 
+  it('normalizes empty review requirement labels before storage validation', async () => {
+    const deps = {
+      nextReviewRound: vi.fn().mockReturnValue(4),
+      storeReviewBatch: vi.fn().mockReturnValue({ urls: ['u1'], summaryUrl: 'summary-url' }),
+      rerunReviewVerdictGate: vi.fn(),
+      writeReviewSentinel: vi.fn(),
+      writeAttachment: vi.fn(),
+    };
+    const artifact = baseArtifact({
+      requestedDimensions: ['requirements'],
+      result: {
+        ...baseArtifact().result,
+        verdict: 'fail',
+        partialCount: 1,
+        dimensions: [{
+          dimension: 'requirements',
+          verdict: 'fail',
+          summary: 'partial',
+          findings: [{ requirement: '', status: 'PARTIAL', detail: 'Reviewer did not provide a requirement label.' }],
+        }],
+      },
+    });
+
+    await storeReviewArtifact(artifact, { round: 4 }, deps);
+
+    expect(deps.storeReviewBatch.mock.calls[0][2][0].findings).toEqual([
+      { requirement: 'Finding 1', status: 'PARTIAL', detail: 'Reviewer did not provide a requirement label.' },
+    ]);
+  });
+
   it('refuses unstoreable artifacts before any storage side effects', async () => {
     const deps = {
       nextReviewRound: vi.fn().mockReturnValue(4),

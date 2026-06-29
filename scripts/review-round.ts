@@ -470,6 +470,16 @@ export function readArtifact(path: string): ReviewRoundArtifact {
   return ArtifactSchema.parse(parsed) as ReviewRoundArtifact;
 }
 
+function normalizeDimensionReview(dimension: DimensionReview): DimensionReview {
+  return {
+    ...dimension,
+    findings: dimension.findings.map((finding, index) => ({
+      ...finding,
+      requirement: finding.requirement.trim() || `Finding ${index + 1}`,
+    })),
+  };
+}
+
 export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
   if (artifact.requestedDimensions.length === 0) {
     throw new Error('Refusing to store authoritative review round: no requested dimensions');
@@ -511,7 +521,7 @@ export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
     throw new Error(`Refusing to store authoritative review round: missing requested dimensions ${missingDimensions.join(', ')}`);
   }
   for (const dimension of artifact.result.dimensions) {
-    const validation = validateReviewFindingPayload(dimension);
+    const validation = validateReviewFindingPayload(normalizeDimensionReview(dimension));
     if (!validation.ok) {
       throw new Error(`Refusing to store authoritative review round: ${dimension.dimension} payload invalid: ${validation.error}`);
     }
@@ -519,11 +529,12 @@ export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
 }
 
 function toReviewFindingData(dimension: DimensionReview): ReviewFindingData {
+  const normalized = normalizeDimensionReview(dimension);
   return {
-    dimension: dimension.dimension,
-    verdict: dimension.verdict,
-    summary: dimension.summary,
-    findings: dimension.findings,
+    dimension: normalized.dimension,
+    verdict: normalized.verdict,
+    summary: normalized.summary,
+    findings: normalized.findings,
   };
 }
 
