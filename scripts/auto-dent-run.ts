@@ -296,6 +296,10 @@ export interface RunMetrics {
   candidate_manifest_path?: string;
   /** Number of candidates parsed from the explore-mode candidate-task manifest (#1196). */
   candidate_manifest_count?: number;
+  /** Number of manifest candidates with complete duplicate-search evidence (#735). */
+  candidate_manifest_dedup_checked_count?: number;
+  /** Number of manifest candidates that chose to file a new issue (#735). */
+  candidate_manifest_file_new_count?: number;
   /** Non-fatal candidate manifest parse/read warnings (#1196). */
   candidate_manifest_warnings?: string[];
   /** Durable UCB1 decision breakdown used for mode selection (#1178). */
@@ -370,6 +374,10 @@ export interface RunResult {
   candidateManifestPath?: string;
   /** Number of candidates parsed from the explore-mode candidate-task manifest (#1196). */
   candidateManifestCount?: number;
+  /** Number of manifest candidates with complete duplicate-search evidence (#735). */
+  candidateManifestDedupCheckedCount?: number;
+  /** Number of manifest candidates that chose to file a new issue (#735). */
+  candidateManifestFileNewCount?: number;
   /** Non-fatal candidate manifest parse/read warnings (#1196). */
   candidateManifestWarnings?: string[];
   /** Structured failure classification */
@@ -458,6 +466,8 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     issues_pruned: result.issuesPruned,
     candidate_manifest_path: result.candidateManifestPath,
     candidate_manifest_count: result.candidateManifestCount,
+    candidate_manifest_dedup_checked_count: result.candidateManifestDedupCheckedCount,
+    candidate_manifest_file_new_count: result.candidateManifestFileNewCount,
     candidate_manifest_warnings: result.candidateManifestWarnings,
     bandit_decision: buildBanditDecisionTelemetry(runMode, modeReason, bandit),
     final_claim_status: result.finalClaimStatus,
@@ -472,6 +482,8 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
 export interface CandidateTaskManifestParseResult {
   path: string;
   count: number;
+  dedupCheckedCount: number;
+  fileNewCount: number;
   warnings: string[];
 }
 
@@ -490,7 +502,13 @@ export const CANDIDATE_TASK_MANIFEST_SCHEMA = [
   '      "title": "<candidate task title>",',
   '      "rationale": "<why this should be worked>",',
   '      "refs": ["#123", "path/to/file.ts"],',
-  '      "suggested_mode": "exploit|subtract|reflect|contemplate"',
+  '      "suggested_mode": "exploit|subtract|reflect|contemplate",',
+  '      "dedup": {',
+  '        "query": "<gh issue search/list query used before filing>",',
+  '        "matches": ["#123 existing related issue, if any"],',
+  '        "decision": "file_new|comment_existing|candidate_only",',
+  '        "reason": "<why this decision does not duplicate the backlog>"',
+  '      }',
   '    }',
   '  ]',
   '}',
@@ -498,27 +516,78 @@ export const CANDIDATE_TASK_MANIFEST_SCHEMA = [
 
 export function parseCandidateTaskManifest(path: string): CandidateTaskManifestParseResult {
   if (!existsSync(path)) {
-    return { path, count: 0, warnings: [`candidate task manifest missing: ${path}`] };
+    return { path, count: 0, dedupCheckedCount: 0, fileNewCount: 0, warnings: [`candidate task manifest missing: ${path}`] };
   }
 
   const raw = readFileSync(path, 'utf8');
   const parsed = parseJsonObject(raw);
   if (!parsed) {
-    return { path, count: 0, warnings: [`candidate task manifest malformed JSON: ${path}`] };
+    return { path, count: 0, dedupCheckedCount: 0, fileNewCount: 0, warnings: [`candidate task manifest malformed JSON: ${path}`] };
   }
 
   const candidates = (parsed as { candidates?: unknown }).candidates;
   if (!Array.isArray(candidates)) {
-    return { path, count: 0, warnings: [`candidate task manifest candidates must be an array: ${path}`] };
+    return { path, count: 0, dedupCheckedCount: 0, fileNewCount: 0, warnings: [`candidate task manifest candidates must be an array: ${path}`] };
   }
 
-  return { path, count: candidates.length, warnings: [] };
+  const warnings: string[] = [];
+  let dedupCheckedCount = 0;
+  let fileNewCount = 0;
+  const validDecisions = new Set(['file_new', 'comment_existing', 'candidate_only']);
+
+  candidates.forEach((candidate, index) => {
+    const label = `candidate[${index}]`;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      warnings.push(`candidate task manifest ${label} must be an object with dedup evidence: ${path}`);
+      return;
+    }
+
+    const dedup = (candidate as Record<string, unknown>).dedup;
+    if (!dedup || typeof dedup !== 'object' || Array.isArray(dedup)) {
+      warnings.push(`candidate task manifest ${label} missing dedup evidence: ${path}`);
+      return;
+    }
+
+    const rawDedup = dedup as Record<string, unknown>;
+    const query = typeof rawDedup.query === 'string' ? rawDedup.query.trim() : '';
+    const matches = rawDedup.matches;
+    const decision = typeof rawDedup.decision === 'string' ? rawDedup.decision.trim() : '';
+    const reason = typeof rawDedup.reason === 'string' ? rawDedup.reason.trim() : '';
+
+    if (!query) {
+      warnings.push(`candidate task manifest ${label} missing dedup query: ${path}`);
+      return;
+    }
+    if (!Array.isArray(matches) || !matches.every((match) => typeof match === 'string')) {
+      warnings.push(`candidate task manifest ${label} dedup matches must be a string array: ${path}`);
+      return;
+    }
+    if (!validDecisions.has(decision)) {
+      warnings.push(`candidate task manifest ${label} invalid dedup decision: ${decision || '<empty>'}`);
+      return;
+    }
+    if (!reason) {
+      warnings.push(`candidate task manifest ${label} missing dedup reason: ${path}`);
+      return;
+    }
+
+    dedupCheckedCount += 1;
+    if (decision === 'file_new') fileNewCount += 1;
+  });
+
+  if (fileNewCount > 2) {
+    warnings.push(`candidate task manifest file_new budget exceeded: ${fileNewCount} decisions (max 2)`);
+  }
+
+  return { path, count: candidates.length, dedupCheckedCount, fileNewCount, warnings };
 }
 
 function attachCandidateTaskManifest(result: RunResult, path: string): void {
   const parsed = parseCandidateTaskManifest(path);
   result.candidateManifestPath = parsed.path;
   result.candidateManifestCount = parsed.count;
+  result.candidateManifestDedupCheckedCount = parsed.dedupCheckedCount;
+  result.candidateManifestFileNewCount = parsed.fileNewCount;
   result.candidateManifestWarnings = parsed.warnings;
 }
 
@@ -1183,7 +1252,7 @@ function learnedSignalMode(
  * Compute mode-appropriate success metric for a run.
  * Each mode has its own definition of "success":
  *   - exploit: PRs produced
- *   - explore: candidate-task manifest entries + issues filed (durable scouting)
+ *   - explore: dedup-checked candidate-task entries + capped issues filed (durable scouting)
  *   - reflect: issues filed (insights that become actionable issues)
  *   - subtract: lines deleted + issues pruned (reduction, not addition)
  *   - contemplate: fixed baseline (strategic value not measurable per-run)
@@ -1192,8 +1261,10 @@ export function modeSuccess(mode: string, metrics: RunMetrics): number {
   switch (mode) {
     case 'exploit':
       return metrics.prs.length;
-    case 'explore':
-      return metrics.issues_filed.length + (metrics.candidate_manifest_count ?? 0);
+    case 'explore': {
+      const manifestReward = metrics.candidate_manifest_dedup_checked_count ?? metrics.candidate_manifest_count ?? 0;
+      return Math.min(metrics.issues_filed.length, 2) + manifestReward;
+    }
     case 'reflect':
       return metrics.issues_filed.length;
     case 'subtract':
