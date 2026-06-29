@@ -73,6 +73,7 @@ import {
   formatIssueForDisplay,
   formatIssueUrl,
   formatProgressStepsMarkdown,
+  formatTerminalProgressPipeline,
   hasContextDelegationProgressEvidence,
   formatReviewForDisplay,
   upsertContextDelegationProgressStep,
@@ -4816,6 +4817,14 @@ async function main(): Promise<void> {
 
   // Batch scoreboard (cumulative stats across all runs)
   {
+    console.log(formatTerminalProgressPipeline(result, {
+      repo: state.kaizen_repo || state.host_repo || '',
+      runNum,
+      durationSeconds: duration,
+      costUsd: result.cost,
+    }));
+    console.log('');
+
     const previewState = readState(stateFile);
     // Include this run's PRs for an accurate footer
     for (const pr of result.prs) {

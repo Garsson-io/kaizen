@@ -47,6 +47,13 @@ const SYNTHETIC_NOT_APPLICABLE_PHASES = new Set([
 
 export type ProgressUpsertMode = 'merge' | 'replace';
 
+export interface TerminalProgressPipelineOptions {
+  repo?: string;
+  runNum?: number;
+  durationSeconds?: number;
+  costUsd?: number;
+}
+
 export function formatIssueUrl(issue: string | undefined, repo: string): string {
   if (!issue) return '';
   if (/^https?:\/\//.test(issue)) return issue;
@@ -162,6 +169,58 @@ export function formatProgressStepsMarkdown(result: AutoDentProgressResult, repo
     lines.push(`| ${step.phase} | ${step.state} | ${step.detail || '-'} | ${step.url || '-'} |`);
   }
   return lines.join('\n');
+}
+
+export function formatTerminalProgressPipeline(
+  result: AutoDentProgressResult,
+  options: TerminalProgressPipelineOptions = {},
+): string {
+  const repo = options.repo ?? '';
+  const parts = [`run ${options.runNum ?? '?'}`];
+  if (typeof options.durationSeconds === 'number') parts.push(formatDuration(options.durationSeconds));
+  if (typeof options.costUsd === 'number') parts.push(`$${options.costUsd.toFixed(2)}`);
+
+  const lines = [
+    `Auto-dent ${parts.join(' | ')}`,
+    'Phase      Status          Detail',
+    '---------- --------------- ----------------------------------------',
+  ];
+
+  for (const step of buildKaizenCycleSteps(result, repo)) {
+    const status = `${statusGlyph(step.state)} ${step.state || 'unknown'}`;
+    const detail = terminalStepDetail(step);
+    lines.push(`${step.phase.padEnd(10)} ${status.padEnd(15)} ${detail}`);
+  }
+
+  return lines.join('\n');
+}
+
+function terminalStepDetail(step: RunProgressStep): string {
+  const detail = normalizeWhitespace(step.detail);
+  const url = normalizeWhitespace(step.url);
+  if (detail && url && !detail.includes(url)) return `${detail} (${url})`;
+  return detail || url || '-';
+}
+
+function normalizeWhitespace(value: string | undefined): string {
+  return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function statusGlyph(state: string): string {
+  const normalized = state.trim().toLowerCase().replace(/_/g, '-');
+  if (normalized === 'not applicable' || normalized === 'not-applicable') return '[-]';
+  if (normalized === 'not observed' || normalized === 'not requested') return '[ ]';
+  if (normalized.includes('fail') || normalized.includes('error')) return '[!]';
+  if (normalized.includes('pending') || normalized.includes('started') || normalized.includes('running')) return '[>]';
+  return '[x]';
+}
+
+function formatDuration(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+  if (minutes === 0) return `${remainingSeconds}s`;
+  return `${minutes}m${String(remainingSeconds).padStart(2, '0')}s`;
 }
 
 export function hasContextDelegationProgressEvidence(

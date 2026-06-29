@@ -4,6 +4,7 @@ import {
   PROGRESS_PHASE_ORDER,
   buildKaizenCycleSteps,
   formatProgressStepsMarkdown,
+  formatTerminalProgressPipeline,
   hasContextDelegationProgressEvidence,
   orderedProgressSteps,
   upsertContextDelegationProgressStep,
@@ -154,6 +155,96 @@ describe('auto-dent progress rendering core (#1311)', () => {
     expect(markdown).toContain('| MERGE | merged | PR #1645 | https://github.com/Garsson-io/kaizen/pull/1645 |');
     expect(markdown).toContain('| STOP | requested | merged and cleaned up | - |');
     expect(markdown).not.toContain('[object Object]');
+  });
+
+  it('formats a complete run as a plain terminal phase pipeline', () => {
+    const output = formatTerminalProgressPipeline({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1645'],
+      cases: ['case/260629-k1311-auto-dent-progress-coverage'],
+      pickedIssue: '#1311',
+      pickedIssueTitle: 'Progress rendering coverage',
+      progressSteps: [
+        { phase: 'PLAN', state: 'stored', detail: 'plan/test-plan stored' },
+        { phase: 'IMPLEMENT', state: 'done', detail: 'renderer added' },
+        { phase: 'TEST', state: 'passed', detail: 'focused vitest' },
+        {
+          phase: 'MERGE',
+          state: 'merged',
+          detail: 'PR #1645',
+          url: 'https://github.com/Garsson-io/kaizen/pull/1645',
+        },
+        { phase: 'REFLECT', state: 'completed', detail: '0 issues filed' },
+      ],
+      reviewVerdict: 'pass',
+      reviewUrls: ['https://github.com/Garsson-io/kaizen/pull/1645#issuecomment-1'],
+      stopRequested: true,
+      stopReason: 'merged and cleaned up',
+    }, {
+      repo: 'Garsson-io/kaizen',
+      runNum: 17,
+      durationSeconds: 432,
+      costUsd: 3.4,
+    });
+
+    expect(output).toContain('Auto-dent run 17 | 7m12s | $3.40');
+    expect(output).toContain('Phase      Status          Detail');
+    expect(output).toContain('PICK       [x] selected');
+    expect(output).toContain('https://github.com/Garsson-io/kaizen/issues/1311');
+    expect(output).toContain('PLAN       [x] stored');
+    expect(output).toContain('TEST       [x] passed');
+    expect(output).toContain('REVIEW     [x] pass');
+    expect(output).toContain('MERGE      [x] merged');
+    expect(output).toContain('REFLECT    [x] completed');
+    expect(output).toContain('STOP       [x] requested');
+    expect(output).not.toContain('[object Object]');
+  });
+
+  it('formats partial and missing phases without layout corruption', () => {
+    const output = formatTerminalProgressPipeline({
+      prs: [],
+      cases: [],
+      pickedIssue: '#1724',
+      progressSteps: [
+        { phase: 'IMPLEMENT', state: 'started', detail: 'terminal renderer' },
+      ],
+      stopRequested: false,
+    }, {
+      repo: 'Garsson-io/kaizen',
+      runNum: 2,
+      durationSeconds: 9,
+    });
+
+    expect(output).toContain('Auto-dent run 2 | 9s');
+    expect(output).toContain('IMPLEMENT  [>] started');
+    expect(output).toContain('PR         [ ] not observed');
+    expect(output).toContain('MERGE      [-] not applicable');
+    expect(output).toContain('STOP       [ ] not requested');
+    expect(output).not.toContain('[object Object]');
+    for (const line of output.split('\n').slice(3)) {
+      expect(line).toMatch(/^[A-Z-]+\s{2,}\[[x>! -]\]/);
+    }
+  });
+
+  it('preserves synthetic not-applicable defaults in terminal output', () => {
+    const output = formatTerminalProgressPipeline({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/2000'],
+      cases: ['case/synthetic'],
+      pickedIssue: 'not applicable',
+      pickedIssueTitle: 'synthetic dashboard probe',
+      progressSteps: [
+        { phase: 'PLAN', state: 'done', detail: 'should not replace synthetic skip' },
+        { phase: 'DELEGATE', state: 'done', detail: 'delegated dashboard inspection' },
+      ],
+      reviewVerdict: 'pass',
+      stopRequested: true,
+      stopReason: 'synthetic complete',
+    });
+
+    expect(output).toContain('PICK       [-] not applicable synthetic dashboard probe');
+    expect(output).toContain('PLAN       [-] not applicable synthetic test task');
+    expect(output).toContain('DELEGATE   [x] done');
+    expect(output).toContain('STOP       [x] requested');
+    expect(output).toContain('synthetic complete');
   });
 });
 

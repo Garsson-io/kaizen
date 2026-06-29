@@ -4636,6 +4636,20 @@ describe('formatBatchFooter', () => {
   });
 });
 
+describe('terminal progress pipeline wiring (#1724)', () => {
+  it('prints the run pipeline before the batch footer from finalized run state', () => {
+    const mainSection = AUTO_DENT_RUN_SOURCE.slice(AUTO_DENT_RUN_SOURCE.indexOf('async function main()'));
+    const pipelineIndex = mainSection.indexOf('formatTerminalProgressPipeline(result, {');
+    const footerIndex = mainSection.indexOf('formatBatchFooter(previewState)');
+
+    expect(pipelineIndex).toBeGreaterThan(-1);
+    expect(footerIndex).toBeGreaterThan(-1);
+    expect(pipelineIndex).toBeLessThan(footerIndex);
+    expect(mainSection).toContain('durationSeconds: duration');
+    expect(mainSection).toContain('costUsd: result.cost');
+  });
+});
+
 describe('formatBatchProgressIssueBody', () => {
   it('renders a dashboard header, guidance section, empty scoreboard, and config details', () => {
     const state = makeBatchState({
