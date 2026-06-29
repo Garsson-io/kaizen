@@ -164,8 +164,8 @@ class TestRealWorldCommands:
             "gh pr create --title test --body test",
             stderr="https://github.com/Garsson-io/kaizen/pull/88",
         )
-        result = review_harness.run_hook("pr-review-loop-ts.sh", inp)
-        assert "SELF-REVIEW" in result.stdout
+        result = review_harness.run_post_hook("pr-review-loop-ts.sh", inp)
+        assert_post_hook_stdout_contains(result, "SELF-REVIEW", "PostToolUse pr-review-loop")
 
     def test_multiline_command(self, harness, mocks):
         mocks.add_git_mock()
@@ -240,10 +240,10 @@ class TestPRLifecycle:
         assert r.allows(), "Should allow before any PR"
 
         # Phase 2: PR create → gate activates
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr create --title test --body test",
             stdout=self.PR_URL))
-        assert "SELF-REVIEW" in r.stdout
+        assert_post_hook_stdout_contains(r, "SELF-REVIEW", "PostToolUse pr-review-loop")
         assert state.state_exists(self.PR_URL)
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "needs_review"
@@ -258,11 +258,11 @@ class TestPRLifecycle:
         assert r.allows(), "Should allow gh pr diff"
 
         # Phase 3: Review agents ran and outcome persisted.
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.agent())
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.agent())
         state.create_review_sentinel(self.PR_URL, 1)
 
         # gh pr diff → review passed
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "passed"
 
@@ -272,7 +272,7 @@ class TestPRLifecycle:
 
         # Phase 4: git push → re-gate
         # The push handler finds "passed" state and increments to next round.
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("git push", stdout="ok"))
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("git push", stdout="ok"))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "needs_review", "Push after passed should re-engage gate"
         assert s["ROUND"] == "2", "Round should be incremented after push"
@@ -282,7 +282,7 @@ class TestPRLifecycle:
         state.create_state(self.PR_URL, round_num=1, status="needs_review", branch="wt/test-branch")
 
         # No sentinel yet -> stays blocked
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "needs_review"
         # The gate now reports the structured sentinel reason (#920); the old
@@ -292,21 +292,21 @@ class TestPRLifecycle:
 
         # Sentinel without Agent evidence still stays blocked (#455).
         state.create_review_sentinel(self.PR_URL, 1)
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "needs_review"
         assert "no observed Agent reviewer activity" in r.stdout
 
         # Sentinel plus Agent evidence -> clears.
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.agent())
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.agent())
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "passed"
 
     def test_merge_cleans_up(self, review_harness, state):
         state.create_state(self.PR_URL, round_num=2, status="needs_review", branch="wt/test-branch")
 
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr merge 55 --squash",
             stdout=f"✓ Merged {self.PR_URL}"))
 
@@ -317,23 +317,23 @@ class TestPRLifecycle:
         url_b = "https://github.com/Garsson-io/garsson-prints/pull/10"
 
         # Create PRs for both repos
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr create --repo Garsson-io/kaizen", stdout=url_a))
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr create --repo Garsson-io/garsson-prints", stdout=url_b))
 
         assert state.state_exists(url_a)
         assert state.state_exists(url_b)
 
         # Merge A shouldn't affect B
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr merge 60", stdout=f"✓ Merged {url_a}"))
 
         assert not state.state_exists(url_a)
         assert state.state_exists(url_b), "Merging A should not touch B's state"
 
     def test_failed_command_no_state(self, review_harness, state):
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr create --title test", exit_code="1"))
         assert state.state_count() == 0, "Failed command should not create state"
 
@@ -407,6 +407,27 @@ class TestPostToolUseFormat:
         )
 
         with pytest.raises(AssertionError, match="PostToolUse kaizen-reflect timed out.*KAIZEN"):
+            assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse kaizen-reflect")
+
+    def test_post_hook_stdout_helper_accepts_expected_output(self):
+        result = HookResult(
+            hook_path="kaizen-reflect-ts.sh",
+            stdout="KAIZEN: consider filing a process improvement",
+            stderr="",
+            exit_code=0,
+        )
+
+        assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse kaizen-reflect")
+
+    def test_post_hook_stdout_helper_reports_missing_output_without_timeout(self):
+        result = HookResult(
+            hook_path="kaizen-reflect-ts.sh",
+            stdout="SELF-REVIEW: run review",
+            stderr="",
+            exit_code=0,
+        )
+
+        with pytest.raises(AssertionError, match="did not emit 'KAIZEN'.*stdout="):
             assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse kaizen-reflect")
 
     def test_run_post_hook_timeout_reports_real_subprocess_diagnostic(self, tmp_path):
