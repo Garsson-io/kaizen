@@ -361,6 +361,31 @@ describe('runReviewRound', () => {
     expect(artifact.result.error).toContain('invalid JSON');
   });
 
+  it('writes a failure artifact when prefetch JSON is not an object', async () => {
+    const writeArtifact = vi.fn();
+    const gh = vi.fn((args: string[]) => {
+      if (args[0] === 'issue') return 'null';
+      throw new Error(`unexpected gh call ${args.join(' ')}`);
+    });
+
+    await expect(runReviewRound(
+      parseCliArgs(['run', '--pr', '1735', '--issue', '1732', '--repo', 'Garsson-io/kaizen', '--dimensions', 'security', '--provider', 'codex']),
+      {
+        reviewBattery: vi.fn(),
+        listPrDimensions: vi.fn(),
+        gh: gh as any,
+        retrievePlan: vi.fn(),
+        retrieveTestPlan: vi.fn(),
+        writeArtifact,
+        now: () => '2026-06-30T10:00:00.000Z',
+      },
+    )).rejects.toThrow('expected a JSON object');
+
+    const [, artifact] = writeArtifact.mock.calls[0];
+    expect(artifact.result.failedDimensions).toEqual(['security']);
+    expect(artifact.result.error).toContain('expected a JSON object');
+  });
+
   it('does not silently widen an explicit empty group selection to all PR dimensions', async () => {
     const gh = makeReviewRoundGhMock();
     const reviewBattery = vi.fn();
@@ -561,6 +586,21 @@ describe('storeReviewArtifact', () => {
     expect(deps.rerunReviewVerdictGate).not.toHaveBeenCalled();
     expect(deps.writeReviewSentinel).not.toHaveBeenCalled();
     expect(result).toEqual({ round: 7, urls: [], summaryUrl: undefined, gate: undefined });
+  });
+
+  it('refuses invalid injected rounds before storage side effects', async () => {
+    const deps = {
+      nextReviewRound: vi.fn(),
+      storeReviewBatch: vi.fn(),
+      rerunReviewVerdictGate: vi.fn(),
+      writeReviewSentinel: vi.fn(),
+      writeAttachment: vi.fn(),
+    };
+
+    await expect(storeReviewArtifact(baseArtifact({ requestedDimensions: ['security'] }), { round: 0 }, deps)).rejects.toThrow(/invalid round 0/);
+
+    expect(deps.storeReviewBatch).not.toHaveBeenCalled();
+    expect(deps.writeReviewSentinel).not.toHaveBeenCalled();
   });
 
   it('allows PARTIAL-only artifacts so structured-data can derive PASS_WITH_PARTIALS', async () => {

@@ -352,7 +352,11 @@ function selectDimensions(args: ReviewRoundCliArgs, listPr: () => string[]): str
 
 function parseJsonObject<T>(text: string, label: string): T {
   try {
-    return JSON.parse(text) as T;
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('expected a JSON object');
+    }
+    return parsed as T;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`${label} returned invalid JSON: ${msg}`);
@@ -531,6 +535,9 @@ export async function storeReviewArtifact(
   assertArtifactStoreable(artifact);
   const target = prTarget(artifact.pr, artifact.repo);
   const round = options.round ?? deps.nextReviewRound(target);
+  if (!Number.isSafeInteger(round) || round <= 0) {
+    throw new Error(`Refusing to store authoritative review round: invalid round ${round}`);
+  }
   if (options.dryRun) {
     return { round, urls: [], summaryUrl: undefined, gate: undefined };
   }
