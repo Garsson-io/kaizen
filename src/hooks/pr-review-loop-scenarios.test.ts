@@ -35,6 +35,14 @@ function input(command: string, stdout = ''): HookInput {
   return { tool_name: 'Bash', tool_input: { command }, tool_response: { stdout, stderr: '', exit_code: '0' } };
 }
 
+function agentInput(): HookInput {
+  return {
+    tool_name: 'Agent',
+    tool_input: { prompt: 'Run /kaizen-review-pr dimension review' },
+    tool_response: { stdout: 'review complete', stderr: '', exit_code: '0' },
+  };
+}
+
 function opts(diffFn?: (sha: string) => number): ProcessOptions {
   return {
     stateDir: TEST_DIR,
@@ -62,6 +70,7 @@ function runAndReadState(hookInput: HookInput, options: ProcessOptions): { decis
 describe('Scenario: cumulative diff cap prevents auto-pass bypass', () => {
   it('small incremental (5 lines) but large cumulative (150 lines) triggers needs_review', () => {
     processHookInput(input('gh pr create --title "test"', PR_URL), opts());
+    processHookInput(agentInput(), opts());
     processHookInput(input('gh pr diff 42'), opts());
 
     // The hook calls getDiffLines twice: once for incremental (lastPushSha), once for cumulative (lastFullReviewSha).
@@ -79,6 +88,7 @@ describe('Scenario: cumulative diff cap prevents auto-pass bypass', () => {
 
   it('small push after review (STATUS=passed) requires review, not auto-pass', () => {
     processHookInput(input('gh pr create --title "test"', PR_URL), opts());
+    processHookInput(agentInput(), opts());
     processHookInput(input('gh pr diff 42'), opts()); // → STATUS=passed
 
     const pushOpts = opts(() => 8); // both incremental and cumulative = 8
@@ -99,6 +109,7 @@ describe('Scenario: cumulative diff cap prevents auto-pass bypass', () => {
 
   it('large incremental (50 lines) triggers needs_review regardless of cumulative', () => {
     processHookInput(input('gh pr create --title "test"', PR_URL), opts());
+    processHookInput(agentInput(), opts());
     processHookInput(input('gh pr diff 42'), opts());
 
     const pushOpts = opts(() => 50);
@@ -136,6 +147,7 @@ describe('Scenario: LAST_FULL_REVIEW_SHA lifecycle', () => {
 
   it('full review (gh pr diff) resets LAST_FULL_REVIEW_SHA', () => {
     processHookInput(input('gh pr create --title "test"', PR_URL), opts());
+    processHookInput(agentInput(), opts());
     processHookInput(input('gh pr diff 42'), opts());
 
     // Read SHA after first review
@@ -147,6 +159,7 @@ describe('Scenario: LAST_FULL_REVIEW_SHA lifecycle', () => {
     processHookInput(input('git push'), opts(() => 500));
 
     // Do second review
+    processHookInput(agentInput(), opts());
     processHookInput(input('gh pr diff 42'), opts());
 
     // LAST_FULL_REVIEW_SHA should be updated
@@ -164,6 +177,7 @@ describe('Scenario: LAST_FULL_REVIEW_SHA lifecycle', () => {
 describe('Scenario: invalid SHA graceful degradation', () => {
   it('rebased SHA → conservative needs_review (not crash or auto-pass)', () => {
     processHookInput(input('gh pr create --title "test"', PR_URL), opts());
+    processHookInput(agentInput(), opts());
     processHookInput(input('gh pr diff 42'), opts());
 
     const pushOpts = opts(() => 0); // can't compute diff

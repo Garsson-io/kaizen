@@ -200,6 +200,18 @@ function prDiffInput(prUrl: string): object {
   };
 }
 
+function agentReviewInput(): object {
+  return {
+    tool_name: 'Agent',
+    tool_input: { prompt: 'Run /kaizen-review-pr dimension review' },
+    tool_response: {
+      stdout: 'review complete',
+      stderr: '',
+      exit_code: '0',
+    },
+  };
+}
+
 function prMergeInput(prUrl: string, options: string = '--squash'): object {
   return {
     tool_input: { command: `gh pr merge ${prUrl} ${options}` },
@@ -392,7 +404,50 @@ describe('pr-review-loop: gh pr diff', () => {
     });
   }
 
-  it('outputs checklist and transitions to passed (with sentinel)', () => {
+  function createAgentReviewedState(
+    prNumber: string,
+    round: string = '1',
+    evidenceRound: string = round,
+  ): void {
+    const branch = TEST_BRANCH;
+    createState(`Garsson-io_kaizen_${prNumber}`, {
+      PR_URL: `https://github.com/Garsson-io/kaizen/pull/${prNumber}`,
+      ROUND: round,
+      STATUS: 'needs_review',
+      BRANCH: branch,
+      REVIEW_AGENT_ROUND: evidenceRound,
+      REVIEW_AGENT_OBSERVED_AT: '2026-06-29T00:00:00.000Z',
+    });
+  }
+
+  it('records Agent review evidence for the active review round', () => {
+    createPendingReviewState('4551', '2');
+
+    const output = runHookDecision(agentReviewInput());
+
+    expect(output).toBe('');
+    const state = readState('Garsson-io_kaizen_4551');
+    expect(state.STATUS).toBe('needs_review');
+    expect(state.REVIEW_AGENT_ROUND).toBe('2');
+    expect(state.REVIEW_AGENT_OBSERVED_AT).toBeTruthy();
+  });
+
+  it('keeps manual sentinel-only reviews blocked until /kaizen-review-pr runs Agent reviewers', () => {
+    createPendingReviewState('4552', '1');
+    writeSentinel('Garsson-io_kaizen_4552', '1');
+
+    const output = runHookDecision(
+      prDiffInput('https://github.com/Garsson-io/kaizen/pull/4552'),
+    );
+
+    expect(output).toContain('no observed Agent reviewer activity');
+    expect(output).toContain('/kaizen-review-pr https://github.com/Garsson-io/kaizen/pull/4552');
+    expect(output).not.toContain('REVIEW PASSED');
+    const state = readState('Garsson-io_kaizen_4552');
+    expect(state.STATUS).toBe('needs_review');
+  });
+
+  it('outputs checklist and transitions to passed (with Agent evidence and sentinel)', () => {
     const branch = TEST_BRANCH;
     createState('Garsson-io_kaizen_55', {
       PR_URL: 'https://github.com/Garsson-io/kaizen/pull/55',
@@ -400,13 +455,15 @@ describe('pr-review-loop: gh pr diff', () => {
       STATUS: 'needs_review',
       BRANCH: branch,
     });
+    runHookDecision(agentReviewInput());
     writeSentinel('Garsson-io_kaizen_55', '2');
 
     const output = runHookDecision(
       prDiffInput('https://github.com/Garsson-io/kaizen/pull/55'),
     );
     expect(output).toContain('REVIEW ROUND 2/4');
-    expect(output).toContain('/review-pr');
+    expect(output).toContain('/kaizen-review-pr');
+    expect(output).not.toContain('/review-pr');
     expect(output).toContain('REVIEW PASSED');
 
     const state = readState('Garsson-io_kaizen_55');
@@ -423,7 +480,7 @@ describe('pr-review-loop: gh pr diff', () => {
   });
 
   it('clears a stale local round when a later valid passing sentinel exists', () => {
-    createPendingReviewState('1559', '1');
+    createAgentReviewedState('1559', '1', '3');
     writeSentinel('Garsson-io_kaizen_1559', '3');
 
     const output = runHookDecision(
@@ -438,7 +495,7 @@ describe('pr-review-loop: gh pr diff', () => {
   });
 
   it('uses the newest valid later sentinel and skips invalid newer candidates', () => {
-    createPendingReviewState('1560', '1');
+    createAgentReviewedState('1560', '1', '2');
     writeSentinel('Garsson-io_kaizen_1560', '2');
     fs.writeFileSync(path.join(testStateDir, 'Garsson-io_kaizen_1560.reviewed-r4'), 'not json\n');
 
@@ -507,7 +564,7 @@ describe('pr-review-loop: gh pr diff', () => {
   });
 
   it('does not require non-PR dimensions to clear review gate', () => {
-    createPendingReviewState('1039', '1');
+    createAgentReviewedState('1039', '1');
     const prDimensions = expectedPrReviewDimensions();
     expect(prDimensions).not.toContain('plan-coverage');
     expect(prDimensions).not.toContain('multi-pr-spiral');
@@ -533,6 +590,8 @@ describe('pr-review-loop: gh pr diff', () => {
       ROUND: '1',
       STATUS: 'needs_review',
       BRANCH: branch,
+      REVIEW_AGENT_ROUND: '1',
+      REVIEW_AGENT_OBSERVED_AT: '2026-06-29T00:00:00.000Z',
     });
     writeSentinel('Garsson-io_kaizen_201', '1');
 
@@ -744,6 +803,7 @@ describe('INVARIANT: gate transitions verify outcome, not just trigger command',
         tool_response: { stdout: 'diff --git a/foo b/foo', stderr: '', exit_code: '0' },
       },
       provideOutcome: () => {
+        runHookDecision(agentReviewInput(), { branch });
         const dims = expectedPrReviewDimensions();
         writeReviewSentinel(PR_URL, '1', testStateDir, {
           dimensionsReviewed: dims,

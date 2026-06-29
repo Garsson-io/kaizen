@@ -194,6 +194,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/pr-review-loop-ts.sh",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [
