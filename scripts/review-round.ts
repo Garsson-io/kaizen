@@ -450,6 +450,9 @@ export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
   if (artifact.result.dimensions.length === 0) {
     throw new Error('Refusing to store authoritative review round: no stored dimensions');
   }
+  if (artifact.result.error) {
+    throw new Error(`Refusing to store authoritative review round: artifact contains provider/run error: ${artifact.result.error}`);
+  }
   if (artifact.result.failedDimensions.length > 0) {
     throw new Error(
       `Refusing to store authoritative review round: provider failures in dimensions ` +

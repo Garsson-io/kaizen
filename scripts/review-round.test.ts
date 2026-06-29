@@ -413,6 +413,18 @@ describe('assertArtifactStoreable', () => {
     expect(() => assertArtifactStoreable(artifact)).toThrow(/provider failure records/);
   });
 
+  it('fails closed when the artifact carries a provider or run error', () => {
+    const artifact = baseArtifact({
+      requestedDimensions: ['security'],
+      result: {
+        ...baseArtifact().result,
+        error: 'provider timeout',
+      },
+    });
+
+    expect(() => assertArtifactStoreable(artifact)).toThrow(/artifact contains provider\/run error/);
+  });
+
   it('fails closed when requested dimensions are missing from the artifact results', () => {
     const artifact = baseArtifact({
       requestedDimensions: ['security', 'test-quality'],
