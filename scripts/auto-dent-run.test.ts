@@ -586,6 +586,25 @@ describe('candidate task archive', () => {
     });
     expect(result.candidateArchiveEntryId).toBeTruthy();
   });
+
+  it('fails open with a warning when the existing archive is malformed', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-archive-malformed-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeCandidateManifest(path);
+    writeFileSync(candidateTaskArchivePath(tmpDir), '{');
+
+    const result = appendCandidateTaskArchiveEntry(path, '2026-06-29T00:00:00.000Z');
+
+    expect(result).toMatchObject({
+      archivePath: candidateTaskArchivePath(tmpDir),
+      entryCount: 1,
+      backlogFingerprint: 'backlog-fp-1',
+      noveltyScore: 2,
+      warnings: [expect.stringContaining('candidate task archive malformed JSON; starting fresh')],
+    });
+    const archive = JSON.parse(readFileSync(candidateTaskArchivePath(tmpDir), 'utf8'));
+    expect(archive.entries).toHaveLength(1);
+  });
 });
 
 // Reflection feedback loop (#603)

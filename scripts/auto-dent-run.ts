@@ -75,7 +75,7 @@ import {
   type ContextDelegationAnalysis,
 } from './auto-dent-context-delegation.js';
 import { truncateAtWordBoundary } from './auto-dent-display.js';
-import { parseJsonObject } from '../src/lib/json-value.js';
+import { parseJsonObject, parseJsonValue } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
 import { subscriptionAgentProvider } from '../src/provider-contract.js';
 import { hasHardQualityFailure, type PostMergeVerificationVerdict } from '../src/verdict-binding-policy.js';
@@ -822,8 +822,20 @@ function candidateArchiveBacklogFingerprint(parsedManifest: Record<string, unkno
 }
 
 function readCandidateTaskArchive(path: string): { archive: CandidateTaskArchive; warnings: string[] } {
-  const value = readJsonValueFile(path);
-  if (value === null) return { archive: { version: 1, entries: [] }, warnings: [] };
+  if (!existsSync(path)) return { archive: { version: 1, entries: [] }, warnings: [] };
+
+  let value: unknown;
+  try {
+    value = parseJsonValue(readFileSync(path, 'utf8'));
+  } catch {
+    value = null;
+  }
+  if (value === null) {
+    return {
+      archive: { version: 1, entries: [] },
+      warnings: [`candidate task archive malformed JSON; starting fresh: ${path}`],
+    };
+  }
 
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {
