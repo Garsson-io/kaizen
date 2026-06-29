@@ -218,9 +218,23 @@ Each batch creates a progress issue (labeled `auto-dent`). Per-run results are p
 
 ### Logs
 
+The planning pre-pass writes raw provider output under a private
+`planning-<provider>-*` subdirectory before `plan.json` exists:
+
+| File | Provider | Purpose |
+|------|----------|---------|
+| `planning-codex-*/plan-codex.jsonl` | Codex | Raw JSONL from `codex exec` during planning. Use this when the terminal says planning is still reading issues/files or when plan extraction fails. |
+| `planning-claude-*/plan-claude-stream.jsonl` | Claude | Raw `stream-json` output from Claude planning. Use this to audit issue reads, file inspection, and final plan text. |
+| `plan-output.schema.json` | Codex | JSON schema passed to Codex for constrained planning output. |
+| `plan.json` | all | Normalized ranked plan consumed by the batch loop after planning succeeds. |
+
+The terminal prints bounded planning progress while these files grow. Treat the
+raw files as forensic artifacts; do not paste them into the terminal unless you
+are debugging parser behavior.
+
 All logs go to `logs/auto-dent/<batch-id>/`:
 - `state.json` — live batch state (updated after each run)
-- `run-N.log` — raw claude output for run N
+- `run-N.log` — raw provider output and harness diagnostics for run N
 - `batch-summary.txt` — machine-readable summary (written at batch end)
 
 ## Stopping a Batch

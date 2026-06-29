@@ -433,6 +433,7 @@ export interface RunResult {
   toolCalls: number;
   stopRequested: boolean;
   stopReason?: string;
+  harnessFailure?: HarnessFailure;
   /** Net lines removed (positive = deletion) */
   linesDeleted: number;
   /** Issues closed as not-planned (pruned, not fixed) */
@@ -483,6 +484,13 @@ export interface RunResult {
   finalClaimWarnings?: string[];
   /** Hook-activation verdict from the session's `system.init` event (#843). */
   hookActivation?: HookActivationVerdict;
+}
+
+export interface HarnessFailure {
+  phase: string;
+  summary: string;
+  detail: string;
+  nextAction?: string;
 }
 
 type RunMetricsBaseField =
@@ -3399,7 +3407,7 @@ export function normalizeCodexRunExitCode(
   });
 }
 
-function providerWorkspaceFailureResult(
+export function providerWorkspaceFailureResult(
   input: {
     logFile: string;
     result: RunResult;
@@ -3409,11 +3417,13 @@ function providerWorkspaceFailureResult(
     workspace: Exclude<ProviderWorkspaceResolution, { ok: true }>;
   },
 ): ProviderRunResult {
-  input.result.stopRequested = true;
+  const harnessFailure = formatProviderWorkspaceFailureDiagnosis(input.workspace);
+  input.result.harnessFailure = harnessFailure;
   appendFileSync(
     input.logFile,
     `\n[provider-workspace] ${formatProviderWorkspaceResolution(input.workspace)}\n`,
   );
+  console.log(formatHarnessFailureForDisplay(harnessFailure));
   return {
     exitCode: 1,
     duration: 0,
@@ -3422,6 +3432,46 @@ function providerWorkspaceFailureResult(
     modeReason: input.modeReason,
     promptMeta: input.promptMeta,
   };
+}
+
+export function formatProviderWorkspaceFailureDiagnosis(
+  workspace: Exclude<ProviderWorkspaceResolution, { ok: true }>,
+): HarnessFailure {
+  const issue = `#${workspace.issue}`;
+  const nextActionByReason: Record<typeof workspace.reason, string> = {
+    'missing-worktree': `Create or enter a non-main case worktree bound to ${issue}, then rerun auto-dent for that issue.`,
+    'missing-binding': `Bind the provider workspace to ${issue} with cli-issue-binding before spawning the provider.`,
+    'binding-mismatch': `Use the case worktree bound to ${issue}, or fix the stale kaizen.issue binding before spawning the provider.`,
+  };
+  return {
+    phase: 'provider workspace resolution',
+    summary: `provider workspace resolution failed for ${issue}`,
+    detail: workspace.detail,
+    nextAction: nextActionByReason[workspace.reason],
+  };
+}
+
+export function formatHarnessFailureForDisplay(failure: HarnessFailure): string {
+  return [
+    `  ${color.red('[failure]')} Root cause: ${failure.summary}`,
+    `  ${color.red('[failure]')} Phase: ${failure.phase}`,
+    `  ${color.red('[failure]')} Detail: ${failure.detail}`,
+    failure.nextAction ? `  ${color.red('[failure]')} Next: ${failure.nextAction}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+export function formatHarnessFailureSummaryLines(failure: HarnessFailure): string[] {
+  return [
+    `Root cause: ${failure.summary}`,
+    `Phase:    ${failure.phase}`,
+    `Detail:   ${failure.detail}`,
+    ...(failure.nextAction ? [`Next:     ${failure.nextAction}`] : []),
+  ];
+}
+
+export function formatStopReasonForDisplay(reason?: string): string {
+  const trimmed = reason?.trim();
+  return trimmed || 'requested without reason';
 }
 
 async function runCodex(
@@ -4044,6 +4094,11 @@ function printRunSummary(
     `  ${color.bold(`\u250c\u2500 Run #${runNum} Summary`)} ${'─'.repeat(30)}`,
   );
   console.log(`  \u2502 Status:   ${status}`);
+  if (result.harnessFailure) {
+    for (const line of formatHarnessFailureSummaryLines(result.harnessFailure)) {
+      console.log(`  \u2502 ${line}`);
+    }
+  }
   console.log(`  \u2502 Duration: ${duration}s`);
   console.log(`  \u2502 Cost:     $${result.cost.toFixed(2)}`);
   console.log(`  \u2502 Tools:    ${result.toolCalls} calls`);
@@ -4072,7 +4127,7 @@ function printRunSummary(
     console.log(`  \u2502 Closed:   ${result.issuesClosed.join(' ')}`);
   for (const c of result.cases) console.log(`  \u2502 Case:     ${c}`);
   if (result.stopRequested)
-    console.log(`  \u2502 ${color.red('STOP:')}     ${result.stopReason}`);
+    console.log(`  \u2502 ${color.red('STOP:')}     ${formatStopReasonForDisplay(result.stopReason)}`);
   console.log(`  \u2502 Steps:`);
   for (const step of buildKaizenCycleSteps(result, repo)) {
     console.log(`  \u2502   ${step.phase}: ${step.state}${step.detail ? ` — ${step.detail}` : ''}${step.url ? ` (${step.url})` : ''}`);
@@ -5135,8 +5190,9 @@ async function main(): Promise<void> {
   }
 
   if (result.stopRequested) {
-    freshState.stop_reason = `agent requested stop: ${result.stopReason}`;
-    console.log(`>>> Claude requested batch stop: ${result.stopReason}`);
+    const stopReason = formatStopReasonForDisplay(result.stopReason);
+    freshState.stop_reason = `agent requested stop: ${stopReason}`;
+    console.log(`>>> Agent requested batch stop: ${stopReason}`);
   }
 
   // #1255: rescue stranded work. If a run worktree has commits ahead of main or

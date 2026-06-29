@@ -280,10 +280,18 @@ export const spawnAgent: SpawnClaudeFn = (prompt, opts) => {
 
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
     child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
 
-    const timer = setTimeout(() => { child.kill(); }, opts.timeoutMs ?? 120_000);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        if (!child.kill()) timedOut = false;
+      } catch {
+        timedOut = false;
+      }
+    }, opts.timeoutMs ?? 120_000);
     let settled = false;
 
     child.on('error', (err) => {
@@ -308,10 +316,13 @@ export const spawnAgent: SpawnClaudeFn = (prompt, opts) => {
       clearTimeout(timer);
       const durationMs = Date.now() - start;
       const { text, costUsd, failureNotes } = parseAgentResult(provider, stdout);
-      const normalizedStderr = failureNotes.length > 0
-        ? `${stderr}${stderr ? '\n' : ''}${failureNotes.join('\n')}`
+      const providerFailureNotes = timedOut
+        ? [`provider timed out after ${opts.timeoutMs ?? 120_000}ms`]
+        : failureNotes;
+      const normalizedStderr = providerFailureNotes.length > 0
+        ? `${stderr}${stderr ? '\n' : ''}${providerFailureNotes.join('\n')}`
         : stderr;
-      const exitCode = failureNotes.length > 0 ? -1 : (code ?? -1);
+      const exitCode = providerFailureNotes.length > 0 ? -1 : (code ?? -1);
 
       resolve({ text, costUsd, durationMs, exitCode, rawStdout: stdout, rawStderr: normalizedStderr, args });
     });

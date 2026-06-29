@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -15,12 +15,19 @@ import {
   buildPlanPrompt,
   buildPlanningCommand,
   buildPlanningSchemaFile,
+  appendPlanningRawOutput,
+  createPlanningRawOutputFile,
+  clearPlanningTimers,
   titleTokens,
   deriveThemes,
   ensureThemes,
   extractPlanningText,
+  formatPlanningStderrRawLine,
+  formatPlanningProgress,
   formatPlanningFailure,
+  planningRawOutputFilename,
   selectPlanningProvider,
+  summarizePlanningActivity,
   validatePlanningOutputContract,
   withPlanningProvider,
   themeProgress,
@@ -280,6 +287,154 @@ describe('provider-aware planning (#1146)', () => {
     expect(formatPlanningFailure({ provider: 'codex', billing: 'subscription-cli' }, 'could not extract plan JSON')).toBe(
       '  [plan:codex] could not extract plan JSON',
     );
+  });
+
+  it('summarizes Codex planning activity into operator-readable labels', () => {
+    const issueList = summarizePlanningActivity('codex', JSON.stringify({
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        command: 'gh issue list --repo Garsson-io/kaizen --label epic --state open',
+      },
+    }));
+    const fileRead = summarizePlanningActivity('codex', JSON.stringify({
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        command: 'rg -n "dashboard" docs scripts src',
+      },
+    }));
+
+    expect(issueList).toBe('reading GitHub issues');
+    expect(fileRead).toBe('inspecting files');
+  });
+
+  it('summarizes Claude planning activity and ignores malformed/unknown rows', () => {
+    const claudeTool = summarizePlanningActivity('claude', JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [{
+          type: 'tool_use',
+          name: 'Bash',
+          input: { command: 'git worktree list --porcelain' },
+        }],
+      },
+    }));
+
+    expect(claudeTool).toBe('checking worktrees');
+    expect(summarizePlanningActivity('codex', 'not-json')).toBeNull();
+    expect(summarizePlanningActivity('codex', JSON.stringify({ type: 'unknown' }))).toBeNull();
+  });
+
+  it('prefers concrete Claude tool activity over generic text in the same message', () => {
+    const activity = summarizePlanningActivity('claude', JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'text', text: "I'll inspect the repo." },
+          { type: 'tool_use', name: 'Bash', input: { command: 'git worktree list --porcelain' } },
+        ],
+      },
+    }));
+
+    expect(activity).toBe('checking worktrees');
+  });
+
+  it('bounds generic command activity labels', () => {
+    const activity = summarizePlanningActivity('codex', JSON.stringify({
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        command: `node ${'x'.repeat(120)}`,
+      },
+    }));
+
+    expect(activity).toMatch(/^running command: node x+/);
+    expect(activity).toMatch(/…$/);
+    expect(activity!.length).toBeLessThanOrEqual('running command: '.length + 80);
+  });
+
+  it('formats bounded planning progress with elapsed time, activity, counts, and raw log path', () => {
+    expect(formatPlanningProgress({
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      elapsedMs: 45_000,
+      stdoutLines: 12,
+      stdoutBytes: 2048,
+      stderrBytes: 140,
+      lastActivity: 'checking worktrees',
+      rawOutputFile: '/tmp/plan-codex.jsonl',
+    })).toBe('  [plan:codex] still planning (45s elapsed; checking worktrees; stdout 12 lines/2.0 KB; stderr 140 B; raw /tmp/plan-codex.jsonl)');
+
+    expect(formatPlanningProgress({
+      provider: { provider: 'claude', billing: 'subscription-cli' },
+      elapsedMs: 0,
+      stdoutLines: 0,
+      stdoutBytes: 1024,
+      stderrBytes: 1023,
+      rawOutputFile: '/tmp/plan-claude-stream.jsonl',
+    })).toBe('  [plan:claude] still planning (0s elapsed; waiting for provider output; stdout 0 lines/1.0 KB; stderr 1023 B; raw /tmp/plan-claude-stream.jsonl)');
+  });
+
+  it('uses provider-specific raw planning output filenames', () => {
+    expect(planningRawOutputFilename('codex')).toBe('plan-codex.jsonl');
+    expect(planningRawOutputFilename('claude')).toBe('plan-claude-stream.jsonl');
+  });
+
+  it('creates raw planning output paths inside a private batch-log temp dir', () => {
+    const mkdtemp = vi.fn(() => '/logs/planning-codex-abc123');
+
+    expect(createPlanningRawOutputFile('/logs', 'codex', { mkdtemp: mkdtemp as any }))
+      .toBe('/logs/planning-codex-abc123/plan-codex.jsonl');
+    expect(mkdtemp).toHaveBeenCalledWith('/logs/planning-codex-');
+
+    expect(createPlanningRawOutputFile('/logs', 'claude', {
+      mkdtemp: vi.fn(() => { throw new Error('read-only log dir'); }) as any,
+    })).toBeNull();
+  });
+
+  it('clears both planning timeout and progress timers', () => {
+    const clearTimeoutFn = vi.fn();
+    const clearIntervalFn = vi.fn();
+    clearPlanningTimers(
+      { timeout: 111 as any, progress: 222 as any },
+      { clearTimeoutFn: clearTimeoutFn as any, clearIntervalFn: clearIntervalFn as any },
+    );
+
+    expect(clearTimeoutFn).toHaveBeenCalledWith(111);
+    expect(clearIntervalFn).toHaveBeenCalledWith(222);
+  });
+
+  it('captures raw planning output fail-open inside stream callbacks', () => {
+    const appendFile = vi.fn();
+
+    expect(appendPlanningRawOutput('/tmp/raw.jsonl', 'ok', {
+      appendFile: appendFile as any,
+    })).toBe(true);
+
+    expect(appendFile).toHaveBeenCalledWith('/tmp/raw.jsonl', 'ok', { mode: 0o600 });
+    expect(appendPlanningRawOutput('/tmp/raw.jsonl', 'boom', {
+      appendFile: vi.fn(() => { throw new Error('disk full'); }) as any,
+    })).toBe(false);
+  });
+
+  it('keeps planning stderr raw capture JSONL parseable', () => {
+    expect(JSON.parse(formatPlanningStderrRawLine('bad\nnews'))).toEqual({
+      stream: 'stderr',
+      data: 'bad\nnews',
+    });
+  });
+
+  it('captures raw planning output and starts progress inside the provider wait path', () => {
+    const source = readFileSync(new URL('./auto-dent-plan.ts', import.meta.url), 'utf8');
+    const runPlanningStart = source.indexOf('async function runPlanning');
+    const runPlanningEnd = source.indexOf('/**\n * Read plan.json', runPlanningStart);
+    const runPlanningSection = source.slice(runPlanningStart, runPlanningEnd);
+
+    expect(runPlanningSection).toContain('createPlanningRawOutputFile');
+    expect(runPlanningSection).toContain('appendRawOutput(line +');
+    expect(runPlanningSection).toContain('warning: raw provider output capture failed');
+    expect(runPlanningSection).toContain('formatPlanningProgress');
+    expect(runPlanningSection).toContain('setInterval');
   });
 });
 

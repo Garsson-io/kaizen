@@ -288,6 +288,7 @@ export interface ReviewFixState {
     reviewProvider?: ReviewFixProvider;
     fixProvider?: ReviewFixProvider;
     findings?: ReviewFinding[];
+    reviewFailures?: BatteryResult['failedDimensionFailures'];
   }>;
   outcome?: string;
   prBranch?: string;
@@ -871,6 +872,9 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       prUrl: opts.prUrl,
       issueNum: opts.issueNum,
       repo: opts.repo,
+      issueBody: ctx.issueBody,
+      prBody: ctx.prBody,
+      prDiffStat: ctx.prDiff,
       cwd: repoRoot,
       timeoutMs: 180_000,
       reviewProvider: state.reviewProvider,
@@ -882,6 +886,10 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
     const gaps = allFindings.filter(f => f.status !== 'DONE');
 
     console.log(`  Cost: $${battery.costUsd.toFixed(2)} | Findings: ${allFindings.length} | Gaps: ${gaps.length}`);
+    for (const failure of battery.failedDimensionFailures ?? []) {
+      const detail = failure.detail ? ` — ${failure.detail}` : '';
+      console.log(`  REVIEW FAILED: ${failure.dimension} (${failure.failureClass})${detail}`);
+    }
     for (const f of allFindings) {
       const icon = f.status === 'DONE' ? 'PASS' : f.status;
       console.log(`  ${icon}: ${f.requirement}`);
@@ -898,6 +906,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
         reviewCost: battery.costUsd,
         fixCost: 0,
         reviewProvider: battery.reviewProvider ?? state.reviewProvider,
+        reviewFailures: battery.failedDimensionFailures,
       });
       saveState(state, stateDirPath);
       continue;
@@ -907,6 +916,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
       round, phase: 'review', verdict: battery.verdict,
       gaps: gaps.length, reviewCost: battery.costUsd, fixCost: 0,
       reviewProvider: battery.reviewProvider ?? state.reviewProvider,
+      reviewFailures: battery.failedDimensionFailures,
       findings: allFindings,
     });
     saveState(state, stateDirPath);

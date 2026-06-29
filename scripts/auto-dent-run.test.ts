@@ -76,6 +76,11 @@ import {
   attachRunTranscripts,
   applyContextDelegationAnalysis,
   buildContextDelegationAnalysisLog,
+  formatHarnessFailureForDisplay,
+  formatHarnessFailureSummaryLines,
+  formatProviderWorkspaceFailureDiagnosis,
+  formatStopReasonForDisplay,
+  providerWorkspaceFailureResult,
 } from './auto-dent-run.js';
 import { analyzeContextDelegation } from './auto-dent-context-delegation.js';
 import {
@@ -2521,7 +2526,7 @@ describe('runReviewWiring provider selection (#1580)', () => {
       ghExec: vi.fn(),
     });
 
-    expect(runFixCalls[0].reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(runFixCalls[0].reviewProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
     expect(runFixCalls[0].fixProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
     expect(runFixCalls[0].cwd).toBe('/repo/worktree');
   });
@@ -5409,6 +5414,57 @@ describe('provider workspace contract', () => {
     });
   });
 
+  it('formats provider workspace failures as diagnosis-first harness failures', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [{ path: repoRoot, branch: 'main' }],
+      readBoundIssue: () => null,
+    });
+    expect(resolved.ok).toBe(false);
+
+    const diagnosis = formatProviderWorkspaceFailureDiagnosis(resolved as any);
+
+    expect(diagnosis.phase).toBe('provider workspace resolution');
+    expect(diagnosis.summary).toBe('provider workspace resolution failed for #1164');
+    expect(diagnosis.detail).toContain('no non-main case worktree found for assigned issue #1164');
+    expect(diagnosis.nextAction).toContain('Create or enter a non-main case worktree bound to #1164');
+    expect(formatHarnessFailureForDisplay(diagnosis)).toContain('Root cause: provider workspace resolution failed for #1164');
+    expect(formatHarnessFailureSummaryLines(diagnosis)).toEqual([
+      'Root cause: provider workspace resolution failed for #1164',
+      'Phase:    provider workspace resolution',
+      'Detail:   no non-main case worktree found for assigned issue #1164',
+      'Next:     Create or enter a non-main case worktree bound to #1164, then rerun auto-dent for that issue.',
+    ]);
+  });
+
+  it('formats every provider workspace failure reason with a concrete next action', () => {
+    expect(formatProviderWorkspaceFailureDiagnosis({
+      ok: false,
+      reason: 'missing-binding',
+      issue: 1164,
+      providerRoot: '/repo/.claude/worktrees/case',
+      detail: 'candidate worktree has no kaizen.issue binding',
+    }).nextAction).toBe('Bind the provider workspace to #1164 with cli-issue-binding before spawning the provider.');
+
+    expect(formatProviderWorkspaceFailureDiagnosis({
+      ok: false,
+      reason: 'binding-mismatch',
+      issue: 1164,
+      providerRoot: '/repo/.claude/worktrees/case',
+      actualIssue: 999,
+      detail: 'candidate worktree is bound to #999, not #1164',
+    }).nextAction).toBe('Use the case worktree bound to #1164, or fix the stale kaizen.issue binding before spawning the provider.');
+  });
+
+  it('formats missing stop reasons without leaking undefined', () => {
+    expect(formatStopReasonForDisplay(undefined)).toBe('requested without reason');
+    expect(formatStopReasonForDisplay('   ')).toBe('requested without reason');
+    expect(formatStopReasonForDisplay('backlog exhausted')).toBe('backlog exhausted');
+  });
+
   it('does not select another worktree whose issue token only shares a prefix', () => {
     const resolved = resolveProviderWorkspaceRoot({
       repoRoot,
@@ -5476,6 +5532,47 @@ describe('provider workspace contract', () => {
     expect(resolverIndex).toBeLessThan(claudeSpawnIndex);
     expect(runClaudeSection).toContain('providerRoot: providerWorkspace.providerRoot');
     expect(runClaudeSection).toContain('cwd: providerWorkspace.providerRoot');
+  });
+
+  it('does not model provider workspace failures as undefined agent stops', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'provider-workspace-failure-'));
+    const logFile = join(tmp, 'run.log');
+    writeFileSync(logFile, '');
+    const result = makeRunResult();
+
+    const providerResult = providerWorkspaceFailureResult({
+      logFile,
+      result,
+      mode: 'exploit',
+      modeReason: 'test',
+      promptMeta: { assignedIssue: '#1164' } as any,
+      workspace: {
+        ok: false,
+        reason: 'missing-worktree',
+        issue: 1164,
+        detail: 'no non-main case worktree found for assigned issue #1164',
+      },
+    });
+
+    expect(providerResult.exitCode).toBe(1);
+    expect(providerResult.duration).toBe(0);
+    expect(providerResult.result.stopRequested).toBe(false);
+    expect(providerResult.result.harnessFailure).toMatchObject({
+      phase: 'provider workspace resolution',
+      summary: 'provider workspace resolution failed for #1164',
+    });
+    expect(readFileSync(logFile, 'utf8')).toContain('[provider-workspace] provider_workspace_error=missing-worktree issue=#1164');
+
+    const source = AUTO_DENT_RUN_SOURCE;
+    const finalizationStart = source.indexOf('if (result.stopRequested)');
+    const finalizationEnd = source.indexOf('// #1255: rescue stranded work', finalizationStart);
+    const finalizationSection = source.slice(finalizationStart, finalizationEnd);
+
+    expect(finalizationSection).not.toContain('Claude requested batch stop');
+    expect(finalizationSection).toContain('Agent requested batch stop');
+    expect(finalizationSection).toContain('formatStopReasonForDisplay');
+
+    rmSync(tmp, { recursive: true, force: true });
   });
 });
 
