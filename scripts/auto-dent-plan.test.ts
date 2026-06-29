@@ -15,6 +15,7 @@ import {
   buildPlanPrompt,
   buildPlanningCommand,
   buildPlanningSchemaFile,
+  appendPlanningRawOutput,
   clearPlanningTimers,
   titleTokens,
   deriveThemes,
@@ -352,6 +353,15 @@ describe('provider-aware planning (#1146)', () => {
     expect(clearIntervalFn).toHaveBeenCalledWith(222);
   });
 
+  it('captures raw planning output fail-open inside stream callbacks', () => {
+    expect(appendPlanningRawOutput('/tmp/raw.jsonl', 'ok', {
+      appendFile: vi.fn(),
+    })).toBe(true);
+    expect(appendPlanningRawOutput('/tmp/raw.jsonl', 'boom', {
+      appendFile: vi.fn(() => { throw new Error('disk full'); }) as any,
+    })).toBe(false);
+  });
+
   it('captures raw planning output and starts progress inside the provider wait path', () => {
     const source = readFileSync(new URL('./auto-dent-plan.ts', import.meta.url), 'utf8');
     const runPlanningStart = source.indexOf('async function runPlanning');
@@ -359,7 +369,7 @@ describe('provider-aware planning (#1146)', () => {
     const runPlanningSection = source.slice(runPlanningStart, runPlanningEnd);
 
     expect(runPlanningSection).toContain('planningRawOutputFile');
-    expect(runPlanningSection).toContain('appendFileSync(rawOutputFile');
+    expect(runPlanningSection).toContain('appendPlanningRawOutput(rawOutputFile');
     expect(runPlanningSection).toContain('formatPlanningProgress');
     expect(runPlanningSection).toContain('setInterval');
   });

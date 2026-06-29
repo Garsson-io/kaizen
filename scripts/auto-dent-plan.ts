@@ -367,6 +367,19 @@ export function clearPlanningTimers(
   (deps.clearIntervalFn ?? clearInterval)(timers.progress);
 }
 
+export function appendPlanningRawOutput(
+  rawOutputFile: string,
+  text: string,
+  deps: { appendFile?: typeof appendFileSync } = {},
+): boolean {
+  try {
+    (deps.appendFile ?? appendFileSync)(rawOutputFile, text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Extract a JSON block from Claude's response text.
  * Looks for ```json ... ``` fenced blocks first, then bare JSON.
@@ -664,7 +677,7 @@ async function runPlanning(
     const rl = createInterface({ input: child.stdout! });
     rl.on('line', (line) => {
       rawOutput += line + '\n';
-      appendFileSync(rawOutputFile, line + '\n');
+      appendPlanningRawOutput(rawOutputFile, line + '\n');
       stdoutLines++;
       stdoutBytes += Buffer.byteLength(line + '\n');
       const activity = summarizePlanningActivity(providerName, line);
@@ -679,7 +692,7 @@ async function runPlanning(
 
     child.stderr?.on('data', (data: Buffer) => {
       stderrBytes += data.length;
-      appendFileSync(rawOutputFile, data.toString());
+      appendPlanningRawOutput(rawOutputFile, data.toString());
     });
 
     child.on('close', () => {
