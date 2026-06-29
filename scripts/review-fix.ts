@@ -47,6 +47,7 @@ import {
   type ProviderCapability,
   type PlanValidation,
 } from './auto-dent-provider.js';
+import { clearStateWithStatus } from '../src/hooks/state-utils.js';
 
 // ── Stream-JSON parsing ─────────────────────────────────────────────
 
@@ -288,6 +289,13 @@ export interface ReviewFixState {
   outcome?: string;
   prBranch?: string;
   isMerged?: boolean;
+  manualTransitions?: Array<{
+    from: ReviewFixState['phase'];
+    to: ReviewFixState['phase'];
+    round: number;
+    at: string;
+    actor: string;
+  }>;
 }
 
 /**
@@ -382,6 +390,67 @@ export function validateTransition(
   return { allowed: true };
 }
 
+export interface TransitionReviewFixStateOptions {
+  prUrl: string;
+  targetPhase: string;
+  stateDir?: string;
+  actor?: string;
+  now?: () => string;
+}
+
+export interface TransitionReviewFixStateResult {
+  changed: boolean;
+  reason?: string;
+  from?: ReviewFixState['phase'];
+  to?: ReviewFixState['phase'];
+}
+
+function latestTransitionFindings(state: ReviewFixState): ReviewFinding[] {
+  const matchingRound = [...state.rounds]
+    .reverse()
+    .find(round => round.phase === 'review' && round.round === state.currentRound);
+  const latestReview = matchingRound ?? [...state.rounds].reverse().find(round => round.phase === 'review');
+  return latestReview?.findings ?? [];
+}
+
+export function transitionReviewFixState(
+  opts: TransitionReviewFixStateOptions,
+): TransitionReviewFixStateResult {
+  const state = loadState(opts.prUrl, opts.stateDir);
+  if (!state) return { changed: false, reason: `No review-fix state found for ${opts.prUrl}` };
+
+  const validation = validateTransition(opts.targetPhase, state, latestTransitionFindings(state));
+  if (!validation.allowed) return { changed: false, reason: validation.reason };
+
+  const from = state.phase;
+  const to = opts.targetPhase as ReviewFixState['phase'];
+  state.phase = to;
+  state.manualTransitions = [
+    ...(state.manualTransitions ?? []),
+    {
+      from,
+      to,
+      round: state.currentRound,
+      at: opts.now?.() ?? new Date().toISOString(),
+      actor: opts.actor ?? process.env.USER ?? 'unknown',
+    },
+  ];
+  saveState(state, opts.stateDir);
+  return { changed: true, from, to };
+}
+
+export interface ClearReviewGateOptions {
+  branch: string;
+  stateDir?: string;
+}
+
+export function clearReviewGate(opts: ClearReviewGateOptions): { cleared: boolean; branch: string } {
+  return {
+    branch: opts.branch,
+    cleared: clearStateWithStatus('needs_review', opts.branch, opts.stateDir),
+  };
+}
+
 // ── CLI ─────────────────────────────────────────────────────────────
 
 export interface CliArgs {
@@ -394,12 +463,18 @@ export interface CliArgs {
   maxRounds: number;
   budgetCap: number;
   resume: boolean;
+  transition?: string;
+  clearReviewGate?: string;
+  stateDir?: string;
 }
 
 export function parseArgs(argv = process.argv): CliArgs {
   const args = argv.slice(2);
   let prUrl = '', issueNum = '', repo = '';
   let dryRun = false, resume = false, maxRounds = MAX_FIX_ROUNDS, budgetCap = BUDGET_CAP_USD;
+  let transition: string | undefined;
+  let clearReviewGateBranch: string | undefined;
+  let stateDirArg: string | undefined;
   const defaults = defaultReviewFixProviders();
   let reviewProvider = defaults.reviewProvider;
   let fixProvider = defaults.fixProvider;
@@ -415,7 +490,42 @@ export function parseArgs(argv = process.argv): CliArgs {
       case '--resume': resume = true; break;
       case '--max-rounds': maxRounds = parseInt(args[++i] ?? '3', 10); break;
       case '--budget': budgetCap = parseFloat(args[++i] ?? '2'); break;
+      case '--transition': transition = args[++i] ?? ''; break;
+      case '--clear-review-gate': clearReviewGateBranch = args[++i] ?? ''; break;
+      case '--state-dir': stateDirArg = args[++i] ?? ''; break;
     }
+  }
+
+  if (clearReviewGateBranch) {
+    return {
+      prUrl,
+      issueNum,
+      repo,
+      reviewProvider,
+      fixProvider,
+      dryRun,
+      maxRounds,
+      budgetCap,
+      resume,
+      clearReviewGate: clearReviewGateBranch,
+      stateDir: stateDirArg,
+    };
+  }
+
+  if (transition && prUrl && repo) {
+    return {
+      prUrl,
+      issueNum,
+      repo,
+      reviewProvider,
+      fixProvider,
+      dryRun,
+      maxRounds,
+      budgetCap,
+      resume,
+      transition,
+      stateDir: stateDirArg,
+    };
   }
 
   if (!prUrl || !issueNum || !repo) {
@@ -423,12 +533,18 @@ export function parseArgs(argv = process.argv): CliArgs {
 
 Usage:
   npx tsx scripts/review-fix.ts --pr <url> --issue <num> --repo <owner/repo> [options]
+  npx tsx scripts/review-fix.ts --transition <needs_review|needs_fix|fix_running> --pr <url> --repo <owner/repo> [--state-dir <dir>]
+  npx tsx scripts/review-fix.ts --clear-review-gate <branch> [--state-dir <dir>]
 
 Options:
   --dry-run       Review only, show fix prompt, don't execute
   --resume        Resume from last saved state (skips completed rounds)
   --max-rounds N  Max review-fix rounds (default: ${MAX_FIX_ROUNDS})
   --budget N      Budget cap in USD (default: ${BUDGET_CAP_USD})
+  --transition P  Manually transition review-fix state after validating stored findings
+  --clear-review-gate BRANCH
+                  Clear the hook needs_review gate for a branch without raw tsx -e imports
+  --state-dir DIR State directory for manual transition/gate-clear commands
   --review-provider claude|codex
                   Review provider to record/pass to the review battery (default: claude)
   --fix-provider claude|codex
@@ -862,6 +978,29 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
 
 async function main() {
   const opts = parseArgs();
+  if (opts.clearReviewGate) {
+    const result = clearReviewGate({ branch: opts.clearReviewGate, stateDir: opts.stateDir });
+    if (result.cleared) {
+      console.log(`Cleared needs_review gate for ${result.branch}`);
+      process.exit(0);
+    }
+    console.log(`No needs_review gate found for ${result.branch}`);
+    process.exit(1);
+  }
+  if (opts.transition) {
+    const result = transitionReviewFixState({
+      prUrl: opts.prUrl,
+      targetPhase: opts.transition,
+      stateDir: opts.stateDir,
+      actor: process.env.USER ?? 'review-fix',
+    });
+    if (result.changed) {
+      console.log(`Transitioned review-fix state for ${opts.prUrl}: ${result.from} -> ${result.to}`);
+      process.exit(0);
+    }
+    console.error(result.reason ?? `Transition blocked for ${opts.prUrl}`);
+    process.exit(1);
+  }
   const startTime = Date.now();
   const state = await runFixLoop(opts);
   finish(state, startTime);

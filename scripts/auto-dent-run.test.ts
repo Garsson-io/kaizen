@@ -212,6 +212,17 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
     expect(closeSection).toContain('runBacklogHealthMaintenance');
     expect(closeSection).toContain('[backlog-health]');
   });
+
+  it('uploads raw batch artifacts during batch finalize', () => {
+    const closeSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
+    );
+
+    expect(closeSection).toContain('uploadBatchArtifacts(m[1], kaizenRepo, batchDir');
+    expect(closeSection).toContain('[intelligence] uploaded raw batch artifacts');
+    expect(closeSection).toContain('[intelligence] no raw artifacts on disk to upload');
+  });
 });
 
 describe('buildTemplateVars', () => {

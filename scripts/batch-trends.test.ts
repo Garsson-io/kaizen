@@ -1,13 +1,16 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'fs';
+import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { tmpdir } from 'os';
+import { makeIgnoredTestDir } from '../src/lib/test-dirs.js';
 import type { EventEnvelope } from './auto-dent-events.js';
+import { buildArtifactsComment, parseArtifactsComment } from './batch-artifacts-upload.js';
 import {
   discoverBatchDirs,
   toDataPoint,
   computeTrend,
+  analyzeEventSources,
   analyzeTrends,
+  eventSourceFromArtifactParts,
   formatTrendReport,
 } from './batch-trends.js';
 import { summarizeEvents } from './batch-summary.js';
@@ -44,7 +47,7 @@ describe('discoverBatchDirs', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'batch-trends-'));
+    tmpDir = makeIgnoredTestDir('batch-trends');
   });
 
   it('returns empty array for non-existent directory', () => {
@@ -142,7 +145,7 @@ describe('analyzeTrends', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'batch-trends-analyze-'));
+    tmpDir = makeIgnoredTestDir('batch-trends-analyze');
   });
 
   it('produces report from multiple batch directories', () => {
@@ -208,6 +211,39 @@ describe('analyzeTrends', () => {
   });
 });
 
+describe('analyzeEventSources with uploaded artifacts', () => {
+  it('produces trends from batch-artifacts comments without local events files', () => {
+    const firstEvents = [
+      makeCompleteEnvelope({ batch_id: 'cloud-001', cost_usd: 4, prs_created: 1 }, '2026-06-28T10:00:00Z'),
+    ];
+    const secondEvents = [
+      makeCompleteEnvelope({ batch_id: 'cloud-002', cost_usd: 2, prs_created: 2 }, '2026-06-29T10:00:00Z'),
+    ];
+    const first = parseArtifactsComment(buildArtifactsComment({
+      batchId: 'cloud-001',
+      eventsJsonl: firstEvents.map(e => JSON.stringify(e)).join('\n'),
+      stateJson: null,
+      summary: null,
+    }, '2026-06-28T12:00:00Z'));
+    const second = parseArtifactsComment(buildArtifactsComment({
+      batchId: 'cloud-002',
+      eventsJsonl: secondEvents.map(e => JSON.stringify(e)).join('\n'),
+      stateJson: null,
+      summary: null,
+    }, '2026-06-29T12:00:00Z'));
+
+    const report = analyzeEventSources([
+      eventSourceFromArtifactParts(first),
+      eventSourceFromArtifactParts(second),
+    ]);
+
+    expect(report.batch_count).toBe(2);
+    expect(report.datapoints.map(d => d.batch_id)).toEqual(['cloud-001', 'cloud-002']);
+    expect(report.totals.total_prs).toBe(3);
+    expect(report.trends.cost_per_pr.direction).toBe('improving');
+  });
+});
+
 describe('toDataPoint mode_distribution', () => {
   it('includes mode_distribution from summary', () => {
     const summary = summarizeEvents([
@@ -224,7 +260,7 @@ describe('analyzeTrends mode_diversity', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'batch-trends-mode-'));
+    tmpDir = makeIgnoredTestDir('batch-trends-mode');
   });
 
   it('tracks mode diversity trend across batches', () => {
@@ -256,7 +292,7 @@ describe('formatTrendReport', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'batch-trends-format-'));
+    tmpDir = makeIgnoredTestDir('batch-trends-format');
   });
 
   it('produces readable markdown output', () => {
