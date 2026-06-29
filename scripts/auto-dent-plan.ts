@@ -282,12 +282,8 @@ function formatBytes(bytes: number): string {
 }
 
 function parsePlanningJsonLine(rawLine: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(rawLine);
-    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
-  } catch {
-    return null;
-  }
+  const [parsed] = parseJsonLines<unknown>(rawLine);
+  return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
 }
 
 function commandActivity(command: string): string {
@@ -323,12 +319,15 @@ export function summarizePlanningActivity(provider: PlanningProviderName, line: 
       for (const block of content) {
         if (!block || typeof block !== 'object') continue;
         const record = block as Record<string, unknown>;
-        if (record.type === 'tool_use' && record.name === 'Bash') {
-          const input = record.input;
-          if (input && typeof input === 'object' && typeof (input as Record<string, unknown>).command === 'string') {
-            return commandActivity((input as Record<string, string>).command);
-          }
+        if (record.type !== 'tool_use' || record.name !== 'Bash') continue;
+        const input = record.input;
+        if (input && typeof input === 'object' && typeof (input as Record<string, unknown>).command === 'string') {
+          return commandActivity((input as Record<string, string>).command);
         }
+      }
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const record = block as Record<string, unknown>;
         if (record.type === 'text') return 'drafting batch plan';
       }
     }
@@ -645,6 +644,7 @@ async function runPlanning(
   let stderrBytes = 0;
   let lastActivity: string | undefined;
   let lastPrintedActivity: string | undefined;
+  let rawCaptureWarningPrinted = false;
 
   return new Promise((resolve) => {
     writeFileSync(rawOutputFile, '');
@@ -674,10 +674,16 @@ async function runPlanning(
       }));
     }, 15_000);
 
+    const appendRawOutput = (text: string) => {
+      if (appendPlanningRawOutput(rawOutputFile, text) || rawCaptureWarningPrinted) return;
+      rawCaptureWarningPrinted = true;
+      console.log(formatPlanningFailure(provider, `warning: raw provider output capture failed for ${rawOutputFile}; continuing without complete raw transcript`));
+    };
+
     const rl = createInterface({ input: child.stdout! });
     rl.on('line', (line) => {
       rawOutput += line + '\n';
-      appendPlanningRawOutput(rawOutputFile, line + '\n');
+      appendRawOutput(line + '\n');
       stdoutLines++;
       stdoutBytes += Buffer.byteLength(line + '\n');
       const activity = summarizePlanningActivity(providerName, line);
@@ -692,7 +698,7 @@ async function runPlanning(
 
     child.stderr?.on('data', (data: Buffer) => {
       stderrBytes += data.length;
-      appendPlanningRawOutput(rawOutputFile, data.toString());
+      appendRawOutput(data.toString());
     });
 
     child.on('close', () => {

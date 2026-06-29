@@ -3407,7 +3407,7 @@ export function normalizeCodexRunExitCode(
   });
 }
 
-function providerWorkspaceFailureResult(
+export function providerWorkspaceFailureResult(
   input: {
     logFile: string;
     result: RunResult;

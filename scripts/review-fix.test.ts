@@ -346,6 +346,16 @@ describe('provider-aware review-fix loop (#1148)', () => {
     expect(result.violations[0].reason).toContain('api-token');
     expect(result.violations[0].reason).toContain('subscription-compatible');
   });
+
+  it('accepts Codex as an explicit subscription-compatible review provider', () => {
+    const result = validateReviewFixProviderPlan({
+      reviewProvider: { provider: 'codex', billing: 'subscription-cli' },
+      fixProvider: { provider: 'codex', billing: 'subscription-cli' },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
 });
 
 // ── checkFixResult — integration tests with real temp files ──────────
@@ -911,6 +921,9 @@ describe('runFixLoop', () => {
 
       expect(runReviewMock).toHaveBeenCalledWith(expect.objectContaining({
         reviewProvider: { provider: 'claude', billing: 'subscription-cli' },
+        issueBody: 'fix the bug',
+        prBody: 'adds feature',
+        prDiffStat: '--- a\n+++ b',
       }));
       expect(state.fixProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
       expect(state.activeFix?.provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
@@ -932,6 +945,12 @@ describe('runFixLoop', () => {
         partialCount: 0,
         durationMs: 180_000,
         failedDimensions: ['requirements'],
+        failedDimensionFailures: [{
+          dimension: 'requirements',
+          provider: { provider: 'codex', billing: 'subscription-cli' },
+          failureClass: 'codex_review_failed',
+          detail: 'codex (subscription-cli) exit 1: provider unavailable',
+        }],
         skippedDimensions: [],
         dimensions: [],
         reviewProvider: { provider: 'codex', billing: 'subscription-cli' },
@@ -951,6 +970,7 @@ describe('runFixLoop', () => {
 
       expect(state.rounds[0].verdict).toBe('review_failed');
       expect(state.rounds[0].reviewProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+      expect(state.rounds[0].reviewFailures).toEqual(emptyBattery.failedDimensionFailures);
     } finally { teardown(); }
   });
 

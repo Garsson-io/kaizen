@@ -324,6 +324,33 @@ describe('provider-aware planning (#1146)', () => {
     expect(summarizePlanningActivity('codex', JSON.stringify({ type: 'unknown' }))).toBeNull();
   });
 
+  it('prefers concrete Claude tool activity over generic text in the same message', () => {
+    const activity = summarizePlanningActivity('claude', JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'text', text: "I'll inspect the repo." },
+          { type: 'tool_use', name: 'Bash', input: { command: 'git worktree list --porcelain' } },
+        ],
+      },
+    }));
+
+    expect(activity).toBe('checking worktrees');
+  });
+
+  it('bounds generic command activity labels', () => {
+    const activity = summarizePlanningActivity('codex', JSON.stringify({
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        command: `node ${'x'.repeat(120)}`,
+      },
+    }));
+
+    expect(activity).toMatch(/^running command: node x+/);
+    expect(activity!.length).toBeLessThanOrEqual('running command: '.length + 80);
+  });
+
   it('formats bounded planning progress with elapsed time, activity, counts, and raw log path', () => {
     expect(formatPlanningProgress({
       provider: { provider: 'codex', billing: 'subscription-cli' },
@@ -334,6 +361,15 @@ describe('provider-aware planning (#1146)', () => {
       lastActivity: 'checking worktrees',
       rawOutputFile: '/tmp/plan-codex.jsonl',
     })).toBe('  [plan:codex] still planning (45s elapsed; checking worktrees; stdout 12 lines/2.0 KB; stderr 140 B; raw /tmp/plan-codex.jsonl)');
+
+    expect(formatPlanningProgress({
+      provider: { provider: 'claude', billing: 'subscription-cli' },
+      elapsedMs: 0,
+      stdoutLines: 0,
+      stdoutBytes: 1024,
+      stderrBytes: 1023,
+      rawOutputFile: '/tmp/plan-claude-stream.jsonl',
+    })).toBe('  [plan:claude] still planning (0s elapsed; waiting for provider output; stdout 0 lines/1.0 KB; stderr 1023 B; raw /tmp/plan-claude-stream.jsonl)');
   });
 
   it('uses a stable raw planning output path per provider', () => {
@@ -369,7 +405,8 @@ describe('provider-aware planning (#1146)', () => {
     const runPlanningSection = source.slice(runPlanningStart, runPlanningEnd);
 
     expect(runPlanningSection).toContain('planningRawOutputFile');
-    expect(runPlanningSection).toContain('appendPlanningRawOutput(rawOutputFile');
+    expect(runPlanningSection).toContain('appendRawOutput(line +');
+    expect(runPlanningSection).toContain('warning: raw provider output capture failed');
     expect(runPlanningSection).toContain('formatPlanningProgress');
     expect(runPlanningSection).toContain('setInterval');
   });

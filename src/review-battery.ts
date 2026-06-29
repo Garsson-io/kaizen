@@ -66,6 +66,7 @@ export interface ReviewDimensionFailure {
   dimension: string;
   provider: ReviewProvider;
   failureClass: ReviewFailureClass;
+  detail?: string;
 }
 
 /** Aggregated result from running multiple review dimensions */
@@ -384,6 +385,35 @@ export function renderTemplate(template: string, vars: Record<string, string>): 
   return result.trim();
 }
 
+function boundedContext(label: string, value: string | undefined, maxChars: number): string[] {
+  const text = (value ?? '').trim();
+  if (!text) return [];
+  const bounded = text.length > maxChars
+    ? `${text.slice(0, maxChars)}\n\n[truncated: ${text.length - maxChars} chars omitted]`
+    : text;
+  return [`### ${label}`, '', bounded];
+}
+
+export function appendPrefetchedReviewContext(prompt: string, vars: Record<string, string>): string {
+  const sections = [
+    ...boundedContext('Stored plan', vars.plan_text, 8_000),
+    ...boundedContext('Issue body', vars.issue_body, 8_000),
+    ...boundedContext('PR body', vars.pr_body, 8_000),
+    ...boundedContext('PR diff/stat', vars.pr_diff_stat, 20_000),
+  ];
+  if (sections.length === 0) return prompt;
+
+  return [
+    prompt,
+    '',
+    '## Prefetched Review Context',
+    '',
+    'Use this harness-provided context as primary evidence. If it conflicts with live GitHub reads, call out the conflict explicitly instead of treating the context as missing.',
+    '',
+    ...sections,
+  ].join('\n');
+}
+
 /**
  * Resolve the prompts directory. Checks repo-root/prompts first,
  * then falls back to the directory relative to this file.
@@ -405,6 +435,7 @@ export function loadReviewPrompt(
   dimension: ReviewDimension,
   vars: Record<string, string>,
   promptsDir?: string,
+  opts: { includePrefetchedContext?: boolean } = {},
 ): string {
   const dir = promptsDir ?? resolvePromptsDir();
   const dims = discoverDimensions(dir);
@@ -421,7 +452,10 @@ export function loadReviewPrompt(
 
   const content = readFileSync(templatePath, 'utf8');
   const body = stripYamlFrontmatter(content);
-  return renderTemplate(body, vars);
+  const rendered = renderTemplate(body, vars);
+  return opts.includePrefetchedContext === false
+    ? rendered
+    : appendPrefetchedReviewContext(rendered, vars);
 }
 
 // ── Review Spawning ─────────────────────────────────────────────────
@@ -464,6 +498,22 @@ function reviewFailureClass(provider: ReviewProvider): ReviewFailureClass {
   return provider.provider === 'codex' ? 'codex_review_failed' : 'claude_review_failed';
 }
 
+export function summarizeReviewProviderFailure(parts: {
+  provider: ReviewProvider;
+  exitCode?: number;
+  text?: string;
+  stderr?: string;
+}): string {
+  const candidates = [parts.stderr, parts.text]
+    .map(value => (value ?? '').trim())
+    .filter(Boolean);
+  const detail = candidates[0] ?? 'provider returned no diagnostic output';
+  const squashed = detail.replace(/\s+/g, ' ').trim();
+  const bounded = squashed.length > 500 ? `${squashed.slice(0, 497)}...` : squashed;
+  const exit = parts.exitCode === undefined ? '' : ` exit ${parts.exitCode}:`;
+  return `${providerLabel(parts.provider)}${exit} ${bounded}`;
+}
+
 /**
  * Spawn a single review agent via the selected provider.
  * Returns the parsed DimensionReview, or null if the review failed.
@@ -474,6 +524,7 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{
   durationMs: number;
   provider: ReviewProvider;
   failureClass?: ReviewFailureClass;
+  failureDetail?: string;
 }> {
   const provider = selectReviewProvider(opts.reviewProvider);
   const failureClass = reviewFailureClass(provider);
@@ -497,18 +548,20 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{
     return { review: null, costUsd: 0, durationMs: 0, provider, failureClass };
   }
 
-  const { text, costUsd, durationMs, exitCode } = await runAgent(prompt, {
+  const { text, costUsd, durationMs, exitCode, rawStderr } = await runAgent(prompt, {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
     provider,
   });
 
   if (exitCode !== 0) {
-    console.error(`  [review:${provider.provider}] failed for ${opts.dimension}: exit ${exitCode}`);
-    return { review: null, costUsd: 0, durationMs, provider, failureClass };
+    const failureDetail = summarizeReviewProviderFailure({ provider, exitCode, text, stderr: rawStderr });
+    console.error(`  [review:${provider.provider}] failed for ${opts.dimension}: ${failureDetail}`);
+    return { review: null, costUsd: 0, durationMs, provider, failureClass, failureDetail };
   }
 
   const review = parseReviewOutput(text, opts.dimension);
+  const failureDetail = review ? undefined : summarizeReviewProviderFailure({ provider, text });
   if (review) review.provider = provider;
   return {
     review,
@@ -516,6 +569,7 @@ export async function spawnReview(opts: SpawnReviewOptions): Promise<{
     durationMs,
     provider,
     failureClass: review ? undefined : failureClass,
+    failureDetail,
   };
 }
 
@@ -571,6 +625,7 @@ export async function spawnBatchReview(
   durationMs: number;
   provider: ReviewProvider;
   failureClass?: ReviewFailureClass;
+  failureDetail?: string;
 }>> {
   const provider = selectReviewProvider(opts.reviewProvider);
   const failureClass = reviewFailureClass(provider);
@@ -590,7 +645,7 @@ export async function spawnBatchReview(
   const prompts: string[] = [];
   for (const dim of opts.dimensions) {
     try {
-      prompts.push(loadReviewPrompt(dim, vars));
+      prompts.push(loadReviewPrompt(dim, vars, undefined, { includePrefetchedContext: false }));
       loadedDims.push(dim);
     } catch (e: any) {
       console.error(`  [review] batch: failed to load prompt for ${dim}: ${e.message}`);
@@ -598,23 +653,25 @@ export async function spawnBatchReview(
   }
 
   if (prompts.length === 0) {
-    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs: 0, provider, failureClass }));
+    const failureDetail = summarizeReviewProviderFailure({ provider, text: 'no review prompts could be loaded' });
+    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs: 0, provider, failureClass, failureDetail }));
   }
 
   const batchPrompt =
     `Review this PR across ${prompts.length} dimension(s). ` +
     `For each dimension, output a separate \`\`\`json block with the "dimension" field set to the dimension name.\n\n` +
-    prompts.join('\n\n---\n\n');
+    appendPrefetchedReviewContext(prompts.join('\n\n---\n\n'), vars);
 
-  const { text, costUsd, durationMs, exitCode } = await runAgent(batchPrompt, {
+  const { text, costUsd, durationMs, exitCode, rawStderr } = await runAgent(batchPrompt, {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
     provider,
   });
 
   if (exitCode !== 0) {
-    console.error(`  [review:${provider.provider}] batch failed: exit ${exitCode}`);
-    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs, provider, failureClass }));
+    const failureDetail = summarizeReviewProviderFailure({ provider, exitCode, text, stderr: rawStderr });
+    console.error(`  [review:${provider.provider}] batch failed: ${failureDetail}`);
+    return opts.dimensions.map(() => ({ review: null, costUsd: 0, durationMs, provider, failureClass, failureDetail }));
   }
 
   const reviews = parseAllReviewOutputs(text, loadedDims);
@@ -622,6 +679,7 @@ export async function spawnBatchReview(
 
   return opts.dimensions.map(dim => {
     const review = reviews.find(r => r.dimension === dim) ?? null;
+    const failureDetail = review ? undefined : summarizeReviewProviderFailure({ provider, text });
     if (review) review.provider = provider;
     return {
       review,
@@ -629,6 +687,7 @@ export async function spawnBatchReview(
       durationMs,
       provider,
       failureClass: review ? undefined : failureClass,
+      failureDetail,
     };
   });
 }
@@ -732,7 +791,7 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
   );
 
   // Map results back to effective dimension order
-  const resultMap = new Map<string, { review: DimensionReview | null; costUsd: number; durationMs: number; provider: ReviewProvider; failureClass?: ReviewFailureClass }>();
+  const resultMap = new Map<string, { review: DimensionReview | null; costUsd: number; durationMs: number; provider: ReviewProvider; failureClass?: ReviewFailureClass; failureDetail?: string }>();
   for (let i = 0; i < batches.length; i++) {
     for (let j = 0; j < batches[i].length; j++) {
       resultMap.set(batches[i][j], batchResultGroups[i][j]);
@@ -748,9 +807,9 @@ export async function reviewBattery(opts: BatteryOptions): Promise<BatteryResult
     if (r.review === null) {
       failedDimensions.push(dim);
       if (r.failureClass) {
-        failedDimensionFailures.push({ dimension: dim, provider: r.provider, failureClass: r.failureClass });
+        failedDimensionFailures.push({ dimension: dim, provider: r.provider, failureClass: r.failureClass, detail: r.failureDetail });
       }
-      console.error(`  [review] ${dim}: FAILED in ${Math.round(r.durationMs / 1000)}s`);
+      console.error(`  [review] ${dim}: FAILED in ${Math.round(r.durationMs / 1000)}s${r.failureDetail ? ` — ${r.failureDetail}` : ''}`);
     } else {
       console.log(`  [review] ${dim}: ${r.review.verdict.toUpperCase()} in ${Math.round(r.durationMs / 1000)}s ($${r.costUsd.toFixed(3)})`);
     }

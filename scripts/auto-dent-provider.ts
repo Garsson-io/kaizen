@@ -118,7 +118,7 @@ export const PROVIDER_CAPABILITIES: readonly ProviderCapability[] = [
   // --- Codex (subscription CLI) — the epic #1134 target ---
   { provider: 'codex', phase: 'planning', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'Codex can plan via `codex exec` under subscription; Claude usually richer.' },
   { provider: 'codex', phase: 'implementation', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'Codex is strong at focused code generation via the CLI.' },
-  { provider: 'codex', phase: 'review', billingMode: 'subscription-cli', fit: 'avoid', acceptedForUnattended: false, rationale: 'Codex can review through the explicit provider path, but unattended auto-dent review remains pinned to Claude until the operator promotes it.' },
+  { provider: 'codex', phase: 'review', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'Codex review runs through the shared spawnAgent/reviewBattery JSONL path and is accepted as a subscription-compatible fallback when Claude review is unavailable.' },
   { provider: 'codex', phase: 'fix', billingMode: 'subscription-cli', fit: 'best', acceptedForUnattended: true, rationale: 'Tight edit/fix iterations suit Codex exec well.' },
   { provider: 'codex', phase: 'reflection', billingMode: 'subscription-cli', fit: 'works', acceptedForUnattended: true, rationale: 'Codex can reflect but kaizen reflection is Claude-tuned.' },
 

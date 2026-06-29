@@ -190,6 +190,7 @@ describe('spawnClaude live-skill metadata', () => {
 
 describe('spawnAgent provider adapter', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.mocked(spawn).mockRestore();
   });
 
@@ -238,6 +239,32 @@ describe('spawnAgent provider adapter', () => {
     expect(result.text).toBe(reviewJson);
     expect(result.exitCode).toBe(-1);
     expect(result.rawStderr).toContain('missing codex terminal event');
+  });
+
+  it('reports provider timeout before Codex terminal-event validation', async () => {
+    vi.useFakeTimers();
+    vi.mocked(spawn).mockImplementation(() => {
+      const proc = new EventEmitter() as any;
+      proc.stdin = { write: vi.fn(), end: vi.fn() };
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      proc.kill = vi.fn(() => {
+        proc.emit('close', null);
+      });
+      return proc;
+    });
+
+    const promise = spawnAgent('review this', {
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      cwd: '/repo/kaizen',
+      timeoutMs: 10,
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await promise;
+
+    expect(result.exitCode).toBe(-1);
+    expect(result.rawStderr).toContain('provider timed out after 10ms');
+    expect(result.rawStderr).not.toContain('missing codex terminal event');
   });
 
   it('fails Codex JSONL when the terminal turn failed after parseable agent text', async () => {

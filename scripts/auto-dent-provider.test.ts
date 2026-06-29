@@ -106,6 +106,13 @@ describe('validateProviderPlan (#1142)', () => {
     expect(result.violations).toEqual([]);
   });
 
+  it('accepts Codex review as a subscription-compatible fallback', () => {
+    const result = validateProviderPlan({ review: 'codex' });
+
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
   it('accepts an empty plan (no phases to violate)', () => {
     expect(validateProviderPlan({}).ok).toBe(true);
   });
@@ -156,7 +163,7 @@ describe('defaultPhaseProviders (#1143)', () => {
 
     expect(claude).toEqual(defaultPhaseProviders());
     expect(codex.implementation).toEqual({ provider: 'codex', billing: 'subscription-cli' });
-    expect(codex.review).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(codex.review).toEqual({ provider: 'codex', billing: 'subscription-cli' });
     expect(codex.validation).toEqual({ provider: 'provider-independent', billing: 'local-only' });
     expect(validateProviderPlan(phaseProviderRecordToProviderPlan(codex)).ok).toBe(true);
   });

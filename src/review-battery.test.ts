@@ -27,12 +27,14 @@ import {
   reviewBriefing,
   validateReviewCoverage,
   renderTemplate,
+  appendPrefetchedReviewContext,
   computeDataOverlap,
   spawnReview,
   reviewBattery,
   spawnBatchReview,
   parseAllReviewOutputs,
   groupByDataNeeds,
+  summarizeReviewProviderFailure,
   parseFrontmatter,
   MAX_FIX_ROUNDS,
   BUDGET_CAP_USD,
@@ -598,6 +600,33 @@ describe('renderTemplate', () => {
   });
 });
 
+describe('appendPrefetchedReviewContext', () => {
+  it('leaves prompts unchanged when no context is available', () => {
+    expect(appendPrefetchedReviewContext('review prompt', {})).toBe('review prompt');
+  });
+
+  it('appends bounded harness-provided issue, PR, diff, and plan context', () => {
+    const prompt = appendPrefetchedReviewContext('review prompt', {
+      plan_text: 'stored plan',
+      issue_body: 'issue body',
+      pr_body: 'pr body',
+      pr_diff_stat: 'diff'.repeat(10_000),
+    });
+
+    expect(prompt).toContain('## Prefetched Review Context');
+    expect(prompt).toContain('Use this harness-provided context as primary evidence');
+    expect(prompt).toContain('### Stored plan');
+    expect(prompt).toContain('stored plan');
+    expect(prompt).toContain('### Issue body');
+    expect(prompt).toContain('issue body');
+    expect(prompt).toContain('### PR body');
+    expect(prompt).toContain('pr body');
+    expect(prompt).toContain('### PR diff/stat');
+    expect(prompt).toContain('[truncated: ');
+    expect(prompt.length).toBeLessThan(37_000);
+  });
+});
+
 // Tier 1: computeDataOverlap
 
 describe('computeDataOverlap', () => {
@@ -655,7 +684,19 @@ describe('spawnReview', () => {
     vi.mocked(spawn).mockRestore();
   });
 
-  function mockClaude(stdout: string, exitCode = 0) {
+  it('bounds provider failure summaries for terminal/state output', () => {
+    const detail = summarizeReviewProviderFailure({
+      provider: { provider: 'claude', billing: 'subscription-cli' },
+      exitCode: 1,
+      text: 'x'.repeat(800),
+    });
+
+    expect(detail).toContain('claude (subscription-cli) exit 1:');
+    expect(detail.length).toBeLessThanOrEqual(535);
+    expect(detail).toMatch(/\.\.\.$/);
+  });
+
+  function mockClaude(stdout: string, exitCode = 0, stderr = '') {
     vi.mocked(spawnSync).mockImplementation((cmd: string) => {
       if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
       return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
@@ -667,6 +708,7 @@ describe('spawnReview', () => {
       proc.stderr = new EventEmitter();
       setImmediate(() => {
         proc.stdout.emit('data', Buffer.from(stdout));
+        if (stderr) proc.stderr.emit('data', Buffer.from(stderr));
         proc.emit('close', exitCode);
       });
       return proc;
@@ -733,6 +775,28 @@ describe('spawnReview', () => {
     const { review, costUsd } = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
     expect(review).toBeNull();
     expect(costUsd).toBe(0);
+  });
+
+  it('surfaces provider diagnostics when Claude exits non-zero', async () => {
+    const quota = 'You have hit your org monthly spend limit';
+    mockClaude(streamJsonPayload(quota, 0), 1);
+
+    const result = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
+
+    expect(result.review).toBeNull();
+    expect(result.failureClass).toBe('claude_review_failed');
+    expect(result.failureDetail).toContain('claude (subscription-cli) exit 1');
+    expect(result.failureDetail).toContain('monthly spend limit');
+  });
+
+  it('surfaces parse failures with a bounded provider output excerpt', async () => {
+    mockClaude(streamJsonPayload('not json at all', 0));
+
+    const result = await spawnReview({ dimension: 'requirements', repo: 'test/test' });
+
+    expect(result.review).toBeNull();
+    expect(result.failureClass).toBe('claude_review_failed');
+    expect(result.failureDetail).toContain('not json at all');
   });
 
   it('returns review when text contains prose with embedded JSON', async () => {
@@ -1010,14 +1074,15 @@ describe('spawnBatchReview', () => {
     vi.mocked(spawn).mockRestore();
   });
 
-  function mockClaudeOnce(stdout: string, exitCode = 0) {
+  function mockClaudeOnce(stdout: string, exitCode = 0): () => string {
+    let prompt = '';
     vi.mocked(spawnSync).mockImplementation((cmd: string) => {
       if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
       return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
     });
     vi.mocked(spawn).mockImplementation(() => {
       const proc = new EventEmitter() as any;
-      proc.stdin = { write: () => {}, end: () => {} };
+      proc.stdin = { write: (chunk: string | Buffer) => { prompt += chunk.toString(); }, end: () => {} };
       proc.stdout = new EventEmitter();
       proc.stderr = new EventEmitter();
       setImmediate(() => {
@@ -1026,6 +1091,7 @@ describe('spawnBatchReview', () => {
       });
       return proc;
     });
+    return () => prompt;
   }
 
   function batchPayload(reviews: Array<{ dim: string; verdict: string; findings: any[] }>, costUsd: number): string {
@@ -1113,6 +1179,30 @@ describe('spawnBatchReview', () => {
     await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });
     expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
   });
+
+  it('appends prefetched context once for a batched review', async () => {
+    const payload = batchPayload([
+      { dim: 'correctness', verdict: 'pass', findings: [] },
+      { dim: 'security', verdict: 'pass', findings: [] },
+    ], 0.10);
+    const getPrompt = mockClaudeOnce(payload);
+
+    await spawnBatchReview({
+      dimensions: ['correctness', 'security'],
+      repo: 'test/test',
+      issueBody: 'issue body',
+      prBody: 'pr body',
+      prDiffStat: 'diff body',
+      planText: 'plan body',
+    });
+
+    const prompt = getPrompt();
+    expect(prompt.match(/## Prefetched Review Context/g)).toHaveLength(1);
+    expect(prompt.match(/### Issue body/g)).toHaveLength(1);
+    expect(prompt.match(/### PR body/g)).toHaveLength(1);
+    expect(prompt.match(/### PR diff\/stat/g)).toHaveLength(1);
+    expect(prompt.match(/### Stored plan/g)).toHaveLength(1);
+  });
 });
 
 // Tier 1: reviewBattery — failedDimensions, skippedDimensions, batching
@@ -1123,7 +1213,7 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     vi.mocked(spawn).mockRestore();
   });
 
-  function mockClaudeSequential(responses: Array<{ stdout: string; exitCode?: number }>) {
+  function mockClaudeSequential(responses: Array<{ stdout: string; exitCode?: number; stderr?: string }>) {
     vi.mocked(spawnSync).mockImplementation((cmd: string) => {
       if (cmd === 'git') return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
       return { status: 0, stdout: '', stderr: '', signal: null, pid: 0, output: [] } as any;
@@ -1138,6 +1228,7 @@ describe('reviewBattery — failure surfacing and skipping', () => {
       proc.stderr = new EventEmitter();
       setImmediate(() => {
         proc.stdout.emit('data', Buffer.from(resp.stdout));
+        if (resp.stderr) proc.stderr.emit('data', Buffer.from(resp.stderr));
         proc.emit('close', resp.exitCode ?? 0);
       });
       return proc;
@@ -1153,6 +1244,27 @@ describe('reviewBattery — failure surfacing and skipping', () => {
     const result = await reviewBattery({ dimensions: ['requirements', 'test-quality'] });
     expect(result.failedDimensions).toContain('test-quality');
     expect(result.failedDimensions).not.toContain('requirements');
+  });
+
+  it('carries failed dimension diagnostics into the aggregate result', async () => {
+    const passingOutput = streamJsonPayload(
+      JSON.stringify({ dimension: 'requirements', summary: 'ok', findings: [{ requirement: 'R', status: 'DONE', detail: '' }] }),
+      0.10,
+    );
+    mockClaudeSequential([
+      { stdout: passingOutput },
+      { stdout: streamJsonPayload('You have hit your org monthly spend limit', 0), exitCode: 1 },
+    ]);
+
+    const result = await reviewBattery({ dimensions: ['requirements', 'test-quality'] });
+
+    expect(result.failedDimensionFailures).toEqual([
+      expect.objectContaining({
+        dimension: 'test-quality',
+        failureClass: 'claude_review_failed',
+        detail: expect.stringContaining('monthly spend limit'),
+      }),
+    ]);
   });
 
   it('failedDimensions is empty when all dims succeed', async () => {

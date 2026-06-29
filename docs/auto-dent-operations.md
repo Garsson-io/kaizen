@@ -233,7 +233,7 @@ are debugging parser behavior.
 
 All logs go to `logs/auto-dent/<batch-id>/`:
 - `state.json` — live batch state (updated after each run)
-- `run-N.log` — raw claude output for run N
+- `run-N.log` — raw provider output and harness diagnostics for run N
 - `batch-summary.txt` — machine-readable summary (written at batch end)
 
 ## Stopping a Batch
