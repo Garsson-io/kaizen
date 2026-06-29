@@ -33,6 +33,17 @@ SETTINGS_PATH = HOOKS_DIR.parent / "settings.json"
 REPO_ROOT = HOOKS_DIR.parent.parent
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+DEFAULT_HOOK_TIMEOUT_SECONDS = 10
+DEFAULT_POST_TOOL_USE_TIMEOUT_SECONDS = _env_int("KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS", 30)
+
+
 def resolve_tsx_bin() -> Optional[str]:
     helper = HOOKS_DIR / "lib" / "resolve-tsx-bin.sh"
     try:
@@ -207,6 +218,21 @@ class MultiHookResult:
         return [r for r in self.results if r.exit_code not in (0, 2)]
 
 
+def assert_post_hook_stdout_contains(result: HookResult, expected: str, context: str) -> None:
+    if result.timed_out:
+        raise AssertionError(
+            f"{context} timed out before emitting {expected!r}. "
+            f"hook={result.name}, exit={result.exit_code}, stderr={result.stderr!r}. "
+            "PostToolUse hooks are advisory and can be slow under fleet load; "
+            "set KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS to adjust the bounded test budget."
+        )
+    assert expected in result.stdout, (
+        f"{context} did not emit {expected!r}. "
+        f"hook={result.name}, exit={result.exit_code}, "
+        f"stdout={result.stdout[:500]!r}, stderr={result.stderr[:500]!r}"
+    )
+
+
 # Main harness
 
 class HookHarness:
@@ -246,8 +272,9 @@ class HookHarness:
         """Set an environment variable override for all hook runs."""
         self.env_overrides[key] = value
 
-    def run_hook(self, hook_name: str, input_data, timeout: int = 10) -> HookResult:
+    def run_hook(self, hook_name: str, input_data, timeout: Optional[float] = None) -> HookResult:
         """Run a single hook with given input."""
+        timeout = timeout if timeout is not None else DEFAULT_HOOK_TIMEOUT_SECONDS
         hook_path = self.hooks_dir / hook_name
         if not hook_path.exists():
             raise FileNotFoundError(f"Hook not found: {hook_path}")
@@ -282,8 +309,14 @@ class HookHarness:
                 timed_out=True,
             )
 
-    def run_all_hooks(self, event: str, tool_name: str, input_data, timeout: int = 10) -> MultiHookResult:
+    def run_post_hook(self, hook_name: str, input_data, timeout: Optional[float] = None) -> HookResult:
+        """Run a PostToolUse hook with the post-hook budget used by fleet-sensitive tests."""
+        timeout = timeout if timeout is not None else DEFAULT_POST_TOOL_USE_TIMEOUT_SECONDS
+        return self.run_hook(hook_name, input_data, timeout=timeout)
+
+    def run_all_hooks(self, event: str, tool_name: str, input_data, timeout: Optional[float] = None) -> MultiHookResult:
         """Run all configured hooks for event+tool (sequentially, unlike Claude Code's parallel)."""
+        timeout = timeout if timeout is not None else DEFAULT_HOOK_TIMEOUT_SECONDS
         hooks = self._get_hooks_for_event(event, tool_name)
         results = []
         for hook_cmd in hooks:
