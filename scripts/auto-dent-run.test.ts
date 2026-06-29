@@ -335,6 +335,7 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
       expect(body).toContain('- **Merged PRs:** 1/2');
       expect(body).toContain('### Durable Attachments');
       expect(body).toContain('- **Machine outcome:** `batch-outcome` on #1226');
+      expect(body).toContain('- **RSI proposals:** `rsi-improvement-proposals` on #1226');
       expect(body).toContain('- **Raw artifacts:** `batch-artifacts` on #1226');
       expect(body).not.toContain('\n**PRs:**');
     });
@@ -364,6 +365,7 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
       expect(body).toContain('- **PRs:** none');
       expect(body).toContain('- **Issues filed:** none');
       expect(body).toContain('- **Issues closed:** none');
+      expect(body).toContain('- **RSI proposals:** `rsi-improvement-proposals` on #1226');
       expect(body).toContain('- **Raw artifacts:** not uploaded for this close path');
     });
 
@@ -462,6 +464,20 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
 
     expect(closeSection).toContain("'progress/batch-complete'");
     expect(closeSection).toContain('writeProgressAttachment');
+  });
+
+  it('stores RSI improvement proposals during batch finalize without blocking close', () => {
+    const closeSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
+    );
+
+    expect(closeSection).toContain('writeRsiImprovementProposalsForBatch(issueNum, kaizenRepo, state, outcome');
+    expect(closeSection).toContain('readBatchOutcomesFromGithub(kaizenRepo, { excludeBatchId: state.batch_id })');
+    expect(closeSection).toContain('priorOutcomes');
+    expect(closeSection).toContain('[intelligence] stored RSI improvement proposals');
+    expect(closeSection).toContain('cross-run ${rsiWrite.crossRunVerdict}');
+    expect(closeSection).toContain('[intelligence] RSI proposal write skipped');
   });
 
   it('wires the formatted batch completion retrospective to the stable attachment key', () => {
@@ -2525,7 +2541,7 @@ describe('e2e: full workflow through stream pipeline', () => {
 
     expect(capture.result.toolCalls).toBe(2);
     expect(capture.result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/500');
-    expect(capture.result.issuesClosed).toContain('#472');
+    expect(capture.result.issuesClosed).toContain('https://github.com/Garsson-io/kaizen/issues/472');
     expect(capture.result.cost).toBe(2.5);
   });
 
@@ -2649,8 +2665,8 @@ describe('e2e: full workflow through stream pipeline', () => {
 
     expect(result.issuesFiled).toContain('https://github.com/Garsson-io/kaizen/issues/700');
     expect(result.prs).toHaveLength(2);
-    expect(result.issuesClosed).toContain('#450');
-    expect(result.issuesClosed).toContain('#451');
+    expect(result.issuesClosed).toContain('https://github.com/Garsson-io/kaizen/issues/450');
+    expect(result.issuesClosed).toContain('https://github.com/Garsson-io/kaizen/issues/451');
   });
 
   it('handles phase with no fields gracefully', () => {

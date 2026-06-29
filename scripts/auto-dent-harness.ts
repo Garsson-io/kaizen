@@ -145,6 +145,8 @@ export const msg = {
 export interface RunStreamOpts {
   /** If true, also print to real console (for debugging) */
   verbose?: boolean;
+  /** Repo used to canonicalize shorthand filed/closed issue refs. */
+  issueRepo?: string;
 }
 
 export function runStream(
@@ -154,6 +156,7 @@ export function runStream(
   const logLines: string[] = [];
   const realLog = console.log;
   const result = makeRunResult();
+  const ctx: StreamContext = { issueRepo: opts.issueRepo ?? 'Garsson-io/kaizen' };
   const start = Date.now();
 
   console.log = (...args: any[]) => {
@@ -164,7 +167,7 @@ export function runStream(
 
   try {
     for (const m of messages) {
-      processStreamMessage(m, result, start);
+      processStreamMessage(m, result, start, ctx);
     }
   } finally {
     console.log = realLog;
@@ -259,7 +262,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
   const logLines: string[] = [];
   const rawMessages: Record<string, any>[] = [];
   const result = makeRunResult();
-  const ctx: StreamContext = { provider };
+  const ctx: StreamContext = { provider, issueRepo: 'Garsson-io/kaizen' };
   const start = Date.now();
   const command = buildLiveProbeCommand({ provider, prompt, cwd, maxBudget, extraArgs });
   let malformedJsonlLines = 0;

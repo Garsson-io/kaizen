@@ -50,7 +50,11 @@ import {
   computeSteeringRecommendations,
   deriveBanditPriorFromOutcomes,
   type BanditPrior,
+  type BatchOutcome,
 } from './batch-outcome.js';
+import {
+  writeRsiImprovementProposalsForBatch,
+} from './auto-dent-rsi.js';
 import {
   isAcceptedSubscriptionCompatibleCapability,
   phaseProvidersForAgentProvider,
@@ -3125,6 +3129,7 @@ export function formatBatchCompletionAttachment(input: FormatBatchCompletionAtta
     '### Durable Attachments',
     '',
     `- **Machine outcome:** \`batch-outcome\` on #${progressIssueNumber}`,
+    `- **RSI proposals:** \`rsi-improvement-proposals\` on #${progressIssueNumber}`,
     `- **Raw artifacts:** ${batchDir ? `\`batch-artifacts\` on #${progressIssueNumber}` : 'not uploaded for this close path'}`,
   );
 
@@ -3201,12 +3206,37 @@ export function closeBatchProgressIssue(
   // batch-outcome attachment BEFORE closing, so future batches can read back what
   // this batch measured instead of starting blind. Best-effort — a failed write
   // must never block batch close (this runs on abnormal exits too).
+  let outcome: ReturnType<typeof buildBatchOutcome> | null = null;
   try {
-    const outcome = buildBatchOutcome(state, batchScore, Math.floor(Date.now() / 1000));
+    outcome = buildBatchOutcome(state, batchScore, Math.floor(Date.now() / 1000));
     writeBatchOutcomeAttachment(issueNum, kaizenRepo, outcome);
     console.log(`  [intelligence] stored batch-outcome attachment on #${issueNum}`);
   } catch (err) {
     console.log(`  [intelligence] batch-outcome write skipped: ${(err as Error).message}`);
+  }
+
+  // Recursive self-improvement (#1158): convert reflection/degradation evidence
+  // into bounded prompt/skill/process proposals with proof requirements and
+  // before/after metrics. Best-effort like batch-outcome; proposal generation
+  // must never block finalization.
+  if (outcome) {
+    let priorOutcomes: BatchOutcome[] = [];
+    try {
+      priorOutcomes = readBatchOutcomesFromGithub(kaizenRepo, { excludeBatchId: state.batch_id });
+    } catch (err) {
+      console.log(`  [intelligence] RSI cross-run metric limited to current batch: ${(err as Error).message}`);
+    }
+    const rsiWrite = writeRsiImprovementProposalsForBatch(issueNum, kaizenRepo, state, outcome, {
+      write: deps.writeAttachment ?? writeAttachment,
+      priorOutcomes,
+    });
+    if (rsiWrite.status === 'written') {
+      console.log(
+        `  [intelligence] stored RSI improvement proposals on #${issueNum} (${rsiWrite.proposalCount} proposal(s), cross-run ${rsiWrite.crossRunVerdict})`,
+      );
+    } else {
+      console.log(`  [intelligence] RSI proposal write skipped: ${rsiWrite.reason}`);
+    }
   }
 
   // Durable RAW artifacts (#696, epic #842): inline the on-disk events.jsonl +
@@ -3396,7 +3426,7 @@ async function runCodex(
     let processExited = false;
     let raw = '';
     const progressCheckpoint = { signature: runProgressCheckpointSignature(input.result) };
-    const ctx: StreamContext = { provider: 'codex' };
+    const ctx: StreamContext = { provider: 'codex', issueRepo: input.state.kaizen_repo };
     const child = spawn('codex', buildCodexExecArgs(input.providerRoot, {
       sandbox: 'workspace-write',
       bypassApprovalsAndSandbox: false,
@@ -3502,7 +3532,7 @@ async function runClaude(
   };
 
   // Claude path: hooks are expected. The init-event check (#843) proves they loaded.
-  const ctx: StreamContext = { provider: 'claude' };
+  const ctx: StreamContext = { provider: 'claude', issueRepo: state.kaizen_repo };
 
   const logDir = dirname(stateFile);
   const modeSelection = selectMode(state, runNum, { logDir });

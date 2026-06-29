@@ -239,6 +239,11 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       rationale: 'Advisory long-horizon quality signal for operators and steering prompts; it does not authorize an irreversible terminal action.',
     },
     {
+      signature: 'scripts/auto-dent-rsi.ts:field:degradation_verdict',
+      label: 'RSI proposal baseline degradation verdict',
+      rationale: 'Metric snapshot copied from BatchOutcome degradation_signal for proposal evaluation; terminal binding is represented by batch-outcome-schema-verdict.',
+    },
+    {
       signature: 'scripts/auto-dent-replay.ts:field:process_verdict',
       label: 'Auto-dent replay process verdict projection',
       rationale: 'Replay-state reporting copy of the process verdict from events.jsonl; terminal binding is represented by process-evidence-verdict.',

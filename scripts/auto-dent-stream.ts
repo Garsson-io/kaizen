@@ -106,13 +106,20 @@ function pushUnique<T>(items: T[], item: T): void {
   if (!items.includes(item)) items.push(item);
 }
 
-function extractIssueRefs(value: string): string[] {
+function canonicalIssueRef(ref: string, repo?: string): string {
+  if (ref.startsWith('https://github.com/')) return ref;
+  const number = ref.match(/^#(\d+)$/)?.[1];
+  if (number && repo) return `https://github.com/${repo}/issues/${number}`;
+  return ref;
+}
+
+function extractIssueRefs(value: string, repo?: string): string[] {
   const refs: string[] = [];
   for (const m of value.matchAll(/#\d+/g)) {
-    pushUnique(refs, m[0]);
+    pushUnique(refs, canonicalIssueRef(m[0], repo));
   }
   for (const m of value.matchAll(/https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+/g)) {
-    pushUnique(refs, m[0]);
+    pushUnique(refs, canonicalIssueRef(m[0], repo));
   }
   return refs;
 }
@@ -140,6 +147,7 @@ export function extractBranchPushUrl(text: string): string | null {
 
 export interface ExtractArtifactOptions {
   allowPrSummary?: boolean;
+  issueRepo?: string;
 }
 
 export function extractArtifacts(
@@ -164,13 +172,13 @@ export function extractArtifacts(
     }
     for (const key of ['issues_filed', 'issues_created']) {
       if (!marker.fields[key]) continue;
-      for (const ref of extractIssueRefs(marker.fields[key])) {
+      for (const ref of extractIssueRefs(marker.fields[key], options.issueRepo)) {
         pushUnique(result.issuesFiled, ref);
       }
     }
     for (const key of ['issues_closed', 'closed']) {
       if (!marker.fields[key]) continue;
-      for (const ref of extractIssueRefs(marker.fields[key])) {
+      for (const ref of extractIssueRefs(marker.fields[key], options.issueRepo)) {
         pushUnique(result.issuesClosed, ref);
       }
     }
@@ -407,6 +415,8 @@ export interface StreamContext {
   lastActivity?: string;
   /** Provider running this session — decides whether hooks are expected (#843). */
   provider?: Provider;
+  /** Repo used to canonicalize shorthand filed/closed issue refs in phase markers. */
+  issueRepo?: string;
   /** Count of system.init events observed in this run (#1501). */
   initEventsSeen?: number;
   /** Hook-activation verdict computed from the session's `system.init` event (#843). */
@@ -566,7 +576,7 @@ export function ingestRunText(
   ctx?: StreamContext,
   opts: { control?: boolean; allowPrSummary?: boolean } = {},
 ): void {
-  extractArtifacts(text, result, { allowPrSummary: opts.allowPrSummary });
+  extractArtifacts(text, result, { allowPrSummary: opts.allowPrSummary, issueRepo: ctx?.issueRepo });
   emitPhaseMarkers(text, elapsed, ctx);
   const pushUrl = extractBranchPushUrl(text);
   if (pushUrl) {

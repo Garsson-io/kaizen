@@ -265,6 +265,28 @@ describe('synthetic: DECOMPOSE phase marker', () => {
 
     expect(phaseCount(capture, 'DECOMPOSE')).toBe(1);
     expectPhase(capture, 'DECOMPOSE');
+    expect(capture.result.issuesFiled).toEqual([
+      'https://github.com/Garsson-io/kaizen/issues/560',
+      'https://github.com/Garsson-io/kaizen/issues/561',
+      'https://github.com/Garsson-io/kaizen/issues/562',
+    ]);
+  });
+
+  it('canonicalizes shorthand filed issue refs without changing the picked issue display ref', () => {
+    const capture = runStream([
+      msg.init(),
+      msg.phase('PICK', { issue: '#506', title: 'experimentation framework' }),
+      msg.phase('DECOMPOSE', { epic: '#506', issues_created: '#560,#561' }),
+      msg.phase('REFLECT', { issues_filed: '#562' }),
+      msg.done(1.5),
+    ], { issueRepo: 'Garsson-io/kaizen' });
+
+    expect(capture.result.pickedIssue).toBe('#506');
+    expect(capture.result.issuesFiled).toEqual([
+      'https://github.com/Garsson-io/kaizen/issues/560',
+      'https://github.com/Garsson-io/kaizen/issues/561',
+      'https://github.com/Garsson-io/kaizen/issues/562',
+    ]);
   });
 
   it('DECOMPOSE phase coexists with other phases in a full flow', () => {
