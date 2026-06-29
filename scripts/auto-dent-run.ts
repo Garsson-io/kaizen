@@ -1422,6 +1422,23 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
   };
 }
 
+export function applyContextDelegationAnalysis(
+  result: RunResult,
+  logText: string,
+  appendDiagnostic: (line: string) => void = () => {},
+): ContextDelegationAnalysis {
+  const analysis = analyzeContextDelegation(logText);
+  const automaticContextDelegationStep = buildAutomaticContextDelegationStep(analysis);
+  if (automaticContextDelegationStep) {
+    upsertContextDelegationProgressStep(result, automaticContextDelegationStep);
+    appendDiagnostic(`context_delegation_evidence=${automaticContextDelegationStep.detail}\n`);
+  }
+  if (analysis.pressure.required) {
+    appendDiagnostic(`context_delegation_pressure=${analysis.pressure.reasons.join('; ')}\n`);
+  }
+  return analysis;
+}
+
 function processCheckState(status: ProcessValidation['checks'][number]['status']): WorkflowGateState {
   switch (status) {
     case 'pass':
@@ -3359,15 +3376,11 @@ async function main(): Promise<void> {
   let contextDelegationAnalysis: ContextDelegationAnalysis | undefined;
   try {
     const lifecycle = validateRunLifecycle(logFile);
-    contextDelegationAnalysis = analyzeContextDelegation(readFileSync(logFile, 'utf8'));
-    const automaticContextDelegationStep = buildAutomaticContextDelegationStep(contextDelegationAnalysis);
-    if (automaticContextDelegationStep) {
-      upsertContextDelegationProgressStep(result, automaticContextDelegationStep);
-      appendFileSync(logFile, `context_delegation_evidence=${automaticContextDelegationStep.detail}\n`);
-    }
-    if (contextDelegationAnalysis.pressure.required) {
-      appendFileSync(logFile, `context_delegation_pressure=${contextDelegationAnalysis.pressure.reasons.join('; ')}\n`);
-    }
+    contextDelegationAnalysis = applyContextDelegationAnalysis(
+      result,
+      readFileSync(logFile, 'utf8'),
+      (line) => appendFileSync(logFile, line),
+    );
 
     // External evidence cross-check (#1138, epic #1134): the markers above are
     // the agent's self-report; here we judge them against the outcomes the

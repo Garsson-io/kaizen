@@ -72,7 +72,7 @@ Key variables: `{{guidance}}`, `{{run_tag}}`, `{{run_context}}`, `{{issues_close
 
 `{{goal_forcing_contract}}` comes from `scripts/kaizen-workflow-driver.ts`. It is the headless equivalent of `/goal`: a run should not finish while applicable kaizen gates remain pending. Keep lifecycle gate wording there instead of copying checklists into individual prompt templates.
 
-Context-heavy work is delegated by default through that same contract. Auto-dent tells the worker to fan out broad code search, multi-file summarization, independent investigations, review dimensions, and related-area DRY/dead-code sweeps before continuing implementation. `scripts/auto-dent-context-delegation.ts` then mines the run log for context pressure (`context_growth`, `missing_subagent`, high main-thread discovery/tool-call volume) and observed subagent tool use. Observed delegation becomes a `DELEGATE` progress row; threshold-crossing PR runs without delegation repair the existing `context-delegation` gate.
+Context-heavy work is delegated by default through that same contract. The exact fan-out policy is rendered by `renderContextDelegationPolicy()` from `DEFAULT_CONTEXT_DELEGATION_SUBSTEPS` in `scripts/auto-dent-context-delegation.ts`; keep the sub-step list there. The same helper mines run logs for context pressure (`context_growth`, `missing_subagent`, high main-thread discovery/tool-call volume) and observed subagent tool use. Observed delegation becomes a `DELEGATE` progress row; threshold-crossing PR runs without delegation repair the existing `context-delegation` gate.
 
 Status for a run or issue uses the same shared model:
 

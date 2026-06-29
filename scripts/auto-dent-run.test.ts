@@ -60,6 +60,7 @@ import {
   populateCrossBatchSteering,
   shouldRunCodexProvider,
   attachRunTranscripts,
+  applyContextDelegationAnalysis,
 } from './auto-dent-run.js';
 import {
   resolveProviderWorkspaceRoot,
@@ -4813,18 +4814,29 @@ describe('context-delegation evidence wiring (#1509)', () => {
     expect(helperIndex).toBeLessThan(validationIndex);
   });
 
-  it('analyzes run context pressure before process validation and run telemetry', () => {
-    const analysisIndex = AUTO_DENT_RUN_SOURCE.indexOf('analyzeContextDelegation(readFileSync(logFile');
-    const automaticStepIndex = AUTO_DENT_RUN_SOURCE.indexOf('buildAutomaticContextDelegationStep(contextDelegationAnalysis)');
-    const pressureReasonsIndex = AUTO_DENT_RUN_SOURCE.indexOf('contextDelegationPressureReasons: contextDelegationAnalysis.pressure.reasons');
-    const validationIndex = AUTO_DENT_RUN_SOURCE.indexOf('validateProcessEvidence(lifecycle, processEvidence)');
-    const eventIndex = AUTO_DENT_RUN_SOURCE.lastIndexOf('contextDelegationAnalysis,');
+  it('applies run context analysis as progress evidence and diagnostics', () => {
+    const result = makeRunResult({
+      progressSteps: [
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+      ],
+    });
+    const diagnostics: string[] = [];
+    const row = (name: string, input: Record<string, unknown>) => JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name, input }] },
+    });
+    const logText = [
+      row('Agent', { description: 'Fan out broad code search', subagent_type: 'explorer' }),
+      ...Array.from({ length: 12 }, () => row('Read', { file_path: 'src/auto-dent-run.ts' })),
+    ].join('\n');
 
-    expect(analysisIndex).toBeGreaterThanOrEqual(0);
-    expect(automaticStepIndex).toBeGreaterThan(analysisIndex);
-    expect(pressureReasonsIndex).toBeGreaterThan(automaticStepIndex);
-    expect(pressureReasonsIndex).toBeLessThan(validationIndex);
-    expect(eventIndex).toBeGreaterThan(validationIndex);
+    const analysis = applyContextDelegationAnalysis(result, logText, (line) => diagnostics.push(line));
+
+    expect(analysis.pressure.required).toBe(true);
+    expect(analysis.delegation.observed).toBe(true);
+    expect(result.progressSteps?.map((step) => step.phase)).toEqual(['DELEGATE', 'IMPLEMENT']);
+    expect(diagnostics.join('')).toContain('context_delegation_evidence=delegated Fan out broad code search');
+    expect(diagnostics.join('')).toContain('context_delegation_pressure=');
   });
 });
 

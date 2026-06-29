@@ -89,6 +89,50 @@ describe('auto-dent context delegation pressure', () => {
     });
   });
 
+  it('stays quiet for empty, malformed, and below-threshold logs', () => {
+    const analysis = analyzeContextDelegation(logWith([
+      'not-json',
+      ...Array.from({ length: 9 }, (_, i) => toolUse('Read', { file_path: `src/file-${i}.ts` })),
+      toolUse('Bash', { command: 'git status --short' }),
+      toolUse('Bash', { command: 'git diff --check' }),
+    ]));
+
+    expect(analysis.pressure.required).toBe(false);
+    expect(analysis.pressure.mainThreadToolCalls).toBe(11);
+    expect(analysis.pressure.discoveryToolCalls).toBe(9);
+    expect(analysis.delegation.observed).toBe(false);
+    expect(buildAutomaticContextDelegationStep(analysis)).toBeUndefined();
+  });
+
+  it('ignores delegation tools after implementation has started', () => {
+    for (const log of [
+      logWith([
+        assistantText('AUTO_DENT_PHASE: IMPLEMENT | case=case-1'),
+        toolUse('Agent', { description: 'late search', subagent_type: 'explorer' }),
+      ]),
+      logWith([
+        toolUse('Edit', { file_path: 'src/file.ts', old_string: 'a', new_string: 'b' }),
+        toolUse('TaskCreate', { subject: 'late task' }),
+      ]),
+    ]) {
+      const analysis = analyzeContextDelegation(log);
+      expect(analysis.delegation.observed).toBe(false);
+      expect(buildAutomaticContextDelegationStep(analysis)).toBeUndefined();
+    }
+  });
+
+  it('records TaskCreate delegation using subject or prompt fallback evidence', () => {
+    const subjectStep = buildAutomaticContextDelegationStep(analyzeContextDelegation(logWith([
+      toolUse('TaskCreate', { subject: 'Review dimensions in parallel' }),
+    ])));
+    const promptStep = buildAutomaticContextDelegationStep(analyzeContextDelegation(logWith([
+      toolUse('TaskCreate', { prompt: 'Summarize five files without loading them into the orchestrator' }),
+    ])));
+
+    expect(subjectStep?.detail).toContain('Review dimensions in parallel');
+    expect(promptStep?.detail).toContain('Summarize five files');
+  });
+
   it('demonstrates the synthetic before/after bounded main-thread tool volume', () => {
     const before = analyzeContextDelegation(logWith([
       ...Array.from({ length: 8 }, (_, i) => toolUse('Read', { file_path: `src/file-${i}.ts` })),

@@ -3,6 +3,7 @@ import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { resolve } from 'node:path';
 
 import { resolveTsxBin } from '../src/e2e/test-runtime.js';
+import { DEFAULT_CONTEXT_DELEGATION_SUBSTEPS } from './auto-dent-context-delegation.js';
 import {
   FULL_KAIZEN_GATE_LABELS,
   buildManualGoalDirective,
@@ -49,10 +50,9 @@ describe('kaizen workflow forcing driver', () => {
     expect(directive).toContain('related-area DRY/refactor pass');
     expect(directive).toContain('reduce competing mechanisms, schemas, and drift');
     expect(directive).toContain('delegate context-heavy sub-work');
-    expect(directive).toContain('fan out broad code search');
-    expect(directive).toContain('multi-file summarization');
-    expect(directive).toContain('review dimensions');
-    expect(directive).toContain('DRY/dead-code sweeps');
+    for (const substep of DEFAULT_CONTEXT_DELEGATION_SUBSTEPS) {
+      expect(directive).toContain(substep);
+    }
     expect(directive).toContain('record context-delegation evidence');
     expect(directive).toContain('meet reality');
     expect(directive).toContain('observe outputs and side effects');
@@ -67,10 +67,9 @@ describe('kaizen workflow forcing driver', () => {
     expect(contract).toContain('review/requirements/impact gates');
     expect(contract).toContain('related-area DRY/refactor pass');
     expect(contract).toContain('delegate context-heavy sub-work');
-    expect(contract).toContain('fan out broad code search');
-    expect(contract).toContain('multi-file summarization');
-    expect(contract).toContain('review dimensions');
-    expect(contract).toContain('DRY/dead-code sweeps');
+    for (const substep of DEFAULT_CONTEXT_DELEGATION_SUBSTEPS) {
+      expect(contract).toContain(substep);
+    }
     expect(contract).toContain('before continuing implementation');
     expect(contract).toContain('context-delegation evidence');
     expect(contract).toContain('AUTO_DENT_PHASE: DELEGATE | status=not-applicable | evidence=<why>');

@@ -67,9 +67,15 @@ const DISCOVERY_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 const IMPLEMENTATION_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'EnterWorktree']);
 const DELEGATION_TOOLS = new Set(['Agent', 'TaskCreate']);
 
+function formatSubstepList(substeps: readonly string[]): string {
+  if (substeps.length <= 1) return substeps.join('');
+  return `${substeps.slice(0, -1).join(', ')}, and ${substeps[substeps.length - 1]}`;
+}
+
 export function renderContextDelegationPolicy(): string {
+  const substeps = formatSubstepList(DEFAULT_CONTEXT_DELEGATION_SUBSTEPS);
   return [
-    'For broad/context-heavy work, fan out broad code search, multi-file summarization, independent investigations, review dimensions, and related-area DRY/dead-code sweeps to subagents before continuing implementation.',
+    `For broad/context-heavy work, fan out ${substeps} to subagents before continuing implementation.`,
     'Emit AUTO_DENT_PHASE: DELEGATE | status=done | evidence=<what was delegated> when those sub-steps are delegated; emit status=not-applicable only for genuinely narrow work.',
   ].join(' ');
 }
