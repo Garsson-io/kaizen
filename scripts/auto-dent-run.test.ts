@@ -54,6 +54,8 @@ import {
   findExistingProgressIssue,
   ensureBatchProgressIssue,
   updateBatchProgressIssue,
+  extractModeOutput,
+  postModeOutputToProgressIssue,
   extractPlanText,
   populateCrossBatchSteering,
   shouldRunCodexProvider,
@@ -4477,6 +4479,179 @@ describe('updateBatchProgressIssue', () => {
     expect(body).toContain('| CLEANUP | not observed | - | - |');
     expect(body.indexOf('| PICK |')).toBeLessThan(body.indexOf('| REVIEW |'));
     expect(body.indexOf('| REVIEW |')).toBeLessThan(body.indexOf('| STOP |'));
+  });
+});
+
+describe('mode-output progress fallback (#702)', () => {
+  const exploreLog = [
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"Candidate analysis\\n\\n- #10 duplicate of #9\\n- File #11 for missing fallback"}]}}',
+    '',
+    '--- auto-dent metadata ---',
+    'exit_code=0',
+  ].join('\n');
+
+  it('extracts assistant analysis text from a completed stream log without metadata noise', () => {
+    const output = extractModeOutput(exploreLog);
+
+    expect(output).toContain('Candidate analysis');
+    expect(output).toContain('File #11 for missing fallback');
+    expect(output).not.toContain('auto-dent metadata');
+  });
+
+  it('posts harness-owned explore output to the progress issue', () => {
+    const commands: string[][] = [];
+
+    postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'explore',
+      runNum: 3,
+      logFile: '/logs/run-3.log',
+      readLog: () => exploreLog,
+      gh: (args) => {
+        commands.push(args);
+        return 'https://github.com/Garsson-io/kaizen/issues/7020#issuecomment-1';
+      },
+      log: () => {},
+    });
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0].slice(0, 5)).toEqual(['issue', 'comment', '7020', '--repo', 'Garsson-io/kaizen']);
+    const body = commands[0][commands[0].indexOf('--body') + 1];
+    expect(body).toContain('### explore run #3 — analysis fallback');
+    expect(body).toContain('Candidate analysis');
+    expect(body).toContain('File #11 for missing fallback');
+  });
+
+  it('posts reflect output from codex final text blocks', () => {
+    const commands: string[][] = [];
+    const reflectLog = [
+      '[provider] codex subscription-cli',
+      '--- codex final text ---',
+      'REFLECTION_INSIGHT: progress issue fallback is missing',
+      '',
+      'Detailed reflection body.',
+      '--- codex lifecycle markers ---',
+      'AUTO_DENT_PHASE: REFLECT | issues_filed=1',
+    ].join('\n');
+
+    postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'reflect',
+      runNum: 4,
+      logFile: '/logs/run-4.log',
+      readLog: () => reflectLog,
+      gh: (args) => {
+        commands.push(args);
+        return '';
+      },
+      log: () => {},
+    });
+
+    const body = commands[0][commands[0].indexOf('--body') + 1];
+    expect(body).toContain('### reflect run #4 — analysis fallback');
+    expect(body).toContain('REFLECTION_INSIGHT: progress issue fallback is missing');
+    expect(body).toContain('Detailed reflection body.');
+    expect(body).not.toContain('codex lifecycle markers');
+  });
+
+  it('does not post for exploit mode', () => {
+    const commands: string[][] = [];
+
+    postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'exploit',
+      runNum: 5,
+      logFile: '/logs/run-5.log',
+      readLog: () => exploreLog,
+      gh: (args) => {
+        commands.push(args);
+        return '';
+      },
+      log: () => {},
+    });
+
+    expect(commands).toHaveLength(0);
+  });
+
+  it('deduplicates contemplate when the agent already posted to the progress issue', () => {
+    const commands: string[][] = [];
+    const logs: string[] = [];
+
+    postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'contemplate',
+      runNum: 6,
+      logFile: '/logs/run-6.log',
+      readLog: () => 'Strategic output\nReflection complete (posted to progress issue).',
+      gh: (args) => {
+        commands.push(args);
+        return '';
+      },
+      log: (msg) => logs.push(msg),
+    });
+
+    expect(commands).toHaveLength(0);
+    expect(logs.some((msg) => msg.includes('already posted'))).toBe(true);
+  });
+
+  it('fails open when the log cannot be read', () => {
+    const commands: string[][] = [];
+    const logs: string[] = [];
+
+    expect(() => postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'reflect',
+      runNum: 7,
+      logFile: '/logs/missing.log',
+      readLog: () => { throw new Error('ENOENT'); },
+      gh: (args) => {
+        commands.push(args);
+        return '';
+      },
+      log: (msg) => logs.push(msg),
+    })).not.toThrow();
+
+    expect(commands).toHaveLength(0);
+    expect(logs.some((msg) => msg.includes('skipped'))).toBe(true);
+  });
+
+  it('fails open without a progress issue or repository', () => {
+    const commands: string[][] = [];
+    const logs: string[] = [];
+
+    postModeOutputToProgressIssue({
+      progressIssue: '',
+      repo: '',
+      mode: 'reflect',
+      runNum: 8,
+      logFile: '/logs/run-8.log',
+      readLog: () => exploreLog,
+      gh: (args) => {
+        commands.push(args);
+        return '';
+      },
+      log: (msg) => logs.push(msg),
+    });
+
+    expect(commands).toHaveLength(0);
+    expect(logs.some((msg) => msg.includes('no progress issue'))).toBe(true);
+  });
+
+  it('wires the fallback immediately after run metadata and before review/metrics updates', () => {
+    const metadataIndex = AUTO_DENT_RUN_SOURCE.indexOf("'--- auto-dent metadata ---'");
+    const fallbackIndex = AUTO_DENT_RUN_SOURCE.indexOf('postModeOutputToProgressIssue({');
+    const reviewIndex = AUTO_DENT_RUN_SOURCE.indexOf('runReviewWiring(', fallbackIndex);
+    const metricsIndex = AUTO_DENT_RUN_SOURCE.indexOf('updateBatchProgressIssue(', fallbackIndex);
+
+    expect(metadataIndex).toBeGreaterThan(-1);
+    expect(fallbackIndex).toBeGreaterThan(metadataIndex);
+    expect(reviewIndex).toBeGreaterThan(fallbackIndex);
+    expect(metricsIndex).toBeGreaterThan(fallbackIndex);
   });
 });
 

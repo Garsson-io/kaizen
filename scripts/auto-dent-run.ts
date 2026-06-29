@@ -65,6 +65,7 @@ import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
 import { hasHardQualityFailure } from '../src/verdict-binding-policy.js';
 import { extractPlanText } from '../src/structured-data.js';
+import { gh } from '../src/lib/gh-exec.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -2778,6 +2779,109 @@ export function attachRunTranscripts(input: {
   }
 }
 
+const MODE_OUTPUT_FALLBACK_MODES = new Set(['explore', 'reflect', 'contemplate']);
+const MODE_OUTPUT_MAX_CHARS = 12_000;
+
+function cleanModeOutput(text: string): string {
+  return truncateAtWordBoundary(
+    text
+      .replace(/\n--- auto-dent metadata ---[\s\S]*$/m, '')
+      .replace(/\n--- codex lifecycle markers ---[\s\S]*$/m, '')
+      .trim(),
+    MODE_OUTPUT_MAX_CHARS,
+  );
+}
+
+function extractCodexFinalText(logText: string): string {
+  const marker = '--- codex final text ---';
+  const start = logText.indexOf(marker);
+  if (start < 0) return '';
+  return cleanModeOutput(logText.slice(start + marker.length));
+}
+
+function extractAssistantTextFromStream(logText: string): string {
+  const chunks: string[] = [];
+  for (const line of logText.split(/\r?\n/)) {
+    const msg = parseJsonObject(line);
+    if (!msg || msg.type !== 'assistant' || !Array.isArray(msg.message?.content)) continue;
+    for (const block of msg.message.content) {
+      if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+        chunks.push(block.text.trim());
+      }
+    }
+  }
+  return cleanModeOutput(chunks.join('\n\n'));
+}
+
+export function extractModeOutput(logText: string): string {
+  return extractCodexFinalText(logText) || extractAssistantTextFromStream(logText);
+}
+
+function contemplateAlreadyPosted(logText: string): boolean {
+  return /\bposted to (?:the )?progress issue\b/i.test(logText)
+    || /\bprogress issue\b[\s\S]{0,120}\bposted\b/i.test(logText);
+}
+
+export function postModeOutputToProgressIssue(input: {
+  progressIssue: string;
+  repo: string;
+  mode: string;
+  runNum: number;
+  logFile: string;
+  readLog?: (path: string) => string;
+  gh?: (args: string[]) => string;
+  log?: (msg: string) => void;
+}): void {
+  if (!MODE_OUTPUT_FALLBACK_MODES.has(input.mode)) return;
+
+  const log = input.log ?? ((m) => console.log(m));
+  if (!input.progressIssue || !input.repo) {
+    log(`  [hygiene] ${input.mode} output fallback skipped: no progress issue`);
+    return;
+  }
+
+  const issueNum = input.progressIssue.match(/issues\/(\d+)/)?.[1];
+  if (!issueNum) {
+    log(`  [hygiene] ${input.mode} output fallback skipped: invalid progress issue`);
+    return;
+  }
+
+  const readLog = input.readLog ?? ((p) => readFileSync(p, 'utf8'));
+  let logText = '';
+  try {
+    logText = readLog(input.logFile);
+  } catch (err) {
+    log(`  [hygiene] ${input.mode} output fallback skipped: ${(err as Error).message}`);
+    return;
+  }
+
+  if (input.mode === 'contemplate' && contemplateAlreadyPosted(logText)) {
+    log(`  [hygiene] contemplate output fallback skipped: already posted to progress issue`);
+    return;
+  }
+
+  const output = extractModeOutput(logText);
+  if (!output) {
+    log(`  [hygiene] ${input.mode} output fallback skipped: no analysis text found`);
+    return;
+  }
+
+  const body = [
+    `### ${input.mode} run #${input.runNum} — analysis fallback`,
+    '',
+    `_Harness-posted from \`${input.logFile}\` so non-exploit analysis is durable even if the agent did not post it._`,
+    '',
+    output,
+  ].join('\n');
+  const runGh = input.gh ?? ((args) => gh(args));
+  try {
+    const url = runGh(['issue', 'comment', issueNum, '--repo', input.repo, '--body', body]);
+    log(`  [hygiene] posted ${input.mode} output fallback to progress issue${url ? `: ${url}` : ''}`);
+  } catch (err) {
+    log(`  [hygiene] ${input.mode} output fallback skipped: ${(err as Error).message}`);
+  }
+}
+
 function printRunSummary(
   runNum: number,
   exitCode: number,
@@ -3124,6 +3228,15 @@ async function main(): Promise<void> {
       '',
     ].join('\n'),
   );
+
+  const progressIssue = ensureBatchProgressIssue(state, stateFile);
+  postModeOutputToProgressIssue({
+    progressIssue,
+    repo: state.kaizen_repo,
+    mode: runMode,
+    runNum,
+    logFile,
+  });
 
   // Emit per-artifact events from stream results (#647)
   let pickedIssue = '';
@@ -3521,7 +3634,6 @@ async function main(): Promise<void> {
   }
 
   // Post-run hygiene
-  const progressIssue = ensureBatchProgressIssue(state, stateFile);
   labelArtifacts(result, 'auto-dent');
   const runLog = existsSync(logFile) ? readFileSync(logFile, 'utf8') : undefined;
   const testHealth = deriveRunTestHealth({ runLog });
