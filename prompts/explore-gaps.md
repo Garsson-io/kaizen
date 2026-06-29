@@ -45,8 +45,8 @@ Rotate through these focus areas based on run number ({{run_num}} mod 6):
 | 5 | "Recursive self-improvement" — LessWrong, alignment forum, research papers |
 
 Use WebSearch to find 2-3 relevant repos or articles for your assigned topic.
-For each discovery: assess relevance to kaizen. If high-relevance, file an issue
-with labels `source:ecosystem-research` and `kaizen`.
+For each discovery: assess relevance to kaizen. If high-relevance, put it
+through the Search-before-file gate below before filing or commenting.
 
 ## Exploration Tasks
 
@@ -67,10 +67,53 @@ Pick the highest-value exploration from this list:
 
 ## Output
 
+### Required artifact
+
+Write a durable candidate-task manifest to:
+
+`{{candidate_manifest_path}}`
+
+This file is required even if you also file GitHub issues. It is the scouting
+artifact the next exploit/subtract run can consume. Use this JSON shape:
+
+```json
+{{candidate_manifest_schema}}
+```
+
+Rules:
+- Include every promising candidate you discovered, including candidates you did
+  not file as issues.
+- Use `suggested_mode` to describe how the next run should approach the candidate.
+- Fill `dedup` for every candidate. A candidate without `dedup.query`,
+  `dedup.matches`, `dedup.decision`, and `dedup.reason` is incomplete scouting.
+- If no candidates exist, write `"candidates": []` and explain why in the run
+  summary.
+- A run that only files issues but writes no manifest is incomplete scouting.
+
+### Search-before-file gate
+
+Before filing any issue, run a targeted duplicate search using
+`gh issue list --search` or `gh search issues`. Record the exact query and
+relevant matches in the candidate's `dedup` object.
+
+Use exactly one dedup decision per candidate:
+- `file_new` - no strong existing match; file a new issue.
+- `comment_existing` - a strong match exists; comment on the existing issue
+  with the new evidence instead of filing a duplicate.
+- `candidate_only` - promising but not worth filing or commenting yet; keep it
+  in the manifest for future planning.
+
+At most 2 candidates may use `file_new` in one explore run. Prioritize the two
+highest-value genuinely new gaps. Extra discoveries should be `comment_existing`
+or `candidate_only`.
+
 For each discovery:
-1. File a GitHub issue in {{kaizen_repo}} with clear title and context
-2. Label it `source:auto-dent-explore` and `kaizen`
-3. Reference this exploration run in the issue body
+1. Search first and record the `dedup` decision in the manifest.
+2. If `decision=file_new`, file a GitHub issue in {{kaizen_repo}} with clear
+   title and context, label it `source:auto-dent-explore` and `kaizen`, and
+   reference this exploration run in the issue body.
+3. If `decision=comment_existing`, add the new evidence to the existing issue
+   and do not file a duplicate.
 
 Post a summary of all discoveries to the batch progress issue.
 

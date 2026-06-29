@@ -27,7 +27,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { DEFAULT_STATE_DIR, ensureStateDir, prUrlToStateKey, readStateFile, writeStateFile } from './state-utils.js';
+import { DEFAULT_STATE_DIR, prUrlToStateKey, readStateFile, writeStateFile } from './state-utils.js';
 import { currentHookBranch } from './lib/current-branch.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
@@ -307,7 +307,6 @@ export function applyDecision(
   if (!decision.gateSignal?.pr) return;
 
   const stateDir = options.stateDir ?? DEFAULT_STATE_DIR;
-  ensureStateDir(stateDir);
   const filename = prUrlToStateKey(decision.gateSignal.pr);
   const filepath = join(stateDir, filename);
 

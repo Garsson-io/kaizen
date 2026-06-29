@@ -191,6 +191,18 @@ describe("Part 2: All hooks are registered and executable", () => {
     expect(matchers).toContain("Agent");
   });
 
+  it("PostToolUse observes Agent reviewers for the PR review loop", () => {
+    const agentEntry = (pluginJson.hooks.PostToolUse as any[]).find(
+      (e: any) => e.matcher === "Agent",
+    );
+    expect(agentEntry).toBeDefined();
+    expect(
+      agentEntry.hooks.some((hook: any) =>
+        String(hook.command ?? "").endsWith("/.claude/hooks/pr-review-loop-ts.sh"),
+      ),
+    ).toBe(true);
+  });
+
   // Reverse check: every .sh hook file on disk must be registered in plugin.json
   const registeredFilenames = new Set(
     allHookCommands.map((cmd) => cmd.split("/").pop()!),

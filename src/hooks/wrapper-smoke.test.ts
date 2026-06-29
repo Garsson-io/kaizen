@@ -17,6 +17,9 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 const HOOKS_DIR = path.resolve(__dirname, '../../.claude/hooks');
+const GIT_PRE_PUSH = path.resolve(__dirname, '../../.githooks/pre-push');
+const HOOKS_DESIGN = path.resolve(__dirname, '../../docs/hooks-design.md');
+const TRUSTED_DEFAULT_STATE_DIR_ENV = 'KAIZEN_TRUST_DEFAULT_STATE_DIR';
 
 interface SmokeContext {
   tmpDir: string;
@@ -148,6 +151,27 @@ describe('wrapper smoke: bash wrappers exist and are executable', () => {
       expect(stats.mode & 0o100).toBeGreaterThan(0);
     });
   }
+});
+
+describe('wrapper smoke: default state trust boundary', () => {
+  it('marks Claude TS hook trampolines as trusted default-state writers (#1072)', () => {
+    const source = fs.readFileSync(path.join(HOOKS_DIR, 'lib/run-tsx.sh'), 'utf-8');
+
+    expect(source).toContain(`export ${TRUSTED_DEFAULT_STATE_DIR_ENV}=1`);
+  });
+
+  it('marks the git pre-push wrapper as a trusted default-state writer (#1072)', () => {
+    const source = fs.readFileSync(GIT_PRE_PUSH, 'utf-8');
+
+    expect(source).toContain(`export ${TRUSTED_DEFAULT_STATE_DIR_ENV}=1`);
+  });
+
+  it('documents isolated STATE_DIR for direct hook smoke tests (#1072)', () => {
+    const source = fs.readFileSync(HOOKS_DESIGN, 'utf-8');
+
+    expect(source).toContain('STATE_DIR=$(mktemp -d)');
+    expect(source).toContain(TRUSTED_DEFAULT_STATE_DIR_ENV);
+  });
 });
 
 describe('wrapper smoke: pr-review-loop-ts.sh', () => {

@@ -8,7 +8,7 @@
  *                 full dimension coverage check tracked in #1038).
  *                 Canonical: docs/kaizen-invariants.md.
  *
- * PostToolUse hook on Bash — always exits 0 (advisory, not blocking).
+ * PostToolUse hook on Bash and Agent — always exits 0 (advisory, not blocking).
  *
  * Triggers:
  *   1. gh pr create  — starts review loop (round 1)
@@ -34,6 +34,7 @@ import { type HookInput, readHookInput, traceHookEvent, writeHookOutput } from '
 import { currentHookBranch } from './lib/current-branch.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
+import { postMergeWorkflowVerificationLines, safeMainSyncCommand } from './lib/post-merge-workflows.js';
 import {
   isGhPrCommand,
   isGitCommand,
@@ -171,10 +172,10 @@ function printChecklist(
   maxRounds: number,
 ): string {
   return `
-Use the /review-pr skill for the full checklist. Run \`/review-pr ${prUrl}\` now.
+Use the /kaizen-review-pr skill for the full checklist. Run \`/kaizen-review-pr ${prUrl}\` now.
 
 PROCESS:
-1. Run \`/review-pr ${prUrl}\`
+1. Run \`/kaizen-review-pr ${prUrl}\`
 2. Walk through EVERY section
 3. If issues found: fix, commit, push
 4. If clean: state "REVIEW PASSED (round ${round}/${maxRounds})"
@@ -209,6 +210,14 @@ function reviewSentinelFailure(
     reason: result.reason === 'missing_sentinel' ? 'no_review_sentinel' : 'invalid_review_sentinel',
     message: `\n\ud83d\udccb REVIEW ROUND ${round}/${MAX_ROUNDS}\n${printChecklist(prUrl, round, MAX_ROUNDS)}\n\u26a0\ufe0f invalid review sentinel: no valid review sentinel stored for round ${round} (${result.reason}). Run \`/kaizen-review-pr ${prUrl}\` to spawn dimension agents.\n`,
   };
+}
+
+function reviewAgentFailure(prUrl: string, round: string): string {
+  return `\n\ud83d\udccb REVIEW ROUND ${round}/${MAX_ROUNDS}\n\u26a0\ufe0f review sentinel exists, but this round has no observed Agent reviewer activity.\nRun \`/kaizen-review-pr ${prUrl}\` so dimension agents review the diff, then store findings and re-run \`gh pr diff ${prUrl}\`.\nManual checklists or direct review-summary storage do not satisfy this gate.\n`;
+}
+
+function hasReviewAgentEvidence(state: Record<string, string | undefined>, round: string): boolean {
+  return state.REVIEW_AGENT_ROUND === round && !!state.REVIEW_AGENT_OBSERVED_AT;
 }
 
 /**
@@ -310,6 +319,25 @@ export function processHookInput(
 
   ensureStateDir(stateDir);
 
+  if (input.tool_name === 'Agent') {
+    const found = findStateByStatuses(['needs_review'], branch, stateDir);
+    if (!found || !isValidPrUrl(found.prUrl)) {
+      return decide('ignore', 'no_pending_review_for_agent', null, { branch, hasState: !!found });
+    }
+
+    const state = readStateFile(found.filepath) as Record<string, string | undefined>;
+    writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {
+      ...state,
+      PR_URL: found.prUrl,
+      STATUS: found.status,
+      BRANCH: state.BRANCH ?? branch,
+      ROUND: found.round,
+      REVIEW_AGENT_ROUND: found.round,
+      REVIEW_AGENT_OBSERVED_AT: new Date().toISOString(),
+    });
+    return decide('ignore', 'review_agent_observed', null, { prUrl: found.prUrl, round: found.round });
+  }
+
   const isPrCreate = isGhPrCommand(cmdLine, 'create');
   const isGitPush = isGitCommand(cmdLine, 'push');
   const isPrDiff = isGhPrCommand(cmdLine, 'diff');
@@ -357,7 +385,7 @@ export function processHookInput(
       STATUS: 'needs_post_merge',
       BRANCH: branch,
     });
-    const mergeMsg = `\n\ud83c\udf89 PR merged: ${mergeUrl}\n\nNow complete the post-merge workflow:\n1. **Kaizen reflection (REQUIRED)** \u2014 Run \`/kaizen\` NOW.\n2. **Post-merge action needed** \u2014 classify per CLAUDE.md deploy policy.\n3. **Sync main** \u2014 \`git -C ${mc} fetch origin main && git -C ${mc} merge origin/main --no-edit\`\n4. **Update linked issue** \u2014 Close with lessons learned.\n5. **Spec update** \u2014 Move completed work to "Already Solved".\n\n\u26d4 You will NOT be able to finish until /kaizen is run.\n`;
+    const mergeMsg = `\n\ud83c\udf89 PR merged: ${mergeUrl}\n\nNow complete the post-merge workflow:\n1. **Kaizen reflection (REQUIRED)** \u2014 Run \`/kaizen\` NOW.\n2. **Post-merge action needed** \u2014 classify per CLAUDE.md deploy policy.\n3. ${postMergeWorkflowVerificationLines(mergeUrl)}\n4. **Sync main** \u2014 \`${safeMainSyncCommand(mc)}\`\n5. **Update linked issue** \u2014 Close with lessons learned.\n6. **Spec update** \u2014 Move completed work to "Already Solved".\n\n\u26d4 You will NOT be able to finish until /kaizen is run.\n`;
     return decide('post_merge', 'merge_completed', mergeMsg, { mergeUrl });
   }
 
@@ -511,6 +539,13 @@ export function processHookInput(
     }
 
     const passedRound = sentinelCheck.round;
+    const rawState = readStateFile(found.filepath) as Record<string, string | undefined>;
+    if (!hasReviewAgentEvidence(rawState, passedRound)) {
+      return decide('needs_review', 'missing_review_agent_evidence', reviewAgentFailure(found.prUrl, passedRound),
+        { prUrl: found.prUrl, round: passedRound, stateRound: found.round },
+        { hook: 'pr-review-loop', type: 'gate-set', gate: 'needs_review', pr: found.prUrl, round: parseInt(passedRound, 10), reason: 'missing_review_agent_evidence' });
+    }
+
     const sha = gitStdout(['rev-parse', 'HEAD']);
     writeStateFile(stateDir, prUrlToStateKey(found.prUrl), {
       PR_URL: found.prUrl,
@@ -541,6 +576,7 @@ async function main(): Promise<void> {
 
   // Trace every decision for observability
   const trigger = [
+    input.tool_name === 'Agent' && 'agent',
     isGhPrCommand(stripHeredocBody(input.tool_input?.command ?? ''), 'create') && 'pr_create',
     isGitCommand(stripHeredocBody(input.tool_input?.command ?? ''), 'push') && 'git_push',
     isGhPrCommand(stripHeredocBody(input.tool_input?.command ?? ''), 'diff') && 'pr_diff',

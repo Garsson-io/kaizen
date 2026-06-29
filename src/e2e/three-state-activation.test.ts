@@ -25,15 +25,23 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 import { enablePlugin } from '../kaizen-setup.js';
+import { buildTypeScriptSubprocess } from '../../scripts/test-typescript-runner.js';
 
 const DOCTOR = resolve(__dirname, '../../scripts/kaizen-doctor.ts');
+const DOCTOR_RUNNER = buildTypeScriptSubprocess(DOCTOR, {
+  startDir: __dirname,
+});
+const TEST_SOURCE = readFileSync(
+  resolve(__dirname, 'three-state-activation.test.ts'),
+  'utf-8',
+);
 
 function runDoctor(projectRoot: string, homeDir: string): {
   exitCode: number;
   results: Array<{ name: string; status: string; detail: string }>;
 } {
   try {
-    const out = execFileSync('npx', ['tsx', DOCTOR, '--json'], {
+    const out = execFileSync(DOCTOR_RUNNER.command, [...DOCTOR_RUNNER.args, '--json'], {
       cwd: projectRoot,
       env: { ...process.env, HOME: homeDir },
       encoding: 'utf-8',
@@ -81,6 +89,12 @@ describe('#1063 three-state matrix — host project activation', () => {
   afterEach(() => {
     rmSync(project, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
+  });
+
+  it('test runtime invariant: doctor subprocesses use the shared TypeScript runner', () => {
+    expect(runDoctor.toString()).toContain('DOCTOR_RUNNER');
+    expect(TEST_SOURCE).toContain('buildTypeScriptSubprocess');
+    expect(TEST_SOURCE).not.toMatch(/execFileSync\(['"]npx['"]/);
   });
 
   it('State 1: enabled — enabledPlugins present, doctor all-PASS, activation switch works', () => {

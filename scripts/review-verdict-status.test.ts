@@ -6,9 +6,10 @@ import {
 } from './review-verdict-status.js';
 
 describe('decideReviewVerdictStatus', () => {
-  it('fails when the latest stored review round derives FAIL', () => {
+  it('fails when the authoritative stored review round derives FAIL', () => {
     const status = decideReviewVerdictStatus(2, 'FAIL');
     expect(status.outcome).toBe('fail');
+    expect(status.message.toLowerCase()).toContain('authoritative');
     expect(status.message).toContain('r2');
   });
 
@@ -17,8 +18,11 @@ describe('decideReviewVerdictStatus', () => {
     expect(decideReviewVerdictStatus(1, 'PASS_WITH_PARTIALS').outcome).toBe('pass');
   });
 
-  it('does not fail when no stored review data exists', () => {
-    expect(decideReviewVerdictStatus(0, null).outcome).toBe('no_data');
+  it('fails when no stored review data exists', () => {
+    const status = decideReviewVerdictStatus(0, null);
+    expect(status.outcome).toBe('fail');
+    expect(status.message).toContain('No stored review rounds found');
+    expect(status.message).toContain('merge is blocked');
   });
 });
 
@@ -54,30 +58,45 @@ describe('resolveTarget', () => {
 });
 
 describe('getReviewVerdictStatus', () => {
-  it('reads the latest stored review round and fails when it derives FAIL', () => {
-    const latest = vi.fn(() => 2);
+  it('reads the authoritative stored review round and fails when it derives FAIL', () => {
+    const authoritative = vi.fn(() => 2);
     const derive = vi.fn(() => 'FAIL' as const);
 
     const status = getReviewVerdictStatus('Garsson-io/kaizen', '1498', {
-      latestReviewRound: latest,
+      authoritativeReviewRound: authoritative,
       deriveStoredRoundVerdict: derive,
     });
 
     expect(status.outcome).toBe('fail');
-    expect(latest).toHaveBeenCalledWith({ kind: 'pr', number: '1498', repo: 'Garsson-io/kaizen' });
+    expect(authoritative).toHaveBeenCalledWith({ kind: 'pr', number: '1498', repo: 'Garsson-io/kaizen' });
     expect(derive).toHaveBeenCalledWith({ kind: 'pr', number: '1498', repo: 'Garsson-io/kaizen' }, 2);
   });
 
-  it('does not read a round verdict when no review rounds exist', () => {
-    const latest = vi.fn(() => 0);
-    const derive = vi.fn(() => 'FAIL' as const);
+  it('uses active r2 instead of stale higher r3 when deriving the gate verdict', () => {
+    const authoritative = vi.fn(() => 2);
+    const derive = vi.fn((_target, round: number) => round === 2 ? 'PASS' as const : 'FAIL' as const);
 
     const status = getReviewVerdictStatus('Garsson-io/kaizen', '1498', {
-      latestReviewRound: latest,
+      authoritativeReviewRound: authoritative,
       deriveStoredRoundVerdict: derive,
     });
 
-    expect(status.outcome).toBe('no_data');
+    expect(status.outcome).toBe('pass');
+    expect(status.round).toBe(2);
+    expect(derive).toHaveBeenCalledTimes(1);
+    expect(derive).toHaveBeenCalledWith({ kind: 'pr', number: '1498', repo: 'Garsson-io/kaizen' }, 2);
+  });
+
+  it('fails closed and does not read a round verdict when no review rounds exist', () => {
+    const authoritative = vi.fn(() => 0);
+    const derive = vi.fn(() => 'FAIL' as const);
+
+    const status = getReviewVerdictStatus('Garsson-io/kaizen', '1498', {
+      authoritativeReviewRound: authoritative,
+      deriveStoredRoundVerdict: derive,
+    });
+
+    expect(status.outcome).toBe('fail');
     expect(derive).not.toHaveBeenCalled();
   });
 });

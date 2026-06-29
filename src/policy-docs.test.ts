@@ -258,6 +258,45 @@ describe('hook source files — @enforces JSDoc cross-references', () => {
   });
 });
 
+describe('hook runtime docs — TypeScript shim contract', () => {
+  const hooksDesign = read('docs/hooks-design.md');
+  const hookCatalog = read('.agents/kaizen/docs/hook-catalog.md');
+  const languageBoundaries = read('docs/hook-language-boundaries.md');
+
+  it('documents run-tsx.sh as the production TypeScript hook trampoline', () => {
+    for (const doc of [hooksDesign, hookCatalog, languageBoundaries]) {
+      expect(doc).toMatch(/run-tsx\.sh/);
+    }
+    expect(hooksDesign).toMatch(/resolve-tsx-bin\.sh/);
+    expect(hooksDesign).toMatch(/KAIZEN_TSX_BIN/);
+  });
+
+  it('documents the precompiled Node freshness contract and fallback matrix', () => {
+    for (const doc of [hooksDesign, hookCatalog, languageBoundaries]) {
+      expect(doc).toMatch(/dist\/\.kaizen-hook-build/);
+    }
+    expect(hooksDesign).toMatch(/Precompiled Node/);
+    expect(hooksDesign).toMatch(/Source `tsx`/);
+    expect(hooksDesign).toMatch(/Bun/);
+    expect(hooksDesign).toMatch(/non-test `src\/\*\*\/\*\.ts`/);
+  });
+
+  it('does not claim TS hook shims call npx tsx directly', () => {
+    const staleDirectShimClaims = [
+      /shim[^.\n]*calls `npx tsx`/i,
+      /wrapper[^.\n]*calls `npx tsx`/i,
+      /calls `npx tsx` to invoke/i,
+      /exec npx --prefix "\$KAIZEN_DIR" tsx/,
+    ];
+
+    for (const doc of [hooksDesign, hookCatalog, languageBoundaries]) {
+      for (const pattern of staleDirectShimClaims) {
+        expect(doc).not.toMatch(pattern);
+      }
+    }
+  });
+});
+
 describe('skill files — Upholds invariants section', () => {
   it('kaizen-write-pr names I1-I4', () => {
     const s = read('.agents/skills/kaizen-write-pr/SKILL.md');
@@ -306,6 +345,16 @@ describe('workflow skills — simplification/refactor impact is first-class', ()
     expect(s).toMatch(/related-area simplification\/DRY refactor pass/i);
     expect(s).toMatch(/before review/i);
     expect(s).toMatch(/competing mechanisms/i);
+  });
+
+  it('kaizen-implement and workflow tasks make context delegation evidence visible', () => {
+    const skill = read('.agents/skills/kaizen-implement/SKILL.md');
+    const workflowTasks = read('.agents/kaizen/workflow-tasks.md');
+
+    expect(skill).toMatch(/Context delegation evidence before review/i);
+    expect(skill).toMatch(/Delegate context-heavy/i);
+    expect(workflowTasks).toMatch(/Context delegation evidence/i);
+    expect(workflowTasks).toMatch(/Delegate broad\/context-heavy sub-work/i);
   });
 
   it('kaizen-review-pr documents the simplification-impact data-needs grouping', () => {

@@ -32,7 +32,7 @@ claude plugin update kaizen
 
 **For self-dogfood (kaizen repo itself):**
 ```bash
-git fetch origin main && git merge origin/main --no-edit
+git fetch origin main && git merge --ff-only origin/main
 ```
 
 ## Step 2: Install dependencies

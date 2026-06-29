@@ -33,6 +33,8 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { readJsonValueFile } from '../src/lib/json-file.js';
 import { KAIZEN_PLUGIN_SOURCE } from '../src/kaizen-plugin-identity.js';
+import { checkDevLinkStatus } from './kaizen-dev-link.js';
+import { resolveTsxBin } from '../src/lib/typescript-runner.js';
 
 export type CheckStatus = 'PASS' | 'WARN' | 'FAIL';
 
@@ -101,6 +103,32 @@ function collectHookCommands(cfg: unknown): string[] {
   }
   walk(cfg);
   return out;
+}
+
+interface ReferencedHook {
+  label: string;
+  command: string;
+  path: string;
+}
+
+function collectReferencedHooks(opts: DoctorOpts): ReferencedHook[] {
+  const cfgs: Array<{ path: string; label: string }> = [
+    { path: join(opts.projectRoot, '.claude/settings.json'), label: 'settings.json' },
+    { path: join(opts.projectRoot, '.claude-plugin/plugin.json'), label: 'plugin.json' },
+  ];
+  const hooks: ReferencedHook[] = [];
+  for (const cfg of cfgs) {
+    const data = readJsonValueFile(cfg.path);
+    if (!data) continue;
+    for (const command of collectHookCommands(data)) {
+      hooks.push({
+        label: cfg.label,
+        command,
+        path: resolveHookPath(command, opts.projectRoot),
+      });
+    }
+  }
+  return hooks;
 }
 
 /** Extract the executable path from a hook `command` string.
@@ -182,24 +210,14 @@ export function checkPluginDoubleInstall(opts: DoctorOpts): CheckResult {
 
 /** Check 2: every referenced hook command resolves to an existing file. */
 export function checkDanglingHookPaths(opts: DoctorOpts): CheckResult {
-  const cfgs: Array<{ path: string; label: string }> = [
-    { path: join(opts.projectRoot, '.claude/settings.json'), label: 'settings.json' },
-    { path: join(opts.projectRoot, '.claude-plugin/plugin.json'), label: 'plugin.json' },
-  ];
   const missing: string[] = [];
-  let total = 0;
-  for (const cfg of cfgs) {
-    const data = readJsonValueFile(cfg.path);
-    if (!data) continue;
-    for (const c of collectHookCommands(data)) {
-      total++;
-      const hookPath = resolveHookPath(c, opts.projectRoot);
-      if (!existsSync(hookPath)) {
-        missing.push(`${cfg.label}: ${hookPath}`);
-      }
+  const hooks = collectReferencedHooks(opts);
+  for (const hook of hooks) {
+    if (!existsSync(hook.path)) {
+      missing.push(`${hook.label}: ${hook.path}`);
     }
   }
-  if (total === 0) {
+  if (hooks.length === 0) {
     return {
       name: 'dangling-hook-paths',
       status: 'WARN',
@@ -210,13 +228,13 @@ export function checkDanglingHookPaths(opts: DoctorOpts): CheckResult {
     return {
       name: 'dangling-hook-paths',
       status: 'FAIL',
-      detail: `${missing.length}/${total} hook paths missing: ${missing.slice(0, 3).join('; ')}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ''}`,
+      detail: `${missing.length}/${hooks.length} hook paths missing: ${missing.slice(0, 3).join('; ')}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ''}`,
     };
   }
   return {
     name: 'dangling-hook-paths',
     status: 'PASS',
-    detail: `all ${total} hook paths resolve.`,
+    detail: `all ${hooks.length} hook paths resolve.`,
   };
 }
 
@@ -268,6 +286,42 @@ export function checkStalePluginCache(opts: DoctorOpts): CheckResult {
       ? `installed_plugins and cache consistent for "${plugin}".`
       : `"${plugin}" not installed, no cache.`,
   };
+}
+
+/** Check: contributor dev-link override is visible so it is not left on
+ * accidentally. This is WARN, not FAIL: active dev links are intentional local
+ * development state, but they should be loud in doctor output. */
+export function checkDevLinkOverride(opts: DoctorOpts): CheckResult {
+  try {
+    const status = checkDevLinkStatus({
+      homeDir: opts.homeDir,
+      projectRoot: opts.projectRoot,
+      plugin: opts.pluginName ?? DEFAULT_PLUGIN,
+    });
+    if (status.active) {
+      return {
+        name: 'dev-link-override',
+        status: 'WARN',
+        detail: `dev override active: ${status.installPath} -> ${status.targetPath}. Run scripts/kaizen-dev-link.sh disable before normal user testing.`,
+        data: status,
+      };
+    }
+    return {
+      name: 'dev-link-override',
+      status: 'PASS',
+      detail: status.state === 'inactive'
+        ? `inactive for "${status.plugin}".`
+        : `no dev override active for "${status.plugin}" (${status.state}).`,
+      data: status,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      name: 'dev-link-override',
+      status: 'WARN',
+      detail: `could not inspect dev override state: ${message}`,
+    };
+  }
 }
 
 /** Normalize a project root for snapshot-keying. Uses realpath when possible
@@ -402,24 +456,15 @@ export function checkSingleRegistrationPath(opts: DoctorOpts): CheckResult {
 
 /** Check 5: every referenced hook file is executable. */
 export function checkHookExecSmoke(opts: DoctorOpts): CheckResult {
-  const cfgs = [
-    join(opts.projectRoot, '.claude/settings.json'),
-    join(opts.projectRoot, '.claude-plugin/plugin.json'),
-  ];
   const nonExec: string[] = [];
   let total = 0;
-  for (const cfgPath of cfgs) {
-    const data = readJsonValueFile(cfgPath);
-    if (!data) continue;
-    for (const c of collectHookCommands(data)) {
-      const hookPath = resolveHookPath(c, opts.projectRoot);
-      if (!existsSync(hookPath)) continue;
-      total++;
-      try {
-        accessSync(hookPath, fsConstants.X_OK);
-      } catch {
-        nonExec.push(hookPath);
-      }
+  for (const hook of collectReferencedHooks(opts)) {
+    if (!existsSync(hook.path)) continue;
+    total++;
+    try {
+      accessSync(hook.path, fsConstants.X_OK);
+    } catch {
+      nonExec.push(hook.path);
     }
   }
   if (total === 0) {
@@ -440,6 +485,134 @@ export function checkHookExecSmoke(opts: DoctorOpts): CheckResult {
     name: 'hook-exec-smoke',
     status: 'PASS',
     detail: `all ${total} hook files executable.`,
+  };
+}
+
+function hookRootFor(hook: ReferencedHook, projectRoot: string): string {
+  if (hook.command.includes('${CLAUDE_PLUGIN_ROOT}')) return projectRoot;
+  const marker = '/.claude/hooks/';
+  const idx = hook.path.indexOf(marker);
+  if (idx >= 0) return hook.path.slice(0, idx);
+  return dirname(dirname(hook.path));
+}
+
+function hookUsesTypeScriptTrampoline(path: string): boolean {
+  try {
+    const body = readFileSync(path, 'utf8');
+    return body.includes('run-tsx.sh') || /\brun_tsx\b/.test(body);
+  } catch {
+    return false;
+  }
+}
+
+/** Check: registered TypeScript hook roots must have a runnable tsx dependency.
+ *
+ * Path/executable/syntax checks can all pass while TS hook shims still fail at
+ * runtime because the bound plugin/worktree root lacks node_modules. This is the
+ * #1131 diagnostic black hole: hooks look installed but every TS dispatch skips
+ * or fails. Check roots, not individual files, because many hooks share one
+ * dependency contract.
+ */
+export function checkHookDependencyRoots(opts: DoctorOpts): CheckResult {
+  const roots = new Set<string>();
+  for (const hook of collectReferencedHooks(opts)) {
+    if (!existsSync(hook.path)) continue;
+    if (!hookUsesTypeScriptTrampoline(hook.path)) continue;
+    roots.add(hookRootFor(hook, opts.projectRoot));
+  }
+
+  if (roots.size === 0) {
+    return {
+      name: 'hook-dependency-roots',
+      status: 'PASS',
+      detail: 'no TS hook roots to check.',
+    };
+  }
+
+  const missing = [...roots].filter(root => !resolveTsxBin(root));
+  if (missing.length > 0) {
+    return {
+      name: 'hook-dependency-roots',
+      status: 'FAIL',
+      detail: `tsx not found for ${missing.length}/${roots.size} TS hook root(s): ${missing.slice(0, 3).join('; ')}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ''}. Run npm install there or symlink node_modules from the main checkout.`,
+    };
+  }
+
+  return {
+    name: 'hook-dependency-roots',
+    status: 'PASS',
+    detail: roots.size === 1
+      ? 'all 1 TS hook root has runnable tsx dependencies.'
+      : `all ${roots.size} TS hook roots have runnable tsx dependencies.`,
+  };
+}
+
+function bounded(text: string, max = 240): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= max) return compact;
+  return compact.slice(0, max - 12) + '...<truncated>';
+}
+
+function hasConflictMarkers(body: string): boolean {
+  return /^(<<<<<<<|=======|>>>>>>>)(?:\s|$)/m.test(body);
+}
+
+/** Check 6: referenced hook files must be parseable shell scripts.
+ *
+ * CI already runs validate-hook-integrity.sh before merge. This doctor check
+ * covers the runtime/install-state version of #371: a local or cached hook can
+ * be present and executable while containing merge markers or broken syntax.
+ */
+export function checkHookSyntaxSmoke(opts: DoctorOpts): CheckResult {
+  const bad: string[] = [];
+  let total = 0;
+  for (const hook of collectReferencedHooks(opts)) {
+    if (!existsSync(hook.path)) continue;
+    total++;
+
+    let body = '';
+    try {
+      body = readFileSync(hook.path, 'utf8');
+    } catch (err) {
+      bad.push(`${hook.path}: unreadable (${bounded(String(err))})`);
+      continue;
+    }
+
+    if (hasConflictMarkers(body)) {
+      bad.push(`${hook.path}: conflict markers present`);
+      continue;
+    }
+
+    try {
+      execFileSync('bash', ['-n', hook.path], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 5_000,
+      });
+    } catch (err) {
+      const e = err as { stderr?: string; message?: string };
+      bad.push(`${hook.path}: syntax error${e.stderr ? ` (${bounded(e.stderr)})` : e.message ? ` (${bounded(e.message)})` : ''}`);
+    }
+  }
+
+  if (total === 0) {
+    return {
+      name: 'hook-syntax-smoke',
+      status: 'PASS',
+      detail: 'no resolvable hook paths to check.',
+    };
+  }
+  if (bad.length > 0) {
+    return {
+      name: 'hook-syntax-smoke',
+      status: 'FAIL',
+      detail: `${bad.length}/${total} hook files failed syntax checks: ${bad.slice(0, 3).join('; ')}${bad.length > 3 ? ` (+${bad.length - 3} more)` : ''}`,
+    };
+  }
+  return {
+    name: 'hook-syntax-smoke',
+    status: 'PASS',
+    detail: `all ${total} hook files pass syntax checks.`,
   };
 }
 
@@ -609,8 +782,11 @@ export function runAllChecks(opts: DoctorOpts): CheckResult[] {
     checkPluginDoubleInstall(opts),
     checkDanglingHookPaths(opts),
     checkStalePluginCache(opts),
+    checkDevLinkOverride(opts),
     checkRestartNeeded(opts),
+    checkHookDependencyRoots(opts),
     checkHookExecSmoke(opts),
+    checkHookSyntaxSmoke(opts),
     checkCodexReadiness(opts.codexReadiness),
   ];
 }
@@ -648,6 +824,16 @@ if (isMain) {
   if (argv[0] === 'snapshot') {
     try { writeSessionSnapshot(opts); } catch {}
     process.exit(0);
+  }
+
+  // Narrow SessionStart/doctor path for #371. Avoids noisy unrelated WARNs
+  // (for example Codex readiness) while still surfacing corrupt hook files.
+  if (argv[0] === 'hook-syntax') {
+    const result = checkHookSyntaxSmoke(opts);
+    if (!(argv.includes('--quiet') && result.status === 'PASS')) {
+      process.stdout.write(formatResult(result) + '\n');
+    }
+    process.exit(result.status === 'FAIL' ? 1 : 0);
   }
 
   const json = argv.includes('--json');

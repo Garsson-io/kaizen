@@ -1,10 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { writeFileSync, rmSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { makeIgnoredTestDir } from '../src/lib/test-dirs.js';
 import {
   buildArtifactsComment,
+  parseArtifactsComment,
   readArtifactParts,
+  uploadBatchArtifacts,
   type ArtifactParts,
   BATCH_ARTIFACTS_ATTACHMENT,
   ARTIFACTS_BODY_BUDGET,
@@ -29,7 +31,7 @@ afterEach(() => {
   while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });
 });
 function freshBatchDir(): string {
-  const d = mkdtempSync(join(tmpdir(), 'batch-artifacts-'));
+  const d = makeIgnoredTestDir('batch-artifacts');
   tmpDirs.push(d);
   return d;
 }
@@ -113,6 +115,28 @@ describe('buildArtifactsComment', () => {
   });
 });
 
+describe('parseArtifactsComment', () => {
+  it('round-trips generated artifact comments into raw parts', () => {
+    const body = buildArtifactsComment(makeParts(), NOW);
+
+    const parts = parseArtifactsComment(body);
+
+    expect(parts.batchId).toBe('sticky-lark');
+    expect(parts.eventsJsonl).toContain('{"kind":"run_complete","run":1}');
+    expect(parts.stateJson).toContain('"batch_id": "sticky-lark"');
+    expect(parts.summary).toBe('Runs: 3\nPRs: 1');
+  });
+
+  it('rejects truncated events.jsonl instead of returning partial telemetry', () => {
+    const huge = Array.from({ length: 4000 }, (_, i) => `{"kind":"run_complete","run":${i}}`).join(
+      '\n',
+    );
+    const body = buildArtifactsComment(makeParts({ eventsJsonl: huge }), NOW);
+
+    expect(() => parseArtifactsComment(body)).toThrow(/truncated events\.jsonl/);
+  });
+});
+
 describe('readArtifactParts', () => {
   it('reads state.json, events.jsonl, and summary from a batch dir', () => {
     const dir = freshBatchDir();
@@ -121,7 +145,7 @@ describe('readArtifactParts', () => {
     writeFileSync(join(dir, 'batch-summary.txt'), 'all good');
 
     const parts = readArtifactParts(dir);
-    expect(parts.batchId).toBe(dir.split('/').pop());
+    expect(parts.batchId).toBe(basename(dir));
     expect(parts.stateJson).toBe('{"run":2}');
     expect(parts.eventsJsonl).toBe('{"kind":"run_start"}');
     expect(parts.summary).toBe('all good');
@@ -140,6 +164,47 @@ describe('readArtifactParts', () => {
     const dir = freshBatchDir();
     writeFileSync(join(dir, 'batch-summary-report.md'), '# report');
     expect(readArtifactParts(dir).summary).toBe('# report');
+  });
+});
+
+describe('uploadBatchArtifacts', () => {
+  it('returns null and does not write when a batch dir has no artifacts', () => {
+    const dir = freshBatchDir();
+    const writes: Array<{ name: string; body: string }> = [];
+
+    const url = uploadBatchArtifacts('1183', 'owner/repo', dir, NOW, (_target, name, body) => {
+      writes.push({ name, body });
+      return 'https://github.com/owner/repo/issues/1183#issuecomment-1';
+    });
+
+    expect(url).toBeNull();
+    expect(writes).toEqual([]);
+  });
+
+  it('reads a batch dir and writes the stable batch-artifacts attachment body', () => {
+    const dir = freshBatchDir();
+    writeFileSync(join(dir, 'state.json'), JSON.stringify({ batch_id: 'fixture-batch', run: 2 }));
+    writeFileSync(join(dir, 'events.jsonl'), [
+      JSON.stringify({ timestamp: NOW, event: { type: 'run.start', batch_id: 'fixture-batch', run_num: 1 } }),
+      JSON.stringify({ timestamp: NOW, event: { type: 'run.complete', batch_id: 'fixture-batch', run_num: 1 } }),
+    ].join('\n'));
+    writeFileSync(join(dir, 'batch-summary-report.md'), 'Fixture batch summary');
+    const calls: Array<{ target: unknown; name: string; body: string }> = [];
+
+    const url = uploadBatchArtifacts('1183', 'owner/repo', dir, NOW, (target, name, body) => {
+      calls.push({ target, name, body });
+      return 'https://github.com/owner/repo/issues/1183#issuecomment-2';
+    });
+
+    expect(url).toContain('issuecomment-2');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].target).toEqual({ kind: 'issue', number: '1183', repo: 'owner/repo' });
+    expect(calls[0].name).toBe(BATCH_ARTIFACTS_ATTACHMENT);
+    const parts = parseArtifactsComment(calls[0].body);
+    expect(parts.batchId).toBe(dir.split('/').pop());
+    expect(parts.eventsJsonl).toContain('"run.complete"');
+    expect(parts.stateJson).toContain('"fixture-batch"');
+    expect(parts.summary).toBe('Fixture batch summary');
   });
 });
 

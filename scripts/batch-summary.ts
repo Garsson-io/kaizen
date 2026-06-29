@@ -18,6 +18,8 @@ import { resolve } from 'path';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 import type { EventEnvelope, RunCompleteEvent, RunIssuePickedEvent, RunPrCreatedEvent } from './auto-dent-events.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
+import { parseBatchArtifactCliArgs } from './batch-artifacts-cli.js';
+import { readArtifactPartsFromProgressIssue } from './batch-artifacts-upload.js';
 import {
   computeHookActivationCounts,
   hookActivationDistributionEntries,
@@ -97,7 +99,28 @@ export function parseEventsFile(eventsPath: string): EventEnvelope[] {
   const content = readFileSync(eventsPath, 'utf8').trim();
   if (!content) return [];
 
-  return parseJsonLines<EventEnvelope>(content);
+  return parseEventsJsonl(content);
+}
+
+/**
+ * Parse events.jsonl content into typed event envelopes.
+ * Silently skips malformed lines through the shared JSONL helper.
+ */
+export function parseEventsJsonl(content: string): EventEnvelope[] {
+  const trimmed = content.trim();
+  if (!trimmed) return [];
+  return parseJsonLines<EventEnvelope>(trimmed);
+}
+
+export function parseEventsFromProgressIssue(issueNumber: string, repo: string): EventEnvelope[] {
+  const parts = readArtifactPartsFromProgressIssue(issueNumber, repo);
+  if (!parts) {
+    throw new Error(`No batch-artifacts attachment found on issue #${issueNumber}`);
+  }
+  if (!parts.eventsJsonl) {
+    throw new Error(`No events.jsonl artifact found on issue #${issueNumber}`);
+  }
+  return parseEventsJsonl(parts.eventsJsonl);
 }
 
 /**
@@ -398,19 +421,32 @@ export function formatPlainLanguage(summary: BatchSummary): string {
 
 // CLI entry point
 if (process.argv[1]?.endsWith('batch-summary.ts') || process.argv[1]?.endsWith('batch-summary.js')) {
-  const batchDir = process.argv[2];
-  const jsonMode = process.argv.includes('--json');
+  const { positional, progressIssues, repo, jsonMode } = parseBatchArtifactCliArgs(process.argv.slice(2));
+  const progressIssue = progressIssues[0];
+  const batchDir = positional[0];
 
-  if (!batchDir) {
+  if (!batchDir && !progressIssue) {
     console.error('Usage: npx tsx scripts/batch-summary.ts <batch-dir> [--json]');
+    console.error('   or: npx tsx scripts/batch-summary.ts --progress-issue <issue> --repo <owner/repo> [--json]');
+    process.exit(1);
+  }
+  if (progressIssue && !repo) {
+    console.error('Usage: --progress-issue requires --repo <owner/repo> or GITHUB_REPOSITORY');
     process.exit(1);
   }
 
-  const eventsPath = resolve(batchDir, 'events.jsonl');
-  const envelopes = parseEventsFile(eventsPath);
+  const eventsPath = batchDir ? resolve(batchDir, 'events.jsonl') : '';
+  let envelopes: EventEnvelope[];
+  try {
+    envelopes = progressIssue ? parseEventsFromProgressIssue(progressIssue, repo!) : parseEventsFile(eventsPath);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 
   if (envelopes.length === 0) {
-    console.error(`No events found at ${eventsPath}`);
+    const source = progressIssue ? `progress issue #${progressIssue}` : eventsPath;
+    console.error(`No events found at ${source}`);
     process.exit(1);
   }
 

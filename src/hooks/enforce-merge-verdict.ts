@@ -3,14 +3,14 @@
  *
  * Auto-dent now blocks unsafe auto-merge queueing before it asks GitHub to merge.
  * This hook covers the sibling L2 path: a direct interactive `gh pr merge` must
- * not bypass a latest review round that derives FAIL.
+ * not bypass an authoritative review round that derives FAIL.
  */
 
 import { parseGithubPrUrl } from '../lib/github-pr.js';
 import type { RoundVerdict } from '../review-finding-contract.js';
 import {
+  authoritativeReviewRound,
   deriveStoredRoundVerdict,
-  latestReviewRound,
   prTarget,
 } from '../structured-data.js';
 import { readHookInput, traceHookEvent, traceNullInput } from './hook-io.js';
@@ -86,7 +86,7 @@ export function parseMergeTarget(
 
 export const defaultVerdictReader: VerdictReader = (target) => {
   const t = prTarget(target.pr, target.repo);
-  const round = latestReviewRound(t);
+  const round = authoritativeReviewRound(t);
   if (round === 0) return null;
   return deriveStoredRoundVerdict(t, round);
 };
@@ -109,9 +109,9 @@ export function decideMergeGate(
     }
     return {
       action: 'deny',
-      message: `MERGE BLOCKED: ${prRef}'s latest review round derives FAIL.
+      message: `MERGE BLOCKED: ${prRef}'s authoritative review round derives FAIL.
 
-Fix the findings and re-run the review until the latest round derives PASS, or
+Fix the findings and re-run the review until the authoritative round derives PASS, or
 use an explicit logged human override:
 
   ${MERGE_OVERRIDE_ENV}=1 gh pr merge ...
@@ -122,10 +122,13 @@ This gate binds the stored review verdict to the irreversible merge step.`,
 
   if (verdict === null) {
     return {
-      action: 'warn',
-      message:
-        `[enforce-merge-verdict] No stored review rounds found for ${prRef}; ` +
-        `merge-verdict gate is advisory for this invocation.`,
+      action: 'deny',
+      message: `MERGE BLOCKED: No stored review rounds found for ${prRef}.
+
+Run /kaizen-review-pr for this PR, store findings for every applicable
+dimension, and store the derived review summary before merging.
+
+This gate requires a durable authoritative review verdict on the PR itself.`,
     };
   }
 
@@ -182,13 +185,18 @@ async function main(): Promise<void> {
   }
 
   const result = checkMergeVerdict(input.tool_input?.command ?? '');
+  const reason = result.bypassed
+    ? 'override'
+    : result.action === 'deny'
+      ? result.verdict === null ? 'missing_review_verdict' : 'fail_verdict'
+      : result.action;
   traceHookEvent('enforce-merge-verdict', {
     action: result.action,
     bypassed: result.bypassed ?? false,
     pr: result.target?.pr,
     repo: result.target?.repo,
     verdict: result.verdict,
-    reason: result.bypassed ? 'override' : result.action === 'deny' ? 'fail_verdict' : result.action,
+    reason,
   });
   if (result.action === 'deny') {
     process.stdout.write(JSON.stringify({

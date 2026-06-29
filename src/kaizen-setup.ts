@@ -14,7 +14,7 @@
  *   2. .agents/kaizen/local/policies-local.md — host-specific policies
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { execSync } from "child_process";
 import { join } from "path";
 import { parseArgs } from "util";
@@ -63,6 +63,20 @@ export interface ScaffoldResult {
   status: "ok" | "skipped";
   path: string;
   reason?: string;
+}
+
+export interface PreconditionResult {
+  step: "precondition";
+  status: "ok" | "warn";
+  warnings: string[];
+}
+
+export interface InjectInstructionsResult {
+  step: "inject-instructions";
+  status: "ok" | "skipped" | "error";
+  path?: string;
+  reason?: string;
+  error?: string;
 }
 
 interface VerifyCheck {
@@ -187,11 +201,65 @@ export function enablePlugin(cwd: string, pluginName = KAIZEN_PLUGIN_SOURCE): En
   return { step: "enable", status: "ok", path, changed: true };
 }
 
+const KAIZEN_GITIGNORE_ENTRIES = [
+  ".claude/review-fix/",
+  ".claude/audit/",
+  ".agents/kaizen/local/audit/",
+  ".claude/worktrees/",
+  "data/telemetry/",
+];
+
+function readTextFileIfExists(path: string): string | null {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function ensureGitignoreEntries(cwd: string): void {
+  const gitignorePath = join(cwd, ".gitignore");
+  const existing = readTextFileIfExists(gitignorePath) ?? "";
+  const missing = KAIZEN_GITIGNORE_ENTRIES.filter(e => !existing.includes(e));
+  if (missing.length === 0) return;
+
+  const addition = (existing.endsWith("\n") || existing === "" ? "" : "\n")
+    + "# kaizen session-local state (not committed)\n"
+    + missing.join("\n") + "\n";
+  appendFileSync(gitignorePath, addition);
+}
+
+export function checkPreconditions(cwd: string): PreconditionResult {
+  const warnings: string[] = [];
+  const gitignorePath = join(cwd, ".gitignore");
+  const body = readTextFileIfExists(gitignorePath);
+  if (body !== null) {
+    const broadClaudeIgnore = body.split(/\r?\n/).some(raw => {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) return false;
+      return /^\/?\.claude\/?$/.test(line);
+    });
+
+    if (broadClaudeIgnore) {
+      warnings.push(
+        "This repo gitignores .claude/ broadly, so project-scope plugin activation in " +
+        ".claude/settings.json will not propagate to collaborators. Replace the broad " +
+        "entry with narrower session-local entries such as .claude/review-fix/, " +
+        ".claude/audit/, .claude/worktrees/, and .claude/settings.local.json.",
+      );
+    }
+  }
+
+  return { step: "precondition", status: warnings.length > 0 ? "warn" : "ok", warnings };
+}
+
 export function scaffoldPolicies(cwd: string): ScaffoldResult {
   const dir = join(cwd, ".agents", "kaizen", "local");
   const path = join(dir, "policies-local.md");
 
   if (existsSync(path)) {
+    ensureGitignoreEntries(cwd);
     return { step: "scaffold", status: "skipped", path, reason: "already exists" };
   }
 
@@ -210,26 +278,43 @@ Add project-specific enforcement rules here.
 `
   );
 
-  // Ensure kaizen session-local directories are gitignored in the host project
-  const gitignorePath = join(cwd, ".gitignore");
-  const gitignoreEntries = [
-    ".claude/review-fix/",
-    ".claude/audit/",
-    ".agents/kaizen/local/audit/",
-    ".claude/worktrees/",
-  ];
-  const existing = existsSync(gitignorePath)
-    ? readFileSync(gitignorePath, "utf-8")
-    : "";
-  const missing = gitignoreEntries.filter(e => !existing.includes(e));
-  if (missing.length > 0) {
-    const addition = (existing.endsWith("\n") || existing === "" ? "" : "\n")
-      + "# kaizen session-local state (not committed)\n"
-      + missing.join("\n") + "\n";
-    writeFileSync(gitignorePath, existing + addition);
-  }
+  ensureGitignoreEntries(cwd);
 
   return { step: "scaffold", status: "ok", path };
+}
+
+function chooseInstructionsTarget(cwd: string, target?: string): string {
+  if (target) return target;
+  const claudeMd = join(cwd, "CLAUDE.md");
+  if (existsSync(claudeMd)) return claudeMd;
+  const agentsMd = join(cwd, "AGENTS.md");
+  if (existsSync(agentsMd)) return agentsMd;
+  return claudeMd;
+}
+
+function appendWithBlankLine(existing: string, fragment: string): string {
+  if (!existing) return fragment;
+  if (existing.endsWith("\n\n")) return existing + fragment;
+  if (existing.endsWith("\n")) return existing + "\n" + fragment;
+  return existing + "\n\n" + fragment;
+}
+
+export function injectInstructions(opts: { cwd: string; pluginRoot: string; target?: string }): InjectInstructionsResult {
+  const fragmentPath = join(opts.pluginRoot, ".agents", "kaizen", "instructions-fragment.md");
+  const fragmentTemplate = readTextFileIfExists(fragmentPath);
+  if (fragmentTemplate === null) {
+    return { step: "inject-instructions", status: "error", error: `fragment not found: ${fragmentPath}` };
+  }
+
+  const path = chooseInstructionsTarget(opts.cwd, opts.target);
+  const fragment = fragmentTemplate.replace(/\{\{KAIZEN_ROOT\}\}/g, opts.pluginRoot);
+  const existing = readTextFileIfExists(path) ?? "";
+  if (existing.includes("<!-- BEGIN KAIZEN PLUGIN")) {
+    return { step: "inject-instructions", status: "skipped", path, reason: "kaizen section already present" };
+  }
+
+  appendFileSync(path, appendWithBlankLine(existing, fragment).slice(existing.length));
+  return { step: "inject-instructions", status: "ok", path };
 }
 
 interface PluginContractCheck {
@@ -465,6 +550,7 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       "plugin-root": { type: "string" },
       "run-post-install": { type: "string" },
       "plugin": { type: "string" },
+      target: { type: "string" },
     },
     strict: false,
   }) as { values: Record<string, string | undefined> };
@@ -491,9 +577,19 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       console.log(JSON.stringify(scaffoldPolicies(cwd)));
       break;
 
+    case "precondition":
+      console.log(JSON.stringify(checkPreconditions(cwd)));
+      break;
+
     case "enable":
       console.log(JSON.stringify(enablePlugin(cwd, values["plugin"] ?? KAIZEN_PLUGIN_SOURCE)));
       break;
+
+    case "inject-instructions": {
+      const pluginRoot = values["plugin-root"] ?? process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
+      console.log(JSON.stringify(injectInstructions({ cwd, pluginRoot, target: values.target })));
+      break;
+    }
 
     case "verify": {
       const pluginRoot = values["plugin-root"] ?? process.env.CLAUDE_PLUGIN_ROOT;
@@ -511,10 +607,11 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       // Epic #1059: install kaizen's pre-push hook into host project.
       // Option C: detect host framework; inject into theirs; raw fallback if none.
       const pluginRoot = values["plugin-root"] ?? process.env.CLAUDE_PLUGIN_ROOT;
-      // The host's `.kaizen-hooks/pre-push` is a THIN WRAPPER (#1086) that execs
-      // the plugin-resident canonical entry — it does not copy the entry's logic.
-      // Verify the entry exists in the plugin so a broken/missing install fails
-      // fast here rather than silently fail-opening at push time.
+      // Pre-commit hosts invoke the plugin entry through kaizen's remote provider
+      // manifest; other frameworks use a THIN `.kaizen-hooks/pre-push` wrapper
+      // (#1086) that execs the plugin-resident canonical entry. Verify the entry
+      // exists so a broken/missing install fails fast here rather than silently
+      // fail-opening at push time.
       const entryPath = pluginRoot
         ? join(pluginRoot, "src/hooks/kaizen-host-entry.sh")
         : null;
@@ -534,14 +631,14 @@ if (process.argv[1]?.endsWith("kaizen-setup.ts") || process.argv[1]?.endsWith("k
       const entryContent = buildThinWrapper(pluginRoot ?? "");
       const runPostInstall = values["run-post-install"] === "true";
 
-      const result: InstallResult = installGitHooks({ cwd, entryScriptContent: entryContent, runPostInstall });
+      const result: InstallResult = installGitHooks({ cwd, entryScriptContent: entryContent, pluginRoot, runPostInstall });
       console.log(JSON.stringify({ step: "install-git-hooks", status: "ok", ...result }));
       break;
     }
 
     default:
       console.error(`Unknown step: ${values.step}`);
-      console.error("Steps: detect, config, scaffold, enable, verify, post-update-validate, install-git-hooks");
+      console.error("Steps: detect, precondition, config, scaffold, enable, inject-instructions, verify, post-update-validate, install-git-hooks");
       process.exit(1);
   }
 }

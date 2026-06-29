@@ -1,13 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync, symlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildTypeScriptSubprocess } from './test-typescript-runner.js';
 import {
   checkPluginDoubleInstall,
   checkDanglingHookPaths,
   checkStalePluginCache,
   checkRestartNeeded,
   checkHookExecSmoke,
+  checkHookDependencyRoots,
+  checkHookSyntaxSmoke,
+  checkDevLinkOverride,
   checkSingleRegistrationPath,
   checkCodexReadiness,
   runAllChecks,
@@ -18,6 +23,11 @@ import {
   restartSensitiveFiles,
   DoctorOpts,
 } from './kaizen-doctor.ts';
+
+const DOCTOR_CLI = join(__dirname, 'kaizen-doctor.ts');
+const DOCTOR_RUNNER = buildTypeScriptSubprocess(DOCTOR_CLI, {
+  startDir: __dirname,
+});
 
 function makeProject(): string {
   return mkdtempSync(join(tmpdir(), 'kaizen-doctor-proj-'));
@@ -39,13 +49,25 @@ function writePluginJson(projectRoot: string, content: unknown): void {
   writeFileSync(join(projectRoot, '.claude-plugin/plugin.json'), JSON.stringify(content, null, 2));
 }
 
-function writeHook(projectRoot: string, rel: string, executable = true): string {
+function writeHook(projectRoot: string, rel: string, executable = true, content = '#!/bin/bash\nexit 0\n'): string {
   const p = join(projectRoot, rel);
   mkdirSync(join(p, '..'), { recursive: true });
-  writeFileSync(p, '#!/bin/bash\nexit 0\n');
+  writeFileSync(p, content);
   if (executable) chmodSync(p, 0o755);
   else chmodSync(p, 0o644);
   return p;
+}
+
+function runDoctorHookSyntax(projectRoot: string, homeDir: string) {
+  return spawnSync(
+    DOCTOR_RUNNER.command,
+    [...DOCTOR_RUNNER.args, 'hook-syntax', '--quiet'],
+    {
+      cwd: projectRoot,
+      env: { ...process.env, HOME: homeDir },
+      encoding: 'utf8',
+    },
+  );
 }
 
 describe('safe JSON parsing', () => {
@@ -172,6 +194,50 @@ describe('checkStalePluginCache', () => {
     writeFileSync(join(home, '.claude/plugins/installed_plugins.json'), JSON.stringify({ plugins: {} }));
     const r = checkStalePluginCache({ projectRoot: proj, homeDir: home });
     expect(r.status).toBe('PASS');
+  });
+});
+
+describe('checkDevLinkOverride (#1064)', () => {
+  let proj: string, home: string;
+  beforeEach(() => { proj = makeProject(); home = makeHome(); });
+  afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+
+  function installRecord(installPath: string): void {
+    writeFileSync(join(home, '.claude/plugins/installed_plugins.json'),
+      JSON.stringify({ plugins: { 'kaizen@kaizen': [{ installPath, projectPath: proj }] } }));
+  }
+
+  it('PASS when kaizen is not installed for this project', () => {
+    writeFileSync(join(home, '.claude/plugins/installed_plugins.json'), JSON.stringify({ plugins: {} }));
+
+    const r = checkDevLinkOverride({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('PASS');
+    expect(r.detail).toContain('no dev override active');
+  });
+
+  it('PASS when install path is a normal cache directory', () => {
+    const installPath = join(home, '.claude/plugins/cache/kaizen/kaizen/1.2.3');
+    mkdirSync(installPath, { recursive: true });
+    installRecord(installPath);
+
+    const r = checkDevLinkOverride({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('PASS');
+    expect(r.detail).toContain('inactive');
+  });
+
+  it('WARN when install path is symlinked to this worktree', () => {
+    const installPath = join(home, '.claude/plugins/cache/kaizen/kaizen/1.2.3');
+    mkdirSync(join(installPath, '..'), { recursive: true });
+    symlinkSync(proj, installPath);
+    installRecord(installPath);
+
+    const r = checkDevLinkOverride({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('WARN');
+    expect(r.detail).toContain('dev override active');
+    expect(r.detail).toContain(proj);
   });
 });
 
@@ -313,6 +379,169 @@ describe('checkHookExecSmoke', () => {
     writeSettings(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './.claude/hooks/foo.sh' }] }] } });
     const r = checkHookExecSmoke({ projectRoot: proj, homeDir: home });
     expect(r.status).toBe('PASS');
+  });
+});
+
+describe('checkHookDependencyRoots (#1131)', () => {
+  let proj: string, home: string;
+  beforeEach(() => { proj = makeProject(); home = makeHome(); });
+  afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+
+  function writeTsHookRegistration(): void {
+    writeHook(proj, '.claude/hooks/kaizen-enforce-plan-stored-ts.sh', true, [
+      '#!/bin/bash',
+      'source "$(dirname "$0")/lib/run-tsx.sh"',
+      'run_tsx "$KAIZEN_DIR" "$KAIZEN_DIR/src/hooks/enforce-plan-stored.ts"',
+      '',
+    ].join('\n'));
+    writePluginJson(proj, {
+      hooks: {
+        PreToolUse: [{
+          matcher: 'Write',
+          hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-plan-stored-ts.sh' }],
+        }],
+      },
+    });
+  }
+
+  it('FAILS when a registered TS hook root has no runnable tsx dependency', () => {
+    writeTsHookRegistration();
+
+    const result = checkHookDependencyRoots({ projectRoot: proj, homeDir: home });
+
+    expect(result.status).toBe('FAIL');
+    expect(result.name).toBe('hook-dependency-roots');
+    expect(result.detail).toContain('tsx not found');
+    expect(result.detail).toContain(proj);
+  });
+
+  it('PASSES when the registered TS hook root has a local tsx binary', () => {
+    writeTsHookRegistration();
+    mkdirSync(join(proj, 'node_modules/.bin'), { recursive: true });
+    writeFileSync(join(proj, 'node_modules/.bin/tsx'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+
+    const result = checkHookDependencyRoots({ projectRoot: proj, homeDir: home });
+
+    expect(result.status).toBe('PASS');
+    expect(result.detail).toContain('all 1 TS hook root');
+  });
+
+  it('PASSES when no registered hooks use the TS trampoline', () => {
+    writeHook(proj, '.claude/hooks/plain.sh', true, '#!/bin/bash\nexit 0\n');
+    writePluginJson(proj, {
+      hooks: {
+        PreToolUse: [{
+          matcher: 'Write',
+          hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/plain.sh' }],
+        }],
+      },
+    });
+
+    const result = checkHookDependencyRoots({ projectRoot: proj, homeDir: home });
+
+    expect(result.status).toBe('PASS');
+    expect(result.detail).toContain('no TS hook roots');
+  });
+});
+
+describe('checkHookSyntaxSmoke', () => {
+  let proj: string, home: string;
+  beforeEach(() => { proj = makeProject(); home = makeHome(); });
+  afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+
+  it('PASS when referenced hooks have valid bash syntax', () => {
+    writeHook(proj, '.claude/hooks/foo.sh', true);
+    writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/foo.sh' }] }] } });
+
+    const r = checkHookSyntaxSmoke({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('PASS');
+    expect(r.detail).toContain('all 1 hook files pass syntax checks');
+  });
+
+  it('FAILs on conflict markers even when the hook is present and executable', () => {
+    writeHook(proj, '.claude/hooks/conflicted.sh', true, [
+      '#!/bin/bash',
+      '<<<<<<< HEAD',
+      'echo ours',
+      '=======',
+      'echo theirs',
+      '>>>>>>> branch',
+      '',
+    ].join('\n'));
+    writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/conflicted.sh' }] }] } });
+
+    const r = checkHookSyntaxSmoke({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('FAIL');
+    expect(r.detail).toContain('conflicted.sh');
+    expect(r.detail).toContain('conflict markers');
+  });
+
+  it('FAILs on shell syntax errors with bounded diagnostic detail', () => {
+    writeHook(proj, '.claude/hooks/bad.sh', true, '#!/bin/bash\necho "unterminated\n');
+    writeSettings(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './.claude/hooks/bad.sh' }] }] } });
+
+    const r = checkHookSyntaxSmoke({ projectRoot: proj, homeDir: home });
+
+    expect(r.status).toBe('FAIL');
+    expect(r.detail).toContain('bad.sh');
+    expect(r.detail).toContain('syntax error');
+    expect(r.detail.length).toBeLessThan(700);
+  });
+});
+
+describe('hook-syntax CLI and SessionStart wrapper', () => {
+  let proj: string, home: string;
+  beforeEach(() => { proj = makeProject(); home = makeHome(); });
+  afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+
+  function writeConflictedPluginHook(): void {
+    writeHook(proj, '.claude/hooks/conflicted.sh', true, [
+      '#!/bin/bash',
+      '<<<<<<< HEAD',
+      'echo ours',
+      '=======',
+      'echo theirs',
+      '>>>>>>> branch',
+      '',
+    ].join('\n'));
+    writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/conflicted.sh' }] }] } });
+  }
+
+  it('test runtime invariant: hook-syntax CLI smoke uses the shared TypeScript runner', () => {
+    expect(runDoctorHookSyntax.toString()).toContain('DOCTOR_RUNNER');
+    expect(runDoctorHookSyntax.toString()).not.toContain("spawnSync('npx'");
+  });
+
+  it('hook-syntax --quiet is silent on pass and exits non-zero on corrupt hooks', () => {
+    writeHook(proj, '.claude/hooks/foo.sh', true);
+    writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/foo.sh' }] }] } });
+
+    const ok = runDoctorHookSyntax(proj, home);
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toBe('');
+
+    rmSync(join(proj, '.claude/hooks/foo.sh'));
+    writeConflictedPluginHook();
+    const bad = runDoctorHookSyntax(proj, home);
+    expect(bad.status).toBe(1);
+    expect(bad.stdout).toContain('[FAIL] hook-syntax-smoke');
+    expect(bad.stdout).toContain('conflict markers');
+  });
+
+  it('SessionStart snapshot hook surfaces corrupt hooks but exits 0', () => {
+    writeConflictedPluginHook();
+
+    const result = spawnSync('bash', [join(process.cwd(), '.claude/hooks/kaizen-session-snapshot.sh')], {
+      cwd: proj,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('[FAIL] hook-syntax-smoke');
+    expect(result.stdout).toContain('conflict markers');
   });
 });
 
@@ -567,8 +796,11 @@ describe('runAllChecks + exitCodeFor', () => {
       'plugin-double-install',
       'dangling-hook-paths',
       'stale-plugin-cache',
+      'dev-link-override',
       'restart-needed',
+      'hook-dependency-roots',
       'hook-exec-smoke',
+      'hook-syntax-smoke',
       'codex-readiness',
     ]);
     expect(codexRun).toHaveBeenCalledWith('codex', ['--version']);

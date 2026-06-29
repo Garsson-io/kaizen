@@ -4,7 +4,8 @@
 #
 # INVARIANT: git commit/push inside a git worktree are ALLOWED.
 # INVARIANT: git commit/push outside a worktree (main checkout) produce a warning on stderr.
-# INVARIANT: Non-git-commit/push commands are always ALLOWED regardless of location.
+# INVARIANT: Non-git-commit/push commands are ALLOWED unless a case worktree
+#            detects dirty source files in the root checkout.
 # SUT: kaizen-enforce-case-worktree.sh
 
 set -u
@@ -20,21 +21,30 @@ trap 'rm -rf "$MOCK_DIR"' EXIT
 # Helper: mock git to simulate being inside a worktree
 # In a worktree, --git-dir and --git-common-dir return different paths
 setup_worktree_mock() {
-  cat > "$MOCK_DIR/git" << 'MOCK'
+  local root_status="${1:-}"
+  cat > "$MOCK_DIR/git" << MOCK
 #!/bin/bash
-if echo "$@" | grep -q "rev-parse --git-dir"; then
+if echo "\$@" | grep -q "rev-parse --git-dir"; then
   echo "/repo/.git/worktrees/my-worktree"
   exit 0
 fi
-if echo "$@" | grep -q "rev-parse --git-common-dir"; then
+if echo "\$@" | grep -q "rev-parse --git-common-dir"; then
   echo "/repo/.git"
   exit 0
 fi
-if echo "$@" | grep -q "rev-parse --abbrev-ref HEAD"; then
-  echo "some-branch"
+if echo "\$@" | grep -q "rev-parse --show-toplevel"; then
+  echo "/repo/.claude/worktrees/my-worktree"
   exit 0
 fi
-/usr/bin/git "$@"
+if echo "\$@" | grep -q "rev-parse --abbrev-ref HEAD"; then
+  echo "case/260629-k1631-root-patch-drift"
+  exit 0
+fi
+if [ "\$1" = "-C" ] && [ "\$2" = "/repo" ] && echo "\$@" | grep -q "status --porcelain"; then
+  printf '%b' "$root_status"
+  exit 0
+fi
+/usr/bin/git "\$@"
 MOCK
   chmod +x "$MOCK_DIR/git"
 }
@@ -93,6 +103,33 @@ assert_eq "push allowed in worktree" "" "$OUTPUT"
 
 OUTPUT=$(run_hook "$HOOK" "git push -u origin my-branch")
 assert_eq "push -u allowed in worktree" "" "$OUTPUT"
+
+echo ""
+echo "=== Inside a worktree: root checkout source drift is denied ==="
+
+setup_worktree_mock " M src/root-drift.ts\n?? package-lock.json\n"
+
+OUTPUT=$(run_hook "$HOOK" "npm test")
+assert_contains "root drift emits deny JSON" "permissionDecision" "$OUTPUT"
+assert_contains "root drift denial mentions root checkout" "root checkout has dirty source files" "$OUTPUT"
+assert_contains "root drift denial lists source file" "src/root-drift.ts" "$OUTPUT"
+assert_contains "root drift denial mentions active worktree" "/repo/.claude/worktrees/my-worktree" "$OUTPUT"
+
+echo ""
+echo "=== Inside a worktree: runtime-only root dirt is allowed ==="
+
+setup_worktree_mock " M .claude/settings.json\n?? logs/run.log\n"
+
+OUTPUT=$(run_hook "$HOOK" "npm test")
+assert_eq "runtime-only root dirt allowed" "" "$OUTPUT"
+
+echo ""
+echo "=== Inside a worktree: clean root allows normal commands ==="
+
+setup_worktree_mock
+
+OUTPUT=$(run_hook "$HOOK" "npm test")
+assert_eq "clean root normal command allowed" "" "$OUTPUT"
 
 echo ""
 echo "=== Outside a worktree (main checkout): commit and push produce warnings ==="

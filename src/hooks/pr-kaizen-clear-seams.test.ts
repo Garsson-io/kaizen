@@ -20,6 +20,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { processHookInput } from './pr-kaizen-clear.js';
 import { listStateFilesAnyBranch } from './state-utils.js';
 
+type HookOptions = NonNullable<Parameters<typeof processHookInput>[1]>;
+
 let testStateDir: string;
 let testAuditDir: string;
 
@@ -59,7 +61,26 @@ function gateStatus(): string | null {
   return m ? m[1] : null;
 }
 
+function seamHookOptions(overrides: HookOptions = {}): HookOptions {
+  return {
+    stateDir: testStateDir,
+    postComment: () => {},
+    getPrFiles: () => [],
+    gh: () => '',
+    verifyRef: () => 'exists',
+    ...overrides,
+  };
+}
+
 // ── KAIZEN_UNFINISHED seam ────────────────────────────────────────────
+
+describe('test runtime invariant', () => {
+  it('injects local hook boundaries for in-process seam tests', () => {
+    expect(seamHookOptions.toString()).toContain('postComment');
+    expect(seamHookOptions.toString()).toContain('getPrFiles');
+    expect(seamHookOptions.toString()).toContain('verifyRef');
+  });
+});
 
 describe('KAIZEN_UNFINISHED seam: grep pattern false-positive prevention', () => {
   it('INVARIANT: grep command containing KAIZEN_UNFINISHED: as search term does NOT trigger gate clearing', () => {
@@ -71,7 +92,7 @@ describe('KAIZEN_UNFINISHED seam: grep pattern false-positive prevention', () =>
         tool_input: { command: 'grep "KAIZEN_UNFINISHED:" logs.txt' },
         tool_response: { stdout: '', stderr: '', exit_code: '0' },
       },
-      { stateDir: testStateDir },
+      seamHookOptions(),
     );
     // Must NOT clear the gate — it's just a grep search, not a declaration
     expect(result).toBeNull();
@@ -87,7 +108,7 @@ describe('KAIZEN_UNFINISHED seam: grep pattern false-positive prevention', () =>
         tool_input: { command: 'git log --oneline | grep KAIZEN_UNFINISHED:' },
         tool_response: { stdout: '', stderr: '', exit_code: '0' },
       },
-      { stateDir: testStateDir },
+      seamHookOptions(),
     );
     expect(result).toBeNull();
     expect(gateStatus()).toBe('needs_pr_kaizen');
@@ -105,7 +126,7 @@ describe('KAIZEN_UNFINISHED seam: grep pattern false-positive prevention', () =>
           exit_code: '0',
         },
       },
-      { stateDir: testStateDir },
+      seamHookOptions(),
     );
     // Must clear the gate and return a message
     expect(result).not.toBeNull();
@@ -146,7 +167,7 @@ describe('KAIZEN_IMPEDIMENTS seam: piped command extraction', () => {
           exit_code: '0',
         },
       },
-      { stateDir: testStateDir },
+      seamHookOptions(),
     );
     // Declaration in stdout must succeed regardless of how the command was structured
     expect(result).not.toBeNull();
@@ -174,7 +195,7 @@ describe('KAIZEN_IMPEDIMENTS seam: non-array JSON', () => {
           exit_code: '0',
         },
       },
-      { stateDir: testStateDir },
+      seamHookOptions(),
     );
     // Must return an explicit error, not null (silent failure)
     expect(result).not.toBeNull();
@@ -197,7 +218,7 @@ describe('KAIZEN_IMPEDIMENTS seam: non-array JSON', () => {
           exit_code: '0',
         },
       },
-      { stateDir: testStateDir },
+      seamHookOptions(),
     );
     expect(result).not.toBeNull();
     expect(result).toContain('Invalid JSON');

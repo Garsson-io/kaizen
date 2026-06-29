@@ -19,6 +19,7 @@
 source "$(dirname "$0")/lib/parse-command.sh" 2>/dev/null || { exit 0; }
 source "$(dirname "$0")/lib/input-utils.sh" 2>/dev/null || { exit 0; }
 source "$(dirname "$0")/lib/hook-output.sh" 2>/dev/null || { exit 0; }
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 read_hook_input
 get_command

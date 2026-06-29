@@ -445,6 +445,42 @@ describe('plan file operations', () => {
     expect(item!.issue).toBe('#451');
   });
 
+  it('claimNextItem honors a forced target issue before normal ranking', () => {
+    const plan = makePlan({
+      items: [
+        { issue: '#302', title: 'High score unrelated', score: 10, approach: 'Do unrelated work', status: 'pending', item_type: 'leaf' },
+        { issue: '#451', title: 'Manifest target', score: 1, approach: 'Do forced work', status: 'pending', item_type: 'leaf' },
+      ],
+    });
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const item = claimNextItem(tmpDir, { targetIssue: '#451' });
+
+    expect(item).toMatchObject({
+      issue: '#451',
+      title: 'Manifest target',
+      status: 'assigned',
+    });
+    const updated = readPlan(tmpDir);
+    expect(updated!.items[0].status).toBe('pending');
+    expect(updated!.items[1].status).toBe('assigned');
+  });
+
+  it('claimNextItem creates a synthetic assignment when a forced target is missing from the plan', () => {
+    const plan = makePlan();
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const item = claimNextItem(tmpDir, { targetIssue: '#999' });
+
+    expect(item).toMatchObject({
+      issue: '#999',
+      status: 'assigned',
+      item_type: 'leaf',
+    });
+    const updated = readPlan(tmpDir);
+    expect(updated!.items[0]).toMatchObject({ issue: '#999', status: 'assigned' });
+  });
+
   it('claimNextItem returns null when all items are done', () => {
     const plan = makePlan();
     plan.items.forEach((i) => (i.status = 'done'));
@@ -1139,5 +1175,23 @@ describe('plan-prepass template includes theme instructions', () => {
     };
     const prompt = buildPlanPrompt(state);
     expect(prompt.toLowerCase()).toContain('theme');
+  });
+
+  it('buildPlanPrompt surfaces explore-sourced issues and candidate manifests', () => {
+    const state = {
+      batch_id: 'b', batch_start: 0, guidance: 'g', max_runs: 10, cooldown: 30,
+      budget: '3.00', max_failures: 3, kaizen_repo: 'Garsson-io/kaizen',
+      host_repo: 'Garsson-io/kaizen', run: 0, prs: [], issues_filed: [],
+      issues_closed: [], cases: [], consecutive_failures: 0, current_cooldown: 30,
+      stop_reason: '', last_issue: '', last_pr: '', last_case: '', last_branch: '',
+      last_worktree: '',
+    };
+
+    const prompt = buildPlanPrompt(state);
+
+    expect(prompt).toContain('source:auto-dent-explore');
+    expect(prompt).toContain('source:ecosystem-research');
+    expect(prompt).toContain('run-*-candidate-tasks-manifest.json');
+    expect(prompt).toContain('candidate-task manifest');
   });
 });

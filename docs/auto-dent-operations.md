@@ -72,6 +72,8 @@ Key variables: `{{guidance}}`, `{{run_tag}}`, `{{run_context}}`, `{{issues_close
 
 `{{goal_forcing_contract}}` comes from `scripts/kaizen-workflow-driver.ts`. It is the headless equivalent of `/goal`: a run should not finish while applicable kaizen gates remain pending. Keep lifecycle gate wording there instead of copying checklists into individual prompt templates.
 
+Context-heavy work is delegated by default through that same contract. The exact fan-out policy is rendered by `renderContextDelegationPolicy()` from `DEFAULT_CONTEXT_DELEGATION_SUBSTEPS` in `scripts/auto-dent-context-delegation.ts`; keep the sub-step list there. The same helper mines run logs for context pressure (`context_growth`, `missing_subagent`, high main-thread discovery/tool-call volume) and observed subagent tool use. Observed delegation becomes a `DELEGATE` progress row; threshold-crossing PR runs without delegation repair the existing `context-delegation` gate.
+
 Status for a run or issue uses the same shared model:
 
 ```bash
@@ -181,6 +183,33 @@ row, so a pushed branch is never misread as a real PR (a later `/pull/<N>` super
 # Or directly:
 npx tsx scripts/auto-dent-ctl.ts status
 ```
+
+### Cross-PR DRY sweep
+
+Use the dry-sweep control command when a batch has accumulated several adjacent
+Auto-Dent PRs and you want cleanup candidates before adding more mechanisms:
+
+```bash
+npx tsx scripts/auto-dent-ctl.ts dry-sweep --repo Garsson-io/kaizen --limit 20
+```
+
+The report scans production `scripts/` and `src/` code for known drift families
+such as GitHub execution wrappers, direct progress comments versus marker
+attachments, telemetry envelopes, display formatting, and markdown table helpers.
+When `--repo` is provided it also annotates candidates with recent merged PRs
+whose changed files overlap the candidate files.
+
+To persist the result on a batch progress issue as an idempotent marker-comment
+attachment:
+
+```bash
+npx tsx scripts/auto-dent-ctl.ts dry-sweep --repo Garsson-io/kaizen --post <progress-issue>
+```
+
+`auto-dent-ctl.ts reflect` runs the same sweep on its normal cadence and surfaces
+the candidate count in reflection insights. Treat those insights as advisory
+steering: convert high-confidence findings into small cleanup issues or PRs
+before adding another parallel mechanism.
 
 ### From GitHub
 
@@ -349,7 +378,9 @@ Add to the batch loop in `auto-dent.ts` (between runs) or to `auto-dent-run.ts` 
 | `scripts/auto-dent.sh` | Compatibility wrapper for the TS batch runner |
 | `scripts/auto-dent.ts` | TypeScript batch runner (outer loop, self-update, stop conditions, summaries) |
 | `scripts/auto-dent-run.ts` | Single-run TypeScript runner (prompt building, stream-json parsing, state updates) |
-| `scripts/auto-dent-ctl.ts` | Control plane (status, halt) |
+| `scripts/auto-dent-context-delegation.ts` | Context pressure and observed delegation analysis for the `context-delegation` gate |
+| `scripts/auto-dent-ctl.ts` | Control plane (status, halt, reflect, dry-sweep) |
+| `scripts/auto-dent-dry-sweep.ts` | Cross-PR/codebase DRY drift candidate collector |
 | `scripts/auto-dent-score.ts` | Run and batch quality scoring |
 | `scripts/auto-dent-provider-matrix.ts` | Synthetic Claude/Codex/hybrid provider comparison matrix |
 | `scripts/auto-dent-harness.ts` | Harness utilities (auto-merge, labeling) |

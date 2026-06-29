@@ -426,6 +426,42 @@ describe("cleanupWorktrees", () => {
     expect(result.skipped).toBe(0);
   });
 
+  it("removes clean squash-merged worktrees even when local commits are not on the deleted remote branch", () => {
+    const calls: string[][] = [];
+    const writes: string[] = [];
+    const deps = makeDeps({
+      readdir: () => ["wt-squashed"],
+      isDir: () => true,
+      exists: () => false,
+      writeFile: (p) => { writes.push(p); },
+      git: (args) => {
+        calls.push([...args]);
+        const cmd = args.join(" ");
+        if (cmd.includes("branch --merged main")) return "* main";
+        if (cmd.includes("rev-parse --abbrev-ref HEAD")) return "feat-squashed";
+        if (cmd.includes("diff --stat main..feat-squashed")) return "";
+        if (cmd.includes("status --porcelain")) return "";
+        if (cmd.includes("log --oneline @{u}..HEAD")) return "a111 first\nb222 second";
+        if (cmd.includes("worktree remove")) return "";
+        if (cmd.includes("worktree list")) return "";
+        if (cmd.endsWith("branch")) return "* main\n  feat-squashed";
+        return "";
+      },
+    });
+
+    const result = cleanupWorktrees(makePaths(), deps, false);
+
+    expect(result.removedWorktrees).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(result.actions).toContainEqual({
+      type: "remove",
+      target: "wt-squashed",
+      reason: "squash-merged",
+    });
+    expect(writes.some((p) => p.endsWith(".worktree-will-delete"))).toBe(true);
+    expect(calls.some((args) => args.includes("worktree") && args.includes("remove"))).toBe(true);
+  });
+
   it("dry-run does not call unlink or exec remove", () => {
     let execCmds: string[] = [];
     const deps = makeDeps({

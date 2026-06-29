@@ -217,6 +217,18 @@ describe('checkPlanBeforeEdit', () => {
       expect(result.allowed).toBe(false);
       expect(result.reason).toMatch(/No plan or test plan stored/);
     });
+
+    it('scope conflict → message says the stored plan conflicts with the issue scope (#1161)', () => {
+      const result = checkPlanBeforeEdit(
+        'src/thing.ts',
+        makeDeps({ retrievePlan: () => `${GOOD_PLAN}\n\nCloses #1056` }),
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toEqual(['scope-conflict']);
+      expect(result.reason).toContain('conflicts with this issue scope');
+      expect(result.reason).toContain('#1056');
+      expect(result.reason).not.toMatch(/test plan is missing/);
+    });
   });
 
   it('allows non-source files even without plan', () => {
@@ -379,6 +391,18 @@ describe('checkPlanBeforePr', () => {
     expect(checkPlanBeforePr(ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`), makeDeps()).allowed).toBe(true);
   });
 
+  it('DENIES PR creation when the stored plan closes a different issue (#1161)', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`),
+      makeDeps({ retrievePlan: () => `${GOOD_PLAN}\n\nCloses #1056` }),
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['scope-conflict']);
+    expect(result.reason).toContain('scope-conflicting close target');
+    expect(result.reason).toContain('#1056');
+  });
+
   it('allows populated Impact proof supplied through --body-file', () => {
     const { command, cleanup } = ghPrCreateWithBodyFile(`${GOOD_IMPACT_SECTION}\n\nCloses #1055`);
     try {
@@ -533,6 +557,15 @@ describe('checkPlanBeforePr', () => {
   it('DENIES when no plan', () => {
     const result = checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps({ retrievePlan: () => null }));
     expect(result.allowed).toBe(false);
+  });
+
+  it('DENIES with direct store-plan remediation when a plan is missing (#1085)', () => {
+    const result = checkPlanBeforePr(ghPrCreate('Closes #1055'), makeDeps({ retrievePlan: () => null }));
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('/kaizen-write-plan');
+    expect(result.reason).toContain('store-plan');
+    expect(result.reason).toContain('--issue 1055 --repo Garsson-io/kaizen');
+    expect(result.reason).toContain('retrieve-testplan');
   });
 
   it('DENIES when no testplan', () => {

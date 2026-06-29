@@ -94,7 +94,11 @@ describe('readAllPendingGates', () => {
     const report = readAllPendingGates(TEST_BRANCH, TEST_STATE_DIR);
     expect(report.gates).toHaveLength(1);
     expect(report.gates[0].type).toBe('post_merge');
+    expect(report.gates[0].detail).toContain('gh run list --repo org/repo --branch main --commit <merge-sha>');
     expect(report.gates[0].detail).toContain('git fetch origin main');
+    expect(report.gates[0].detail).toContain('git merge --ff-only origin/main');
+    expect(report.gates[0].action).toBe('git fetch origin main && git merge --ff-only origin/main');
+    expect(report.gates[0].detail).not.toContain('git merge origin/main');
   });
 
   it('post-merge gate detail mentions /kaizen reflection as first step (#936)', () => {
@@ -107,9 +111,12 @@ describe('readAllPendingGates', () => {
     expect(detail.toLowerCase()).toMatch(/kaizen/);
     // Kaizen must appear before git sync in the detail text
     const kaizenPos = detail.toLowerCase().indexOf('kaizen');
+    const workflowPos = detail.indexOf('gh run list');
     const gitPos = detail.toLowerCase().indexOf('git fetch');
     expect(kaizenPos).toBeGreaterThanOrEqual(0);
+    expect(workflowPos).toBeGreaterThan(kaizenPos);
     expect(kaizenPos).toBeLessThan(gitPos);
+    expect(workflowPos).toBeLessThan(gitPos);
   });
 
   it('reads multiple gates of different types', () => {

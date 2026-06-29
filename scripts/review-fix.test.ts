@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync as spawnRaw } from 'node:child_process';
@@ -680,6 +680,30 @@ describe('parseArgs', () => {
       '--fix-provider', 'api-token',
     ])).toThrow('exit');
   });
+
+  it('parses --transition without requiring --issue for the full fix loop (#929)', () => {
+    vi.spyOn(process, 'exit').mockImplementation((_code?: number | string) => { throw new Error('exit'); });
+    const result = parseArgs([
+      'node', 'review-fix.ts',
+      '--transition', 'needs_review',
+      '--pr', 'https://github.com/org/repo/pull/1',
+      '--repo', 'org/repo',
+    ]);
+    expect(result.transition).toBe('needs_review');
+    expect(result.prUrl).toBe('https://github.com/org/repo/pull/1');
+    expect(result.repo).toBe('org/repo');
+  });
+
+  it('parses --clear-review-gate without requiring full-loop args (#961)', () => {
+    vi.spyOn(process, 'exit').mockImplementation((_code?: number | string) => { throw new Error('exit'); });
+    const result = parseArgs([
+      'node', 'review-fix.ts',
+      '--clear-review-gate', 'feat/manual-review',
+      '--state-dir', '/tmp/review-state',
+    ]);
+    expect(result.clearReviewGate).toBe('feat/manual-review');
+    expect(result.stateDir).toBe('/tmp/review-state');
+  });
 });
 
 // ── buildFixPrompt ────────────────────────────────────────────────────
@@ -1352,7 +1376,12 @@ describe('resume state machine E2E (#917)', () => {
 // These tests verify the invariant: review state must live in the MAIN repo,
 // never inside a worktree. Worktrees are ephemeral; state must survive deletion.
 
-import { resolveStateDir, validateTransition } from './review-fix.js';
+import {
+  clearReviewGate,
+  resolveStateDir,
+  transitionReviewFixState,
+  validateTransition,
+} from './review-fix.js';
 
 describe('resolveStateDir', () => {
   it('returns main-repo-rooted path when git-common-dir is .git (main checkout)', () => {
@@ -1450,5 +1479,136 @@ describe('validateTransition', () => {
     const findings = [{ status: 'PARTIAL' as const, requirement: 'req', detail: 'minor gap', confidence: 79 }];
     const result = validateTransition('needs_review', baseState, findings);
     expect(result.allowed).toBe(true);
+  });
+});
+
+describe('manual review-fix transitions (#929)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'review-fix-transition-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function stateWithFindings(findings: ReviewFixState['rounds'][number]['findings']): ReviewFixState {
+    return {
+      prUrl: 'https://github.com/org/repo/pull/1',
+      issueNum: '1',
+      repo: 'org/repo',
+      maxRounds: 3,
+      budgetCap: 5,
+      currentRound: 1,
+      totalCostUsd: 0,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      phase: 'needs_fix',
+      rounds: [{
+        round: 1,
+        phase: 'review',
+        verdict: 'pass',
+        gaps: 0,
+        reviewCost: 0,
+        fixCost: 0,
+        findings,
+      }],
+    };
+  }
+
+  it('updates state and appends a transition audit record when findings are safe', () => {
+    const state = stateWithFindings([{ status: 'DONE', requirement: 'review done', detail: 'ok', confidence: 90 }]);
+    saveState(state, dir);
+
+    const result = transitionReviewFixState({
+      prUrl: state.prUrl,
+      targetPhase: 'needs_review',
+      stateDir: dir,
+      actor: 'test',
+      now: () => '2026-06-29T01:00:00.000Z',
+    });
+
+    expect(result.changed).toBe(true);
+    const loaded = loadState(state.prUrl, dir)!;
+    expect(loaded.phase).toBe('needs_review');
+    expect(loaded.manualTransitions).toEqual([
+      expect.objectContaining({
+        from: 'needs_fix',
+        to: 'needs_review',
+        actor: 'test',
+        at: '2026-06-29T01:00:00.000Z',
+      }),
+    ]);
+  });
+
+  it('blocks transition when the current round has no findings', () => {
+    const state = stateWithFindings([]);
+    saveState(state, dir);
+
+    const result = transitionReviewFixState({
+      prUrl: state.prUrl,
+      targetPhase: 'needs_review',
+      stateDir: dir,
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toMatch(/no findings/i);
+    expect(loadState(state.prUrl, dir)!.phase).toBe('needs_fix');
+  });
+});
+
+describe('manual review gate clear (#961)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'review-gate-clear-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeNeedsReview(branch: string): string {
+    const statePath = join(dir, 'pr-review-test');
+    writeFileSync(statePath, [
+      'PR_URL=https://github.com/org/repo/pull/1',
+      'STATUS=needs_review',
+      `BRANCH=${branch}`,
+      'ROUND=1',
+      '',
+    ].join('\n'));
+    return statePath;
+  }
+
+  it('clears a needs_review hook state for the requested branch', () => {
+    const branch = 'feat/manual-review';
+    const statePath = writeNeedsReview(branch);
+
+    expect(clearReviewGate({ branch, stateDir: dir })).toEqual({
+      cleared: true,
+      branch,
+    });
+    expect(existsSync(statePath)).toBe(false);
+  });
+
+  it('CLI smoke clears a real temp state file without MODULE_NOT_FOUND', () => {
+    const branch = 'feat/manual-review';
+    const statePath = writeNeedsReview(branch);
+
+    const result = spawnRaw('npx', [
+      'tsx',
+      'scripts/review-fix.ts',
+      '--clear-review-gate', branch,
+      '--state-dir', dir,
+    ], {
+      cwd: new URL('..', import.meta.url),
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('MODULE_NOT_FOUND');
+    expect(result.stderr).not.toContain('Cannot find module');
+    expect(result.stdout).toContain('Cleared needs_review gate');
+    expect(existsSync(statePath)).toBe(false);
   });
 });

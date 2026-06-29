@@ -77,7 +77,8 @@ Use the /kaizen-setup skill to install kaizen's pre-push git hook into this host
 
 1. Run \`npx --prefix "$CLAUDE_PLUGIN_ROOT" tsx "$CLAUDE_PLUGIN_ROOT/src/kaizen-setup.ts" --step install-git-hooks\` from the host project root.
 2. Verify the JSON output reports \`framework: "pre-commit"\` and \`action: "installed"\` (or \`already_installed\` if re-run).
-3. Verify \`.kaizen-hooks/pre-push\` was written, and \`.pre-commit-config.yaml\` now has a \`local\` repo with hook id \`kaizen-pre-push\`.
+3. Verify \`.pre-commit-config.yaml\` now has a remote \`repo: https://github.com/Garsson-io/kaizen\` entry with a non-empty \`rev\` and hook id \`kaizen-pre-push\`.
+4. Verify \`.kaizen-hooks/\` was not written for the pre-commit branch.
 
 ## Rules
 
@@ -314,8 +315,8 @@ export const SCENARIOS: Scenario[] = [
     setupFiles: {
       // Seed a minimal pre-commit config so install-git-hooks detects the
       // pre-commit framework (PRIMARY branch) rather than falling back to raw
-      // .git/hooks installation. The install step injects a `local` repo with
-      // hook id `kaizen-pre-push` into this file.
+      // .git/hooks installation. The install step injects a remote kaizen repo
+      // reference with hook id `kaizen-pre-push` into this file.
       '.pre-commit-config.yaml':
         'repos:\n  - repo: meta\n    hooks:\n      - id: check-hooks-apply\n',
     },

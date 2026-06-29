@@ -33,10 +33,11 @@
  * [x] Gate cleared with specific PR URL targeting (kaizen #309)
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { buildTypeScriptSubprocess } from '../../scripts/test-typescript-runner.js';
 import {
   classifyReflectionQuality,
   detectFixableFiledImpediments,
@@ -51,6 +52,9 @@ import {
 let testStateDir: string;
 let testAuditDir: string;
 const HOOK_PATH = path.resolve(__dirname, 'pr-kaizen-clear.ts');
+const HOOK_RUNNER = buildTypeScriptSubprocess(HOOK_PATH, {
+  startDir: __dirname,
+});
 const HOOK_SOURCE = fs.readFileSync(HOOK_PATH, 'utf-8');
 
 beforeEach(() => {
@@ -97,18 +101,21 @@ describe('test runtime invariant', () => {
   it('keeps repeated hook behavior cases on the in-process seam', () => {
     expect(runHook.toString()).toContain('processHookInput');
     expect(runHook.toString()).not.toContain('execSync');
-    expect(runHookSubprocess.toString()).toContain('execSync');
+    expect(runHookSubprocess.toString()).toContain('HOOK_RUNNER');
+    expect(runHookSubprocess.toString()).toContain('execFileSync');
+    expect(runHookSubprocess.toString()).not.toContain('npx tsx');
   });
 });
 
 function runHookSubprocess(input: object): string {
-  const json = JSON.stringify(input);
   try {
-    return execSync(
-      `echo '${json.replace(/'/g, "'\\''")}' | npx tsx "${HOOK_PATH}"`,
+    return execFileSync(
+      HOOK_RUNNER.command,
+      HOOK_RUNNER.args,
       {
         encoding: 'utf-8',
         env: { ...process.env, STATE_DIR: testStateDir, AUDIT_DIR: testAuditDir },
+        input: JSON.stringify(input),
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 15000,
       },

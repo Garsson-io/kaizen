@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { openSync, readFileSync, writeFileSync } from 'node:fs';
-import { handlers, parseArgs, resolveContent, resolveRound, type CliArgs } from './cli-structured-data.js';
+import {
+  handlers,
+  parseArgs,
+  resolveContent,
+  resolveRound,
+  unknownFlagsForCommand,
+  validateKnownFlags,
+  type CliArgs,
+} from './cli-structured-data.js';
 import {
   nextReviewRound,
   storePlan,
@@ -120,6 +128,19 @@ describe('handler registry', () => {
     expect(Object.keys(handlers).length).toBe(24);
   });
 
+  it('has unknown-flag validation coverage for every registered handler', () => {
+    for (const cmd of Object.keys(handlers)) {
+      expect(
+        unknownFlagsForCommand({
+          command: cmd,
+          repo: 'Garsson-io/kaizen',
+          'definitely-unknown': 'true',
+        } as CliArgs),
+        `missing flag allowlist for '${cmd}'`,
+      ).toEqual(['definitely-unknown']);
+    }
+  });
+
   it('registers the attach-transcript handler (#1508)', () => {
     expect(handlers['attach-transcript']).toBeTypeOf('function');
   });
@@ -179,6 +200,56 @@ describe('parseArgs — boolean flag handling', () => {
     const a = parseArgs(['store-review-finding', '--pr', '1060', '--round', '2']);
     expect(a.pr).toBe('1060');
     expect(a.round).toBe('2');
+  });
+});
+
+describe('command flag validation (#1163)', () => {
+  function spyExit() {
+    return vi.spyOn(process, 'exit').mockImplementation((code?: number | string | null) => {
+      throw new Error(`process.exit(${code})`);
+    });
+  }
+
+  it('treats --json as an explicit content alias for payload-bearing commands', () => {
+    const a = parseArgs([
+      'store-review-summary',
+      '--repo', 'Garsson-io/kaizen',
+      '--pr', '903',
+      '--round', '5',
+      '--json', '{"summary":"kept"}',
+    ]);
+
+    expect(unknownFlagsForCommand(a)).toEqual([]);
+    expect(resolveContent(a)).toBe('{"summary":"kept"}');
+  });
+
+  it('reports command-scoped unknown flags instead of silently accepting them', () => {
+    const a = parseArgs([
+      'store-review-summary',
+      '--repo', 'Garsson-io/kaizen',
+      '--pr', '903',
+      '--round', '5',
+      '--json', '{"summary":"kept"}',
+      '--bogus', 'dropped',
+    ]);
+
+    expect(unknownFlagsForCommand(a)).toEqual(['bogus']);
+  });
+
+  it('exits non-zero with an actionable unknown-option error before dispatch', () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = spyExit();
+    const a = parseArgs([
+      'store-review-summary',
+      '--repo', 'Garsson-io/kaizen',
+      '--pr', '903',
+      '--bogus',
+    ]);
+
+    expect(() => validateKnownFlags(a)).toThrow('process.exit(1)');
+    expect(err).toHaveBeenCalledWith('store-review-summary: unknown option: --bogus');
+    err.mockRestore();
+    exit.mockRestore();
   });
 });
 

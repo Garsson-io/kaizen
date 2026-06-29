@@ -1,0 +1,45 @@
+name: Review verdict gate rerun
+
+on:
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: >-
+    review-verdict-rerun-${{ github.event.issue.number || github.ref }}-${{
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, 'kaizen:review/r') &&
+      contains(github.event.comment.body, '/summary -->') &&
+      'summary' ||
+      github.event.comment.id
+    }}
+  cancel-in-progress: true
+
+jobs:
+  rerun-after-review-summary:
+    if: >-
+      ${{
+        github.event.issue.pull_request &&
+        contains(github.event.comment.body, 'kaizen:review/r') &&
+        contains(github.event.comment.body, '/summary -->')
+      }}
+    name: Rerun PR Review verdict gate after stored summary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Rerun PR-attached Review verdict gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: npx tsx scripts/rerun-review-verdict-gate.ts --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER"

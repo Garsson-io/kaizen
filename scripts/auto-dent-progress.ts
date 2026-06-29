@@ -21,6 +21,7 @@ export const PROGRESS_PHASE_ORDER = [
   'PICK',
   'PLAN',
   'EVALUATE',
+  'DELEGATE',
   'CASE',
   'IMPLEMENT',
   'TEST',
@@ -106,6 +107,7 @@ export function buildKaizenCycleSteps(
     },
     { phase: 'PLAN', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
     { phase: 'EVALUATE', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
+    { phase: 'DELEGATE', state: synthetic ? 'not applicable' : 'not observed', detail: synthetic ? 'synthetic test task' : '' },
     {
       phase: 'CASE',
       state: synthetic ? 'not applicable' : result.cases.length > 0 ? 'created' : 'not observed',
@@ -162,6 +164,37 @@ export function formatProgressStepsMarkdown(result: AutoDentProgressResult, repo
   return lines.join('\n');
 }
 
+export function hasContextDelegationProgressEvidence(
+  steps: RunProgressStep[] | undefined,
+  options: { allowNotApplicable?: boolean } = {},
+): boolean {
+  const allowNotApplicable = options.allowNotApplicable ?? true;
+  const implementationIndex = steps?.findIndex((step) => [
+    'IMPLEMENT',
+    'TEST',
+    'PR',
+    'REVIEW',
+    'FIX',
+    'MERGE',
+    'REFLECT',
+    'CLEANUP',
+  ].includes(step.phase)) ?? -1;
+
+  return Boolean(steps?.some((step, index) => {
+    if (implementationIndex !== -1 && index > implementationIndex) return false;
+    const state = step.state.trim().toLowerCase().replace(/_/g, '-');
+    const hasDetail = step.detail.trim().length > 0;
+    const isNotApplicable = state === 'not applicable' || state === 'not-applicable';
+    if (step.phase === 'DELEGATE') {
+      return hasDetail && (state === 'done' || state === 'delegated' || (allowNotApplicable && isNotApplicable));
+    }
+    if (step.phase === 'CONTEXT-DELEGATION') {
+      return hasDetail && (state === 'done' || (allowNotApplicable && isNotApplicable));
+    }
+    return false;
+  }));
+}
+
 export function upsertProgressStep(
   result: AutoDentProgressResult,
   step: RunProgressStep,
@@ -170,6 +203,10 @@ export function upsertProgressStep(
   result.progressSteps = result.progressSteps || [];
   const existing = result.progressSteps.find((s) => s.phase === step.phase);
   if (!existing) {
+    result.progressSteps.push(step);
+    return;
+  }
+  if (step.phase === 'DELEGATE' && mode !== 'replace') {
     result.progressSteps.push(step);
     return;
   }
@@ -182,4 +219,26 @@ export function upsertProgressStep(
   existing.state = step.state || existing.state;
   existing.detail = step.detail || existing.detail;
   existing.url = step.url || existing.url;
+}
+
+export function upsertContextDelegationProgressStep(
+  result: AutoDentProgressResult,
+  step: RunProgressStep,
+): void {
+  result.progressSteps = result.progressSteps || [];
+  const implementationIndex = result.progressSteps.findIndex((existing) => [
+    'IMPLEMENT',
+    'TEST',
+    'PR',
+    'REVIEW',
+    'FIX',
+    'MERGE',
+    'REFLECT',
+    'CLEANUP',
+  ].includes(existing.phase));
+  if (implementationIndex === -1) {
+    upsertProgressStep(result, step);
+    return;
+  }
+  result.progressSteps.splice(implementationIndex, 0, step);
 }

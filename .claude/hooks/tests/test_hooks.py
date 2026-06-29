@@ -23,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from harness import (
     HookHarness, PreToolUseInput, PostToolUseInput, StopInput,
-    PRReviewState, MockBinDir, REAL_COMMANDS,
+    PRReviewState, MockBinDir, HookResult, REAL_COMMANDS,
+    _env_int, assert_post_hook_stdout_contains,
 )
 
 
@@ -163,8 +164,8 @@ class TestRealWorldCommands:
             "gh pr create --title test --body test",
             stderr="https://github.com/Garsson-io/kaizen/pull/88",
         )
-        result = review_harness.run_hook("pr-review-loop-ts.sh", inp)
-        assert "SELF-REVIEW" in result.stdout
+        result = review_harness.run_post_hook("pr-review-loop-ts.sh", inp)
+        assert_post_hook_stdout_contains(result, "SELF-REVIEW", "PostToolUse pr-review-loop")
 
     def test_multiline_command(self, harness, mocks):
         mocks.add_git_mock()
@@ -239,10 +240,10 @@ class TestPRLifecycle:
         assert r.allows(), "Should allow before any PR"
 
         # Phase 2: PR create → gate activates
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr create --title test --body test",
             stdout=self.PR_URL))
-        assert "SELF-REVIEW" in r.stdout
+        assert_post_hook_stdout_contains(r, "SELF-REVIEW", "PostToolUse pr-review-loop")
         assert state.state_exists(self.PR_URL)
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "needs_review"
@@ -256,11 +257,12 @@ class TestPRLifecycle:
         r = review_harness.run_hook("kaizen-enforce-pr-review-ts.sh", PreToolUseInput.bash("gh pr diff 55"))
         assert r.allows(), "Should allow gh pr diff"
 
-        # Phase 3: Review outcome persisted (store-review-summary/store-review-batch sentinel)
+        # Phase 3: Review agents ran and outcome persisted.
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.agent())
         state.create_review_sentinel(self.PR_URL, 1)
 
         # gh pr diff → review passed
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "passed"
 
@@ -270,17 +272,17 @@ class TestPRLifecycle:
 
         # Phase 4: git push → re-gate
         # The push handler finds "passed" state and increments to next round.
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("git push", stdout="ok"))
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("git push", stdout="ok"))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "needs_review", "Push after passed should re-engage gate"
         assert s["ROUND"] == "2", "Round should be incremented after push"
 
     def test_diff_requires_review_sentinel(self, review_harness, state):
-        """gh pr diff alone must not clear gate; sentinel is required (#920)."""
+        """gh pr diff alone must not clear gate; sentinel and Agent evidence are required."""
         state.create_state(self.PR_URL, round_num=1, status="needs_review", branch="wt/test-branch")
 
         # No sentinel yet -> stays blocked
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "needs_review"
         # The gate now reports the structured sentinel reason (#920); the old
@@ -288,16 +290,23 @@ class TestPRLifecycle:
         # "no valid review sentinel stored" message.
         assert "no valid review sentinel stored" in r.stdout
 
-        # Sentinel present -> clears
+        # Sentinel without Agent evidence still stays blocked (#455).
         state.create_review_sentinel(self.PR_URL, 1)
-        r = review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
+        s = state.read_state(self.PR_URL)
+        assert s["STATUS"] == "needs_review"
+        assert "no observed Agent reviewer activity" in r.stdout
+
+        # Sentinel plus Agent evidence -> clears.
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.agent())
+        r = review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash("gh pr diff 55", stdout="diff..."))
         s = state.read_state(self.PR_URL)
         assert s["STATUS"] == "passed"
 
     def test_merge_cleans_up(self, review_harness, state):
         state.create_state(self.PR_URL, round_num=2, status="needs_review", branch="wt/test-branch")
 
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr merge 55 --squash",
             stdout=f"✓ Merged {self.PR_URL}"))
 
@@ -308,23 +317,23 @@ class TestPRLifecycle:
         url_b = "https://github.com/Garsson-io/garsson-prints/pull/10"
 
         # Create PRs for both repos
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr create --repo Garsson-io/kaizen", stdout=url_a))
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr create --repo Garsson-io/garsson-prints", stdout=url_b))
 
         assert state.state_exists(url_a)
         assert state.state_exists(url_b)
 
         # Merge A shouldn't affect B
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr merge 60", stdout=f"✓ Merged {url_a}"))
 
         assert not state.state_exists(url_a)
         assert state.state_exists(url_b), "Merging A should not touch B's state"
 
     def test_failed_command_no_state(self, review_harness, state):
-        review_harness.run_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
+        review_harness.run_post_hook("pr-review-loop-ts.sh", PostToolUseInput.bash(
             "gh pr create --title test", exit_code="1"))
         assert state.state_count() == 0, "Failed command should not create state"
 
@@ -369,17 +378,73 @@ class TestParallelExecution:
             "gh pr create --title test --body test",
             stdout="https://github.com/Garsson-io/kaizen/pull/99")
 
-        review_result = review_harness.run_hook("pr-review-loop-ts.sh", inp)
-        kaizen_result = review_harness.run_hook("kaizen-reflect-ts.sh", inp)
+        review_result = review_harness.run_post_hook("pr-review-loop-ts.sh", inp)
+        kaizen_result = review_harness.run_post_hook("kaizen-reflect-ts.sh", inp)
 
-        assert "SELF-REVIEW" in review_result.stdout, "pr-review-loop should fire"
-        assert "KAIZEN" in kaizen_result.stdout, "kaizen-reflect should fire"
+        assert_post_hook_stdout_contains(review_result, "SELF-REVIEW", "PostToolUse pr-review-loop")
+        assert_post_hook_stdout_contains(kaizen_result, "KAIZEN", "PostToolUse kaizen-reflect")
 
 
 # PostToolUse format tests
 
 class TestPostToolUseFormat:
     """INVARIANT: PostToolUse hooks output advisory text, not deny JSON."""
+
+    def test_post_hook_timeout_budget_env_parsing(self, monkeypatch):
+        monkeypatch.setenv("KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS", "45")
+        assert _env_int("KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS", 30) == 45
+
+        monkeypatch.setenv("KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS", "not-an-int")
+        assert _env_int("KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS", 30) == 30
+
+    def test_post_hook_timeout_reports_diagnostic(self):
+        result = HookResult(
+            hook_path="kaizen-reflect-ts.sh",
+            stdout="",
+            stderr="TIMEOUT after 1s",
+            exit_code=124,
+            timed_out=True,
+        )
+
+        with pytest.raises(AssertionError, match="PostToolUse kaizen-reflect timed out.*KAIZEN"):
+            assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse kaizen-reflect")
+
+    def test_post_hook_stdout_helper_accepts_expected_output(self):
+        result = HookResult(
+            hook_path="kaizen-reflect-ts.sh",
+            stdout="KAIZEN: consider filing a process improvement",
+            stderr="",
+            exit_code=0,
+        )
+
+        assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse kaizen-reflect")
+
+    def test_post_hook_stdout_helper_reports_missing_output_without_timeout(self):
+        result = HookResult(
+            hook_path="kaizen-reflect-ts.sh",
+            stdout="SELF-REVIEW: run review",
+            stderr="",
+            exit_code=0,
+        )
+
+        with pytest.raises(AssertionError, match="did not emit 'KAIZEN'.*stdout="):
+            assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse kaizen-reflect")
+
+    def test_run_post_hook_timeout_reports_real_subprocess_diagnostic(self, tmp_path):
+        hook = tmp_path / "slow-post-hook.sh"
+        hook.write_text("#!/bin/bash\nsleep 1\necho KAIZEN\n")
+        hook.chmod(0o755)
+
+        h = HookHarness(hooks_dir=tmp_path, settings_path=tmp_path / "settings.json")
+        try:
+            result = h.run_post_hook("slow-post-hook.sh", PostToolUseInput.bash("gh pr create"), timeout=0.01)
+
+            assert result.timed_out
+            assert result.exit_code == 124
+            with pytest.raises(AssertionError, match="PostToolUse slow hook timed out.*KAIZEN.*slow-post-hook.sh"):
+                assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse slow hook")
+        finally:
+            h.cleanup()
 
     @pytest.mark.parametrize("hook", ["pr-review-loop-ts.sh", "kaizen-reflect-ts.sh"])
     def test_no_deny_json_in_post_hooks(self, review_harness, hook):
@@ -388,7 +453,7 @@ class TestPostToolUseFormat:
             "gh pr create --title test --body test",
             stdout="https://github.com/Garsson-io/kaizen/pull/70")
 
-        result = review_harness.run_hook(hook, inp)
+        result = review_harness.run_post_hook(hook, inp)
         assert result.exit_code == 0, f"{hook} should always exit 0"
 
         # Should not produce deny JSON

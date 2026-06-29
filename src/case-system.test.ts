@@ -125,6 +125,55 @@ describe('CaseSystem.checkPlanGate', () => {
     be.storeTestPlan(number, 'r', '');
     expect(new CaseSystem(be).checkPlanGate(number, 'r').passed).toBe(false);
   });
+
+  it('fails when the plan explicitly closes a different issue (#1161)', () => {
+    const be = new InMemoryBackend();
+    be.createIssue({ title: 'selected', body: '', repo: 'r' });
+    be.storePlan(1, 'r', '## Plan\n\nShip the batch in one PR.\n\nCloses #1, #2, and #3');
+    be.storeTestPlan(1, 'r', '## Test Plan\n\n- unit');
+
+    const r = new CaseSystem(be).checkPlanGate(1, 'r');
+
+    expect(r.passed).toBe(false);
+    expect(r.hasPlan).toBe(true);
+    expect(r.hasTestPlan).toBe(true);
+    expect(r.reason).toContain('scope-conflicting close target');
+    expect(r.reason).toContain('#2');
+    expect(r.reason).toContain('#3');
+  });
+
+  it('allows closing-keyword targets for the selected issue', () => {
+    const be = new InMemoryBackend();
+    be.createIssue({ title: 'selected', body: '', repo: 'r' });
+    be.storePlan(1, 'r', '## Plan\n\nFixes #1 with a scoped PR.');
+    be.storeTestPlan(1, 'r', '## Test Plan\n\n- unit');
+
+    const r = new CaseSystem(be).checkPlanGate(1, 'r');
+
+    expect(r.passed).toBe(true);
+  });
+
+  it('allows non-closing context references to parent or sibling issues', () => {
+    const be = new InMemoryBackend();
+    be.createIssue({ title: 'selected', body: '', repo: 'r' });
+    be.storePlan(1, 'r', 'Parent: #1134\n\nCompare behavior observed on #2, but only implement #1.');
+    be.storeTestPlan(1, 'r', '## Test Plan\n\n- unit');
+
+    const r = new CaseSystem(be).checkPlanGate(1, 'r');
+
+    expect(r.passed).toBe(true);
+  });
+
+  it('allows prose-separated context references after a selected close target', () => {
+    const be = new InMemoryBackend();
+    be.createIssue({ title: 'selected', body: '', repo: 'r' });
+    be.storePlan(1, 'r', 'Fixes #1 by comparing the incident observed on #2.');
+    be.storeTestPlan(1, 'r', '## Test Plan\n\n- unit');
+
+    const r = new CaseSystem(be).checkPlanGate(1, 'r');
+
+    expect(r.passed).toBe(true);
+  });
 });
 
 // ── Plan store / retrieve round-trip ───────────────────────────────

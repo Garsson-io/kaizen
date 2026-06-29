@@ -26,13 +26,21 @@ import { findStateWithStatus } from './state-utils.js';
 const BLOCKED_TOOLS = new Set(['Edit', 'Write']);
 
 function buildDenyMessage(toolLabel: string, prUrl: string, round: string): string {
+  const prNum = prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '<N>';
+
   return `BLOCKED: ${toolLabel} is not allowed during PR review.
 
 You have an active PR review that must be completed first:
   PR: ${prUrl} (round ${round})
 
-Run \`gh pr diff ${prUrl}\` to review the diff, then work through the
-self-review checklist. Only after reviewing can you proceed with other work.
+Use the review skill for the normal path:
+  /kaizen-review-pr ${prNum}
+
+The review gate clears only after /kaizen-review-pr launches reviewer agents,
+stores structured findings for every PR dimension, and you re-run:
+  gh pr diff ${prUrl}
+
+Manual checklists or direct review-summary storage do not satisfy this gate.
 
 Allowed commands during review:
   gh pr diff, gh pr view, gh pr comment, gh pr edit

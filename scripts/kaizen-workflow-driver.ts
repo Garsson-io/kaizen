@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { currentBranch, makeGitRun, type GitRun } from '../src/issue-binding.js';
 import { resolveProjectRoot } from '../src/lib/resolve-project-root.js';
+import { renderContextDelegationPolicy } from './auto-dent-context-delegation.js';
 import { CANONICAL_WORKFLOW_GATES } from './workflow-gate-ledger.js';
 
 export type WorkflowMode = 'manual' | 'exploit' | 'explore' | 'reflect' | 'subtract' | 'contemplate' | string;
@@ -28,6 +29,7 @@ export interface WorkflowEvidenceInput {
   worktreeCase?: string;
   implementation?: string;
   dryRefactor?: string;
+  contextDelegation?: string;
   meetReality?: string;
   review?: string;
   reflection?: string;
@@ -73,6 +75,7 @@ const STAGE_EVIDENCE_KEYS = {
   'worktree-case': 'worktreeCase',
   'implementation-tests': 'implementation',
   'dry-refactor': 'dryRefactor',
+  'context-delegation': 'contextDelegation',
   'meet-reality': 'meetReality',
   'review-requirements-impact': 'review',
   reflection: 'reflection',
@@ -92,6 +95,7 @@ const CLI_EVIDENCE_KEYS: Record<string, keyof WorkflowEvidenceInput> = {
   'worktree-case': 'worktreeCase',
   implementation: 'implementation',
   'dry-refactor': 'dryRefactor',
+  'context-delegation': 'contextDelegation',
   'meet-reality': 'meetReality',
   review: 'review',
   reflection: 'reflection',
@@ -135,6 +139,8 @@ export function buildManualGoalDirective(input: ManualGoalInput): string {
     'The goal is not complete until every applicable gate is respected or honestly deferred through the existing gate mechanisms:',
     FULL_KAIZEN_GATE_LABELS.join(' -> '),
     'Do a related-area DRY/refactor pass to reduce competing mechanisms, schemas, and drift.',
+    'For broad work, delegate context-heavy sub-work to subagents when work is parallelizable or self-contained, and record context-delegation evidence or why delegation was not applicable.',
+    renderContextDelegationPolicy(),
     'Meet reality: try the PR/workflow, observe outputs and side effects, and record whether the ticket goal was achieved.',
   ].join(' ');
   return `/goal ${objective}`;
@@ -152,19 +158,22 @@ export function renderAutoDentGoalContract(mode: WorkflowMode): string {
     `- ${FULL_KAIZEN_GATE_LABELS.join('\n- ')}`,
     '',
     'The related-area DRY/refactor pass is required for implementation work: reduce competing mechanisms, schemas, and drift in the area touched by the ticket.',
+    'For broad work, delegate context-heavy sub-work to subagents when work is parallelizable or self-contained; record context-delegation evidence or an explicit not-applicable reason.',
+    renderContextDelegationPolicy(),
     'Meet reality before declaring done: try the PR/workflow, observe outputs and side effects, and record whether the original goal changed in reality.',
     '',
     'Harness terminal protocol:',
     '- Leave merge commands and auto-merge queueing to the auto-dent harness after review verdicts and process evidence are known.',
     '- Explicitly close every issue the PR fixes in the host repo after creating the PR; do not rely only on PR closing keywords for non-default-branch runs.',
-    '- Emit AUTO_DENT_PHASE markers as real phases complete: PICK, EVALUATE, IMPLEMENT, TEST, PR, MERGE, DECOMPOSE, REFLECT.',
+    '- Emit AUTO_DENT_PHASE markers as real phases complete: PICK, EVALUATE, DELEGATE, IMPLEMENT, TEST, PR, MERGE, DEPLOY, DECOMPOSE, REFLECT.',
+    '- For delegated context work, emit AUTO_DENT_PHASE: DELEGATE | status=done | evidence=<what was delegated>; for narrow work where delegation is not applicable, emit AUTO_DENT_PHASE: DELEGATE | status=not-applicable | evidence=<why>.',
     '- Emit AUTO_DENT_PHASE: STOP | reason=<reason> only when meaningful matching work is genuinely exhausted, not at the end of a normal run.',
     '- When done, summarize PRs created, issues filed, issues closed, tests, review status, and any remaining blockers with full URLs.',
     '',
     'For status, use the reusable workflow status call:',
     '  npx tsx scripts/kaizen-workflow-driver.ts status --mode <mode> --issue <N> --repo <owner/repo>',
     'Pass explicit stage evidence when automation or skills have proof the CLI cannot infer, for example:',
-    '  --dry-refactor "done: duplicated workflow schema removed" --meet-reality "done: CLI output inspected"',
+    '  --dry-refactor "done: duplicated workflow schema removed" --context-delegation "done: delegated broad search to explorer subagent" --meet-reality "done: CLI output inspected"',
   ].join('\n');
 }
 
@@ -362,7 +371,7 @@ export function runCli(argv: string[]): number {
     return 0;
   }
 
-  process.stderr.write('Usage: kaizen-workflow-driver.ts <goal|status|contract> [--mode M] [--issue N] [--repo owner/repo] [--task text] [--dry-refactor evidence] [--meet-reality evidence]\n');
+  process.stderr.write('Usage: kaizen-workflow-driver.ts <goal|status|contract> [--mode M] [--issue N] [--repo owner/repo] [--task text] [--dry-refactor evidence] [--context-delegation evidence] [--meet-reality evidence]\n');
   return 1;
 }
 

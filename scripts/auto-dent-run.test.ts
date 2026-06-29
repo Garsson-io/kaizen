@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { writeFileSync, unlinkSync, mkdtempSync, existsSync, readFileSync } from 'fs';
+import { writeFileSync, unlinkSync, mkdtempSync, existsSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -30,12 +30,16 @@ import {
   DEFAULT_BANDIT_C,
   banditExplorationC,
   modeSuccess,
+  parseCandidateTaskManifest,
+  derivePostMergeVerification,
   deriveRunOutcome,
   buildRunMetrics,
   buildRunCompleteEvent,
+  mergeVerifiedClosedIssuesIntoRunResult,
   weightedModeSelect,
   computeModeDistribution,
   formatBatchFooter,
+  checkpointRunState,
   readState,
   writeState,
   color,
@@ -51,13 +55,21 @@ import {
   findExistingProgressIssue,
   ensureBatchProgressIssue,
   updateBatchProgressIssue,
+  extractModeOutput,
+  postModeOutputToProgressIssue,
   extractPlanText,
   normalizeCodexRunExitCode,
   populateCrossBatchSteering,
   runReviewWiring,
   shouldRunCodexProvider,
   attachRunTranscripts,
+  applyContextDelegationAnalysis,
+  buildContextDelegationAnalysisLog,
 } from './auto-dent-run.js';
+import { analyzeContextDelegation } from './auto-dent-context-delegation.js';
+import {
+  resolveProviderWorkspaceRoot,
+} from './auto-dent-provider-workspace.js';
 import { deriveRunTestHealth } from './auto-dent-test-health.js';
 import * as github from './auto-dent-github.js';
 import type { ProviderCapability } from './auto-dent-provider.js';
@@ -204,6 +216,17 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
     expect(closeSection).toContain('runBacklogHealthMaintenance');
     expect(closeSection).toContain('[backlog-health]');
   });
+
+  it('uploads raw batch artifacts during batch finalize', () => {
+    const closeSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
+    );
+
+    expect(closeSection).toContain('uploadBatchArtifacts(m[1], kaizenRepo, batchDir');
+    expect(closeSection).toContain('[intelligence] uploaded raw batch artifacts');
+    expect(closeSection).toContain('[intelligence] no raw artifacts on disk to upload');
+  });
 });
 
 describe('buildTemplateVars', () => {
@@ -269,11 +292,202 @@ describe('buildTemplateVars', () => {
     expect(vars.claimed_plan_issue).toBe('');
   });
 
+  it('exposes a per-run candidate task manifest path under the log directory', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-vars-'));
+    const state = makeBatchState();
+
+    const vars = buildTemplateVars(state, 4, tmpDir);
+
+    expect(vars.candidate_manifest_path).toBe(join(tmpDir, 'run-4-candidate-tasks-manifest.json'));
+    expect(vars.candidate_manifest_schema).toContain('candidates');
+    expect(vars.candidate_manifest_schema).toContain('suggested_mode');
+    expect(vars.candidate_manifest_schema).toContain('"dedup"');
+    expect(vars.candidate_manifest_schema).toContain('"decision": "file_new|comment_existing|candidate_only"');
+  });
+
+  it('renders explore prompt with required candidate manifest artifact path', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-prompt-'));
+    const state = makeBatchState({ guidance: 'find gaps mode:explore' });
+
+    const meta = buildPromptWithMetadata(state, 2, tmpDir);
+
+    expect(meta.template).toBe('explore-gaps.md');
+    expect(meta.prompt).toContain('Required artifact');
+    expect(meta.prompt).toContain(join(tmpDir, 'run-2-candidate-tasks-manifest.json'));
+    expect(meta.prompt).toContain('candidate-task manifest');
+    expect(meta.prompt).toContain('Search-before-file gate');
+    expect(meta.prompt).toContain('gh issue list --search');
+    expect(meta.prompt).toContain('comment_existing');
+    expect(meta.prompt).toContain('At most 2 candidates may use');
+  });
+
   it('exposes the shared goal forcing contract as a template variable', () => {
     const vars = buildTemplateVars(makeBatchState(), 1);
     expect(vars.goal_forcing_contract).toContain('Headless /goal Equivalent');
     expect(vars.goal_forcing_contract).toContain('plan/test-plan gate');
     expect(vars.goal_forcing_contract).toContain('review/requirements/impact gates');
+  });
+});
+
+describe('parseCandidateTaskManifest', () => {
+  it('counts candidates from a valid manifest', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-valid-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      runTag: 'batch/run-1',
+      generatedAt: '2026-06-29T00:00:00.000Z',
+      candidates: [
+        {
+          id: 'a',
+          title: 'First',
+          rationale: 'why',
+          refs: ['#1'],
+          suggested_mode: 'exploit',
+          dedup: {
+            query: 'First in:title repo:Garsson-io/kaizen',
+            matches: [],
+            decision: 'file_new',
+            reason: 'No existing issue matched this specific gap',
+          },
+        },
+        {
+          id: 'b',
+          title: 'Second',
+          rationale: 'why',
+          refs: ['#2'],
+          suggested_mode: 'subtract',
+          dedup: {
+            query: 'Second in:title repo:Garsson-io/kaizen',
+            matches: ['#2'],
+            decision: 'comment_existing',
+            reason: 'Existing issue covers the candidate',
+          },
+        },
+      ],
+    }));
+
+    const parsed = parseCandidateTaskManifest(path);
+
+    expect(parsed).toEqual({
+      path,
+      count: 2,
+      dedupCheckedCount: 2,
+      fileNewCount: 1,
+      warnings: [],
+    });
+  });
+
+  it('warns when candidates omit dedup evidence', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-no-dedup-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      candidates: [
+        { id: 'a', title: 'First', rationale: 'why', refs: ['#1'], suggested_mode: 'exploit' },
+      ],
+    }));
+
+    const parsed = parseCandidateTaskManifest(path);
+
+    expect(parsed).toMatchObject({
+      path,
+      count: 1,
+      dedupCheckedCount: 0,
+      fileNewCount: 0,
+      warnings: [expect.stringContaining('missing dedup evidence')],
+    });
+  });
+
+  it('warns when a dedup decision is invalid', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-bad-decision-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      candidates: [
+        {
+          id: 'a',
+          title: 'First',
+          rationale: 'why',
+          refs: ['#1'],
+          suggested_mode: 'exploit',
+          dedup: {
+            query: 'First',
+            matches: [],
+            decision: 'maybe',
+            reason: 'bad',
+          },
+        },
+      ],
+    }));
+
+    const parsed = parseCandidateTaskManifest(path);
+
+    expect(parsed).toMatchObject({
+      count: 1,
+      dedupCheckedCount: 0,
+      warnings: [expect.stringContaining('invalid dedup decision')],
+    });
+  });
+
+  it('warns when an explore manifest exceeds the file-new budget', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-budget-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      candidates: [1, 2, 3].map((n) => ({
+        id: `c${n}`,
+        title: `Candidate ${n}`,
+        rationale: 'why',
+        refs: [],
+        suggested_mode: 'exploit',
+        dedup: {
+          query: `Candidate ${n}`,
+          matches: [],
+          decision: 'file_new',
+          reason: 'No duplicate found',
+        },
+      })),
+    }));
+
+    const parsed = parseCandidateTaskManifest(path);
+
+    expect(parsed).toMatchObject({
+      count: 3,
+      dedupCheckedCount: 3,
+      fileNewCount: 3,
+      warnings: [expect.stringContaining('file_new budget exceeded')],
+    });
+  });
+
+  it('returns zero with warning for missing or malformed manifests', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-bad-'));
+    const missing = join(tmpDir, 'missing.json');
+    const malformed = join(tmpDir, 'bad.json');
+    writeFileSync(malformed, '{not-json');
+
+    expect(parseCandidateTaskManifest(missing)).toMatchObject({
+      path: missing,
+      count: 0,
+      warnings: [expect.stringContaining('missing')],
+    });
+    expect(parseCandidateTaskManifest(malformed)).toMatchObject({
+      path: malformed,
+      count: 0,
+      warnings: [expect.stringContaining('malformed')],
+    });
+  });
+
+  it('returns zero with warning when candidates is not an array', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-shape-'));
+    const path = join(tmpDir, 'shape.json');
+    writeFileSync(path, JSON.stringify({ version: 1, candidates: 'nope' }));
+
+    expect(parseCandidateTaskManifest(path)).toMatchObject({
+      path,
+      count: 0,
+      warnings: [expect.stringContaining('candidates')],
+    });
   });
 });
 
@@ -423,6 +637,33 @@ describe('populateCrossBatchSteering — close the loop (#940 Phase 2)', () => {
     // Persisted to state and onto disk.
     expect(state.cross_batch_steering).toEqual(result);
     expect(readState(f).cross_batch_steering).toEqual(result);
+  });
+
+  it('persists a cross-batch bandit prior from the same outcome read', () => {
+    const state = makeBatchState({ batch_id: 'self' });
+    const f = tmpState(state);
+    populateCrossBatchSteering(state, f, {
+      read: () => [
+        {
+          schema_version: 1, batch_id: 'p1', guidance: 'g', batch_start: 1, batch_end: 2,
+          wall_seconds: 1, stop_reason: 'completed',
+          totals: { runs: 6, successful_runs: 3, prs: 3, issues_closed: 3, issues_filed: 0, cost_usd: 6, duration_seconds: 100, lines_deleted: 0, issues_pruned: 0 },
+          success_rate: 0.5, avg_cost_per_success: 2, overall_efficiency: 0.5, review_fail_rate: 0,
+          cost_anomaly_count: 0, mode_diversity: 2, trend: null,
+          mode_breakdown: [
+            { mode: 'exploit', runs: 3, successes: 3, success_rate: 1, cost_usd: 3, prs: 3, avg_cost: 1, efficiency: 1, lines_deleted: 0, issues_pruned: 0 },
+            { mode: 'explore', runs: 3, successes: 0, success_rate: 0, cost_usd: 3, prs: 0, avg_cost: 1, efficiency: 0, lines_deleted: 0, issues_pruned: 0 },
+          ],
+          prs: [], issues_closed: [], issues_filed: [],
+        },
+      ],
+    });
+
+    expect(state.cross_batch_bandit_prior).toMatchObject({
+      source: 'batch-outcome',
+      source_batches: 1,
+    });
+    expect(readState(f).cross_batch_bandit_prior).toEqual(state.cross_batch_bandit_prior);
   });
 
   it('is idempotent — does not refetch when already populated', () => {
@@ -1924,7 +2165,7 @@ describe('e2e: full workflow through stream pipeline', () => {
 
     expect(capture.result.toolCalls).toBe(3);
     expectToolLogged(capture, 'Read /src/index.ts', 'Grep "TODO"', 'Edit /src/index.ts');
-    for (const phase of ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']) {
+    for (const phase of ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT']) {
       expectNoPhase(capture, phase);
     }
   });
@@ -2226,6 +2467,92 @@ describe('formatPlanAsMarkdown', () => {
 });
 
 describe('selectMode', () => {
+  const cleanupDirs: string[] = [];
+  afterEach(() => {
+    for (const dir of cleanupDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    cleanupDirs.length = 0;
+  });
+
+  function writeRepeatedCandidateManifests(tmpDir: string, issue = '#1213', suggestedMode = 'exploit') {
+    for (const run of [1, 2, 3]) {
+      writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
+        version: 1,
+        runTag: `batch/run-${run}`,
+        candidates: [
+          {
+            id: 'self-steering',
+            title: 'Self-steering bundle',
+            rationale: 'Repeated top candidate',
+            refs: [issue, '#1189'],
+            suggested_mode: suggestedMode,
+          },
+        ],
+      }));
+    }
+  }
+
+  it('forces exploit with a target issue when repeated candidate manifests name the same top candidate', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-mode-'));
+    cleanupDirs.push(tmpDir);
+    writeRepeatedCandidateManifests(tmpDir);
+
+    const result = selectMode(makeBatchState(), 7, { logDir: tmpDir });
+
+    expect(result).toMatchObject({
+      mode: 'exploit',
+      template: 'deep-dive-default.md',
+      reason: 'manifest-forced',
+      target_issue: '#1213',
+    });
+  });
+
+  it('does not force a consumed manifest target again', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-consumed-'));
+    cleanupDirs.push(tmpDir);
+    writeRepeatedCandidateManifests(tmpDir);
+
+    const result = selectMode(
+      makeBatchState({ manifest_forced_targets_consumed: ['#1213'] }),
+      7,
+      { logDir: tmpDir },
+    );
+
+    expect(result.reason).not.toBe('manifest-forced');
+    expect(result.target_issue).toBeUndefined();
+  });
+
+  it('short-circuits forced explore when a fresh repeated manifest target exists', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-fresh-explore-'));
+    cleanupDirs.push(tmpDir);
+    writeRepeatedCandidateManifests(tmpDir, '#1191');
+
+    const result = selectMode(makeBatchState({ guidance: 're-scout gaps mode:explore' }), 7, { logDir: tmpDir });
+
+    expect(result).toMatchObject({
+      mode: 'exploit',
+      template: 'deep-dive-default.md',
+      reason: 'manifest-fresh-short-circuit',
+      target_issue: '#1191',
+    });
+  });
+
+  it('does not short-circuit non-explore guidance', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-fresh-reflect-'));
+    cleanupDirs.push(tmpDir);
+    writeRepeatedCandidateManifests(tmpDir, '#1191');
+
+    const result = selectMode(makeBatchState({ guidance: 'think about the batch mode:reflect' }), 7, { logDir: tmpDir });
+
+    expect(result).toMatchObject({
+      mode: 'reflect',
+      template: 'reflect-batch.md',
+      reason: 'guidance',
+    });
+    expect(result.target_issue).toBeUndefined();
+  });
+
   it('selects exploit for runs 0-6 (mod 10)', () => {
     for (const run of [1, 2, 3, 4, 5, 6, 10, 11, 16]) {
       const { mode, template } = selectMode(makeBatchState(), run);
@@ -2384,6 +2711,24 @@ describe('checkSignalOverrides', () => {
     expect(result!.reason).toBe('signal:no-recent-prs');
   });
 
+  it('uses the highest learned non-exploit schedulable mode for no-recent-prs when bandit history exists', () => {
+    const history = [
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: [] })),
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i + 5, mode: 'reflect', issues_filed: [`#${i}`], prs: [] })),
+      ...Array.from({ length: 3 }, (_, i) => makeRunMetrics({ run: i + 10, mode: 'explore', issues_filed: [], prs: [] })),
+      ...Array.from({ length: 2 }, (_, i) => makeRunMetrics({ run: i + 13, mode: 'subtract', lines_deleted: 0, prs: [] })),
+    ];
+    const state = makeBatchState({ consecutive_failures: 0, run_history: history });
+
+    const result = checkSignalOverrides(state);
+
+    expect(result).toMatchObject({
+      mode: 'reflect',
+      reason: 'signal:no-recent-prs:bandit-non-exploit',
+    });
+    expect(result!.bandit).toBeDefined();
+  });
+
   it('does not force explore when PRs exist in last 5 runs', () => {
     const state = makeBatchState({
       consecutive_failures: 0,
@@ -2414,6 +2759,25 @@ describe('checkSignalOverrides', () => {
     expect(result!.reason).toBe('signal:mode-streak-exploit');
   });
 
+  it('breaks an exploit streak with the highest learned non-stale schedulable mode', () => {
+    const history = [
+      ...Array.from({ length: 6 }, (_, i) => makeRunMetrics({ run: i, mode: 'reflect', issues_filed: [`#${i}`] })),
+      ...Array.from({ length: 6 }, (_, i) => makeRunMetrics({ run: i + 6, mode: 'subtract', lines_deleted: 0 })),
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i + 12, mode: 'explore', issues_filed: [] })),
+      ...Array.from({ length: 4 }, (_, i) => makeRunMetrics({ run: i + 17, mode: 'exploit', prs: [`pr-${i}`] })),
+    ];
+    const state = makeBatchState({ consecutive_failures: 0, run_history: history });
+
+    const result = checkSignalOverrides(state);
+
+    expect(result).toMatchObject({
+      mode: 'reflect',
+      reason: 'signal:mode-streak-exploit:bandit-non-stale',
+    });
+    expect(result!.bandit).toBeDefined();
+    expect(result!.mode).not.toBe('explore');
+  });
+
   it('breaks non-exploit mode streak with contemplate', () => {
     const state = makeBatchState({
       consecutive_failures: 0,
@@ -2428,6 +2792,23 @@ describe('checkSignalOverrides', () => {
     expect(result).not.toBeNull();
     expect(result!.mode).toBe('contemplate');
     expect(result!.reason).toBe('signal:mode-streak-explore');
+  });
+
+  it('does not use contemplate as a learned streak-breaker replacement', () => {
+    const history = [
+      ...Array.from({ length: 6 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: [`pr-${i}`] })),
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i + 6, mode: 'reflect', issues_filed: [] })),
+      ...Array.from({ length: 4 }, (_, i) => makeRunMetrics({ run: i + 11, mode: 'explore', issues_filed: [] })),
+    ];
+    history[history.length - 1] = makeRunMetrics({ run: 14, mode: 'explore', issues_filed: [], prs: ['diagnostic-pr'] });
+    const state = makeBatchState({ consecutive_failures: 0, run_history: history });
+
+    const result = checkSignalOverrides(state);
+
+    expect(result!.reason).toBe('signal:mode-streak-explore:bandit-non-stale');
+    expect(SCHEDULABLE_MODES).toContain(result!.mode as any);
+    expect(result!.mode).not.toBe('contemplate');
+    expect(result!.mode).not.toBe('explore');
   });
 
   it('consecutive failures takes priority over no-prs signal', () => {
@@ -2516,6 +2897,30 @@ describe('computeBanditWeights', () => {
     expect(computeBanditWeights(history)).toBeNull();
   });
 
+  it('uses prior plays and rewards to warm-start a fresh batch below minRuns', () => {
+    const result = computeBanditWeights([], {
+      minRuns: 10,
+      explorationC: 0,
+      prior: {
+        source: 'batch-outcome',
+        source_batches: 2,
+        decay: 1,
+        modes: {
+          exploit: { plays: 10, total_reward: 10 },
+          explore: { plays: 10, total_reward: 0 },
+          reflect: { plays: 10, total_reward: 0 },
+          subtract: { plays: 10, total_reward: 0 },
+        },
+      },
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.totalPlays).toBe(40);
+    expect(result!.weights.exploit).toBeCloseTo(1, 5);
+    expect(result!.weights.explore).toBeCloseTo(0, 5);
+    expect(result!.details.find((d) => d.mode === 'exploit')!.plays).toBe(10);
+  });
+
   it('returns weights that sum to 1.0 with sufficient data', () => {
     const history = makeHistory(
       { exploit: 9, explore: 1, reflect: 1, subtract: 1 },
@@ -2602,7 +3007,7 @@ describe('computeBanditWeights', () => {
     expect(result.explorationC).toBe(DEFAULT_BANDIT_C);
   });
 
-  it('reward semantics: explore credited by issues_filed, subtract by lines/pruned', () => {
+  it('reward semantics: explore issue-filing reward is capped, subtract uses lines/pruned', () => {
     const history: RunMetrics[] = [];
     for (let i = 0; i < 8; i++) history.push(makeRunMetrics({ run: i, mode: 'exploit', prs: [], cost_usd: 1 }));
     // explore files lots of issues (its reward), subtract deletes lines.
@@ -2611,8 +3016,9 @@ describe('computeBanditWeights', () => {
     history.push(makeRunMetrics({ run: 10, mode: 'subtract', lines_deleted: 400, issues_pruned: 2, cost_usd: 1 }));
     const result = computeBanditWeights(history, { minRuns: 10 })!;
     const byMode = Object.fromEntries(result.details.map(d => [d.mode, d]));
-    // explore's mean reward reflects issues filed (3/play), not its zero PRs.
-    expect(byMode.explore.meanReward).toBeCloseTo(3, 5);
+    // explore's issue-filing reward is capped at 2/play so over-filing does not
+    // train the bandit to prefer backlog inflation.
+    expect(byMode.explore.meanReward).toBeCloseTo(2, 5);
     expect(byMode.subtract.meanReward).toBeGreaterThan(0);
     // exploit produced zero PRs ⇒ zero mean reward.
     expect(byMode.exploit.meanReward).toBe(0);
@@ -2652,8 +3058,15 @@ describe('modeSuccess', () => {
     expect(modeSuccess('exploit', makeRunMetrics({ prs: [] }))).toBe(0);
   });
 
-  it('explore uses issues_filed', () => {
-    expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1', '#2', '#3'] }))).toBe(3);
+  it('explore uses dedup-checked candidate manifests plus capped issues_filed', () => {
+    expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1', '#2', '#3'] }))).toBe(2);
+    expect(modeSuccess('explore', makeRunMetrics({ issues_filed: [], candidate_manifest_count: 4 }))).toBe(4);
+    expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1'], candidate_manifest_count: 2 }))).toBe(3);
+    expect(modeSuccess('explore', makeRunMetrics({
+      issues_filed: ['#1', '#2', '#3'],
+      candidate_manifest_count: 4,
+      candidate_manifest_dedup_checked_count: 2,
+    }))).toBe(4);
     expect(modeSuccess('explore', makeRunMetrics({ prs: ['pr1'], issues_filed: [] }))).toBe(0);
   });
 
@@ -2712,6 +3125,10 @@ describe('deriveRunOutcome — verdict binding (#1224, meta #1227)', () => {
     expect(deriveRunOutcome({ ...cleanWin, lifecycleHealth: 'critical' })).toBe('failure');
   });
 
+  it('post-merge verification fail alone blocks success', () => {
+    expect(deriveRunOutcome({ ...cleanWin, postMergeVerification: 'fail' })).toBe('failure');
+  });
+
   it('a quality-failed run with no artifacts is failure, not empty_success', () => {
     expect(
       deriveRunOutcome({ ...cleanWin, artifactCount: 0, processVerdict: 'process-incomplete' }),
@@ -2732,6 +3149,17 @@ describe('deriveRunOutcome — verdict binding (#1224, meta #1227)', () => {
 
   it('lifecycle degraded alone does NOT block (too broad to gate on)', () => {
     expect(deriveRunOutcome({ ...cleanWin, lifecycleHealth: 'degraded' })).toBe('success');
+  });
+
+  it('post-merge verification pass preserves a clean win', () => {
+    expect(deriveRunOutcome({ ...cleanWin, postMergeVerification: 'pass' })).toBe('success');
+  });
+
+  it('derives post-merge verification from merge status and test health', () => {
+    expect(derivePostMergeVerification([], 'pass')).toBe('not-applicable');
+    expect(derivePostMergeVerification(['auto_queued'], 'pass')).toBe('skipped');
+    expect(derivePostMergeVerification(['merged'], 'unowned-failures')).toBe('fail');
+    expect(derivePostMergeVerification(['merged'], 'pass')).toBe('pass');
   });
 
   it('skipped review is legitimate ⇒ success', () => {
@@ -2846,6 +3274,54 @@ describe('buildRunMetrics', () => {
     });
   });
 
+  it('maps candidate task manifest metadata from RunResult', () => {
+    const metrics = buildRunMetrics({
+      runNum: 5,
+      runStartEpoch: 1742680900,
+      duration: 30,
+      exitCode: 0,
+      runMode: 'explore',
+      result: makeRunResult({
+        candidateManifestPath: '/tmp/run-5-candidate-tasks-manifest.json',
+        candidateManifestCount: 3,
+        candidateManifestWarnings: ['warning'],
+      }),
+    });
+
+    expect(metrics).toMatchObject({
+      candidate_manifest_path: '/tmp/run-5-candidate-tasks-manifest.json',
+      candidate_manifest_count: 3,
+      candidate_manifest_warnings: ['warning'],
+    });
+  });
+
+  it('persists bandit decision metadata to run metrics', () => {
+    const bandit = computeBanditWeights([
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: [`pr-${i}`] })),
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i + 5, mode: 'explore', issues_filed: [] })),
+    ], { minRuns: 10 })!;
+
+    const metrics = buildRunMetrics({
+      runNum: 5,
+      runStartEpoch: 1742680900,
+      duration: 30,
+      exitCode: 0,
+      runMode: 'exploit',
+      result: makeRunResult(),
+      modeReason: 'bandit',
+      bandit,
+    });
+
+    expect(metrics.bandit_decision).toMatchObject({
+      selected_mode: 'exploit',
+      reason: 'bandit',
+      total_plays: bandit.totalPlays,
+      exploration_c: bandit.explorationC,
+    });
+    expect(metrics.bandit_decision?.weights).toEqual(bandit.weights);
+    expect(metrics.bandit_decision?.details).toHaveLength(SCHEDULABLE_MODES.length);
+  });
+
   it('persists the hook-activation verdict to state.json metrics (#843)', () => {
     const metrics = buildRunMetrics({
       runNum: 5,
@@ -2947,6 +3423,126 @@ describe('buildRunMetrics', () => {
       degraded: true,
     });
   });
+
+  it('emits context-delegation pressure diagnostics on run.complete telemetry', () => {
+    const result = makeRunResult();
+    const metrics = buildRunMetrics({
+      runNum: 10,
+      runStartEpoch: 1742681500,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result,
+    });
+
+    const event = buildRunCompleteEvent({
+      runId: 'batch/run-10',
+      batchId: 'batch',
+      runNum: 10,
+      duration: 8,
+      exitCode: 0,
+      result,
+      runMode: 'exploit',
+      outcome: 'empty_success',
+      runMetricsForOutcome: metrics,
+      lifecycleViolationCount: 0,
+      contextDelegationAnalysis: {
+        pressure: {
+          required: true,
+          reasons: ['main_thread_discovery:14/10'],
+          recommendedSubsteps: ['broad code search'],
+          mainThreadToolCalls: 14,
+          discoveryToolCalls: 14,
+          contextGrowthEvents: 0,
+          missingSubagentPatterns: 0,
+          repeatedReads: 0,
+          repeatedSearches: 1,
+        },
+        delegation: {
+          observed: false,
+        },
+      },
+    });
+
+    expect(event).toMatchObject({
+      context_delegation_required: true,
+      context_delegation_observed: false,
+      context_delegation_reasons: ['main_thread_discovery:14/10'],
+      context_delegation_recommended_substeps: ['broad code search'],
+    });
+  });
+
+  it('emits bandit decision metadata on run.complete telemetry', () => {
+    const bandit = computeBanditWeights([
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: [`pr-${i}`] })),
+      ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i + 5, mode: 'explore', issues_filed: [] })),
+    ], { minRuns: 10 })!;
+    const result = makeRunResult();
+    const metrics = buildRunMetrics({
+      runNum: 9,
+      runStartEpoch: 1742681400,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result,
+      modeReason: 'bandit',
+      bandit,
+    });
+
+    const event = buildRunCompleteEvent({
+      runId: 'batch/run-9',
+      batchId: 'batch',
+      runNum: 9,
+      duration: 8,
+      exitCode: 0,
+      result,
+      runMode: 'exploit',
+      outcome: 'success',
+      runMetricsForOutcome: metrics,
+      lifecycleViolationCount: 0,
+    });
+
+    expect(event.bandit_decision).toEqual(metrics.bandit_decision);
+  });
+});
+
+describe('mergeVerifiedClosedIssuesIntoRunResult (#1210)', () => {
+  it('adds merged-PR closing refs for this run without importing older batch PRs', () => {
+    const result = makeRunResult({
+      prs: ['https://github.com/owner/repo/pull/2'],
+      issuesClosed: ['#99'],
+    });
+
+    const added = mergeVerifiedClosedIssuesIntoRunResult(result, [
+      {
+        pr: 'https://github.com/owner/repo/pull/1',
+        verified: ['#1'],
+        forceClosed: [],
+      },
+      {
+        pr: 'https://github.com/owner/repo/pull/2',
+        verified: ['#20'],
+        forceClosed: ['#10'],
+      },
+      {
+        pr: 'https://github.com/owner/repo/pull/3',
+        verified: ['#30'],
+        forceClosed: [],
+      },
+    ]);
+
+    expect(added).toEqual(['#10', '#20']);
+    expect(result.issuesClosed).toEqual(['#99', '#10', '#20']);
+  });
+
+  it('runs before persisted run metrics are built', () => {
+    const mergeIndex = AUTO_DENT_RUN_SOURCE.indexOf('mergeVerifiedClosedIssuesIntoRunResult(result, verifyResults)');
+    const metricsIndex = AUTO_DENT_RUN_SOURCE.indexOf('const runMetrics = buildRunMetrics({');
+
+    expect(mergeIndex).toBeGreaterThan(-1);
+    expect(metricsIndex).toBeGreaterThan(-1);
+    expect(mergeIndex).toBeLessThan(metricsIndex);
+  });
 });
 
 describe('weightedModeSelect', () => {
@@ -3033,6 +3629,31 @@ describe('selectMode bandit integration', () => {
     expect(result.mode).toBe('explore');
   });
 
+  it('uses cross-batch bandit prior instead of scheduled explore in a fresh batch', () => {
+    const state = makeBatchState({
+      run_history: [makeRunMetrics({ run: 0, mode: 'exploit', prs: ['pr'] })],
+      cross_batch_bandit_prior: {
+        source: 'batch-outcome',
+        source_batches: 2,
+        decay: 1,
+        modes: {
+          exploit: { plays: 12, total_reward: 12 },
+          explore: { plays: 12, total_reward: 0 },
+          reflect: { plays: 12, total_reward: 0 },
+          subtract: { plays: 12, total_reward: 0 },
+        },
+      },
+    });
+
+    const result = selectMode(state, 7);
+
+    expect(result.reason).toBe('bandit');
+    expect(result.bandit).toBeDefined();
+    expect(result.bandit!.details.find((d) => d.mode === 'exploit')!.meanReward).toBeGreaterThan(
+      result.bandit!.details.find((d) => d.mode === 'explore')!.meanReward,
+    );
+  });
+
   it('signal overrides take priority over adaptive selection', () => {
     const state = makeBatchState({
       run_history: makeVariedHistory(),
@@ -3048,6 +3669,93 @@ describe('selectMode bandit integration', () => {
     const result = selectMode(state, 14);
     expect(result.mode).toBe('contemplate');
     expect(result.reason).toBe('schedule');
+  });
+});
+
+describe('selectMode manifest-forced target binding', () => {
+  function writePlanAndManifestTarget(tmpDir: string, issue = '#1213', status = 'pending') {
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify({
+      created_at: '2026-06-29T00:00:00.000Z',
+      guidance: 'bind manifests',
+      items: [
+        { issue: '#999', title: 'Other', score: 9, approach: 'normal pick', status: 'pending', item_type: 'leaf' },
+        { issue, title: 'Manifest target', score: 1, approach: 'forced pick', status, item_type: 'leaf' },
+      ],
+      wip_excluded: [],
+      epics_scanned: [],
+    }));
+    for (const run of [4, 5, 6]) {
+      writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
+        version: 1,
+        runTag: `batch/run-${run}`,
+        generatedAt: '2026-06-29T00:00:00.000Z',
+        candidates: [
+          { id: 'top', title: 'Top bundle', rationale: 'repeated', refs: [issue], suggested_mode: 'exploit' },
+        ],
+      }));
+    }
+  }
+
+  it('forces exploit when repeated latest manifests name a pending plan issue', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-mode-'));
+    writePlanAndManifestTarget(tmpDir);
+    const state = makeBatchState({
+      run_history: Array.from({ length: 12 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: ['pr'] })),
+    });
+
+    const result = selectMode(state, 12, { logDir: tmpDir, manifestRepeatThreshold: 2 });
+
+    expect(result).toMatchObject({
+      mode: 'exploit',
+      reason: 'manifest-forced',
+      target_issue: '#1213',
+    });
+  });
+
+  it('does not force when the repeated target is no longer pending', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-assigned-'));
+    writePlanAndManifestTarget(tmpDir, '#1213', 'assigned');
+    const state = makeBatchState({ run_history: [] });
+
+    const result = selectMode(state, 1, { logDir: tmpDir, manifestRepeatThreshold: 2 });
+
+    expect(result.reason).not.toBe('manifest-forced');
+  });
+
+  it('does not force exploit for repeated non-exploit manifest candidates', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-non-exploit-'));
+    writePlanAndManifestTarget(tmpDir);
+    for (const run of [4, 5, 6]) {
+      writeFileSync(join(tmpDir, `run-${run}-candidate-tasks-manifest.json`), JSON.stringify({
+        version: 1,
+        runTag: `batch/run-${run}`,
+        generatedAt: '2026-06-29T00:00:00.000Z',
+        candidates: [
+          { id: 'top', title: 'Top bundle', rationale: 'repeated', refs: ['#1213'], suggested_mode: 'reflect' },
+        ],
+      }));
+    }
+    const state = makeBatchState({ run_history: [] });
+
+    const result = selectMode(state, 1, { logDir: tmpDir, manifestRepeatThreshold: 2 });
+
+    expect(result.reason).not.toBe('manifest-forced');
+  });
+
+  it('renders the forced manifest target as the claimed plan issue', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'manifest-forced-prompt-'));
+    writePlanAndManifestTarget(tmpDir);
+    const state = makeBatchState({ guidance: 'work from manifest' });
+
+    const meta = buildPromptWithMetadata(state, 6, tmpDir);
+
+    expect(meta.template).toBe('deep-dive-default.md');
+    expect(meta.claimedPlanIssue).toBe('#1213');
+    expect(meta.prompt).toContain('Manifest target');
+    expect(meta.prompt).toContain('#1213');
+    const plan = JSON.parse(readFileSync(join(tmpDir, 'plan.json'), 'utf8'));
+    expect(plan.items.find((i: any) => i.issue === '#1213').status).toBe('assigned');
+    expect(plan.items.find((i: any) => i.issue === '#999').status).toBe('pending');
   });
 });
 
@@ -3128,10 +3836,101 @@ describe('formatBatchFooter', () => {
     expect(output).toContain('explore:1');
   });
 
+  it('shows explore to exploit conversion when explore-filed issues close in exploit runs', () => {
+    const state = makeBatchState({
+      run: 3,
+      prs: ['pr1'],
+      run_history: [
+        makeRunMetrics({ run: 1, mode: 'explore', issues_filed: ['#10', '#11'] }),
+        makeRunMetrics({ run: 2, mode: 'exploit', prs: ['pr1'], issues_closed: ['https://github.com/org/repo/issues/10'] }),
+        makeRunMetrics({ run: 3, mode: 'reflect', issues_closed: ['#11'] }),
+      ],
+    });
+
+    const output = formatBatchFooter(state);
+
+    expect(output).toContain('Explore->exploit: 1/2 (50%)');
+  });
+
   it('omits mode line when no history', () => {
     const state = makeBatchState({ run: 0, prs: [], run_history: [] });
     const output = formatBatchFooter(state);
     expect(output).not.toContain('Modes:');
+  });
+});
+
+describe('run state checkpointing', () => {
+  it('checkpoints run identity and heartbeat before provider work finishes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-checkpoint-start-'));
+    const stateFile = join(dir, 'state.json');
+    writeState(stateFile, makeBatchState({ run: 0, last_heartbeat: 0 }));
+
+    checkpointRunState(stateFile, { runNum: 1, heartbeatEpoch: 1742680900 });
+
+    const updated = readState(stateFile);
+    expect(updated.run).toBe(1);
+    expect(updated.last_heartbeat).toBe(1742680900);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('checkpoints assigned issue and observed artifacts idempotently for recovery', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-checkpoint-artifacts-'));
+    const stateFile = join(dir, 'state.json');
+    writeState(stateFile, makeBatchState({
+      run: 0,
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1'],
+      issues_filed: ['#10'],
+      issues_closed: [],
+      cases: [],
+    }));
+    const result = makeRunResult({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1', 'https://github.com/Garsson-io/kaizen/pull/2'],
+      issuesFiled: ['#10', '#11'],
+      issuesClosed: ['https://github.com/Garsson-io/kaizen/issues/12'],
+      cases: ['260629-k1591-run-state-heartbeat'],
+    });
+
+    checkpointRunState(stateFile, {
+      runNum: 1,
+      heartbeatEpoch: 1742680910,
+      pickedIssue: '#1591',
+      result,
+    });
+    checkpointRunState(stateFile, {
+      runNum: 1,
+      heartbeatEpoch: 1742680920,
+      pickedIssue: '#1591',
+      result,
+    });
+
+    const updated = readState(stateFile);
+    expect(updated.run).toBe(1);
+    expect(updated.last_heartbeat).toBe(1742680920);
+    expect(updated.prs).toEqual([
+      'https://github.com/Garsson-io/kaizen/pull/1',
+      'https://github.com/Garsson-io/kaizen/pull/2',
+    ]);
+    expect(updated.issues_filed).toEqual(['#10', '#11']);
+    expect(updated.issues_closed).toEqual(['https://github.com/Garsson-io/kaizen/issues/12']);
+    expect(updated.cases).toEqual(['260629-k1591-run-state-heartbeat']);
+    expect(updated.last_issue).toBe('https://github.com/Garsson-io/kaizen/issues/12');
+    expect(updated.last_pr).toBe('https://github.com/Garsson-io/kaizen/pull/2');
+    expect(updated.last_case).toBe('260629-k1591-run-state-heartbeat');
+    expect(updated.last_branch).toBe('case/260629-k1591-run-state-heartbeat');
+    expect(updated.last_worktree).toBe('.claude/worktrees/260629-k1591-run-state-heartbeat');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('starts live state heartbeat around runClaude instead of inside a provider-only branch', () => {
+    const mainStart = AUTO_DENT_RUN_SOURCE.indexOf('async function main()');
+    const runClaudeStart = AUTO_DENT_RUN_SOURCE.indexOf('async function runClaude(');
+    const runClaudeEnd = AUTO_DENT_RUN_SOURCE.indexOf('// Main', runClaudeStart);
+    const mainSection = AUTO_DENT_RUN_SOURCE.slice(mainStart);
+    const runClaudeSection = AUTO_DENT_RUN_SOURCE.slice(runClaudeStart, runClaudeEnd);
+
+    expect(mainSection).toContain('startRunStateHeartbeat(stateFile, runNum');
+    expect(mainSection).toContain('runHeartbeat.stop()');
+    expect(runClaudeSection).not.toContain('s.last_heartbeat = Math.floor(Date.now() / 1000)');
   });
 });
 
@@ -3187,7 +3986,7 @@ describe('buildPromptWithMetadata', () => {
     expect(meta.prompt).toBe(prompt);
   });
 
-  it('propagates claimedPlanIssue from plan', () => {
+  it('propagates claimedPlanIssue from plan for exploit prompts', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'meta-plan-'));
     const plan = {
       created_at: '2026-03-23T00:00:00Z',
@@ -3203,6 +4002,50 @@ describe('buildPromptWithMetadata', () => {
     const state = makeBatchState();
     const meta = buildPromptWithMetadata(state, 1, tmpDir);
     expect(meta.claimedPlanIssue).toBe('#451');
+    expect(meta.prompt).toContain('## Assigned Work');
+    expect(meta.prompt).toContain('#451');
+
+    const updated = JSON.parse(readFileSync(join(tmpDir, 'plan.json'), 'utf8'));
+    expect(updated.items[0].status).toBe('assigned');
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('does not consume plan items for explore prompts', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'meta-plan-explore-'));
+    const plan = {
+      created_at: '2026-03-23T00:00:00Z',
+      guidance: 'test',
+      items: [
+        { issue: '#1213', title: 'Manifest binding', score: 9, approach: 'bind it', status: 'pending' },
+      ],
+      wip_excluded: [],
+      epics_scanned: [],
+    };
+    writeFileSync(join(tmpDir, 'plan.json'), JSON.stringify(plan));
+
+    const state = makeBatchState({ guidance: 'mode:explore' });
+    const meta = buildPromptWithMetadata(state, 1, tmpDir);
+
+    expect(meta.template).toBe('explore-gaps.md');
+    expect(meta.claimedPlanIssue).toBeUndefined();
+    expect(meta.prompt).not.toContain('## Assigned Work');
+
+    const updated = JSON.parse(readFileSync(join(tmpDir, 'plan.json'), 'utf8'));
+    expect(updated.items[0].status).toBe('pending');
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('uses one selected mode for template choice and plan claim policy', () => {
+    const start = AUTO_DENT_RUN_SOURCE.indexOf('export function buildPromptWithMetadata');
+    const end = AUTO_DENT_RUN_SOURCE.indexOf('function buildPromptInline');
+    const source = AUTO_DENT_RUN_SOURCE.slice(start, end);
+
+    expect(source.match(/selectMode\(state, runNum, \{ logDir \}\)/g)).toHaveLength(1);
+    expect(source).toContain('buildTemplateVars(state, runNum, logDir, {');
+    expect(source).toContain('targetIssue: modeSelection.target_issue');
+    expect(source).toContain('claimPlanItem: shouldClaimPlanItem');
+    expect(source).toContain('modeSelection');
+    expect(source).toContain("modeSelection.mode === 'exploit' && !state.test_task");
   });
 
   it('claimedPlanIssue is undefined when no plan exists', () => {
@@ -3320,10 +4163,12 @@ describe('validateRunLifecycle', () => {
     writeFileSync(logFile, [
       'AUTO_DENT_PHASE: PICK | issue=#1 | title=test',
       'AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=ok',
+      'AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated search to explorer subagent',
       'AUTO_DENT_PHASE: IMPLEMENT | case=test-case',
       'AUTO_DENT_PHASE: TEST | result=pass | count=5',
       'AUTO_DENT_PHASE: PR | url=https://example.com/pr/1',
       'AUTO_DENT_PHASE: MERGE | url=https://example.com/pr/1 | status=queued',
+      'AUTO_DENT_PHASE: DEPLOY | status=pass | evidence=post-merge checks passed',
       'AUTO_DENT_PHASE: REFLECT | issues_filed=0',
     ].join('\n'));
 
@@ -3331,7 +4176,7 @@ describe('validateRunLifecycle', () => {
     expect(result.valid).toBe(true);
     expect(result.violations).toEqual([]);
     expect(result.phasesMissing).toEqual([]);
-    expect(result.phasesPresent).toEqual(['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']);
+    expect(result.phasesPresent).toEqual(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT']);
   });
 
   it('detects ordering violations', () => {
@@ -3383,7 +4228,7 @@ describe('validateRunLifecycle', () => {
     const result = validateRunLifecycle(logFile);
     expect(result.valid).toBe(true);
     expect(result.phasesPresent).toEqual([]);
-    expect(result.phasesMissing).toEqual(['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']);
+    expect(result.phasesMissing).toEqual(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT']);
   });
 
   it('handles phases mixed with JSON stream messages', () => {
@@ -3394,6 +4239,7 @@ describe('validateRunLifecycle', () => {
       'AUTO_DENT_PHASE: PICK | issue=#1',
       '{"type":"content_block_delta","delta":{"text":"working..."}}',
       'AUTO_DENT_PHASE: EVALUATE | verdict=proceed',
+      'AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated search to explorer subagent',
       'AUTO_DENT_PHASE: IMPLEMENT | case=test',
     ].join('\n'));
 
@@ -3401,6 +4247,7 @@ describe('validateRunLifecycle', () => {
     expect(result.valid).toBe(true);
     expect(result.phasesPresent).toContain('PICK');
     expect(result.phasesPresent).toContain('EVALUATE');
+    expect(result.phasesPresent).toContain('DELEGATE');
     expect(result.phasesPresent).toContain('IMPLEMENT');
   });
 });
@@ -3474,6 +4321,174 @@ describe('runOnce stream-json line parsing', () => {
     expect(runCodexSection).toContain('normalizeCodexEventToStreamMessages');
     expect(runCodexSection).toContain('processStreamMessage(streamMessage');
     expect(runCodexSection).not.toContain('extractArtifacts([parsed.text, parsed.finalText]');
+  });
+});
+
+describe('provider workspace contract', () => {
+  const repoRoot = '/repo/main';
+  const caseRoot = '/repo/.claude/worktrees/260629-0120-k1164-cross-pr-dry-sweep';
+
+  it('uses the invocation case worktree when its binding matches the assigned issue', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: caseRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [],
+      readBoundIssue: (root) => root === caseRoot ? 1164 : 1586,
+    });
+
+    expect(resolved).toEqual({
+      ok: true,
+      providerRoot: caseRoot,
+      issue: 1164,
+      source: 'invocation-root',
+    });
+  });
+
+  it('fails closed when the invocation worktree binding mismatches the assigned issue', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: caseRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [{ path: caseRoot, branch: 'case/260629-0120-k1164-cross-pr-dry-sweep' }],
+      readBoundIssue: () => 1586,
+    });
+
+    expect(resolved).toMatchObject({
+      ok: false,
+      issue: 1164,
+      reason: 'binding-mismatch',
+      providerRoot: caseRoot,
+      actualIssue: 1586,
+    });
+  });
+
+  it('selects an existing matching case worktree instead of the main checkout', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: 'https://github.com/Garsson-io/kaizen/issues/1164',
+    }, {
+      listWorktrees: () => [
+        { path: repoRoot, branch: 'main' },
+        { path: caseRoot, branch: 'case/260629-0120-k1164-cross-pr-dry-sweep' },
+      ],
+      readBoundIssue: (root) => root === caseRoot ? 1164 : 1586,
+    });
+
+    expect(resolved).toMatchObject({
+      ok: true,
+      providerRoot: caseRoot,
+      source: 'worktree-list',
+      issue: 1164,
+    });
+  });
+
+  it('does not trust known case paths outside the managed worktree directory', () => {
+    const externalRoot = '/tmp/not-a-kaizen-case';
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: '#1164',
+      knownCases: [externalRoot],
+    }, {
+      listWorktrees: () => [{ path: repoRoot, branch: 'main' }],
+      readBoundIssue: (root) => root === externalRoot ? 1164 : 1586,
+    });
+
+    expect(resolved).toMatchObject({
+      ok: false,
+      reason: 'missing-worktree',
+      issue: 1164,
+    });
+  });
+
+  it('fails closed when an assigned issue has no matching case worktree', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [{ path: repoRoot, branch: 'main' }],
+      readBoundIssue: () => 1586,
+    });
+
+    expect(resolved).toMatchObject({
+      ok: false,
+      reason: 'missing-worktree',
+      issue: 1164,
+    });
+  });
+
+  it('does not select another worktree whose issue token only shares a prefix', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [
+        { path: repoRoot, branch: 'main' },
+        { path: '/repo/.claude/worktrees/260629-k11640-prefix-collision', branch: 'case/260629-k11640-prefix-collision' },
+      ],
+      readBoundIssue: () => 11640,
+    });
+
+    expect(resolved).toMatchObject({
+      ok: false,
+      reason: 'missing-worktree',
+      issue: 1164,
+    });
+  });
+
+  it('leaves unassigned synthetic runs on the harness root', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: undefined,
+    }, {
+      listWorktrees: () => [],
+      readBoundIssue: () => null,
+    });
+
+    expect(resolved).toEqual({
+      ok: true,
+      providerRoot: repoRoot,
+      issue: null,
+      source: 'unassigned',
+    });
+  });
+
+  it('threads the resolved provider root through Codex argv and cwd', () => {
+    const source = AUTO_DENT_RUN_SOURCE;
+    const runCodexStart = source.indexOf('async function runCodex');
+    const runCodexEnd = source.indexOf('async function runClaude', runCodexStart);
+    const runCodexSection = source.slice(runCodexStart, runCodexEnd);
+
+    expect(runCodexSection).toContain('providerRoot: string');
+    expect(runCodexSection).toContain('buildCodexExecArgs(input.providerRoot, {');
+    expect(runCodexSection).toContain("sandbox: 'workspace-write'");
+    expect(runCodexSection).toContain('bypassApprovalsAndSandbox: false');
+    expect(runCodexSection).toContain('cwd: input.providerRoot');
+    expect(runCodexSection).not.toContain('buildCodexExecArgs(input.repoRoot)');
+  });
+
+  it('resolves and validates the provider root before either provider can spawn', () => {
+    const source = AUTO_DENT_RUN_SOURCE;
+    const runClaudeStart = source.indexOf('async function runClaude');
+    const runClaudeEnd = source.indexOf('// Execute one run', runClaudeStart);
+    const runClaudeSection = source.slice(runClaudeStart, runClaudeEnd);
+    const resolverIndex = runClaudeSection.indexOf('resolveProviderWorkspaceRoot');
+    const codexIndex = runClaudeSection.indexOf('runCodex({');
+    const claudeSpawnIndex = runClaudeSection.indexOf("spawn('claude'");
+
+    expect(resolverIndex).toBeGreaterThanOrEqual(0);
+    expect(runClaudeSection).toContain('providerWorkspaceFailureResult');
+    expect(resolverIndex).toBeLessThan(codexIndex);
+    expect(resolverIndex).toBeLessThan(claudeSpawnIndex);
+    expect(runClaudeSection).toContain('providerRoot: providerWorkspace.providerRoot');
+    expect(runClaudeSection).toContain('cwd: providerWorkspace.providerRoot');
   });
 });
 
@@ -3646,6 +4661,179 @@ describe('updateBatchProgressIssue', () => {
   });
 });
 
+describe('mode-output progress fallback (#702)', () => {
+  const exploreLog = [
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"Candidate analysis\\n\\n- #10 duplicate of #9\\n- File #11 for missing fallback"}]}}',
+    '',
+    '--- auto-dent metadata ---',
+    'exit_code=0',
+  ].join('\n');
+
+  it('extracts assistant analysis text from a completed stream log without metadata noise', () => {
+    const output = extractModeOutput(exploreLog);
+
+    expect(output).toContain('Candidate analysis');
+    expect(output).toContain('File #11 for missing fallback');
+    expect(output).not.toContain('auto-dent metadata');
+  });
+
+  it('posts harness-owned explore output to the progress issue', () => {
+    const commands: string[][] = [];
+
+    postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'explore',
+      runNum: 3,
+      logFile: '/logs/run-3.log',
+      readLog: () => exploreLog,
+      gh: (args) => {
+        commands.push(args);
+        return 'https://github.com/Garsson-io/kaizen/issues/7020#issuecomment-1';
+      },
+      log: () => {},
+    });
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0].slice(0, 5)).toEqual(['issue', 'comment', '7020', '--repo', 'Garsson-io/kaizen']);
+    const body = commands[0][commands[0].indexOf('--body') + 1];
+    expect(body).toContain('### explore run #3 — analysis fallback');
+    expect(body).toContain('Candidate analysis');
+    expect(body).toContain('File #11 for missing fallback');
+  });
+
+  it('posts reflect output from codex final text blocks', () => {
+    const commands: string[][] = [];
+    const reflectLog = [
+      '[provider] codex subscription-cli',
+      '--- codex final text ---',
+      'REFLECTION_INSIGHT: progress issue fallback is missing',
+      '',
+      'Detailed reflection body.',
+      '--- codex lifecycle markers ---',
+      'AUTO_DENT_PHASE: REFLECT | issues_filed=1',
+    ].join('\n');
+
+    postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'reflect',
+      runNum: 4,
+      logFile: '/logs/run-4.log',
+      readLog: () => reflectLog,
+      gh: (args) => {
+        commands.push(args);
+        return '';
+      },
+      log: () => {},
+    });
+
+    const body = commands[0][commands[0].indexOf('--body') + 1];
+    expect(body).toContain('### reflect run #4 — analysis fallback');
+    expect(body).toContain('REFLECTION_INSIGHT: progress issue fallback is missing');
+    expect(body).toContain('Detailed reflection body.');
+    expect(body).not.toContain('codex lifecycle markers');
+  });
+
+  it('does not post for exploit mode', () => {
+    const commands: string[][] = [];
+
+    postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'exploit',
+      runNum: 5,
+      logFile: '/logs/run-5.log',
+      readLog: () => exploreLog,
+      gh: (args) => {
+        commands.push(args);
+        return '';
+      },
+      log: () => {},
+    });
+
+    expect(commands).toHaveLength(0);
+  });
+
+  it('deduplicates contemplate when the agent already posted to the progress issue', () => {
+    const commands: string[][] = [];
+    const logs: string[] = [];
+
+    postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'contemplate',
+      runNum: 6,
+      logFile: '/logs/run-6.log',
+      readLog: () => 'Strategic output\nReflection complete (posted to progress issue).',
+      gh: (args) => {
+        commands.push(args);
+        return '';
+      },
+      log: (msg) => logs.push(msg),
+    });
+
+    expect(commands).toHaveLength(0);
+    expect(logs.some((msg) => msg.includes('already posted'))).toBe(true);
+  });
+
+  it('fails open when the log cannot be read', () => {
+    const commands: string[][] = [];
+    const logs: string[] = [];
+
+    expect(() => postModeOutputToProgressIssue({
+      progressIssue: 'https://github.com/Garsson-io/kaizen/issues/7020',
+      repo: 'Garsson-io/kaizen',
+      mode: 'reflect',
+      runNum: 7,
+      logFile: '/logs/missing.log',
+      readLog: () => { throw new Error('ENOENT'); },
+      gh: (args) => {
+        commands.push(args);
+        return '';
+      },
+      log: (msg) => logs.push(msg),
+    })).not.toThrow();
+
+    expect(commands).toHaveLength(0);
+    expect(logs.some((msg) => msg.includes('skipped'))).toBe(true);
+  });
+
+  it('fails open without a progress issue or repository', () => {
+    const commands: string[][] = [];
+    const logs: string[] = [];
+
+    postModeOutputToProgressIssue({
+      progressIssue: '',
+      repo: '',
+      mode: 'reflect',
+      runNum: 8,
+      logFile: '/logs/run-8.log',
+      readLog: () => exploreLog,
+      gh: (args) => {
+        commands.push(args);
+        return '';
+      },
+      log: (msg) => logs.push(msg),
+    });
+
+    expect(commands).toHaveLength(0);
+    expect(logs.some((msg) => msg.includes('no progress issue'))).toBe(true);
+  });
+
+  it('wires the fallback immediately after run metadata and before review/metrics updates', () => {
+    const metadataIndex = AUTO_DENT_RUN_SOURCE.indexOf("'--- auto-dent metadata ---'");
+    const fallbackIndex = AUTO_DENT_RUN_SOURCE.indexOf('postModeOutputToProgressIssue({');
+    const reviewIndex = AUTO_DENT_RUN_SOURCE.indexOf('runReviewWiring(', fallbackIndex);
+    const metricsIndex = AUTO_DENT_RUN_SOURCE.indexOf('updateBatchProgressIssue(', fallbackIndex);
+
+    expect(metadataIndex).toBeGreaterThan(-1);
+    expect(fallbackIndex).toBeGreaterThan(metadataIndex);
+    expect(reviewIndex).toBeGreaterThan(fallbackIndex);
+    expect(metricsIndex).toBeGreaterThan(fallbackIndex);
+  });
+});
+
 describe('extractPlanText — plan section regex extraction (kaizen #901)', () => {
   it('extracts ## Plan section from issue body', () => {
     const body = '## Problem\n\nSomething broke.\n\n## Plan\n\n1. Fix A\n2. Fix B\n\n## Test Plan\n\nRun tests.';
@@ -3737,6 +4925,115 @@ describe('workflow gate repair scheduling (#1533)', () => {
     expect(AUTO_DENT_RUN_SOURCE).toContain('workflowRepairState,');
     expect(AUTO_DENT_RUN_SOURCE).toContain('fill evidence for these exact gates on the existing PR');
     expect(AUTO_DENT_RUN_SOURCE).toContain('do not restart unrelated implementation');
+  });
+});
+
+describe('context-delegation evidence wiring (#1509)', () => {
+  it('includes Codex raw JSONL sidecar tool telemetry in context pressure analysis', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'codex-context-pressure-'));
+    try {
+      const logFile = join(dir, 'run-1.log');
+      const rawFile = join(dir, 'run-1-codex.jsonl');
+      writeFileSync(logFile, [
+        '[provider] codex subscription-cli',
+        '[provider] raw_jsonl=run-1-codex.jsonl',
+        'AUTO_DENT_PHASE: DELEGATE | status=not-applicable | evidence=narrow task',
+      ].join('\n'));
+      writeFileSync(rawFile, Array.from({ length: 12 }, (_, i) => JSON.stringify({
+        type: 'item.completed',
+        item: {
+          type: 'command_execution',
+          command: `npx tsx scripts/probe-${i}.ts`,
+          aggregated_output: 'ok',
+          exit_code: 0,
+          status: 'completed',
+        },
+      })).join('\n'));
+
+      const logText = buildContextDelegationAnalysisLog(logFile);
+      const analysis = analyzeContextDelegation(logText);
+
+      expect(analysis.pressure.required).toBe(true);
+      expect(analysis.pressure.mainThreadToolCalls).toBe(12);
+      expect(analysis.pressure.reasons).toContain('main_thread_tool_calls:12/12');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores raw_jsonl pointers outside the run log directory or expected Codex sidecar shape', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'codex-context-pressure-path-'));
+    try {
+      const logFile = join(dir, 'run-1.log');
+      writeFileSync(logFile, [
+        '[provider] raw_jsonl=../../outside.jsonl',
+        '[provider] raw_jsonl=/dev/zero',
+        '[provider] raw_jsonl=run-1-codex.jsonl',
+      ].join('\n'));
+      const reads: string[] = [];
+      const logText = buildContextDelegationAnalysisLog(logFile, (path) => {
+        reads.push(path);
+        if (path === logFile) return readFileSync(path, 'utf8');
+        if (path === join(dir, 'run-1-codex.jsonl')) {
+          return JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'command_execution',
+              command: 'git status --short',
+              aggregated_output: '',
+            },
+          });
+        }
+        throw new Error(`unexpected read: ${path}`);
+      });
+
+      expect(reads).toEqual([logFile, join(dir, 'run-1-codex.jsonl')]);
+      expect(logText).toContain('"name":"Bash"');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('routes auto-dent progress evidence into process validation', () => {
+    const reasonsIndex = AUTO_DENT_RUN_SOURCE.indexOf('const contextDelegationPressureReasons = contextDelegationAnalysis.pressure.reasons;');
+    const helperIndex = AUTO_DENT_RUN_SOURCE.indexOf('const contextDelegationProgressEvidence = hasContextDelegationProgressEvidence(result.progressSteps, {');
+    const pressureOptionIndex = AUTO_DENT_RUN_SOURCE.indexOf('allowNotApplicable: contextDelegationPressureReasons.length === 0');
+    const evidenceFieldIndex = AUTO_DENT_RUN_SOURCE.indexOf('contextDelegationEvidence: Boolean(state.test_task) ||\n        contextDelegationProgressEvidence,');
+    const validationIndex = AUTO_DENT_RUN_SOURCE.indexOf('validateProcessEvidence(lifecycle, processEvidence)');
+
+    expect(reasonsIndex).toBeGreaterThanOrEqual(0);
+    expect(helperIndex).toBeGreaterThanOrEqual(0);
+    expect(pressureOptionIndex).toBeGreaterThan(helperIndex);
+    expect(evidenceFieldIndex).toBeGreaterThanOrEqual(0);
+    expect(validationIndex).toBeGreaterThanOrEqual(0);
+    expect(helperIndex).toBeGreaterThan(reasonsIndex);
+    expect(evidenceFieldIndex).toBeGreaterThan(helperIndex);
+    expect(helperIndex).toBeLessThan(validationIndex);
+  });
+
+  it('applies run context analysis as progress evidence and diagnostics', () => {
+    const result = makeRunResult({
+      progressSteps: [
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+      ],
+    });
+    const diagnostics: string[] = [];
+    const row = (name: string, input: Record<string, unknown>) => JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name, input }] },
+    });
+    const logText = [
+      row('Agent', { description: 'Fan out broad code search', subagent_type: 'explorer' }),
+      ...Array.from({ length: 12 }, () => row('Read', { file_path: 'src/auto-dent-run.ts' })),
+    ].join('\n');
+
+    const analysis = applyContextDelegationAnalysis(result, logText, (line) => diagnostics.push(line));
+
+    expect(analysis.pressure.required).toBe(true);
+    expect(analysis.delegation.observed).toBe(true);
+    expect(result.progressSteps?.map((step) => step.phase)).toEqual(['DELEGATE', 'IMPLEMENT']);
+    expect(diagnostics.join('')).toContain('context_delegation_evidence=delegated Fan out broad code search');
+    expect(diagnostics.join('')).toContain('context_delegation_pressure=');
   });
 });
 

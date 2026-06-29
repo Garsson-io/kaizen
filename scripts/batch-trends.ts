@@ -16,7 +16,18 @@
 
 import { readdirSync, statSync, existsSync } from 'fs';
 import { resolve, basename } from 'path';
-import { parseEventsFile, summarizeEvents, type BatchSummary } from './batch-summary.js';
+import type { EventEnvelope } from './auto-dent-events.js';
+import { parseBatchArtifactCliArgs } from './batch-artifacts-cli.js';
+import {
+  readArtifactPartsFromProgressIssue,
+  type ArtifactParts,
+} from './batch-artifacts-upload.js';
+import {
+  parseEventsFile,
+  parseEventsJsonl,
+  summarizeEvents,
+  type BatchSummary,
+} from './batch-summary.js';
 
 export interface BatchDataPoint {
   batch_id: string;
@@ -60,6 +71,11 @@ export interface TrendDirection {
   first_half_avg: number;
   second_half_avg: number;
   change_pct: number;
+}
+
+export interface BatchEventSource {
+  label: string;
+  envelopes: EventEnvelope[];
 }
 
 /**
@@ -157,14 +173,52 @@ export function computeTrend(
 }
 
 /**
- * Build a TrendReport from multiple batch directories.
+ * Read a local batch directory into an in-memory trend source.
  */
-export function analyzeTrends(batchDirs: string[]): TrendReport {
+export function eventSourceFromBatchDir(dir: string): BatchEventSource {
+  const eventsPath = resolve(dir, 'events.jsonl');
+  return {
+    label: basename(dir),
+    envelopes: parseEventsFile(eventsPath),
+  };
+}
+
+/**
+ * Convert parsed uploaded batch artifacts into an in-memory trend source.
+ */
+export function eventSourceFromArtifactParts(
+  parts: ArtifactParts,
+  label = parts.batchId,
+): BatchEventSource {
+  if (!parts.eventsJsonl) {
+    throw new Error(`No events.jsonl artifact found for ${label}`);
+  }
+  return {
+    label,
+    envelopes: parseEventsJsonl(parts.eventsJsonl),
+  };
+}
+
+/**
+ * Read a progress issue's uploaded `batch-artifacts` attachment into an
+ * in-memory trend source.
+ */
+export function eventSourceFromProgressIssue(issueNumber: string, repo: string): BatchEventSource {
+  const parts = readArtifactPartsFromProgressIssue(issueNumber, repo);
+  if (!parts) {
+    throw new Error(`No batch-artifacts attachment found on issue #${issueNumber}`);
+  }
+  return eventSourceFromArtifactParts(parts, `issue #${issueNumber}`);
+}
+
+/**
+ * Build a TrendReport from in-memory event sources.
+ */
+export function analyzeEventSources(sources: BatchEventSource[]): TrendReport {
   const datapoints: BatchDataPoint[] = [];
 
-  for (const dir of batchDirs) {
-    const eventsPath = resolve(dir, 'events.jsonl');
-    const envelopes = parseEventsFile(eventsPath);
+  for (const source of sources) {
+    const envelopes = source.envelopes;
     if (envelopes.length === 0) continue;
 
     const summary = summarizeEvents(envelopes);
@@ -196,6 +250,13 @@ export function analyzeTrends(batchDirs: string[]): TrendReport {
   };
 
   return { batch_count: datapoints.length, date_range: dateRange, datapoints, trends, totals };
+}
+
+/**
+ * Build a TrendReport from multiple local batch directories.
+ */
+export function analyzeTrends(batchDirs: string[]): TrendReport {
+  return analyzeEventSources(batchDirs.map(eventSourceFromBatchDir));
 }
 
 /**
@@ -258,16 +319,22 @@ function formatTrendLine(label: string, trend: TrendDirection, unit: string): st
 
 // CLI entry point
 if (process.argv[1]?.endsWith('batch-trends.ts') || process.argv[1]?.endsWith('batch-trends.js')) {
-  const args = process.argv.slice(2).filter(a => !a.startsWith('--'));
-  const jsonMode = process.argv.includes('--json');
+  const { positional: args, progressIssues, repo, jsonMode } = parseBatchArtifactCliArgs(process.argv.slice(2));
 
-  if (args.length === 0) {
+  if (args.length === 0 && progressIssues.length === 0) {
     console.error('Usage: npx tsx scripts/batch-trends.ts <parent-dir|batch-dir...> [--json]');
+    console.error('   or: npx tsx scripts/batch-trends.ts --progress-issue <issue> --repo <owner/repo> [--json]');
+    process.exit(1);
+  }
+  if (progressIssues.length > 0 && !repo) {
+    console.error('Usage: --progress-issue requires --repo <owner/repo> or GITHUB_REPOSITORY');
     process.exit(1);
   }
 
   let batchDirs: string[];
-  if (args.length === 1) {
+  if (args.length === 0) {
+    batchDirs = [];
+  } else if (args.length === 1) {
     // Single arg: could be a parent dir containing batch subdirs, or a single batch dir
     const resolved = resolve(args[0]);
     const discovered = discoverBatchDirs(resolved);
@@ -283,10 +350,20 @@ if (process.argv[1]?.endsWith('batch-trends.ts') || process.argv[1]?.endsWith('b
     batchDirs = args.map(a => resolve(a));
   }
 
-  const report = analyzeTrends(batchDirs);
+  let report: TrendReport;
+  try {
+    const sources = [
+      ...batchDirs.map(eventSourceFromBatchDir),
+      ...progressIssues.map((issue) => eventSourceFromProgressIssue(issue, repo!)),
+    ];
+    report = analyzeEventSources(sources);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 
   if (report.batch_count === 0) {
-    console.error('No events found in any batch directory');
+    console.error('No events found in any batch directory or progress issue artifact');
     process.exit(1);
   }
 

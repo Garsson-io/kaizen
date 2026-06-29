@@ -27,8 +27,10 @@ import {
   type WatchdogResult,
   type AggregateBatchRecord,
 } from './auto-dent-ctl.js';
+import type { DrySweepReport } from './auto-dent-dry-sweep.js';
 import type { RunMetrics } from './auto-dent-run.js';
 import { makeBatchState } from './auto-dent-test-utils.js';
+import { checkpointRunState, writeState } from './auto-dent-run.js';
 
 const AUTO_DENT_CTL_SOURCE = readFileSync(new URL('./auto-dent-ctl.ts', import.meta.url), 'utf8');
 
@@ -70,6 +72,41 @@ describe('discoverBatches', () => {
       expect(source).not.toContain("JSON.parse(readFileSync(stateFile, 'utf8'))");
       expect(source).toMatch(/readState,/);
       expect(source).toContain("from './auto-dent-run.js'");
+    } finally {
+      rmSync(logsDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('watchdog live-run checkpoint reality proof', () => {
+  it('classifies checkpointed active runs by heartbeat age instead of no_heartbeat', () => {
+    const logsDir = mkdtempSync(join(tmpdir(), 'watchdog-checkpoint-'));
+    try {
+      const batchDir = join(logsDir, 'batch-live');
+      mkdirSync(batchDir, { recursive: true });
+      const stateFile = join(batchDir, 'state.json');
+      writeState(stateFile, makeBatchState({
+        batch_id: 'batch-live',
+        run: 0,
+        last_heartbeat: 0,
+      }));
+
+      checkpointRunState(stateFile, { runNum: 1, heartbeatEpoch: 1_742_680_900 });
+      const [fresh] = runWatchdog(logsDir, 60, 1_742_680_930);
+      const [stale] = runWatchdog(logsDir, 60, 1_742_681_100);
+
+      expect(fresh).toMatchObject({
+        batchId: 'batch-live',
+        action: 'healthy',
+        heartbeatAge: 30,
+      });
+      expect(stale).toMatchObject({
+        batchId: 'batch-live',
+        action: 'halt_created',
+        heartbeatAge: 200,
+      });
+      expect(formatWatchdogResult(fresh)).not.toContain('no heartbeat recorded');
+      expect(existsSync(join(batchDir, 'HALT'))).toBe(true);
     } finally {
       rmSync(logsDir, { recursive: true, force: true });
     }
@@ -554,6 +591,30 @@ describe('buildBatchReflection', () => {
     expect(reflection.avgCostPerPr).toBeCloseTo(3.25);
   });
 
+  it('surfaces explore to exploit conversion in reflection comments', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        run_history: [
+          makeRunMetrics({ run: 1, mode: 'explore', issues_filed: ['#10', '#11'] }),
+          makeRunMetrics({ run: 2, mode: 'exploit', prs: ['pr1'], issues_closed: ['https://github.com/Garsson-io/kaizen/issues/10'] }),
+          makeRunMetrics({ run: 3, mode: 'reflect', issues_closed: ['#11'] }),
+        ],
+      }),
+    });
+
+    const reflection = buildBatchReflection(batch);
+    const comment = formatBatchReflectionComment(reflection);
+
+    expect(reflection.exploreExploitConversion).toMatchObject({
+      exploreIssuesFiled: 2,
+      exploreIssuesClosedByExploit: 1,
+      conversionRate: 0.5,
+    });
+    expect(comment).toContain('Explore->exploit conversion');
+    expect(comment).toContain('1/2 (50%)');
+  });
+
   it('detects high success rate pattern', () => {
     const runs = Array.from({ length: 5 }, (_, i) =>
       makeRunMetrics({ run: i + 1, cost_usd: 2.0, prs: ['https://github.com/Garsson-io/kaizen/pull/' + (100 + i)] }),
@@ -645,6 +706,57 @@ describe('buildBatchReflection', () => {
     const reflection = buildBatchReflection(batch);
     const stopInsight = reflection.insights.find((i) => i.message.includes('stop signals'));
     expect(stopInsight).toBeDefined();
+  });
+
+  it('surfaces dry-sweep findings as advisory reflection insight', () => {
+    const drySweepReport: DrySweepReport = {
+      generatedAt: '2026-06-29T00:00:00.000Z',
+      repo: 'Garsson-io/kaizen',
+      recentPrLimit: 20,
+      candidates: [
+        {
+          kind: 'progress_comments',
+          summary: 'Direct progress comments compete with marker attachments',
+          confidence: 85,
+          evidence: [
+            { path: 'scripts/auto-dent-run.ts', line: 10, symbol: 'gh issue comment', detail: 'direct comment' },
+            { path: 'src/section-editor.ts', line: 338, symbol: 'writeAttachment', detail: 'shared attachment primitive' },
+          ],
+          files: ['scripts/auto-dent-run.ts', 'src/section-editor.ts'],
+          recentPrs: [
+            {
+              number: 100,
+              title: 'refactor(auto-dent): progress comments',
+              mergedAt: '2026-06-28T10:00:00Z',
+              changedFiles: ['scripts/auto-dent-run.ts'],
+              url: 'https://github.com/Garsson-io/kaizen/pull/100',
+            },
+          ],
+          suggestedUnificationTarget: 'src/section-editor.ts writeAttachment',
+        },
+      ],
+    };
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 3,
+        run_history: [
+          makeRunMetrics({ run: 1, prs: ['https://github.com/Garsson-io/kaizen/pull/1'] }),
+          makeRunMetrics({ run: 2, prs: ['https://github.com/Garsson-io/kaizen/pull/2'] }),
+          makeRunMetrics({ run: 3, prs: ['https://github.com/Garsson-io/kaizen/pull/3'] }),
+        ],
+      }),
+    });
+
+    const reflection = buildBatchReflection(batch, { drySweepReport });
+
+    expect(reflection.insights).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'recommendation',
+        message: expect.stringContaining('DRY sweep found 1 candidate'),
+      }),
+    ]));
+    expect(formatBatchReflection(reflection)).toContain('progress_comments');
+    expect(formatBatchReflectionComment(reflection)).toContain('DRY sweep found 1 candidate');
   });
 
   it('builds run history table', () => {

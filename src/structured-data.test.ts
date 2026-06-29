@@ -13,6 +13,8 @@ import {
   parseFindingMeta,
   nextReviewRound,
   latestReviewRound,
+  authoritativeReviewRound,
+  readActiveReviewRound,
   listReviewRounds,
   listReviewDimensions,
   readReviewFinding,
@@ -190,6 +192,8 @@ describe('storeReviewBatch — multiple findings + auto-summary', () => {
     ghReturns(stored2);
     // writeAttachment for summary: readAttachment (no existing) + createComment
     ghReturns(''); ghReturns('https://...#issuecomment-12');
+    // writeAttachment for active marker: readAttachment (no existing) + createComment
+    ghReturns(''); ghReturns('https://...#issuecomment-active');
 
     const result = storeReviewBatch(pr, 5, [passFinding, failFinding]);
     expect(result.urls).toHaveLength(2);
@@ -224,6 +228,41 @@ describe('nextReviewRound + latestReviewRound', () => {
       JSON.stringify({ url: 'u', body: '<!-- kaizen:review/r3/summary -->' }),
     ].join('\n'));
     expect(nextReviewRound(pr)).toBe(4);
+  });
+
+  it('uses a stored active round instead of a stale higher-numbered round when it has review data', () => {
+    ghReturns(JSON.stringify({
+      url: 'u',
+      body: '<!-- kaizen:review/active-round -->\n<!-- meta:{"round":2} -->\nActive review round: r2',
+    }));
+    ghReturns([
+      JSON.stringify({ url: 'u', body: '<!-- kaizen:review/r2/summary -->' }),
+      JSON.stringify({ url: 'u', body: '<!-- kaizen:review/r3/security -->' }),
+    ].join('\n'));
+
+    expect(authoritativeReviewRound(pr)).toBe(2);
+  });
+
+  it('reads the stored active review round marker', () => {
+    ghReturns(JSON.stringify({
+      url: 'u',
+      body: '<!-- kaizen:review/active-round -->\n<!-- meta:{"round":2} -->\nActive review round: r2',
+    }));
+
+    expect(readActiveReviewRound(pr)).toBe(2);
+  });
+
+  it('falls back to latest review round when the active marker points at a missing round', () => {
+    ghReturns(JSON.stringify({
+      url: 'u',
+      body: '<!-- kaizen:review/active-round -->\n<!-- meta:{"round":9} -->\nActive review round: r9',
+    }));
+    ghReturns([
+      JSON.stringify({ url: 'u', body: '<!-- kaizen:review/r2/summary -->' }),
+      JSON.stringify({ url: 'u', body: '<!-- kaizen:review/r3/security -->' }),
+    ].join('\n'));
+
+    expect(authoritativeReviewRound(pr)).toBe(3);
   });
 });
 
@@ -270,12 +309,11 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
       body: `<!-- kaizen:review/r${round}/${dim} -->\n<!-- meta:{"round":${round},"dimension":"${dim}","verdict":"${verdict}","done":${done},"partial":${partial},"missing":${missing}} -->`,
     });
 
-  const bodyOfLastCreate = (): string => {
-    // createComment is the final gh call; its args carry body=<content>.
+  const bodyOfLastSummaryWrite = (): string => {
     for (let i = mockGh.mock.calls.length - 1; i >= 0; i--) {
       const args = mockGh.mock.calls[i][1] as string[];
       const body = args?.find?.(a => typeof a === 'string' && a.startsWith('body='));
-      if (body) return body;
+      if (body?.includes('## Review Round')) return body;
     }
     return '';
   };
@@ -298,9 +336,11 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     ghReturns(sec); // compose: read
     ghReturns(''); // writeAttachment: readAttachment (no existing summary) → create
     ghReturns('https://...#issuecomment-sum');
+    ghReturns(''); // active marker write: readAttachment (no existing)
+    ghReturns('https://...#issuecomment-active');
 
     storeReviewSummary(pr, 5);
-    const body = bodyOfLastCreate();
+    const body = bodyOfLastSummaryWrite();
     expect(body).toContain('## Review Round 5 — FAIL');
     expect(body).toContain('| security | ❌ FAIL | 1 | 0 | 2 |');
   });
@@ -311,12 +351,32 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     ghReturns(ok); // compose: read
     ghReturns(''); // writeAttachment: readAttachment (no existing)
     ghReturns('https://...#issuecomment-sum');
+    ghReturns(''); // active marker write: readAttachment (no existing)
+    ghReturns('https://...#issuecomment-active');
 
     storeReviewSummary(pr, 2, 'rebased onto main, re-ran the 3 test files, no changes');
-    const body = bodyOfLastCreate();
+    const body = bodyOfLastSummaryWrite();
     expect(body).toContain('## Review Round 2 — PASS');
     expect(body).toContain('### Reviewer notes (non-authoritative');
     expect(body).toContain('rebased onto main');
+  });
+
+  it('updates the active review round marker when a summary is stored', () => {
+    const ok = dimComment(2, 'correctness', 'pass', 3, 0, 0);
+    ghReturns(ok); // compose: list
+    ghReturns(ok); // compose: read
+    ghReturns(''); // summary write: readAttachment
+    ghReturns('https://...#issuecomment-sum');
+    ghReturns(''); // active marker write: readAttachment
+    ghReturns('https://...#issuecomment-active');
+
+    storeReviewSummary(pr, 2);
+
+    const activeBody = mockGh.mock.calls
+      .map(([, args]) => (args as string[])?.find?.(a => typeof a === 'string' && a.startsWith('body=')) ?? '')
+      .find(body => body.includes('<!-- kaizen:review/active-round -->')) ?? '';
+    expect(activeBody).toContain('<!-- meta:{"round":2} -->');
+    expect(activeBody).toContain('Active review round: r2');
   });
 
   // The #1070 CI-proof gate that previously lived here was reverted (#1225): storing a derived PASS
@@ -329,10 +389,12 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     ghReturns(ok); // compose: read
     ghReturns(''); // writeAttachment: readAttachment (no existing) — only storage calls, no pr view/checks
     ghReturns('https://...#issuecomment-sum');
+    ghReturns(''); // active marker write: readAttachment (no existing)
+    ghReturns('https://...#issuecomment-active');
 
     storeReviewSummary(pr, 4);
 
-    const body = bodyOfLastCreate();
+    const body = bodyOfLastSummaryWrite();
     expect(body).toContain('## Review Round 4 — PASS');
 
     // The reverted #1070 gate shelled out to `gh pr view --json headRefOid`, `gh pr checks`,
@@ -356,6 +418,8 @@ describe('storeReviewSummary — derived verdict is authoritative (#1019)', () =
     ghReturns(ok); // compose: read
     ghReturns(''); // writeAttachment: readAttachment (no existing)
     ghReturns('https://...#issuecomment-sum'); // createComment
+    ghReturns(''); // active marker write: readAttachment (no existing)
+    ghReturns('https://...#issuecomment-active');
 
     // Pre-revert this threw via `if (target.kind !== 'pr') throw`; now it stores like any target.
     expect(() => storeReviewSummary(issue, 3)).not.toThrow();

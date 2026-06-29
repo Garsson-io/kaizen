@@ -18,6 +18,7 @@
 import { getCurrentBranch, readHookInput, writeHookOutput, traceNullInput } from './hook-io.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
+import { postMergeWorkflowVerificationLines, safeMainSyncCommand } from './lib/post-merge-workflows.js';
 import { isGhPrCommand, stripHeredocBody } from './parse-command.js';
 import {
   DEFAULT_STATE_DIR,
@@ -49,7 +50,7 @@ export function processPostMergeClear(
       if (cleared > 0) {
         const mc = resolveMainCheckout();
         return formatGateSignal({ hook: 'post-merge-clear', type: 'gate-clear', gate: 'needs_post_merge', reason: 'Kaizen reflection completed' }) +
-          `\nPost-merge gate cleared (${cleared} PR${cleared !== 1 ? 's' : ''}). The /kaizen reflection satisfies the post-merge workflow requirement.\n\nRemember to also:\n- Mark the case as done (if applicable)\n- Sync main: \`git -C ${mc} fetch origin main && git -C ${mc} merge origin/main --no-edit\`\n- Update linked kaizen issue`;
+          `\nPost-merge gate cleared (${cleared} PR${cleared !== 1 ? 's' : ''}). The /kaizen reflection satisfies the post-merge workflow requirement.\n\nRemember to also:\n- Mark the case as done (if applicable)\n- Sync main: \`${safeMainSyncCommand(mc)}\`\n- Update linked kaizen issue`;
       }
     }
     return '';
@@ -87,7 +88,7 @@ export function processPostMergeClear(
 
     const mc = resolveMainCheckout();
     return formatGateSignal({ hook: 'post-merge-clear', type: 'gate-set', gate: 'needs_post_merge', pr: prUrl, reason: 'Merge confirmed — run /kaizen to reflect' }) +
-      `\n🎉 PR merge confirmed: ${prUrl}\n\nNow complete the post-merge workflow:\n1. **Kaizen reflection (REQUIRED)** — Run \`/kaizen\` NOW to reflect on impediments and process friction\n2. **Mark case done** — if a case exists for this work\n3. **Sync main** — \`git -C ${mc} fetch origin main && git -C ${mc} merge origin/main --no-edit\`\n4. **Update linked issue** — close the kaizen/tracking issue with lessons learned\n\n⛔ You will NOT be able to finish until /kaizen is run.`;
+      `\n🎉 PR merge confirmed: ${prUrl}\n\nNow complete the post-merge workflow:\n1. **Kaizen reflection (REQUIRED)** — Run \`/kaizen\` NOW to reflect on impediments and process friction\n2. ${postMergeWorkflowVerificationLines(prUrl)}\n3. **Mark case done** — if a case exists for this work\n4. **Sync main** — \`${safeMainSyncCommand(mc)}\`\n5. **Update linked issue** — close the kaizen/tracking issue with lessons learned\n\n⛔ You will NOT be able to finish until /kaizen is run.`;
   }
 
   return '';

@@ -5,10 +5,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { basename, join } from 'path';
-import { tmpdir } from 'os';
+import { makeIgnoredTestDir } from '../src/lib/test-dirs.js';
 import {
   analyzeRunLog,
   analyzeBatch,
@@ -18,6 +18,7 @@ import {
   generateRecommendations,
   detectRunRegression,
   detectBatchRegressions,
+  formatProgressIssueAnalysisDiagnostic,
   formatRegressionReports,
   formatRunAnalysis,
   formatBatchAnalysis,
@@ -71,14 +72,14 @@ function initMsg(): string {
 // Helpers
 
 function createTmpLog(lines: string[]): string {
-  const dir = mkdtempSync(join(tmpdir(), 'analyze-test-'));
+  const dir = makeIgnoredTestDir('auto-dent-analyze-log');
   const logPath = join(dir, 'run-1-test.log');
   writeFileSync(logPath, lines.join('\n') + '\n');
   return logPath;
 }
 
 function createTmpBatch(runLogs: string[][]): string {
-  const dir = mkdtempSync(join(tmpdir(), 'analyze-batch-'));
+  const dir = makeIgnoredTestDir('auto-dent-analyze-batch');
   for (let i = 0; i < runLogs.length; i++) {
     const logPath = join(dir, `run-${i + 1}-test.log`);
     writeFileSync(logPath, runLogs[i].join('\n') + '\n');
@@ -329,6 +330,39 @@ describe('analyzeBatch', () => {
   });
 });
 
+describe('progress issue artifact diagnostic', () => {
+  it('explains why uploaded JSONL artifacts are insufficient for transcript analysis', () => {
+    const output = formatProgressIssueAnalysisDiagnostic({
+      issueNumber: '1641',
+      repo: 'Garsson-io/kaizen',
+      parts: {
+        batchId: 'cloud-batch',
+        eventsJsonl: '{"event":{"type":"run.complete"}}\n{"event":{"type":"run.start"}}',
+        stateJson: '{"batch_id":"cloud-batch"}',
+        summary: 'Batch summary',
+      },
+    });
+
+    expect(output).toContain('cannot analyze progress issue #1641 directly');
+    expect(output).toContain('run transcript logs');
+    expect(output).toContain('events.jsonl (2 events)');
+    expect(output).toContain('state.json');
+    expect(output).toContain('batch-summary.ts --progress-issue 1641 --repo Garsson-io/kaizen');
+    expect(output).toContain('upload compressed run logs');
+  });
+
+  it('reports missing batch-artifacts attachment distinctly', () => {
+    const output = formatProgressIssueAnalysisDiagnostic({
+      issueNumber: '1641',
+      repo: 'Garsson-io/kaizen',
+      parts: null,
+    });
+
+    expect(output).toContain('No batch-artifacts attachment was found');
+    expect(output).toContain('batch-trends.ts --progress-issue 1641 --repo Garsson-io/kaizen');
+  });
+});
+
 describe('computeToolPhaseFractions', () => {
   it('computes fractions from tool inputs', () => {
     const messages = [
@@ -437,7 +471,8 @@ describe('computeRunCompleteness', () => {
       { offsetSec: 30, phase: 'TEST' },
       { offsetSec: 40, phase: 'PR' },
       { offsetSec: 50, phase: 'MERGE' },
-      { offsetSec: 60, phase: 'REFLECT' },
+      { offsetSec: 60, phase: 'DEPLOY' },
+      { offsetSec: 70, phase: 'REFLECT' },
     ];
 
     const result = computeRunCompleteness(phases);
@@ -454,10 +489,11 @@ describe('computeRunCompleteness', () => {
     ];
 
     const result = computeRunCompleteness(phases);
-    expect(result.score).toBeCloseTo(3 / 7);
+    expect(result.score).toBeCloseTo(3 / 8);
     expect(result.phasesMissing).toContain('EVALUATE');
     expect(result.phasesMissing).toContain('TEST');
     expect(result.phasesMissing).toContain('MERGE');
+    expect(result.phasesMissing).toContain('DEPLOY');
     expect(result.phasesMissing).toContain('REFLECT');
     expect(result.orderedCorrectly).toBe(true);
   });
@@ -476,7 +512,7 @@ describe('computeRunCompleteness', () => {
   it('returns zero score for empty phases', () => {
     const result = computeRunCompleteness([]);
     expect(result.score).toBe(0);
-    expect(result.phasesMissing).toHaveLength(7);
+    expect(result.phasesMissing).toHaveLength(8);
     expect(result.orderedCorrectly).toBe(true);
   });
 
@@ -487,7 +523,7 @@ describe('computeRunCompleteness', () => {
     ];
 
     const result = computeRunCompleteness(phases);
-    expect(result.score).toBeCloseTo(1 / 7);
+    expect(result.score).toBeCloseTo(1 / 8);
     expect(result.phasesPresent).toContain('STOP');
   });
 });
@@ -596,8 +632,8 @@ describe('generateRecommendations', () => {
 
   it('recommends phase clarity for low completeness', () => {
     const runs = [
-      makeMinimalRun({ completeness: { score: 0.3, phasesPresent: ['PICK', 'IMPLEMENT'], phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'], orderedCorrectly: true } }),
-      makeMinimalRun({ completeness: { score: 0.3, phasesPresent: ['PICK', 'IMPLEMENT'], phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'], orderedCorrectly: true } }),
+      makeMinimalRun({ completeness: { score: 0.25, phasesPresent: ['PICK', 'IMPLEMENT'], phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'], orderedCorrectly: true } }),
+      makeMinimalRun({ completeness: { score: 0.25, phasesPresent: ['PICK', 'IMPLEMENT'], phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'], orderedCorrectly: true } }),
     ];
     const recs = generateRecommendations(runs, 30, []);
     expect(recs.some(r => r.includes('completeness'))).toBe(true);
@@ -668,7 +704,7 @@ function makeMinimalRunAnalysis(overrides: Partial<RunAnalysis> = {}): RunAnalys
     topPatterns: [],
     toolEvents: [],
     phaseEvents: [],
-    completeness: { score: 0.71, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR'], phasesMissing: ['MERGE', 'REFLECT'], orderedCorrectly: true },
+    completeness: { score: 0.63, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR'], phasesMissing: ['MERGE', 'DEPLOY', 'REFLECT'], orderedCorrectly: true },
     wastePatterns: [],
     totalWastedCalls: 0,
     ...overrides,
@@ -690,9 +726,9 @@ describe('detectRunRegression', () => {
 
   it('detects consecutive failures when 3+ runs have no PR/MERGE', () => {
     const noPRCompleteness: RunCompleteness = {
-      score: 0.29,
+      score: 0.25,
       phasesPresent: ['PICK', 'IMPLEMENT'],
-      phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'],
+      phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'],
       orderedCorrectly: true,
     };
     const prior = [
@@ -710,15 +746,15 @@ describe('detectRunRegression', () => {
 
   it('does not flag consecutive failures when recent run had PR', () => {
     const noPRCompleteness: RunCompleteness = {
-      score: 0.29,
+      score: 0.25,
       phasesPresent: ['PICK', 'IMPLEMENT'],
-      phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'REFLECT'],
+      phasesMissing: ['EVALUATE', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'],
       orderedCorrectly: true,
     };
     const withPRCompleteness: RunCompleteness = {
-      score: 0.71,
+      score: 0.63,
       phasesPresent: ['PICK', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'],
-      phasesMissing: ['EVALUATE', 'REFLECT'],
+      phasesMissing: ['EVALUATE', 'DEPLOY', 'REFLECT'],
       orderedCorrectly: true,
     };
     const prior = [
@@ -760,12 +796,12 @@ describe('detectRunRegression', () => {
 
   it('detects completeness drop', () => {
     const prior = [
-      makeMinimalRunAnalysis({ runFile: 'run-1.log', completeness: { score: 0.86, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'], phasesMissing: ['REFLECT'], orderedCorrectly: true } }),
-      makeMinimalRunAnalysis({ runFile: 'run-2.log', completeness: { score: 0.86, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'], phasesMissing: ['REFLECT'], orderedCorrectly: true } }),
+      makeMinimalRunAnalysis({ runFile: 'run-1.log', completeness: { score: 0.75, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'], phasesMissing: ['DEPLOY', 'REFLECT'], orderedCorrectly: true } }),
+      makeMinimalRunAnalysis({ runFile: 'run-2.log', completeness: { score: 0.75, phasesPresent: ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE'], phasesMissing: ['DEPLOY', 'REFLECT'], orderedCorrectly: true } }),
     ];
     const current = makeMinimalRunAnalysis({
       runFile: 'run-3.log',
-      completeness: { score: 0.14, phasesPresent: ['PICK'], phasesMissing: ['EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'], orderedCorrectly: true },
+      completeness: { score: 0.13, phasesPresent: ['PICK'], phasesMissing: ['EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'], orderedCorrectly: true },
     });
 
     const result = detectRunRegression(2, current, prior);

@@ -22,9 +22,9 @@
 
 import { spawn, execFileSync, execSync } from 'child_process';
 import { createHash } from 'crypto';
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { createInterface } from 'readline';
-import { dirname, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { firstHookReason } from './hook-signals.js';
 import { claimNextItem, markItem, resetAssignedItems, readPlan, themeProgress } from './auto-dent-plan.js';
@@ -36,7 +36,7 @@ import {
   resolvePromptsDir,
   renderTemplate,
 } from '../src/review-battery.js';
-import { EventEmitter, makeRunId, type AutoDentEvent, type RunCompleteEvent } from './auto-dent-events.js';
+import { EventEmitter, makeRunId, type AutoDentEvent, type BanditDecisionTelemetry, type RunCompleteEvent } from './auto-dent-events.js';
 import { defaultReviewFixProviders, runFixLoop } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
@@ -46,6 +46,8 @@ import {
   writeBatchOutcomeAttachment,
   readBatchOutcomesFromGithub,
   computeSteeringRecommendations,
+  deriveBanditPriorFromOutcomes,
+  type BanditPrior,
 } from './batch-outcome.js';
 import {
   isAcceptedSubscriptionCompatibleCapability,
@@ -54,20 +56,30 @@ import {
   type Provider,
   type ProviderCapability,
 } from './auto-dent-provider.js';
+import { computeExploreExploitConversion, formatExploreExploitConversion } from './auto-dent-explore-conversion.js';
 import {
   buildKaizenCycleSteps,
   formatIssueForDisplay,
   formatIssueUrl,
   formatProgressStepsMarkdown,
+  hasContextDelegationProgressEvidence,
   formatReviewForDisplay,
+  upsertContextDelegationProgressStep,
   upsertProgressStep,
   type RunProgressStep,
 } from './auto-dent-progress.js';
+import {
+  analyzeContextDelegation,
+  buildAutomaticContextDelegationStep,
+  type ContextDelegationAnalysis,
+} from './auto-dent-context-delegation.js';
 import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
-import { hasHardQualityFailure } from '../src/verdict-binding-policy.js';
 import { subscriptionAgentProvider } from '../src/provider-contract.js';
+import { hasHardQualityFailure, type PostMergeVerificationVerdict } from '../src/verdict-binding-policy.js';
+import { extractPlanText } from '../src/structured-data.js';
+import { gh } from '../src/lib/gh-exec.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -83,6 +95,7 @@ export {
   syncEpicChecklists,
   verifyIssuesClosed,
   reconcileBatchClosedIssues,
+  closedIssueRefsFromVerifyCloseResults,
   type MergeStatus,
   type DriveStatus,
   type DriveReason,
@@ -103,6 +116,7 @@ export {
   type RunPrCreatedEvent,
   type RunCompleteEvent,
   type BatchReflectEvent,
+  type BanditDecisionTelemetry,
   type EventEnvelope,
 } from './auto-dent-events.js';
 
@@ -157,7 +171,9 @@ import {
   fetchIssueLabels,
   verifyIssuesClosed,
   reconcileBatchClosedIssues,
+  closedIssueRefsFromVerifyCloseResults,
   syncEpicChecklists,
+  type VerifyCloseResult,
 } from './auto-dent-github.js';
 import {
   color,
@@ -213,6 +229,11 @@ import { createDefaultGitExec } from '../src/hooks/lib/git-state.js';
 import { runStalePrTriageMaintenance } from './stale-pr-triage.js';
 import { runBacklogHealthMaintenance } from './backlog-health.js';
 import { gh as ghArgs } from '../src/lib/gh-exec.js';
+import {
+  formatProviderWorkspaceResolution,
+  resolveProviderWorkspaceRoot,
+  type ProviderWorkspaceResolution,
+} from './auto-dent-provider-workspace.js';
 
 // Types
 
@@ -265,6 +286,10 @@ export interface BatchState {
    * so observable cloud data biases this batch's choices.
    */
   cross_batch_steering?: string[];
+  /** UCB1 warm-start prior derived from PRIOR batches' batch-outcome attachments (#1201). */
+  cross_batch_bandit_prior?: BanditPrior;
+  /** Manifest-forced issue targets already consumed in this batch (#1213). */
+  manifest_forced_targets_consumed?: string[];
 }
 
 export interface RunMetrics {
@@ -285,6 +310,18 @@ export interface RunMetrics {
   lines_deleted?: number;
   /** Issues closed as obsolete/duplicate (not-planned), not fixed */
   issues_pruned?: number;
+  /** Per-run explore-mode candidate-task manifest path, when available (#1196). */
+  candidate_manifest_path?: string;
+  /** Number of candidates parsed from the explore-mode candidate-task manifest (#1196). */
+  candidate_manifest_count?: number;
+  /** Number of manifest candidates with complete duplicate-search evidence (#735). */
+  candidate_manifest_dedup_checked_count?: number;
+  /** Number of manifest candidates that chose to file a new issue (#735). */
+  candidate_manifest_file_new_count?: number;
+  /** Non-fatal candidate manifest parse/read warnings (#1196). */
+  candidate_manifest_warnings?: string[];
+  /** Durable UCB1 decision breakdown used for mode selection (#1178). */
+  bandit_decision?: BanditDecisionTelemetry;
   /** Prompt template file name used for this run */
   prompt_template?: string;
   /** SHA-256 hash of the prompt template content (first 12 chars) */
@@ -299,6 +336,8 @@ export interface RunMetrics {
   lifecycle_health?: LifecycleHealth;
   /** Durable process-evidence verdict (#1149) */
   process_verdict?: ProcessVerdict;
+  /** Post-merge/deployment verification verdict (#1165). */
+  post_merge_verification?: PostMergeVerificationVerdict;
   /** Count of failed/warning process evidence checks (#1149) */
   process_issue_count?: number;
   /** Compact process evidence summary (#1149) */
@@ -351,6 +390,16 @@ export interface RunResult {
   linesDeleted: number;
   /** Issues closed as not-planned (pruned, not fixed) */
   issuesPruned: number;
+  /** Per-run explore-mode candidate-task manifest path, when available (#1196). */
+  candidateManifestPath?: string;
+  /** Number of candidates parsed from the explore-mode candidate-task manifest (#1196). */
+  candidateManifestCount?: number;
+  /** Number of manifest candidates with complete duplicate-search evidence (#735). */
+  candidateManifestDedupCheckedCount?: number;
+  /** Number of manifest candidates that chose to file a new issue (#735). */
+  candidateManifestFileNewCount?: number;
+  /** Non-fatal candidate manifest parse/read warnings (#1196). */
+  candidateManifestWarnings?: string[];
   /** Structured failure classification */
   failureClass?: string;
   /** Whether the run was killed by the wall-clock timeout watchdog (#686) */
@@ -392,6 +441,10 @@ type RunMetricsBaseField =
   | 'mode'
   | 'lines_deleted'
   | 'issues_pruned'
+  | 'candidate_manifest_path'
+  | 'candidate_manifest_count'
+  | 'candidate_manifest_warnings'
+  | 'bandit_decision'
   | 'final_claim_status'
   | 'final_claim'
   | 'final_claim_path'
@@ -406,12 +459,14 @@ export interface BuildRunMetricsInput {
   exitCode: number;
   runMode: string;
   result: RunResult;
+  modeReason?: string;
+  bandit?: BanditResult;
   provider?: Provider;
   metadata?: RunMetricsMetadata;
 }
 
 export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
-  const { runNum, runStartEpoch, duration, exitCode, runMode, result, provider, metadata = {} } = input;
+  const { runNum, runStartEpoch, duration, exitCode, runMode, result, modeReason, bandit, provider, metadata = {} } = input;
   const hookActivation = result.hookActivation
     ?? (provider ? unknownHookActivationVerdict(provider, 'no system.init observed') : undefined);
   return {
@@ -429,6 +484,12 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     mode: runMode,
     lines_deleted: result.linesDeleted,
     issues_pruned: result.issuesPruned,
+    candidate_manifest_path: result.candidateManifestPath,
+    candidate_manifest_count: result.candidateManifestCount,
+    candidate_manifest_dedup_checked_count: result.candidateManifestDedupCheckedCount,
+    candidate_manifest_file_new_count: result.candidateManifestFileNewCount,
+    candidate_manifest_warnings: result.candidateManifestWarnings,
+    bandit_decision: buildBanditDecisionTelemetry(runMode, modeReason, bandit),
     final_claim_status: result.finalClaimStatus,
     final_claim: result.finalClaim,
     final_claim_path: result.finalClaimPath,
@@ -437,7 +498,284 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     ...metadata,
   };
 }
-import { extractPlanText } from '../src/structured-data.js';
+
+export interface CandidateTaskManifestParseResult {
+  path: string;
+  count: number;
+  dedupCheckedCount: number;
+  fileNewCount: number;
+  warnings: string[];
+}
+
+export function candidateTaskManifestPath(logDir: string, runNum: number): string {
+  return join(logDir, `run-${runNum}-candidate-tasks-manifest.json`);
+}
+
+export const CANDIDATE_TASK_MANIFEST_SCHEMA = [
+  '{',
+  '  "version": 1,',
+  '  "runTag": "<batch-id>/run-<N>",',
+  '  "generatedAt": "<ISO timestamp>",',
+  '  "candidates": [',
+  '    {',
+  '      "id": "<stable short id>",',
+  '      "title": "<candidate task title>",',
+  '      "rationale": "<why this should be worked>",',
+  '      "refs": ["#123", "path/to/file.ts"],',
+  '      "suggested_mode": "exploit|subtract|reflect|contemplate",',
+  '      "dedup": {',
+  '        "query": "<gh issue search/list query used before filing>",',
+  '        "matches": ["#123 existing related issue, if any"],',
+  '        "decision": "file_new|comment_existing|candidate_only",',
+  '        "reason": "<why this decision does not duplicate the backlog>"',
+  '      }',
+  '    }',
+  '  ]',
+  '}',
+].join('\n');
+
+export function parseCandidateTaskManifest(path: string): CandidateTaskManifestParseResult {
+  if (!existsSync(path)) {
+    return { path, count: 0, dedupCheckedCount: 0, fileNewCount: 0, warnings: [`candidate task manifest missing: ${path}`] };
+  }
+
+  const raw = readFileSync(path, 'utf8');
+  const parsed = parseJsonObject(raw);
+  if (!parsed) {
+    return { path, count: 0, dedupCheckedCount: 0, fileNewCount: 0, warnings: [`candidate task manifest malformed JSON: ${path}`] };
+  }
+
+  const candidates = (parsed as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates)) {
+    return { path, count: 0, dedupCheckedCount: 0, fileNewCount: 0, warnings: [`candidate task manifest candidates must be an array: ${path}`] };
+  }
+
+  const warnings: string[] = [];
+  let dedupCheckedCount = 0;
+  let fileNewCount = 0;
+  const validDecisions = new Set(['file_new', 'comment_existing', 'candidate_only']);
+
+  candidates.forEach((candidate, index) => {
+    const label = `candidate[${index}]`;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      warnings.push(`candidate task manifest ${label} must be an object with dedup evidence: ${path}`);
+      return;
+    }
+
+    const dedup = (candidate as Record<string, unknown>).dedup;
+    if (!dedup || typeof dedup !== 'object' || Array.isArray(dedup)) {
+      warnings.push(`candidate task manifest ${label} missing dedup evidence: ${path}`);
+      return;
+    }
+
+    const rawDedup = dedup as Record<string, unknown>;
+    const query = typeof rawDedup.query === 'string' ? rawDedup.query.trim() : '';
+    const matches = rawDedup.matches;
+    const decision = typeof rawDedup.decision === 'string' ? rawDedup.decision.trim() : '';
+    const reason = typeof rawDedup.reason === 'string' ? rawDedup.reason.trim() : '';
+
+    if (!query) {
+      warnings.push(`candidate task manifest ${label} missing dedup query: ${path}`);
+      return;
+    }
+    if (!Array.isArray(matches) || !matches.every((match) => typeof match === 'string')) {
+      warnings.push(`candidate task manifest ${label} dedup matches must be a string array: ${path}`);
+      return;
+    }
+    if (!validDecisions.has(decision)) {
+      warnings.push(`candidate task manifest ${label} invalid dedup decision: ${decision || '<empty>'}`);
+      return;
+    }
+    if (!reason) {
+      warnings.push(`candidate task manifest ${label} missing dedup reason: ${path}`);
+      return;
+    }
+
+    dedupCheckedCount += 1;
+    if (decision === 'file_new') fileNewCount += 1;
+  });
+
+  if (fileNewCount > 2) {
+    warnings.push(`candidate task manifest file_new budget exceeded: ${fileNewCount} decisions (max 2)`);
+  }
+
+  return { path, count: candidates.length, dedupCheckedCount, fileNewCount, warnings };
+}
+
+function attachCandidateTaskManifest(result: RunResult, path: string): void {
+  const parsed = parseCandidateTaskManifest(path);
+  result.candidateManifestPath = parsed.path;
+  result.candidateManifestCount = parsed.count;
+  result.candidateManifestDedupCheckedCount = parsed.dedupCheckedCount;
+  result.candidateManifestFileNewCount = parsed.fileNewCount;
+  result.candidateManifestWarnings = parsed.warnings;
+}
+
+export interface ManifestForcedTarget {
+  issue: string;
+  manifestPath: string;
+  observations: number;
+}
+
+export interface ManifestForcedTargetOptions {
+  repeatThreshold?: number;
+}
+
+function normalizeIssueRef(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) return `#${value}`;
+  if (typeof value !== 'string') return null;
+  const match = value.match(/(?:issues\/|#)?(\d+)\b/);
+  return match ? `#${match[1]}` : null;
+}
+
+function firstIssueRef(values: unknown): string | null {
+  if (!Array.isArray(values)) return normalizeIssueRef(values);
+  for (const value of values) {
+    const ref = normalizeIssueRef(value);
+    if (ref) return ref;
+  }
+  return null;
+}
+
+export function mergeVerifiedClosedIssuesIntoRunResult(
+  result: RunResult,
+  verifyResults: VerifyCloseResult[],
+): string[] {
+  const currentRunPrs = new Set(result.prs);
+  const currentRunResults = verifyResults.filter((entry) => currentRunPrs.has(entry.pr));
+  const closedRefs = closedIssueRefsFromVerifyCloseResults(currentRunResults);
+  const existing = new Set(result.issuesClosed.map((ref) => normalizeIssueRef(ref)).filter(Boolean));
+  const added: string[] = [];
+  for (const ref of closedRefs) {
+    const normalized = normalizeIssueRef(ref);
+    if (!normalized || existing.has(normalized)) continue;
+    result.issuesClosed.push(normalized);
+    existing.add(normalized);
+    added.push(normalized);
+  }
+  return added;
+}
+
+function extractManifestTarget(parsed: Record<string, unknown>): string | null {
+  const topBundle = parsed.top_bundle;
+  if (topBundle && typeof topBundle === 'object' && !Array.isArray(topBundle)) {
+    const top = topBundle as Record<string, unknown>;
+    return normalizeIssueRef(top.umbrella) || firstIssueRef(top.issues);
+  }
+
+  const candidates = parsed.candidates;
+  if (Array.isArray(candidates) && candidates.length > 0) {
+    const first = candidates[0];
+    if (first && typeof first === 'object' && !Array.isArray(first)) {
+      const candidate = first as Record<string, unknown>;
+      if (typeof candidate.suggested_mode === 'string' && candidate.suggested_mode !== 'exploit') {
+        return null;
+      }
+      return firstIssueRef(candidate.refs) || normalizeIssueRef(candidate.issue);
+    }
+  }
+
+  const bundles = parsed.bundles;
+  if (Array.isArray(bundles) && bundles.length > 0) {
+    const first = bundles[0];
+    if (first && typeof first === 'object' && !Array.isArray(first)) {
+      return firstIssueRef((first as Record<string, unknown>).issues);
+    }
+  }
+
+  return null;
+}
+
+function aggregateManifestObservationCount(parsed: Record<string, unknown>): number | null {
+  const topBundle = parsed.top_bundle;
+  if (!topBundle || typeof topBundle !== 'object' || Array.isArray(topBundle)) return null;
+  const evidence = (topBundle as Record<string, unknown>).evidence;
+  if (typeof evidence !== 'string') return 1;
+  const match = evidence.match(/(\d+)\s+explore runs?/i);
+  return match ? Number(match[1]) : 1;
+}
+
+function isCandidateManifestFile(name: string): boolean {
+  return name === 'candidate-tasks-manifest.json'
+    || /^run-\d+-(candidate-tasks-manifest|candidate-manifest)\.json$/.test(name);
+}
+
+function consumedManifestTarget(state: BatchState, issue: string): boolean {
+  const consumed = state.manifest_forced_targets_consumed || [];
+  return consumed.some((ref) => normalizeIssueRef(ref) === issue);
+}
+
+function closedInBatch(state: BatchState, issue: string): boolean {
+  return state.issues_closed.some((ref) => normalizeIssueRef(ref) === issue);
+}
+
+function manifestTargetClaimable(logDir: string, issue: string): boolean {
+  const plan = readPlan(logDir);
+  if (!plan) return true;
+  const item = plan.items.find((candidate) => normalizeIssueRef(candidate.issue) === issue);
+  return !item || item.status === 'pending';
+}
+
+export function findManifestForcedTarget(
+  state: BatchState,
+  logDir?: string,
+  options: ManifestForcedTargetOptions = {},
+): ManifestForcedTarget | null {
+  if (!logDir || !existsSync(logDir)) return null;
+  const repeatThreshold = options.repeatThreshold ?? 3;
+
+  const observations: ManifestForcedTarget[] = [];
+  for (const name of readdirSync(logDir)) {
+    if (!isCandidateManifestFile(name)) continue;
+    const path = join(logDir, name);
+    const parsed = parseJsonObject(readFileSync(path, 'utf8'));
+    if (!parsed) continue;
+    const target = extractManifestTarget(parsed as Record<string, unknown>);
+    if (
+      !target
+      || consumedManifestTarget(state, target)
+      || closedInBatch(state, target)
+      || !manifestTargetClaimable(logDir, target)
+    ) continue;
+
+    const aggregateCount = aggregateManifestObservationCount(parsed as Record<string, unknown>);
+    if (aggregateCount && aggregateCount >= repeatThreshold) {
+      return { issue: target, manifestPath: path, observations: aggregateCount };
+    }
+
+    observations.push({
+      issue: target,
+      manifestPath: path,
+      observations: 1,
+    });
+  }
+
+  observations.sort((a, b) =>
+    statSync(b.manifestPath).mtimeMs - statSync(a.manifestPath).mtimeMs
+    || b.manifestPath.localeCompare(a.manifestPath),
+  );
+  const latest = observations[0];
+  if (!latest) return null;
+
+  let consecutive = 0;
+  for (const observation of observations) {
+    if (observation.issue !== latest.issue) break;
+    consecutive += observation.observations;
+  }
+
+  return consecutive >= repeatThreshold
+    ? { ...latest, observations: consecutive }
+    : null;
+}
+
+export function recordManifestForcedTargetConsumed(state: BatchState, issue: string): void {
+  const normalized = normalizeIssueRef(issue);
+  if (!normalized) return;
+  const consumed = state.manifest_forced_targets_consumed || [];
+  if (!consumed.some((ref) => normalizeIssueRef(ref) === normalized)) {
+    state.manifest_forced_targets_consumed = [...consumed, normalized];
+  }
+}
 export { extractPlanText };
 
 // State I/O
@@ -455,6 +793,106 @@ export function writeState(stateFile: string, state: BatchState): void {
   writeDurableJsonValueFile(stateFile, state, { backup: true });
 }
 
+export interface RunStateCheckpointInput {
+  runNum: number;
+  heartbeatEpoch?: number;
+  pickedIssue?: string;
+  result?: Pick<RunResult, 'prs' | 'issuesFiled' | 'issuesClosed' | 'cases'>;
+}
+
+function appendUnique(items: string[], additions: string[]): void {
+  for (const item of additions) {
+    if (!items.includes(item)) items.push(item);
+  }
+}
+
+function mergeRunArtifactsIntoState(
+  state: BatchState,
+  result?: Pick<RunResult, 'prs' | 'issuesFiled' | 'issuesClosed' | 'cases'>,
+): void {
+  if (!result) return;
+
+  appendUnique(state.prs, result.prs);
+  appendUnique(state.issues_filed, result.issuesFiled);
+  appendUnique(state.issues_closed, result.issuesClosed);
+  appendUnique(state.cases, result.cases);
+
+  if (result.prs.length > 0) {
+    state.last_pr = result.prs[result.prs.length - 1];
+  }
+  if (result.issuesFiled.length > 0) {
+    state.last_issue = result.issuesFiled[result.issuesFiled.length - 1];
+  }
+  if (result.issuesClosed.length > 0) {
+    state.last_issue = result.issuesClosed[result.issuesClosed.length - 1];
+  }
+  if (result.cases.length > 0) {
+    const lastCase = result.cases[result.cases.length - 1];
+    state.last_case = lastCase;
+    state.last_branch = `case/${lastCase}`;
+    state.last_worktree = `.claude/worktrees/${lastCase}`;
+  }
+}
+
+function runProgressCheckpointSignature(result: RunResult): string {
+  return JSON.stringify([
+    result.pickedIssue || '',
+    result.prs,
+    result.issuesFiled,
+    result.issuesClosed,
+    result.cases,
+  ]);
+}
+
+function checkpointRunProgressIfChanged(
+  stateFile: string,
+  runNum: number,
+  result: RunResult,
+  checkpoint: { signature: string },
+): void {
+  const signature = runProgressCheckpointSignature(result);
+  if (signature === checkpoint.signature) return;
+  checkpoint.signature = signature;
+  checkpointRunState(stateFile, {
+    runNum,
+    pickedIssue: result.pickedIssue,
+    result,
+  });
+}
+
+export function checkpointRunState(
+  stateFile: string,
+  input: RunStateCheckpointInput,
+): BatchState {
+  const state = readState(stateFile);
+  state.run = Math.max(state.run || 0, input.runNum);
+  state.last_heartbeat = input.heartbeatEpoch ?? Math.floor(Date.now() / 1000);
+  if (input.pickedIssue) {
+    state.last_issue = input.pickedIssue;
+  }
+  mergeRunArtifactsIntoState(state, input.result);
+  writeState(stateFile, state);
+  return state;
+}
+
+export function startRunStateHeartbeat(
+  stateFile: string,
+  runNum: number,
+  intervalMs = 30_000,
+): { stop(): void } {
+  checkpointRunState(stateFile, { runNum });
+  const interval = setInterval(() => {
+    try {
+      checkpointRunState(stateFile, { runNum });
+    } catch {
+      // A transient state write failure must not kill provider work.
+    }
+  }, intervalMs);
+  return {
+    stop: () => clearInterval(interval),
+  };
+}
+
 // Resolve repo root
 
 function getRepoRoot(): string {
@@ -466,6 +904,17 @@ function getRepoRoot(): string {
     return gitCommonDir.replace(/\/\.git$/, '');
   } catch {
     return resolve(dirname(new URL(import.meta.url).pathname), '..');
+  }
+}
+
+function getInvocationWorktreeRoot(): string {
+  try {
+    return execSync(
+      'git rev-parse --path-format=absolute --show-toplevel',
+      { encoding: 'utf8' },
+    ).trim();
+  } catch {
+    return getRepoRoot();
   }
 }
 
@@ -537,10 +986,12 @@ export function buildTemplateVars(
   state: BatchState,
   runNum: number,
   logDir?: string,
+  options: { claimPlanItem?: boolean; targetIssue?: string; modeSelection?: ModeSelection } = {},
 ): Record<string, string> {
   const runTag = `${state.batch_id}/run-${runNum}`;
   const hostRepo = state.host_repo || state.kaizen_repo || 'unknown';
   const now = new Date();
+  const shouldClaimPlanItem = options.claimPlanItem ?? true;
 
   // Try to claim next item from plan (if a plan exists)
   let planAssignment = '';
@@ -548,7 +999,7 @@ export function buildTemplateVars(
   let reflectionInsights = '';
   let priorReflections = '';
   if (logDir) {
-    const planItem = claimNextItem(logDir);
+    const planItem = shouldClaimPlanItem ? claimNextItem(logDir, { targetIssue: options.targetIssue }) : null;
     if (planItem) {
       claimedPlanIssue = planItem.issue;
       const lines = [
@@ -648,7 +1099,10 @@ export function buildTemplateVars(
   const crossBatchSteeringText = crossBatchSteering.length > 0
     ? crossBatchSteering.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
-  const modeSelection = selectMode(state, runNum);
+  const modeSelection = options.modeSelection ?? selectMode(state, runNum, { logDir });
+  const manifestPath = logDir
+    ? candidateTaskManifestPath(logDir, runNum)
+    : `run-${runNum}-candidate-tasks-manifest.json`;
 
   return {
     guidance: state.guidance,
@@ -676,6 +1130,8 @@ export function buildTemplateVars(
     prior_reflections: priorReflections,
     failure_class_summary: failureClassSummary,
     contemplation_recommendations: contemplationRecsText,
+    candidate_manifest_path: manifestPath,
+    candidate_manifest_schema: CANDIDATE_TASK_MANIFEST_SCHEMA,
     goal_forcing_contract: renderAutoDentGoalContract(modeSelection.mode),
   };
 }
@@ -710,6 +1166,8 @@ export interface ModeSelection {
   reason: string;
   /** Full bandit breakdown when the selection came from the UCB1 policy (reason === 'bandit') */
   bandit?: BanditResult;
+  /** Concrete issue forced by a repeated candidate manifest (#1213). */
+  target_issue?: string;
 }
 
 const MODE_TEMPLATES: Record<string, string> = {
@@ -726,8 +1184,8 @@ const MODE_TEMPLATES: Record<string, string> = {
  *
  * Signals (checked in priority order):
  *   1. 3+ consecutive failures -> reflect (diagnose what's going wrong)
- *   2. No PRs in last 5 runs with history -> explore (backlog may be exhausted)
- *   3. Same mode 4+ times consecutively -> force a different mode
+ *   2. No PRs in last 5 runs with history -> learned non-exploit mode, or explore during cold start
+ *   3. Same mode 4+ times consecutively -> learned non-stale schedulable mode, or legacy cold-start fallback
  */
 export function checkSignalOverrides(state: BatchState): ModeSelection | null {
   const history = state.run_history || [];
@@ -742,11 +1200,14 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
     };
   }
 
-  // Signal 2: no PRs in last 5 runs -> explore (backlog may be exhausted)
+  // Signal 2: no PRs in last 5 runs -> avoid exploit; let the learned policy
+  // choose among schedulable alternatives once enough history exists.
   if (history.length >= 5) {
     const recent5 = history.slice(-5);
     const recentPRs = recent5.reduce((sum, r) => sum + r.prs.length, 0);
     if (recentPRs === 0) {
+      const learned = learnedSignalMode(state, new Set(['exploit']), 'signal:no-recent-prs:bandit-non-exploit');
+      if (learned) return learned;
       return {
         mode: 'explore',
         template: MODE_TEMPLATES.explore,
@@ -761,6 +1222,8 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
     const modes = recent4.map(r => r.mode || 'exploit');
     if (modes.every(m => m === modes[0])) {
       const staleMode = modes[0];
+      const learned = learnedSignalMode(state, new Set([staleMode]), `signal:mode-streak-${staleMode}:bandit-non-stale`);
+      if (learned) return learned;
       // Pick a different mode: if stuck on exploit, explore; otherwise contemplate
       const breakMode = staleMode === 'exploit' ? 'explore' : 'contemplate';
       return {
@@ -774,11 +1237,42 @@ export function checkSignalOverrides(state: BatchState): ModeSelection | null {
   return null;
 }
 
+function learnedSignalMode(
+  state: BatchState,
+  excludedModes: Set<string>,
+  reason: string,
+): ModeSelection | null {
+  const bandit = computeBanditWeights(state.run_history || [], {
+    explorationC: banditExplorationC(),
+    prior: state.cross_batch_bandit_prior,
+  });
+  if (!bandit) return null;
+
+  const best = bandit.details
+    .filter((detail) =>
+      (SCHEDULABLE_MODES as readonly string[]).includes(detail.mode)
+      && !excludedModes.has(detail.mode),
+    )
+    .sort((a, b) =>
+      b.ucb - a.ucb
+      || b.weight - a.weight
+      || a.mode.localeCompare(b.mode),
+    )[0];
+  if (!best) return null;
+
+  return {
+    mode: best.mode,
+    template: MODE_TEMPLATES[best.mode] || MODE_TEMPLATES.exploit,
+    reason,
+    bandit,
+  };
+}
+
 /**
  * Compute mode-appropriate success metric for a run.
  * Each mode has its own definition of "success":
  *   - exploit: PRs produced
- *   - explore: issues filed (its purpose is discovery, not PRs)
+ *   - explore: dedup-checked candidate-task entries + capped issues filed (durable scouting)
  *   - reflect: issues filed (insights that become actionable issues)
  *   - subtract: lines deleted + issues pruned (reduction, not addition)
  *   - contemplate: fixed baseline (strategic value not measurable per-run)
@@ -787,8 +1281,10 @@ export function modeSuccess(mode: string, metrics: RunMetrics): number {
   switch (mode) {
     case 'exploit':
       return metrics.prs.length;
-    case 'explore':
-      return metrics.issues_filed.length;
+    case 'explore': {
+      const manifestReward = metrics.candidate_manifest_dedup_checked_count ?? metrics.candidate_manifest_count ?? 0;
+      return Math.min(metrics.issues_filed.length, 2) + manifestReward;
+    }
     case 'reflect':
       return metrics.issues_filed.length;
     case 'subtract':
@@ -812,6 +1308,7 @@ export interface RunOutcomeSignals {
   reviewVerdict?: 'pass' | 'fail' | 'skipped';
   processVerdict?: ProcessVerdict;
   lifecycleHealth?: LifecycleHealth;
+  postMergeVerification?: PostMergeVerificationVerdict;
 }
 
 /**
@@ -848,6 +1345,16 @@ export function deriveRunOutcome(signals: RunOutcomeSignals): RunOutcome {
   return signals.artifactCount > 0 ? 'success' : 'empty_success';
 }
 
+export function derivePostMergeVerification(
+  mergeStatuses: string[],
+  testHealth?: 'pass' | 'unowned-failures' | 'unknown',
+): PostMergeVerificationVerdict {
+  if (mergeStatuses.length === 0) return 'not-applicable';
+  if (!mergeStatuses.some((status) => status === 'merged')) return 'skipped';
+  if (testHealth === 'unowned-failures') return 'fail';
+  return 'pass';
+}
+
 export interface BuildRunCompleteEventInput {
   runId: string;
   batchId: string;
@@ -868,6 +1375,7 @@ export interface BuildRunCompleteEventInput {
   workflowRepairGates?: WorkflowGateId[];
   workflowRepairState?: RunCompleteEvent['workflow_repair_state'];
   workflowRepairPrompt?: string;
+  contextDelegationAnalysis?: ContextDelegationAnalysis;
   reviewVerdict?: RunCompleteEvent['review_verdict'];
   reviewCostUsd?: number;
   phaseProviders?: PhaseProviderRecord;
@@ -894,6 +1402,7 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     workflowRepairGates,
     workflowRepairState,
     workflowRepairPrompt,
+    contextDelegationAnalysis,
     reviewVerdict,
     reviewCostUsd,
     phaseProviders,
@@ -922,13 +1431,82 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     workflow_repair_gates: workflowRepairGates,
     workflow_repair_state: workflowRepairState,
     workflow_repair_prompt: workflowRepairPrompt,
+    context_delegation_required: contextDelegationAnalysis?.pressure.required,
+    context_delegation_observed: contextDelegationAnalysis?.delegation.observed,
+    context_delegation_reasons: contextDelegationAnalysis?.pressure.reasons,
+    context_delegation_recommended_substeps: contextDelegationAnalysis?.pressure.recommendedSubsteps,
     review_verdict: reviewVerdict,
     review_cost_usd: reviewCostUsd,
     phase_providers: phaseProviders,
     hook_activation: runMetricsForOutcome.hook_activation,
+    bandit_decision: runMetricsForOutcome.bandit_decision,
     outcome,
     mode: runMode,
   };
+}
+
+export function applyContextDelegationAnalysis(
+  result: RunResult,
+  logText: string,
+  appendDiagnostic: (line: string) => void = () => {},
+): ContextDelegationAnalysis {
+  const analysis = analyzeContextDelegation(logText);
+  const automaticContextDelegationStep = buildAutomaticContextDelegationStep(analysis);
+  if (automaticContextDelegationStep) {
+    upsertContextDelegationProgressStep(result, automaticContextDelegationStep);
+    appendDiagnostic(`context_delegation_evidence=${automaticContextDelegationStep.detail}\n`);
+  }
+  if (analysis.pressure.required) {
+    appendDiagnostic(`context_delegation_pressure=${analysis.pressure.reasons.join('; ')}\n`);
+  }
+  return analysis;
+}
+
+function normalizeCodexJsonlForAnalysis(jsonl: string): string {
+  const rows: string[] = [];
+  for (const line of jsonl.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const event = parseJsonObject(line);
+    if (!event) continue;
+    for (const message of normalizeCodexEventToStreamMessages(event)) {
+      rows.push(JSON.stringify(message));
+    }
+  }
+  return rows.join('\n');
+}
+
+function resolveContextDelegationRawJsonl(logFile: string, rawJsonlPath: string): string | null {
+  const logDir = resolve(dirname(logFile));
+  const resolved = resolve(logDir, rawJsonlPath);
+  if (dirname(resolved) !== logDir) return null;
+  if (!/^run-\d+-codex\.jsonl$/.test(basename(resolved))) return null;
+  return resolved;
+}
+
+export function buildContextDelegationAnalysisLog(
+  logFile: string,
+  readText: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+): string {
+  const logText = readText(logFile);
+  const parts = [logText];
+  const rawJsonlPaths = Array.from(logText.matchAll(/^\[provider\] raw_jsonl=(.+)$/gm))
+    .map((match) => match[1]?.trim())
+    .filter((path): path is string => Boolean(path));
+
+  for (const rawJsonlPath of rawJsonlPaths) {
+    const resolvedRawJsonl = resolveContextDelegationRawJsonl(logFile, rawJsonlPath);
+    if (!resolvedRawJsonl) continue;
+    try {
+      const normalized = normalizeCodexJsonlForAnalysis(
+        readText(resolvedRawJsonl),
+      );
+      if (normalized) parts.push(normalized);
+    } catch {
+      // The primary run log remains the durable analysis surface; sidecars are best-effort.
+    }
+  }
+
+  return parts.join('\n');
 }
 
 function processCheckState(status: ProcessValidation['checks'][number]['status']): WorkflowGateState {
@@ -1021,6 +1599,30 @@ export interface BanditResult {
   explorationC: number;
 }
 
+export function buildBanditDecisionTelemetry(
+  selectedMode: string,
+  reason: string | undefined,
+  bandit: BanditResult | undefined,
+): BanditDecisionTelemetry | undefined {
+  if (!bandit) return undefined;
+  return {
+    selected_mode: selectedMode,
+    reason: reason ?? 'bandit',
+    weights: bandit.weights,
+    details: bandit.details.map((detail) => ({
+      mode: detail.mode,
+      plays: detail.plays,
+      mean_reward: detail.meanReward,
+      exploit_term: detail.exploitTerm,
+      explore_bonus: detail.exploreBonus,
+      ucb: detail.ucb,
+      weight: detail.weight,
+    })),
+    total_plays: bandit.totalPlays,
+    exploration_c: bandit.explorationC,
+  };
+}
+
 /**
  * Compute cognitive-mode selection weights with a UCB1 multi-armed-bandit policy.
  *
@@ -1046,14 +1648,18 @@ export interface BanditResult {
  */
 export function computeBanditWeights(
   history: RunMetrics[],
-  opts: { minRuns?: number; explorationC?: number } = {},
+  opts: { minRuns?: number; explorationC?: number; prior?: BanditPrior } = {},
 ): BanditResult | null {
   const minRuns = opts.minRuns ?? 10;
   const explorationC = opts.explorationC ?? DEFAULT_BANDIT_C;
+  const prior = opts.prior;
 
   // Only runs with mode data count toward bandit statistics.
   const withMode = history.filter(r => r.mode);
-  if (withMode.length < minRuns) return null;
+  const priorPlaysTotal = prior
+    ? SCHEDULABLE_MODES.reduce((sum, mode) => sum + (prior.modes[mode]?.plays ?? 0), 0)
+    : 0;
+  if (withMode.length + priorPlaysTotal < minRuns) return null;
 
   // Group runs by mode.
   const byMode = new Map<string, RunMetrics[]>();
@@ -1068,9 +1674,13 @@ export function computeBanditWeights(
   const meanReward: Record<string, number> = {};
   for (const mode of SCHEDULABLE_MODES) {
     const runs = byMode.get(mode) || [];
-    plays[mode] = runs.length;
-    meanReward[mode] = runs.length
-      ? runs.reduce((s, r) => s + modeSuccess(mode, r), 0) / runs.length
+    const priorMode = prior?.modes[mode];
+    const priorPlays = priorMode?.plays ?? 0;
+    const priorReward = priorMode?.total_reward ?? 0;
+    const currentReward = runs.reduce((s, r) => s + modeSuccess(mode, r), 0);
+    plays[mode] = priorPlays + runs.length;
+    meanReward[mode] = plays[mode] > 0
+      ? (priorReward + currentReward) / plays[mode]
       : 0;
   }
 
@@ -1161,18 +1771,37 @@ export function weightedModeSelect(
  * Select the cognitive mode for a given run.
  *
  * Priority (highest first):
- *   1. Guidance override: "mode:<name>" in guidance forces that mode
- *   2. Test task: always exploit with test template
- *   3. Signal-driven: reactive to batch state (failures, stalls, streaks)
- *   4. Contemplate overlay: every 15th run for strategic assessment
- *   5. Bandit selection: UCB1 explore/exploit weighting from run history
- *   6. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
+ *   1. Explore freshness: repeated manifests can short-circuit mode:explore
+ *   2. Guidance override: "mode:<name>" in guidance forces that mode
+ *   3. Test task: always exploit with test template
+ *   4. Manifest-forced: repeated explore manifests bind a pending plan target
+ *   5. Signal-driven: reactive to batch state (failures, stalls, streaks)
+ *   6. Contemplate overlay: every 15th run for strategic assessment
+ *   7. Bandit selection: UCB1 explore/exploit weighting from run history
+ *   8. Base cycle (mod 10): 0-6 exploit, 7 explore, 8 reflect, 9 subtract
  */
-export function selectMode(state: BatchState, runNum: number): ModeSelection {
+export interface SelectModeOptions {
+  logDir?: string;
+  manifestRepeatThreshold?: number;
+}
+
+export function selectMode(state: BatchState, runNum: number, options: SelectModeOptions = {}): ModeSelection {
+  const forcedTarget = findManifestForcedTarget(state, options.logDir, {
+    repeatThreshold: options.manifestRepeatThreshold,
+  });
+
   // Force mode from guidance (e.g., "mode:explore")
   const modeOverride = state.guidance.match(/\bmode:(\w+)/i);
   if (modeOverride) {
     const forced = modeOverride[1].toLowerCase();
+    if (forced === 'explore' && forcedTarget) {
+      return {
+        mode: 'exploit',
+        template: MODE_TEMPLATES.exploit,
+        reason: 'manifest-fresh-short-circuit',
+        target_issue: forcedTarget.issue,
+      };
+    }
     return {
       mode: forced,
       template: MODE_TEMPLATES[forced] || MODE_TEMPLATES.exploit,
@@ -1185,6 +1814,15 @@ export function selectMode(state: BatchState, runNum: number): ModeSelection {
     return { mode: 'exploit', template: 'test-task.md', reason: 'test-task' };
   }
 
+  if (forcedTarget) {
+    return {
+      mode: 'exploit',
+      template: MODE_TEMPLATES.exploit,
+      reason: 'manifest-forced',
+      target_issue: forcedTarget.issue,
+    };
+  }
+
   // Signal-driven overrides (reactive to batch state)
   const signalMode = checkSignalOverrides(state);
   if (signalMode) return signalMode;
@@ -1195,7 +1833,10 @@ export function selectMode(state: BatchState, runNum: number): ModeSelection {
   }
 
   // Bandit selection: principled UCB1 explore/exploit weighting when data allows.
-  const bandit = computeBanditWeights(state.run_history || [], { explorationC: banditExplorationC() });
+  const bandit = computeBanditWeights(state.run_history || [], {
+    explorationC: banditExplorationC(),
+    prior: state.cross_batch_bandit_prior,
+  });
   if (bandit) {
     const mode = weightedModeSelect(bandit.weights, runNum, state.batch_id);
     return { mode, template: MODE_TEMPLATES[mode] || MODE_TEMPLATES.exploit, reason: 'bandit', bandit };
@@ -1233,6 +1874,10 @@ export interface PromptMetadata {
   claimedPlanIssue?: string;
 }
 
+export interface BuildPromptWithMetadataOptions {
+  modeSelection?: ModeSelection;
+}
+
 export function buildPrompt(state: BatchState, runNum: number, logDir?: string): string {
   return buildPromptWithMetadata(state, runNum, logDir).prompt;
 }
@@ -1259,11 +1904,13 @@ export function populateCrossBatchSteering(
 
   const repo = state.kaizen_repo;
   let steering: string[] = [];
+  let banditPrior: BanditPrior | undefined;
   if (repo && repo !== 'unknown') {
     try {
       const read = deps.read ?? readBatchOutcomesFromGithub;
       const outcomes = read(repo, { excludeBatchId: state.batch_id });
       const report = computeSteeringRecommendations(outcomes);
+      banditPrior = deriveBanditPriorFromOutcomes(outcomes) ?? undefined;
       steering = report.recommendations.map((r) => r.text);
       if (steering.length > 0) {
         console.log(
@@ -1284,6 +1931,7 @@ export function populateCrossBatchSteering(
   }
 
   state.cross_batch_steering = steering;
+  state.cross_batch_bandit_prior = banditPrior;
   try {
     writeState(stateFile, state);
   } catch {
@@ -1292,11 +1940,22 @@ export function populateCrossBatchSteering(
   return steering;
 }
 
-export function buildPromptWithMetadata(state: BatchState, runNum: number, logDir?: string): PromptMetadata {
-  const vars = buildTemplateVars(state, runNum, logDir);
+export function buildPromptWithMetadata(
+  state: BatchState,
+  runNum: number,
+  logDir?: string,
+  options: BuildPromptWithMetadataOptions = {},
+): PromptMetadata {
+  const modeSelection = options.modeSelection ?? selectMode(state, runNum, { logDir });
+  const shouldClaimPlanItem = modeSelection.mode === 'exploit' && !state.test_task;
+  const vars = buildTemplateVars(state, runNum, logDir, {
+    claimPlanItem: shouldClaimPlanItem,
+    targetIssue: modeSelection.target_issue,
+    modeSelection,
+  });
   const claimedPlanIssue = vars.claimed_plan_issue || undefined;
 
-  const { template: templateFile } = selectMode(state, runNum);
+  const templateFile = modeSelection.template;
   const templateContent = loadPromptTemplate(templateFile);
 
   if (templateContent) {
@@ -1311,14 +1970,14 @@ export function buildPromptWithMetadata(state: BatchState, runNum: number, logDi
 
   // Inline fallback (kept for backward compatibility)
   return {
-    prompt: buildPromptInline(state, runNum),
+    prompt: buildPromptInline(state, runNum, modeSelection),
     template: 'inline',
     hash: 'none',
     claimedPlanIssue,
   };
 }
 
-function buildPromptInline(state: BatchState, runNum: number): string {
+function buildPromptInline(state: BatchState, runNum: number, modeSelection: ModeSelection): string {
   const runTag = `${state.batch_id}/run-${runNum}`;
   const kaizenRepo = state.kaizen_repo || 'unknown';
   const hostRepo = state.host_repo || kaizenRepo;
@@ -1363,7 +2022,7 @@ You are running inside an auto-dent batch loop (run ${runNum}${state.max_runs > 
 After this run completes, the loop will start another run with fresh context.
 Run to completion. Do not ask for confirmation — make autonomous decisions.`;
 
-  prompt += `\n\n${renderAutoDentGoalContract(selectMode(state, runNum).mode)}`;
+  prompt += `\n\n${renderAutoDentGoalContract(modeSelection.mode)}`;
 
   if (state.issues_closed.length > 0) {
     prompt += `\n\nIssues already addressed in previous runs (do not rework): ${state.issues_closed.join(' ')}`;
@@ -1712,12 +2371,37 @@ export function normalizeCodexRunExitCode(
   });
 }
 
+function providerWorkspaceFailureResult(
+  input: {
+    logFile: string;
+    result: RunResult;
+    mode: string;
+    modeReason: string;
+    promptMeta: PromptMetadata;
+    workspace: Exclude<ProviderWorkspaceResolution, { ok: true }>;
+  },
+): ProviderRunResult {
+  input.result.stopRequested = true;
+  appendFileSync(
+    input.logFile,
+    `\n[provider-workspace] ${formatProviderWorkspaceResolution(input.workspace)}\n`,
+  );
+  return {
+    exitCode: 1,
+    duration: 0,
+    result: input.result,
+    mode: input.mode,
+    modeReason: input.modeReason,
+    promptMeta: input.promptMeta,
+  };
+}
+
 async function runCodex(
   input: {
     state: BatchState;
     runNum: number;
     logFile: string;
-    repoRoot: string;
+    providerRoot: string;
     stateFile: string;
     prompt: string;
     promptMeta: PromptMetadata;
@@ -1740,18 +2424,20 @@ async function runCodex(
 
   appendFileSync(input.logFile, `[provider] codex subscription-cli\n`);
   appendFileSync(input.logFile, `[provider] version=${version}\n`);
+  appendFileSync(input.logFile, `[provider] workspace=${input.providerRoot}\n`);
   appendFileSync(input.logFile, `[provider] raw_jsonl=${rawFile}\n`);
   writeFileSync(rawFile, '');
 
   return new Promise((resolvePromise) => {
     let processExited = false;
     let raw = '';
+    const progressCheckpoint = { signature: runProgressCheckpointSignature(input.result) };
     const ctx: StreamContext = { provider: 'codex' };
-    const child = spawn('codex', buildCodexExecArgs(input.repoRoot, {
+    const child = spawn('codex', buildCodexExecArgs(input.providerRoot, {
       sandbox: 'workspace-write',
       bypassApprovalsAndSandbox: false,
     }), {
-      cwd: input.repoRoot,
+      cwd: input.providerRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -1780,6 +2466,7 @@ async function runCodex(
         for (const streamMessage of normalizeCodexEventToStreamMessages(event)) {
           processStreamMessage(streamMessage, input.result, runStart, ctx);
         }
+        checkpointRunProgressIfChanged(input.stateFile, input.runNum, input.result, progressCheckpoint);
       } catch {
         // Raw JSONL remains durable; a malformed display row should not hide run completion.
       }
@@ -1798,6 +2485,7 @@ async function runCodex(
         for (const streamMessage of normalizeCodexFinalTextToStreamMessages(parsed.finalText)) {
           processStreamMessage(streamMessage, input.result, runStart, ctx);
         }
+        checkpointRunProgressIfChanged(input.stateFile, input.runNum, input.result, progressCheckpoint);
       }
 
       appendFileSync(input.logFile, `\n--- codex final text ---\n${parsed.finalText || parsed.text}\n`);
@@ -1834,8 +2522,9 @@ async function runClaude(
   runNum: number,
   logFile: string,
   repoRoot: string,
+  invocationRoot: string,
   stateFile: string,
-): Promise<{ exitCode: number; duration: number; result: RunResult; mode: string; modeReason: string; promptMeta: PromptMetadata }> {
+): Promise<{ exitCode: number; duration: number; result: RunResult; mode: string; modeReason: string; bandit?: BanditResult; promptMeta: PromptMetadata }> {
   const result: RunResult = {
     prs: [],
     issuesFiled: [],
@@ -1852,7 +2541,7 @@ async function runClaude(
   const ctx: StreamContext = { provider: 'claude' };
 
   const logDir = dirname(stateFile);
-  const modeSelection = selectMode(state, runNum);
+  const modeSelection = selectMode(state, runNum, { logDir });
   if (modeSelection.mode !== 'exploit' || modeSelection.reason !== 'schedule') {
     console.log(`  [mode] run #${runNum}: ${modeSelection.mode} (${modeSelection.reason}, template: ${modeSelection.template})`);
   }
@@ -1864,11 +2553,19 @@ async function runClaude(
       .join('  ');
     console.log(`  [bandit] N=${b.totalPlays} c=${b.explorationC.toFixed(2)}  ${breakdown}`);
   }
-  const promptMeta = buildPromptWithMetadata(state, runNum, logDir);
+  const promptMeta = buildPromptWithMetadata(state, runNum, logDir, { modeSelection });
+  if (
+    modeSelection.target_issue
+    && normalizeIssueRef(promptMeta.claimedPlanIssue) === normalizeIssueRef(modeSelection.target_issue)
+  ) {
+    recordManifestForcedTargetConsumed(state, modeSelection.target_issue);
+    writeState(stateFile, state);
+  }
   const prompt = promptMeta.prompt;
   if (state.test_task && !result.pickedIssue) {
     result.pickedIssue = 'not applicable';
     result.pickedIssueTitle = 'synthetic test task';
+    checkpointRunState(stateFile, { runNum, pickedIssue: result.pickedIssue });
   }
   if (promptMeta.claimedPlanIssue && !result.pickedIssue) {
     result.pickedIssue = promptMeta.claimedPlanIssue;
@@ -1887,18 +2584,44 @@ async function runClaude(
       detail: `batch plan item ${promptMeta.claimedPlanIssue}`,
       url: formatIssueUrl(promptMeta.claimedPlanIssue, state.kaizen_repo || state.host_repo || ''),
     });
+    checkpointRunState(stateFile, { runNum, pickedIssue: promptMeta.claimedPlanIssue });
   }
 
   // Save rendered prompt for observability (#602)
   const promptFile = `${logDir}/run-${runNum}-prompt.md`;
   writeFileSync(promptFile, prompt + '\n');
+  const candidateManifestPath = modeSelection.mode === 'explore'
+    ? candidateTaskManifestPath(logDir, runNum)
+    : undefined;
+  const providerWorkspace = resolveProviderWorkspaceRoot({
+    repoRoot,
+    invocationRoot,
+    assignedIssue: promptMeta.claimedPlanIssue,
+    knownCases: [
+      ...state.cases,
+      state.last_case,
+      state.last_worktree,
+      ...result.cases,
+    ].filter(Boolean),
+  });
+  appendFileSync(logFile, `[provider-workspace] ${formatProviderWorkspaceResolution(providerWorkspace)}\n`);
+  if (!providerWorkspace.ok) {
+    return providerWorkspaceFailureResult({
+      logFile,
+      result,
+      mode: modeSelection.mode,
+      modeReason: modeSelection.reason,
+      promptMeta,
+      workspace: providerWorkspace,
+    });
+  }
 
   if (shouldRunCodexProvider(state)) {
-    return runCodex({
+    const codexResult = await runCodex({
       state,
       runNum,
       logFile,
-      repoRoot,
+      providerRoot: providerWorkspace.providerRoot,
       stateFile,
       prompt,
       promptMeta,
@@ -1906,6 +2629,10 @@ async function runClaude(
       modeReason: modeSelection.reason,
       result,
     });
+    if (candidateManifestPath) {
+      attachCandidateTaskManifest(codexResult.result, candidateManifestPath);
+    }
+    return { ...codexResult, bandit: modeSelection.bandit };
   }
 
   const nonce = `${new Date()
@@ -1942,11 +2669,18 @@ async function runClaude(
 
   return new Promise((resolvePromise) => {
     let processExited = false;
+    const progressCheckpoint = { signature: runProgressCheckpointSignature(result) };
 
     const child = spawn('claude', args, {
-      cwd: repoRoot,
+      cwd: providerWorkspace.providerRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, KAIZEN_RUN_TAG: agentRunTag, KAIZEN_RUN_ID: agentRunId },
+      env: {
+        ...process.env,
+        KAIZEN_RUN_TAG: agentRunTag,
+        KAIZEN_RUN_ID: agentRunId,
+        KAIZEN_PROVIDER_WORKSPACE: providerWorkspace.providerRoot,
+        KAIZEN_PROVIDER_ISSUE: providerWorkspace.issue != null ? String(providerWorkspace.issue) : '',
+      },
     });
 
     const cleanup = (...timers: (ReturnType<typeof setInterval> | ReturnType<typeof setTimeout> | undefined)[]) => {
@@ -1961,17 +2695,6 @@ async function runClaude(
       const silence = Math.floor((Date.now() - lastOutputTime) / 1000);
       if (silence >= 55) {
         console.log(formatHeartbeat(runStart, result.toolCalls, ctx));
-      }
-    }, 60_000);
-
-    // Liveness marker: update state.json periodically (#357)
-    const livenessInterval = setInterval(() => {
-      try {
-        const s = readState(stateFile);
-        s.last_heartbeat = Math.floor(Date.now() / 1000);
-        writeState(stateFile, s);
-      } catch {
-        // State file write failure is non-fatal
       }
     }, 60_000);
 
@@ -2026,6 +2749,7 @@ async function runClaude(
 
       try {
         processStreamMessage(msg, result, runStart, ctx);
+        checkpointRunProgressIfChanged(stateFile, runNum, result, progressCheckpoint);
 
         // Start post-result kill timer when result is received
         if (msg.type === 'result' && !postResultTimer) {
@@ -2059,17 +2783,23 @@ async function runClaude(
 
     child.on('close', (code) => {
       processExited = true;
-      cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
+      cleanup(heartbeatInterval, inFlightInterval, wallTimer, postResultTimer);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolvePromise({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, promptMeta });
+      if (candidateManifestPath) {
+        attachCandidateTaskManifest(result, candidateManifestPath);
+      }
+      resolvePromise({ exitCode: code ?? 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, bandit: modeSelection.bandit, promptMeta });
     });
 
     child.on('error', (err) => {
       processExited = true;
-      cleanup(heartbeatInterval, livenessInterval, inFlightInterval, wallTimer, postResultTimer);
+      cleanup(heartbeatInterval, inFlightInterval, wallTimer, postResultTimer);
       appendFileSync(logFile, `\nProcess error: ${err.message}\n`);
       const duration = Math.floor((Date.now() - runStart) / 1000);
-      resolvePromise({ exitCode: 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, promptMeta });
+      if (candidateManifestPath) {
+        attachCandidateTaskManifest(result, candidateManifestPath);
+      }
+      resolvePromise({ exitCode: 1, duration, result, mode: modeSelection.mode, modeReason: modeSelection.reason, bandit: modeSelection.bandit, promptMeta });
     });
   });
 }
@@ -2114,6 +2844,11 @@ export function formatBatchFooter(state: BatchState): string {
     lines.push(`  ${color.dim(`  Modes: ${modeStr}`)}`);
   }
 
+  const conversion = computeExploreExploitConversion(history);
+  if (conversion.exploreIssuesFiled > 0) {
+    lines.push(`  ${color.dim(`  Explore->exploit: ${formatExploreExploitConversion(conversion)}`)}`);
+  }
+
   lines.push(`  ${color.dim(bar)}`);
 
   return lines.join('\n');
@@ -2156,6 +2891,109 @@ export function attachRunTranscripts(input: {
     } catch (err) {
       log(`  [intelligence] run-transcript attach skipped: ${(err as Error).message}`);
     }
+  }
+}
+
+const MODE_OUTPUT_FALLBACK_MODES = new Set(['explore', 'reflect', 'contemplate']);
+const MODE_OUTPUT_MAX_CHARS = 12_000;
+
+function cleanModeOutput(text: string): string {
+  return truncateAtWordBoundary(
+    text
+      .replace(/\n--- auto-dent metadata ---[\s\S]*$/m, '')
+      .replace(/\n--- codex lifecycle markers ---[\s\S]*$/m, '')
+      .trim(),
+    MODE_OUTPUT_MAX_CHARS,
+  );
+}
+
+function extractCodexFinalText(logText: string): string {
+  const marker = '--- codex final text ---';
+  const start = logText.indexOf(marker);
+  if (start < 0) return '';
+  return cleanModeOutput(logText.slice(start + marker.length));
+}
+
+function extractAssistantTextFromStream(logText: string): string {
+  const chunks: string[] = [];
+  for (const line of logText.split(/\r?\n/)) {
+    const msg = parseJsonObject(line);
+    if (!msg || msg.type !== 'assistant' || !Array.isArray(msg.message?.content)) continue;
+    for (const block of msg.message.content) {
+      if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+        chunks.push(block.text.trim());
+      }
+    }
+  }
+  return cleanModeOutput(chunks.join('\n\n'));
+}
+
+export function extractModeOutput(logText: string): string {
+  return extractCodexFinalText(logText) || extractAssistantTextFromStream(logText);
+}
+
+function contemplateAlreadyPosted(logText: string): boolean {
+  return /\bposted to (?:the )?progress issue\b/i.test(logText)
+    || /\bprogress issue\b[\s\S]{0,120}\bposted\b/i.test(logText);
+}
+
+export function postModeOutputToProgressIssue(input: {
+  progressIssue: string;
+  repo: string;
+  mode: string;
+  runNum: number;
+  logFile: string;
+  readLog?: (path: string) => string;
+  gh?: (args: string[]) => string;
+  log?: (msg: string) => void;
+}): void {
+  if (!MODE_OUTPUT_FALLBACK_MODES.has(input.mode)) return;
+
+  const log = input.log ?? ((m) => console.log(m));
+  if (!input.progressIssue || !input.repo) {
+    log(`  [hygiene] ${input.mode} output fallback skipped: no progress issue`);
+    return;
+  }
+
+  const issueNum = input.progressIssue.match(/issues\/(\d+)/)?.[1];
+  if (!issueNum) {
+    log(`  [hygiene] ${input.mode} output fallback skipped: invalid progress issue`);
+    return;
+  }
+
+  const readLog = input.readLog ?? ((p) => readFileSync(p, 'utf8'));
+  let logText = '';
+  try {
+    logText = readLog(input.logFile);
+  } catch (err) {
+    log(`  [hygiene] ${input.mode} output fallback skipped: ${(err as Error).message}`);
+    return;
+  }
+
+  if (input.mode === 'contemplate' && contemplateAlreadyPosted(logText)) {
+    log(`  [hygiene] contemplate output fallback skipped: already posted to progress issue`);
+    return;
+  }
+
+  const output = extractModeOutput(logText);
+  if (!output) {
+    log(`  [hygiene] ${input.mode} output fallback skipped: no analysis text found`);
+    return;
+  }
+
+  const body = [
+    `### ${input.mode} run #${input.runNum} — analysis fallback`,
+    '',
+    `_Harness-posted from \`${input.logFile}\` so non-exploit analysis is durable even if the agent did not post it._`,
+    '',
+    output,
+  ].join('\n');
+  const runGh = input.gh ?? ((args) => gh(args));
+  try {
+    const url = runGh(['issue', 'comment', issueNum, '--repo', input.repo, '--body', body]);
+    log(`  [hygiene] posted ${input.mode} output fallback to progress issue${url ? `: ${url}` : ''}`);
+  } catch (err) {
+    log(`  [hygiene] ${input.mode} output fallback skipped: ${(err as Error).message}`);
   }
 }
 
@@ -2441,6 +3279,7 @@ async function main(): Promise<void> {
   }
 
   const repoRoot = getRepoRoot();
+  const invocationRoot = getInvocationWorktreeRoot();
   const state = readState(stateFile);
   const logDir = dirname(stateFile);
   const runNum = state.run + 1;
@@ -2467,13 +3306,21 @@ async function main(): Promise<void> {
 
   const runStartEpoch = Math.floor(Date.now() / 1000);
   const runStartDate = new Date();
-  const { exitCode, duration, result, mode: runMode, modeReason: runModeReason, promptMeta } = await runClaude(
-    state,
-    runNum,
-    logFile,
-    repoRoot,
-    stateFile,
-  );
+  const runHeartbeat = startRunStateHeartbeat(stateFile, runNum);
+  let runOutput: Awaited<ReturnType<typeof runClaude>>;
+  try {
+    runOutput = await runClaude(
+      state,
+      runNum,
+      logFile,
+      repoRoot,
+      invocationRoot,
+      stateFile,
+    );
+  } finally {
+    runHeartbeat.stop();
+  }
+  const { exitCode, duration, result, mode: runMode, modeReason: runModeReason, bandit: runBandit, promptMeta } = runOutput;
   const runId = makeRunId(state.batch_id, runNum);
   if (!result.hookActivation) {
     result.hookActivation = unknownHookActivationVerdict(
@@ -2518,6 +3365,15 @@ async function main(): Promise<void> {
       '',
     ].join('\n'),
   );
+
+  const progressIssue = ensureBatchProgressIssue(state, stateFile);
+  postModeOutputToProgressIssue({
+    progressIssue,
+    repo: state.kaizen_repo,
+    mode: runMode,
+    runNum,
+    logFile,
+  });
 
   // Emit per-artifact events from stream results (#647)
   let pickedIssue = '';
@@ -2613,26 +3469,35 @@ async function main(): Promise<void> {
 
   // Lifecycle validation (#639, #1103) — observability + steering, never a hard
   // block. Beyond ordering, this detects critical gaps (PR without IMPLEMENT,
-  // MERGE without PR) and phantom claims (TEST result=pass with count=0) — the
+  // MERGE without PR, DEPLOY without MERGE) and phantom claims (TEST result=pass with count=0) — the
   // "verify outcomes, not commands" category (#943, #950).
   let lifecycleViolationCount = 0;
   let lifecycleHealth: LifecycleHealth = 'clean';
   let lifecycleCriticalCount = 0;
   let lifecycleSteeringNote: string | null = null;
   let processVerdict: ProcessVerdict = 'fail-open-warning';
+  let postMergeVerification: PostMergeVerificationVerdict = 'not-applicable';
   let processIssueCount = 0;
   let processSummary = 'fail-open-warning: process validator did not run';
   let workflowGateStates: Partial<Record<WorkflowGateId, WorkflowGateState>> = {};
   let workflowRepairGates: WorkflowGateId[] = [];
   let workflowRepairState: 'not_required' | 'repair_scheduled' | 'merge_ready' | 'blocked_with_reason' | 'repair_budget_exhausted' = 'not_required';
   let workflowRepairPrompt: string | undefined;
+  let contextDelegationAnalysis: ContextDelegationAnalysis | undefined;
+  const runLog = existsSync(logFile) ? readFileSync(logFile, 'utf8') : undefined;
+  const testHealth = deriveRunTestHealth({ runLog });
   try {
     const lifecycle = validateRunLifecycle(logFile);
+    contextDelegationAnalysis = applyContextDelegationAnalysis(
+      result,
+      buildContextDelegationAnalysisLog(logFile),
+      (line) => appendFileSync(logFile, line),
+    );
 
     // External evidence cross-check (#1138, epic #1134): the markers above are
     // the agent's self-report; here we judge them against the outcomes the
     // harness extracted independently (PRs, cases, filed/closed issues, the
-    // review verdict). A run that *claims* PR/MERGE/REFLECT without durable
+    // review verdict). A run that *claims* PR/MERGE/DEPLOY/REFLECT without durable
     // evidence is process-incomplete. Provider-independent — the same evidence
     // is assembled for a Codex run.
     const evidence: LifecycleEvidence = {
@@ -2651,6 +3516,11 @@ async function main(): Promise<void> {
           : mergeStatuses.some((status) => status === 'closed') ? 'not-ready'
             : mergeStatuses.every((status) => status === 'merged' || status === 'auto_queued') ? 'ready'
               : 'unknown';
+    const contextDelegationPressureReasons = contextDelegationAnalysis.pressure.reasons;
+    const contextDelegationProgressEvidence = hasContextDelegationProgressEvidence(result.progressSteps, {
+      allowNotApplicable: contextDelegationPressureReasons.length === 0,
+    });
+    postMergeVerification = derivePostMergeVerification(mergeStatuses, testHealth);
     const intentionalNoOp =
       exitCode === 0 &&
       result.stopRequested &&
@@ -2670,6 +3540,9 @@ async function main(): Promise<void> {
       dryRefactorEvidence: Boolean(state.test_task) || result.progressSteps?.some((step) =>
         step.phase === 'DRY' || step.phase === 'DRY-REFACTOR' || /dry|refactor|simplification/i.test(`${step.phase} ${step.detail}`),
       ),
+      contextDelegationEvidence: Boolean(state.test_task) ||
+        contextDelegationProgressEvidence,
+      contextDelegationPressureReasons,
       meetRealityEvidence: Boolean(state.test_task) || result.progressSteps?.some((step) =>
         step.phase === 'MEET-REALITY' || /meet reality|dogfood|tried|observed output/i.test(`${step.phase} ${step.detail}`),
       ),
@@ -2677,6 +3550,7 @@ async function main(): Promise<void> {
         state.provider === 'codex' ||
         Boolean(result.hookActivation && !result.hookActivation.degraded),
       mergeReadiness,
+      postMergeVerification,
     };
     const processValidation = validateProcessEvidence(lifecycle, processEvidence);
     workflowGateStates = workflowGateStatesFromProcess(processValidation);
@@ -2781,7 +3655,7 @@ async function main(): Promise<void> {
       // A critical marker problem takes precedence over an evidence note.
       lifecycleSteeringNote =
         `Prior run had a CRITICAL lifecycle problem (${summary}). ` +
-        `Do not emit PR/MERGE without a real IMPLEMENT, and never emit TEST result=pass with count=0 — run the tests.`;
+        `Do not emit PR/MERGE/DEPLOY without the prerequisite real work, and never emit TEST result=pass with count=0 — run the tests.`;
     } else if (lifecycle.health === 'degraded') {
       console.log(`  ${color.yellow('[lifecycle]')} ${summary}`);
       appendFileSync(logFile, `\nlifecycle_violations=${lifecycle.violations.length}: ${summary}\n`);
@@ -2839,6 +3713,8 @@ async function main(): Promise<void> {
       exitCode,
       runMode,
       result,
+      modeReason: runModeReason,
+      bandit: runBandit,
       provider: state.provider ?? 'claude',
     });
     // Bind the run-success stamp to the verdicts this run already recorded
@@ -2852,6 +3728,7 @@ async function main(): Promise<void> {
       reviewVerdict,
       processVerdict,
       lifecycleHealth,
+      postMergeVerification,
     });
     events.emit(buildRunCompleteEvent({
       runId,
@@ -2873,6 +3750,7 @@ async function main(): Promise<void> {
       workflowRepairGates,
       workflowRepairState,
       workflowRepairPrompt,
+      contextDelegationAnalysis,
       reviewVerdict,
       reviewCostUsd,
       phaseProviders: phaseProvidersForState(state),
@@ -2915,16 +3793,14 @@ async function main(): Promise<void> {
   }
 
   // Post-run hygiene
-  const progressIssue = ensureBatchProgressIssue(state, stateFile);
   labelArtifacts(result, 'auto-dent');
-  const runLog = existsSync(logFile) ? readFileSync(logFile, 'utf8') : undefined;
-  const testHealth = deriveRunTestHealth({ runLog });
   const autoMergeDecision = decideAutoMergeSafety({
     prCount: result.prs.length,
     reviewRequired: !state.test_task,
     reviewVerdict,
     processVerdict,
     lifecycleHealth,
+    postMergeVerification,
     // Bind the hook-activation verdict (#843/#1500) to the merge decision (#1220):
     // a run whose kaizen hooks did not load (degraded), or one where no
     // `system.init` was observed on a hook-expecting provider, is not merge-ready.
@@ -3020,19 +3896,19 @@ async function main(): Promise<void> {
   // Verify issues claimed by merged PRs are actually closed (#730, Gap 2)
   // Must run before epic sync so force-closed issues are included
   const allBatchPRsForVerify = [...new Set([...state.prs, ...result.prs])];
+  let verifiedClosedThisBatch: string[] = [];
   if (allBatchPRsForVerify.length > 0) {
     const verifyResults = verifyIssuesClosed(allBatchPRsForVerify, state.kaizen_repo);
+    verifiedClosedThisBatch = closedIssueRefsFromVerifyCloseResults(verifyResults);
+    const currentRunClosed = mergeVerifiedClosedIssuesIntoRunResult(result, verifyResults);
+    if (currentRunClosed.length > 0) {
+      console.log(
+        `  [verify-close] current run closed ${currentRunClosed.length} issue(s) via merged PR body: ${currentRunClosed.join(', ')}`,
+      );
+    }
     const forceClosed = verifyResults.flatMap((r) => r.forceClosed);
     if (forceClosed.length > 0) {
       console.log(`  [verify-close] force-closed ${forceClosed.length} issue(s): ${forceClosed.join(', ')}`);
-      // Add force-closed issues to the result so they're tracked in state
-      for (const issue of forceClosed) {
-        const num = issue.replace('#', '');
-        const url = `https://github.com/${state.kaizen_repo}/issues/${num}`;
-        if (!result.issuesClosed.includes(url) && !result.issuesClosed.includes(issue)) {
-          result.issuesClosed.push(url);
-        }
-      }
     }
   }
 
@@ -3040,6 +3916,7 @@ async function main(): Promise<void> {
   const allClosedNums = [...new Set([
     ...state.issues_closed,
     ...result.issuesClosed,
+    ...verifiedClosedThisBatch,
   ])].map((ref) => {
     const m = ref.match(/(\d+)/);
     return m ? m[1] : '';
@@ -3072,6 +3949,8 @@ async function main(): Promise<void> {
     exitCode,
     runMode,
     result,
+    modeReason: runModeReason,
+    bandit: runBandit,
     provider: state.provider ?? 'claude',
     metadata: {
       prompt_template: promptMeta.template,
@@ -3079,6 +3958,7 @@ async function main(): Promise<void> {
       lifecycle_violations: lifecycleViolationCount,
       lifecycle_health: lifecycleHealth,
       process_verdict: processVerdict,
+      post_merge_verification: postMergeVerification,
       process_issue_count: processIssueCount,
       process_summary: processSummary,
       workflow_gate_states: workflowGateStates,
@@ -3100,20 +3980,10 @@ async function main(): Promise<void> {
   }
   if (!freshState.run_history) freshState.run_history = [];
   freshState.run_history.push(runMetrics);
-
-  for (const pr of result.prs) {
-    if (!freshState.prs.includes(pr)) freshState.prs.push(pr);
-  }
-  for (const issue of result.issuesFiled) {
-    if (!freshState.issues_filed.includes(issue))
-      freshState.issues_filed.push(issue);
-  }
-  for (const closed of result.issuesClosed) {
-    if (!freshState.issues_closed.includes(closed))
-      freshState.issues_closed.push(closed);
-  }
-  for (const caseName of result.cases) {
-    if (!freshState.cases.includes(caseName)) freshState.cases.push(caseName);
+  mergeRunArtifactsIntoState(freshState, result);
+  appendUnique(freshState.issues_closed, verifiedClosedThisBatch);
+  if (verifiedClosedThisBatch.length > 0 && result.issuesClosed.length === 0) {
+    freshState.last_issue = verifiedClosedThisBatch[verifiedClosedThisBatch.length - 1];
   }
 
   // Store contemplation recommendations in batch state (#631)
@@ -3157,21 +4027,6 @@ async function main(): Promise<void> {
       freshState.reflection_insights.push(workflowRepairPrompt);
       console.log(`  ${color.yellow('[workflow-repair]')} targeted evidence repair queued for next run`);
     }
-  }
-
-  if (result.prs.length > 0) {
-    freshState.last_pr = result.prs[result.prs.length - 1];
-  }
-  if (result.issuesFiled.length > 0) {
-    freshState.last_issue = result.issuesFiled[result.issuesFiled.length - 1];
-  } else if (result.issuesClosed.length > 0) {
-    freshState.last_issue = result.issuesClosed[result.issuesClosed.length - 1];
-  }
-  if (result.cases.length > 0) {
-    const lastCase = result.cases[result.cases.length - 1];
-    freshState.last_case = lastCase;
-    freshState.last_branch = `case/${lastCase}`;
-    freshState.last_worktree = `.claude/worktrees/${lastCase}`;
   }
 
   const hasPrs = result.prs.length > 0;

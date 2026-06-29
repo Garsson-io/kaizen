@@ -29,7 +29,7 @@ _hook_telemetry_now_ms() {
 
 _hook_telemetry_init() {
   _HOOK_TELEMETRY_START_MS=$(_hook_telemetry_now_ms)
-  _HOOK_TELEMETRY_NAME=$(basename "${BASH_SOURCE[2]:-${BASH_SOURCE[1]:-unknown}}" .sh)
+  _HOOK_TELEMETRY_NAME="${KAIZEN_HOOK_TELEMETRY_NAME:-$(basename "${BASH_SOURCE[2]:-${BASH_SOURCE[1]:-unknown}}" .sh)}"
 
   # Resolve telemetry dir if not set
   if [ -z "$_HOOK_TELEMETRY_DIR" ]; then

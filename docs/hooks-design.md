@@ -132,17 +132,48 @@ See [`hook-language-boundaries.md`](hook-language-boundaries.md) for the full po
 
 ### Trampoline Pattern
 
-All enforcement hooks use a thin bash wrapper that delegates to TypeScript:
+All enforcement hooks use a thin bash wrapper that delegates to TypeScript
+through the shared `run-tsx.sh` resolver:
 
 ```bash
 #!/bin/bash
 # kaizen-some-hook-ts.sh — trampoline to TypeScript implementation
 source "$(dirname "$0")/lib/scope-guard.sh"
-KAIZEN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-exec npx --prefix "$KAIZEN_DIR" tsx "$KAIZEN_DIR/src/hooks/some-hook.ts" 2>/dev/null
+source "$(dirname "$0")/lib/run-tsx.sh" 2>/dev/null || { exit 0; }
+run_tsx "$KAIZEN_DIR" "$KAIZEN_DIR/src/hooks/some-hook.ts"
 ```
 
-The bash shim handles scope-guard and kaizen dir resolution. The TypeScript file handles all logic, reads stdin JSON, and writes stdout JSON. This makes the logic fully testable with vitest.
+The bash shim handles scope-guard and production dispatch. `run-tsx.sh`
+honors `KAIZEN_TSX_BIN` first for deterministic test harnesses. In production
+it prefers precompiled `node dist/...` output only when `npm run build` has
+written `dist/.kaizen-hook-build` after all non-test `src/**/*.ts` files and
+the matching compiled file exists. If the marker is missing or stale, it falls
+back to resolving `tsx` from the kaizen checkout, parent worktree installs, or
+git common dir through `resolve-tsx-bin.sh`. The shim intentionally avoids
+`npx --prefix ... tsx` in production hook paths because missing dependencies
+produced opaque non-blocking hook failures (#1131) and because `npx` adds
+startup overhead.
+
+Current #454 measurement on this host after `npm run build`:
+
+| Launcher | Five-run wall time | Max RSS | Decision |
+|---|---:|---:|---|
+| `pr-review-loop-ts.sh` via `run-tsx.sh` shared resolver | 0.54-0.90s | 107-117 MB | Source fallback when dist is stale or unavailable |
+| Direct `npx tsx src/hooks/pr-review-loop.ts` | 0.68-0.88s | 108-114 MB | Avoid in production shims |
+| `npx --no-install tsx src/hooks/pr-review-loop.ts` | 0.62-0.65s | 112-118 MB | Similar to resolver but less worktree-aware |
+| `npx -y bun src/hooks/pr-review-loop.ts` | 0.59-0.68s | 101-103 MB | Not a production win through `npx` |
+| `node dist/hooks/pr-review-loop.js` | 0.10s | 63-65 MB | Fastest path when build marker is fresh |
+
+Decision matrix:
+
+| Runtime | Production decision | Contract |
+|---|---|---|
+| Precompiled Node | Prefer first when fresh | `npm run build` writes `dist/.kaizen-hook-build`; `run-tsx.sh` requires marker newer than non-test `src/**/*.ts` and a matching `dist/*.js` file |
+| Source `tsx` | Required fallback | Shared resolver stays worktree-aware and fail-open when dependencies are missing |
+| Bun | Do not use by default | `npx -y bun` is not a measured production win; adopting Bun would require a standard installed dependency instead of hot-path `npx` |
+
+The TypeScript file handles all logic, reads stdin JSON, and writes stdout JSON.
+This makes the logic fully testable with vitest.
 
 ### Hook Testability (kaizen #775)
 
@@ -200,6 +231,26 @@ When a gate blocks commands, it needs an allowlist of commands that ARE permitte
 - **Cross-branch lookup:** Active declarations (KAIZEN_IMPEDIMENTS) use `_any_branch` variants since the agent may submit from a different worktree
 - **Staleness:** Files older than `MAX_STATE_AGE` (2 hours) are ignored
 
+### Direct Hook Smoke Tests
+
+Directly invoking a TS hook binary is not the same as running through the real
+hook wrapper. State-writing hooks refuse to write to the shared default
+`/tmp/.pr-review-state` unless one of these is true:
+
+- `STATE_DIR` is set explicitly, preferably `STATE_DIR=$(mktemp -d)` for smoke
+  tests and local repros.
+- A real wrapper has exported `KAIZEN_TRUST_DEFAULT_STATE_DIR=1` before
+  dispatching the TS hook.
+- An operator deliberately sets `KAIZEN_ALLOW_DEFAULT_STATE_DIR=1` for an
+  emergency manual write.
+
+Use an isolated state dir in every direct smoke:
+
+```bash
+STATE_DIR=$(mktemp -d) CLAUDECODE=1 \
+  npx tsx src/hooks/pre-push.ts origin https://github.com/Garsson-io/kaizen
+```
+
 ### Testing Hooks
 
 **TypeScript hooks (preferred):**
@@ -221,7 +272,12 @@ When a gate blocks commands, it needs an allowlist of commands that ARE permitte
 - **Session hook registries are manifest-derived:** `SessionSimulator` loads `.claude-plugin/plugin.json` through `loadDefaultHookRegistry()`. Do not hand-maintain a parallel full hook list in E2E tests; narrow `session.hooks` only when the test intentionally exercises a focused subset.
 - **Hook subprocess tests should be deterministic in worktrees:** use `resolveTsxBin()` from `src/e2e/test-runtime.ts` for TypeScript E2E tests, pass `KAIZEN_TSX_BIN` to bash trampolines when invoking them from test harnesses, and disable advisory background noise with `HOOK_TIMING_SENTINEL_DISABLED=true` and `SEND_TELEGRAM_IPC_DISABLED=true`.
 - **Do not silently skip outcome-proof tests:** if an outcome E2E test requires `tsx`, assert that it is present and fail loudly. Skip guards are acceptable for live fixtures whose subject is explicitly optional local infrastructure.
-- **Production best-effort hooks are separate from test harness resolution:** `resolve-tsx-bin.sh` exists for harness determinism and TS hook trampolines. A few startup/advisory production hooks still use local `node_modules/.bin/tsx` plus `npx --prefix` fallback so missing dependencies cannot block a session.
+- **Production best-effort hooks use the shared trampoline:** `run-tsx.sh`
+  first supports `KAIZEN_TSX_BIN` for tests, then uses precompiled `node
+  dist/...` only when `dist/.kaizen-hook-build` proves the build is fresh, then
+  falls back through `resolve-tsx-bin.sh` to a usable `tsx` binary without
+  `npx`, and finally fails open with an actionable diagnostic when
+  dependencies are missing.
 
 ## Anti-Patterns
 

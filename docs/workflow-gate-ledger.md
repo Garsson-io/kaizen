@@ -13,6 +13,7 @@ Current gates:
 - `worktree-case`
 - `implementation-tests`
 - `dry-refactor`
+- `context-delegation`
 - `meet-reality`
 - `review-requirements-impact`
 - `reflection`
@@ -53,6 +54,8 @@ Worker final claims are not authoritative evidence. They are diagnostic inputs c
 `AUTO_DENT_PHASE` markers remain compatibility input only. They normalize into ledger evidence when the marker is schema-valid enough to prove the claim. Malformed markers, such as `AUTO_DENT_PHASE: TEST | 19 passed`, become invalid evidence with a repair instruction.
 
 Hook output remains useful because it is close to the enforcement point, but hook output is a producer of ledger evidence, not a separate gate language.
+
+`scripts/auto-dent-context-delegation.ts` is the context-delegation pressure producer. It mines run logs for transcript taxonomy signals (`context_growth`, `missing_subagent`), high main-thread discovery/tool-call volume, and observed subagent tool use. Observed delegation normalizes to `AUTO_DENT_PHASE: DELEGATE`; threshold pressure without delegation remains a `context-delegation` repair, not a new gate.
 
 ## Repair Loop
 

@@ -24,6 +24,25 @@ import type { WorkflowGateId, WorkflowGateState } from './workflow-gate-ledger.j
 
 // Event type definitions
 
+export interface BanditDecisionDetailTelemetry {
+  mode: string;
+  plays: number;
+  mean_reward: number;
+  exploit_term: number;
+  explore_bonus: number;
+  ucb: number;
+  weight: number;
+}
+
+export interface BanditDecisionTelemetry {
+  selected_mode: string;
+  reason: string;
+  weights: Record<string, number>;
+  details: BanditDecisionDetailTelemetry[];
+  total_plays: number;
+  exploration_c: number;
+}
+
 /** #899: Base fields shared by all auto-dent events */
 export interface BaseEvent {
   run_id: string;
@@ -83,9 +102,19 @@ export interface RunCompleteEvent extends BaseEvent {
   workflow_repair_state?: 'not_required' | 'repair_scheduled' | 'merge_ready' | 'blocked_with_reason' | 'repair_budget_exhausted';
   /** Targeted repair instruction for the next attempt against the same PR (#1533). */
   workflow_repair_prompt?: string;
+  /** Whether this run crossed the context-delegation pressure threshold (#1629). */
+  context_delegation_required?: boolean;
+  /** Whether this run showed observed subagent/tool delegation before implementation (#1629). */
+  context_delegation_observed?: boolean;
+  /** Machine-readable context/tool-call pressure reasons (#1629). */
+  context_delegation_reasons?: string[];
+  /** Default-delegated sub-work suggested by the pressure analysis (#1629). */
+  context_delegation_recommended_substeps?: string[];
   outcome: 'success' | 'empty_success' | 'failure' | 'stop';
   /** Cognitive mode used, for context in analysis */
   mode?: string;
+  /** Durable UCB1 decision breakdown used for this run's mode selection (#1178). */
+  bandit_decision?: BanditDecisionTelemetry;
   /** Review battery verdict for PRs created in this run */
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Review battery cost (USD) */

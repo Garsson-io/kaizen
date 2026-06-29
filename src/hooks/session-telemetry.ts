@@ -8,14 +8,15 @@
  * Design:
  *   - Reuses the EventEnvelope wrapper format from auto-dent-events.ts
  *   - Defines session-specific event types (session.pr_created, session.pr_merged)
- *   - Writes JSONL to data/telemetry/events.jsonl (gitignored via data/)
+ *   - Writes bounded JSONL to data/telemetry/events.jsonl (gitignored via data/)
  *   - Best-effort: never blocks or crashes the hook
  *
  * Part of horizon #249 (Observability), issue #671.
  */
 
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { appendJsonLine } from '../lib/json-lines.js';
+import { appendBoundedJsonLine } from '../lib/json-lines.js';
 
 // Session event types — lightweight versions of auto-dent events
 
@@ -66,6 +67,9 @@ export interface SessionEventEnvelope {
   event: SessionEvent;
 }
 
+export const INTERACTIVE_TELEMETRY_MAX_BYTES = 10 * 1024 * 1024;
+export const INTERACTIVE_TELEMETRY_MAX_BACKUPS = 3;
+
 /**
  * Resolve the telemetry directory for the current project.
  * Uses KAIZEN_TELEMETRY_DIR env var if set, otherwise data/telemetry
@@ -85,7 +89,7 @@ export function resolveTelemetryDir(projectDir?: string): string {
  */
 export function emitSessionEvent(
   event: SessionEvent,
-  options?: { telemetryDir?: string; now?: Date },
+  options?: { telemetryDir?: string; now?: Date; maxBytes?: number; maxBackups?: number },
 ): void {
   try {
     const dir = options?.telemetryDir ?? resolveTelemetryDir();
@@ -95,10 +99,51 @@ export function emitSessionEvent(
       source: 'interactive',
       event,
     };
-    appendJsonLine(filePath, envelope);
+    appendBoundedJsonLine(filePath, envelope, {
+      maxBytes: options?.maxBytes ?? INTERACTIVE_TELEMETRY_MAX_BYTES,
+      maxBackups: options?.maxBackups ?? INTERACTIVE_TELEMETRY_MAX_BACKUPS,
+    });
   } catch {
     // Telemetry is best-effort — never break the hook
   }
+}
+
+/**
+ * Count events already persisted in events.jsonl.
+ * Best-effort: malformed rows and missing files count as zero, because hook
+ * telemetry must never make advisory prompts brittle.
+ */
+export function countSessionEvents(
+  type: SessionEvent['type'],
+  options?: { telemetryDir?: string; maxBackups?: number },
+): number {
+  const dir = options?.telemetryDir ?? resolveTelemetryDir();
+  const filePath = resolve(dir, 'events.jsonl');
+  const maxBackups = Math.max(0, Math.floor(options?.maxBackups ?? INTERACTIVE_TELEMETRY_MAX_BACKUPS));
+  const paths = [
+    filePath,
+    ...Array.from({ length: maxBackups }, (_, index) => `${filePath}.${index + 1}`),
+  ];
+  let count = 0;
+
+  for (const path of paths) {
+    let content: string;
+    try {
+      content = readFileSync(path, 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const envelope = JSON.parse(line) as Partial<SessionEventEnvelope>;
+        if (envelope.event?.type === type) count += 1;
+      } catch {
+        // Ignore partial/corrupt rows; telemetry is advisory.
+      }
+    }
+  }
+  return count;
 }
 
 /**

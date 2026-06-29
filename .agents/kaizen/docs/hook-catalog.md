@@ -81,7 +81,12 @@ Computer-level installation (`kaizen@kaizen` in `~/.claude/settings.json`) is **
 
 ## TS Migration Status
 
-All enforcement hooks are now in TypeScript. Each `-ts.sh` shim is a thin bash wrapper (~5 lines) that calls `npx tsx` to invoke the TypeScript implementation.
+All enforcement hooks are now in TypeScript. Each `-ts.sh` shim is a thin bash
+wrapper that sources `.claude/hooks/lib/run-tsx.sh`; the shared resolver locates
+fresh precompiled `dist/*.js` output via `dist/.kaizen-hook-build`, then falls
+back to `tsx` from the kaizen checkout, parent worktree installs, or git common
+dir and invokes the TypeScript implementation source. Production hook shims do
+not call `npx tsx` directly.
 
 | Registered shim | TS implementation | Tests |
 |-----------------|-------------------|-------|

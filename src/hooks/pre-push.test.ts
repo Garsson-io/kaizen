@@ -29,8 +29,41 @@ import {
   type PrQueryResult,
   type PrePushDecision,
 } from './pre-push.js';
+import {
+  ALLOW_DEFAULT_STATE_DIR_ENV,
+  SHARED_DEFAULT_STATE_DIR,
+  TRUSTED_DEFAULT_STATE_DIR_ENV,
+} from './state-utils.js';
 
 const PRE_PUSH_SOURCE = fs.readFileSync(new URL('./pre-push.ts', import.meta.url), 'utf-8');
+
+function withPrePushDefaultStateEnv<T>(
+  env: Record<string, string | undefined>,
+  fn: () => T,
+): T {
+  const keys = ['STATE_DIR', TRUSTED_DEFAULT_STATE_DIR_ENV, ALLOW_DEFAULT_STATE_DIR_ENV];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) {
+    const value = env[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
 
 // ── detectAgentEnv ────────────────────────────────────────────────────
 
@@ -476,6 +509,35 @@ describe('applyDecision — idempotent gate write', () => {
 
     expect(secondFiles).toEqual(firstFiles);
     expect(secondContent).toBe(firstContent);
+  });
+
+  it('refuses direct default-state writes without an explicit STATE_DIR or wrapper marker (#1072)', () => {
+    const prNum = String(Date.now());
+    const prUrl = `https://github.com/owner/repo/pull/${prNum}`;
+    const filename = `owner_repo_${prNum}`;
+    const leakedFile = path.join(SHARED_DEFAULT_STATE_DIR, filename);
+    const decision: PrePushDecision = {
+      action: 'allow_gate',
+      reason: 'open_pr_push',
+      message: null,
+      gateSignal: {
+        gate: 'needs_review',
+        action: 'set',
+        pr: prUrl,
+        round: 1,
+        reason: 'test direct default-state write refusal',
+      },
+    };
+
+    try {
+      withPrePushDefaultStateEnv({}, () => {
+        expect(() => applyDecision(decision, 'feat/foo')).toThrow(/Direct hook invocation would write/);
+      });
+
+      expect(fs.existsSync(leakedFile)).toBe(false);
+    } finally {
+      fs.rmSync(leakedFile, { force: true });
+    }
   });
 });
 

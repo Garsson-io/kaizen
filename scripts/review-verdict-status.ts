@@ -3,20 +3,20 @@
  * CI status check for stored PR review verdicts.
  *
  * This is the non-Claude backstop for #1220: when branch protection requires
- * the "Review verdict gate" check, a PR whose latest stored review round
+ * the "Review verdict gate" check, a PR whose authoritative stored review round
  * derives FAIL cannot land even outside an interactive Claude session.
  */
 
 import { parseGithubPrUrl } from '../src/lib/github-pr.js';
 import {
+  authoritativeReviewRound,
   deriveStoredRoundVerdict,
-  latestReviewRound,
   prTarget,
 } from '../src/structured-data.js';
 import type { RoundVerdict } from '../src/review-finding-contract.js';
 
 export interface ReviewVerdictStatus {
-  outcome: 'pass' | 'fail' | 'no_data';
+  outcome: 'pass' | 'fail';
   message: string;
   round: number;
   verdict: RoundVerdict | null;
@@ -25,8 +25,8 @@ export interface ReviewVerdictStatus {
 export function decideReviewVerdictStatus(round: number, verdict: RoundVerdict | null): ReviewVerdictStatus {
   if (round === 0 || verdict === null) {
     return {
-      outcome: 'no_data',
-      message: 'No stored review rounds found; review verdict gate has no failing verdict to block.',
+      outcome: 'fail',
+      message: 'No stored review rounds found; merge is blocked until /kaizen-review-pr stores an authoritative PASS review round.',
       round,
       verdict: null,
     };
@@ -34,14 +34,14 @@ export function decideReviewVerdictStatus(round: number, verdict: RoundVerdict |
   if (verdict === 'FAIL') {
     return {
       outcome: 'fail',
-      message: `Latest stored review round r${round} derives FAIL; merge is blocked.`,
+      message: `Authoritative stored review round r${round} derives FAIL; merge is blocked.`,
       round,
       verdict,
     };
   }
   return {
     outcome: 'pass',
-    message: `Latest stored review round r${round} derives ${verdict}.`,
+    message: `Authoritative stored review round r${round} derives ${verdict}.`,
     round,
     verdict,
   };
@@ -69,7 +69,7 @@ export function resolveTarget(): { repo: string; pr: string } {
 }
 
 export interface ReviewVerdictReaders {
-  latestReviewRound?: typeof latestReviewRound;
+  authoritativeReviewRound?: typeof authoritativeReviewRound;
   deriveStoredRoundVerdict?: typeof deriveStoredRoundVerdict;
 }
 
@@ -79,9 +79,9 @@ export function getReviewVerdictStatus(
   readers: ReviewVerdictReaders = {},
 ): ReviewVerdictStatus {
   const target = prTarget(pr, repo);
-  const readLatestRound = readers.latestReviewRound ?? latestReviewRound;
+  const readRound = readers.authoritativeReviewRound ?? authoritativeReviewRound;
   const readVerdict = readers.deriveStoredRoundVerdict ?? deriveStoredRoundVerdict;
-  const round = readLatestRound(target);
+  const round = readRound(target);
   const verdict = round === 0 ? null : readVerdict(target, round);
   return decideReviewVerdictStatus(round, verdict);
 }

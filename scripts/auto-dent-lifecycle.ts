@@ -1,14 +1,14 @@
 // Auto-dent run lifecycle validation.
 //
 // The agent emits AUTO_DENT_PHASE markers as it moves through the pipeline
-// (PICK -> EVALUATE -> IMPLEMENT -> TEST -> PR -> MERGE -> REFLECT). Those
+// (PICK -> EVALUATE -> DELEGATE -> IMPLEMENT -> TEST -> PR -> MERGE -> DEPLOY -> REFLECT). Those
 // markers are *claims*. This module turns the claims into a verified, classified
 // signal so the harness can see — and steer on — when a run's narrative doesn't
 // hold together:
 //
 //   - ordering violations  : a phase appeared earlier than a prior phase (degraded)
 //   - critical gaps         : a phase that implies prior work is present without it,
-//                             e.g. PR without IMPLEMENT or MERGE without PR (critical)
+//                             e.g. PR without IMPLEMENT, MERGE without PR, or DEPLOY without MERGE (critical)
 //   - phantom phases        : a claimed-green outcome that ran nothing,
 //                             e.g. TEST result=pass with count=0 (critical) — the
 //                             "verify outcomes, not commands" failure (#943, #950)
@@ -19,9 +19,10 @@
 import { readFileSync } from 'fs';
 import { parsePhaseMarkers } from './auto-dent-stream.js';
 import type { WorkflowGateId } from './workflow-gate-ledger.js';
+import type { PostMergeVerificationVerdict } from '../src/verdict-binding-policy.js';
 
 /** Canonical phase order. Phases not in this list (floating) are ignored for ordering. */
-export const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
+export const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT'];
 
 /** Phases that can appear anywhere without breaking ordering. */
 export const FLOATING_PHASES = new Set(['DECOMPOSE', 'STOP']);
@@ -34,6 +35,7 @@ export const FLOATING_PHASES = new Set(['DECOMPOSE', 'STOP']);
 export const REQUIRED_PREDECESSORS: Record<string, string> = {
   PR: 'IMPLEMENT',
   MERGE: 'PR',
+  DEPLOY: 'MERGE',
 };
 
 export type LifecycleHealth = 'clean' | 'degraded' | 'critical';
@@ -125,7 +127,7 @@ export function validateRunLifecycle(logFile: string): LifecycleValidation {
 // validateRunLifecycle above classifies a run from the agent's AUTO_DENT_PHASE
 // markers — but those are the *worker's self-report*. Epic #1134's principle is
 // "auto-dent is the judge; the agent is the worker; hooks are useful feedback but
-// not the source of truth." A run can emit PR/MERGE/REFLECT markers with zero
+// not the source of truth." A run can emit PR/MERGE/DEPLOY/REFLECT markers with zero
 // corresponding external artifacts and still classify as clean. This is the
 // batch-level instance of "verify outcomes, not commands" (#943, #950).
 //
@@ -196,12 +198,23 @@ export interface ProcessEvidence {
   reflectionEvidence?: boolean;
   /** Related-area DRY/refactor pass evidence exists. */
   dryRefactorEvidence?: boolean;
+  /** Context-heavy sub-work delegation or explicit not-applicable evidence exists. */
+  contextDelegationEvidence?: boolean;
+  /** Context/tool-call pressure reasons that made delegation required for this run. */
+  contextDelegationPressureReasons?: string[];
   /** Meet-reality evidence exists. */
   meetRealityEvidence?: boolean;
   /** Hook/provider activation or external substitute evidence exists. */
   hookProviderEvidence?: boolean;
   /** Merge readiness signal for PR-producing runs. */
   mergeReadiness?: MergeReadinessEvidence;
+  /**
+   * Post-merge/deployment verification verdict. `pass` means merged-state checks
+   * completed. `fail` is a hard quality failure. `skipped` / `not-applicable`
+   * are explicit non-applicability evidence for PRs that have not reached a
+   * merged state yet or non-PR runs.
+   */
+  postMergeVerification?: PostMergeVerificationVerdict;
 }
 
 export interface ProcessCheck {
@@ -266,13 +279,9 @@ export function validateProcessEvidence(
   evidence: ProcessEvidence,
 ): ProcessValidation {
   const present = new Set(validation.phasesPresent);
+  const hasClaim = (...phases: string[]): boolean => phases.some((phase) => present.has(phase));
   const checks: ProcessCheck[] = [];
-  const hasProducingClaim =
-    present.has('IMPLEMENT') ||
-    present.has('TEST') ||
-    present.has('PR') ||
-    present.has('MERGE') ||
-    present.has('REFLECT');
+  const hasProducingClaim = hasClaim('IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY', 'REFLECT');
   const hasDurableArtifact =
     evidence.implementationEvidence === true ||
     evidence.prEvidence === true ||
@@ -289,12 +298,14 @@ export function validateProcessEvidence(
       evidence.prEvidence === true);
 
   const needsImplementation =
-    present.has('IMPLEMENT') || present.has('TEST') || present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
-  const needsPr = present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
-  const needsTest = present.has('TEST') || present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
-  const needsReview = present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
+    hasClaim('IMPLEMENT', 'TEST', 'PR', 'MERGE', 'DEPLOY') || evidence.prEvidence === true;
+  const needsPr = hasClaim('PR', 'MERGE', 'DEPLOY') || evidence.prEvidence === true;
+  const needsTest = hasClaim('TEST', 'PR', 'MERGE', 'DEPLOY') || evidence.prEvidence === true;
+  const needsReview = hasClaim('PR', 'MERGE', 'DEPLOY') || evidence.prEvidence === true;
   const needsReflection = present.has('REFLECT');
-  const needsMergeReadiness = present.has('PR') || present.has('MERGE') || evidence.prEvidence === true;
+  const needsMergeReadiness = hasClaim('PR', 'MERGE', 'DEPLOY') || evidence.prEvidence === true;
+  const hasDeployClaim = present.has('DEPLOY');
+  const needsPostMergeVerification = needsMergeReadiness || hasDeployClaim;
 
   addCheck(
     checks,
@@ -340,6 +351,19 @@ export function validateProcessEvidence(
     'a PR exists or was claimed without related-area DRY/refactor evidence',
     'related-area DRY/refactor evidence exists',
     'record the related-area simplification sweep or the explicit reason no refactor was warranted',
+  );
+  addCheck(
+    checks,
+    'context-delegation',
+    needsPr,
+    evidence.contextDelegationEvidence,
+    evidence.contextDelegationPressureReasons && evidence.contextDelegationPressureReasons.length > 0
+      ? `a PR exists or was claimed without context-delegation evidence after context pressure crossed threshold: ${evidence.contextDelegationPressureReasons.join('; ')}`
+      : 'a PR exists or was claimed without context-delegation evidence',
+    'context-delegation evidence exists',
+    evidence.contextDelegationPressureReasons && evidence.contextDelegationPressureReasons.length > 0
+      ? 'delegate the named sub-work before continuing implementation, then record context-heavy sub-work delegated to subagents'
+      : 'record context-heavy sub-work delegated to subagents or the explicit reason delegation was not applicable',
   );
   addCheck(
     checks,
@@ -402,6 +426,48 @@ export function validateProcessEvidence(
       status: 'warning',
       reason: `merge readiness is ${state}`,
       remediation: 'treat as fail-open steering and re-check PR merge readiness next run',
+    });
+  }
+
+  if (!needsPostMergeVerification) {
+    checks.push({ id: 'pr-ci-merge-cleanup', status: 'not-applicable', reason: 'no PR-producing phase required post-merge verification' });
+  } else if (evidence.postMergeVerification === 'pass') {
+    checks.push({ id: 'pr-ci-merge-cleanup', status: 'pass', reason: 'post-merge verification passed' });
+  } else if (evidence.postMergeVerification === 'skipped' || evidence.postMergeVerification === 'not-applicable') {
+    if (hasDeployClaim) {
+      checks.push({
+        id: 'pr-ci-merge-cleanup',
+        status: 'fail',
+        reason: `DEPLOY was claimed but post-merge verification was ${evidence.postMergeVerification}`,
+        remediation: 'only claim DEPLOY after recording a pass/fail post-merge verification verdict',
+      });
+    } else {
+      checks.push({
+        id: 'pr-ci-merge-cleanup',
+        status: 'not-applicable',
+        reason: `post-merge verification ${evidence.postMergeVerification}`,
+      });
+    }
+  } else if (evidence.postMergeVerification === 'fail') {
+    checks.push({
+      id: 'pr-ci-merge-cleanup',
+      status: 'fail',
+      reason: 'post-merge verification failed',
+      remediation: 'rerun merged-state validation on main and repair the merged regression before claiming DEPLOY/post-merge success',
+    });
+  } else if (hasDeployClaim) {
+    checks.push({
+      id: 'pr-ci-merge-cleanup',
+      status: 'fail',
+      reason: 'DEPLOY was claimed but post-merge verification evidence is missing',
+      remediation: 'record a pass/fail post-merge verification verdict before claiming DEPLOY',
+    });
+  } else {
+    checks.push({
+      id: 'pr-ci-merge-cleanup',
+      status: 'fail',
+      reason: 'post-merge verification evidence missing',
+      remediation: 'record post-merge verification as pass, fail, skipped, or not-applicable',
     });
   }
   addCheck(

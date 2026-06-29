@@ -21,6 +21,7 @@ import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from '
 import { currentHookBranch } from './lib/current-branch.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
+import { safeMainSyncCommand } from './lib/post-merge-workflows.js';
 import {
   extractRepoFlag,
   isGhPrCommand,
@@ -34,6 +35,7 @@ import {
   writeStateFile,
 } from './state-utils.js';
 import {
+  countSessionEvents,
   countChangedFiles,
   emitSessionEvent,
 } from './session-telemetry.js';
@@ -162,6 +164,8 @@ function runHookTimingSentinel(changedFiles: string): string {
 
 type HookTimingRunner = (changedFiles: string) => string;
 
+export const AUDIT_ISSUES_MERGE_INTERVAL = 10;
+
 /** Build the transcript instruction line for subagent prompts. */
 function transcriptInstruction(transcriptPath?: string): string {
   if (transcriptPath) {
@@ -234,6 +238,7 @@ export function generateMergeReflection(
   changed: string,
   mainCheckout: string,
   transcriptPath?: string,
+  auditIssuesAdvisory = '',
 ): string {
   return `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -281,11 +286,21 @@ Valid categories: docs-only, formatting, typo, config-only, test-only, trivial-r
 
 **Also complete post-merge steps** (while the subagent runs reflection):
 - Follow Post-Merge deployment procedure in CLAUDE.md
-- Sync main: \`git -C ${mainCheckout} fetch origin main && git -C ${mainCheckout} merge --ff-only origin/main\`
+- Sync main: \`${safeMainSyncCommand(mainCheckout)}\`
 - Close resolved kaizen issues
 - Delete merged branch and worktree
+${auditIssuesAdvisory}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `;
+}
+
+export function formatAuditIssuesAdvisory(mergedPrCount: number): string {
+  if (mergedPrCount <= 0 || mergedPrCount % AUDIT_ISSUES_MERGE_INTERVAL !== 0) return '';
+  return `
+
+**Periodic aggregate-health advisory (#237):** ${mergedPrCount} merged PRs have been recorded locally.
+Run \`/kaizen-audit-issues\` when post-merge cleanup is done. This is non-blocking;
+the reflection gate above still clears through KAIZEN_IMPEDIMENTS or KAIZEN_NO_ACTION.`;
 }
 
 /**
@@ -304,6 +319,7 @@ export function processHookInput(
     sendNotification?: (text: string) => void;
     telemetryDir?: string;
     runHookTimingSentinel?: HookTimingRunner;
+    mergedPrCount?: number;
   } = {},
 ): string | null {
   const command = input.tool_input?.command ?? '';
@@ -385,6 +401,10 @@ export function processHookInput(
     changed,
     mainCheckout,
     transcriptPath,
+    formatAuditIssuesAdvisory(
+      options.mergedPrCount ??
+        countSessionEvents('session.pr_merged', { telemetryDir: options.telemetryDir }),
+    ),
   );
 
   // Send Telegram notification for merges
