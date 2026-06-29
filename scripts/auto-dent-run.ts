@@ -75,7 +75,7 @@ import {
   type ContextDelegationAnalysis,
 } from './auto-dent-context-delegation.js';
 import { truncateAtWordBoundary } from './auto-dent-display.js';
-import { parseJsonObject } from '../src/lib/json-value.js';
+import { parseJsonObject, parseJsonValue } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
 import { subscriptionAgentProvider } from '../src/provider-contract.js';
 import { hasHardQualityFailure, type PostMergeVerificationVerdict } from '../src/verdict-binding-policy.js';
@@ -323,6 +323,18 @@ export interface RunMetrics {
   candidate_manifest_file_new_count?: number;
   /** Non-fatal candidate manifest parse/read warnings (#1196). */
   candidate_manifest_warnings?: string[];
+  /** Cumulative explore-mode candidate archive path (#1202). */
+  candidate_archive_path?: string;
+  /** Entry id appended to the cumulative candidate archive for this run (#1202). */
+  candidate_archive_entry_id?: string;
+  /** Number of entries in the cumulative candidate archive after this run (#1202). */
+  candidate_archive_entry_count?: number;
+  /** Backlog fingerprint used to compare this manifest with prior explore output (#1202). */
+  candidate_archive_backlog_fingerprint?: string;
+  /** Number of candidate keys not previously seen for the same backlog fingerprint (#1202). */
+  candidate_archive_novelty_score?: number;
+  /** Non-fatal candidate archive read/write warnings (#1202). */
+  candidate_archive_warnings?: string[];
   /** Durable UCB1 decision breakdown used for mode selection (#1178). */
   bandit_decision?: BanditDecisionTelemetry;
   /** Prompt template file name used for this run */
@@ -421,6 +433,18 @@ export interface RunResult {
   candidateManifestFileNewCount?: number;
   /** Non-fatal candidate manifest parse/read warnings (#1196). */
   candidateManifestWarnings?: string[];
+  /** Cumulative explore-mode candidate archive path (#1202). */
+  candidateArchivePath?: string;
+  /** Entry id appended to the cumulative candidate archive for this run (#1202). */
+  candidateArchiveEntryId?: string;
+  /** Number of entries in the cumulative candidate archive after this run (#1202). */
+  candidateArchiveEntryCount?: number;
+  /** Backlog fingerprint used to compare this manifest with prior explore output (#1202). */
+  candidateArchiveBacklogFingerprint?: string;
+  /** Number of candidate keys not previously seen for the same backlog fingerprint (#1202). */
+  candidateArchiveNoveltyScore?: number;
+  /** Non-fatal candidate archive read/write warnings (#1202). */
+  candidateArchiveWarnings?: string[];
   /** Structured failure classification */
   failureClass?: string;
   /** Whether the run was killed by the wall-clock timeout watchdog (#686) */
@@ -465,7 +489,15 @@ type RunMetricsBaseField =
   | 'issues_pruned'
   | 'candidate_manifest_path'
   | 'candidate_manifest_count'
+  | 'candidate_manifest_dedup_checked_count'
+  | 'candidate_manifest_file_new_count'
   | 'candidate_manifest_warnings'
+  | 'candidate_archive_path'
+  | 'candidate_archive_entry_id'
+  | 'candidate_archive_entry_count'
+  | 'candidate_archive_backlog_fingerprint'
+  | 'candidate_archive_novelty_score'
+  | 'candidate_archive_warnings'
   | 'bandit_decision'
   | 'final_claim_status'
   | 'final_claim'
@@ -513,6 +545,12 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     candidate_manifest_dedup_checked_count: result.candidateManifestDedupCheckedCount,
     candidate_manifest_file_new_count: result.candidateManifestFileNewCount,
     candidate_manifest_warnings: result.candidateManifestWarnings,
+    candidate_archive_path: result.candidateArchivePath,
+    candidate_archive_entry_id: result.candidateArchiveEntryId,
+    candidate_archive_entry_count: result.candidateArchiveEntryCount,
+    candidate_archive_backlog_fingerprint: result.candidateArchiveBacklogFingerprint,
+    candidate_archive_novelty_score: result.candidateArchiveNoveltyScore,
+    candidate_archive_warnings: result.candidateArchiveWarnings,
     bandit_decision: buildBanditDecisionTelemetry(runMode, modeReason, bandit),
     final_claim_status: result.finalClaimStatus,
     final_claim: result.finalClaim,
@@ -593,8 +631,41 @@ export interface CandidateTaskManifestParseResult {
   warnings: string[];
 }
 
+export interface CandidateTaskArchiveAppendResult {
+  archivePath: string;
+  entryId: string;
+  entryCount: number;
+  backlogFingerprint: string;
+  noveltyScore: number;
+  warnings: string[];
+}
+
+interface CandidateTaskArchiveEntry {
+  id: string;
+  run_tag?: string;
+  generated_at: string;
+  manifest_path: string;
+  backlog_fingerprint: string;
+  candidate_keys: string[];
+  candidate_count: number;
+  dedup_checked_count: number;
+  file_new_count: number;
+  novelty_score: number;
+}
+
+interface CandidateTaskArchive {
+  version: 1;
+  entries: CandidateTaskArchiveEntry[];
+}
+
+export const CANDIDATE_TASK_ARCHIVE_FILE = 'candidate-task-archive.json';
+
 export function candidateTaskManifestPath(logDir: string, runNum: number): string {
   return join(logDir, `run-${runNum}-candidate-tasks-manifest.json`);
+}
+
+export function candidateTaskArchivePath(logDir: string): string {
+  return join(logDir, CANDIDATE_TASK_ARCHIVE_FILE);
 }
 
 export const CANDIDATE_TASK_MANIFEST_SCHEMA = [
@@ -602,6 +673,7 @@ export const CANDIDATE_TASK_MANIFEST_SCHEMA = [
   '  "version": 1,',
   '  "runTag": "<batch-id>/run-<N>",',
   '  "generatedAt": "<ISO timestamp>",',
+  '  "backlog_fingerprint": "<stable fingerprint for the backlog/search state inspected>",',
   '  "candidates": [',
   '    {',
   '      "id": "<stable short id>",',
@@ -688,13 +760,216 @@ export function parseCandidateTaskManifest(path: string): CandidateTaskManifestP
   return { path, count: candidates.length, dedupCheckedCount, fileNewCount, warnings };
 }
 
-function attachCandidateTaskManifest(result: RunResult, path: string): void {
+function stableHash(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value) ?? String(value)).digest('hex').slice(0, 16);
+}
+
+function normalizeCandidateArchiveString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function candidateArchiveKey(candidate: unknown, index: number): string {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return `candidate:${index}:${stableHash(candidate)}`;
+  }
+
+  const raw = candidate as Record<string, unknown>;
+  const id = normalizeCandidateArchiveString(raw.id);
+  if (id) return `id:${id}`;
+
+  const title = normalizeCandidateArchiveString(raw.title);
+  const refs = Array.isArray(raw.refs)
+    ? raw.refs.filter((ref): ref is string => typeof ref === 'string').map((ref) => ref.trim()).filter(Boolean).sort()
+    : [];
+  if (title || refs.length > 0) return `candidate:${stableHash({ title, refs })}`;
+
+  return `candidate:${index}:${stableHash(raw)}`;
+}
+
+function candidateArchiveKeys(parsedManifest: Record<string, unknown>): string[] {
+  const candidates = parsedManifest.candidates;
+  if (!Array.isArray(candidates)) return [];
+  return [...new Set(candidates.map((candidate, index) => candidateArchiveKey(candidate, index)))].sort();
+}
+
+function candidateArchiveBacklogFingerprint(parsedManifest: Record<string, unknown>): { fingerprint: string; warnings: string[] } {
+  const explicit = normalizeCandidateArchiveString(parsedManifest.backlog_fingerprint);
+  if (explicit) return { fingerprint: explicit, warnings: [] };
+
+  const candidates = Array.isArray(parsedManifest.candidates) ? parsedManifest.candidates : [];
+  const fallbackFingerprint = `legacy:${stableHash(candidates.map((candidate, index) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      return { index, value: candidate };
+    }
+    const raw = candidate as Record<string, unknown>;
+    const dedup = raw.dedup && typeof raw.dedup === 'object' && !Array.isArray(raw.dedup)
+      ? raw.dedup as Record<string, unknown>
+      : {};
+    return {
+      key: candidateArchiveKey(candidate, index),
+      title: raw.title,
+      refs: raw.refs,
+      query: dedup.query,
+      matches: dedup.matches,
+    };
+  }))}`;
+  return {
+    fingerprint: fallbackFingerprint,
+    warnings: ['candidate task manifest missing backlog_fingerprint; derived legacy fingerprint from manifest content'],
+  };
+}
+
+function readCandidateTaskArchive(path: string): { archive: CandidateTaskArchive; warnings: string[] } {
+  if (!existsSync(path)) return { archive: { version: 1, entries: [] }, warnings: [] };
+
+  let value: unknown;
+  try {
+    value = parseJsonValue(readFileSync(path, 'utf8'));
+  } catch {
+    value = null;
+  }
+  if (value === null) {
+    return {
+      archive: { version: 1, entries: [] },
+      warnings: [`candidate task archive malformed JSON; starting fresh: ${path}`],
+    };
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {
+      archive: { version: 1, entries: [] },
+      warnings: [`candidate task archive malformed; starting fresh: ${path}`],
+    };
+  }
+
+  const rawEntries = (value as { entries?: unknown }).entries;
+  if (!Array.isArray(rawEntries)) {
+    return {
+      archive: { version: 1, entries: [] },
+      warnings: [`candidate task archive entries must be an array; starting fresh: ${path}`],
+    };
+  }
+
+  const entries: CandidateTaskArchiveEntry[] = [];
+  const warnings: string[] = [];
+  rawEntries.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      warnings.push(`candidate task archive entry[${index}] must be an object: ${path}`);
+      return;
+    }
+    const raw = entry as Record<string, unknown>;
+    const id = normalizeCandidateArchiveString(raw.id);
+    const generatedAt = normalizeCandidateArchiveString(raw.generated_at);
+    const manifestPath = normalizeCandidateArchiveString(raw.manifest_path);
+    const backlogFingerprint = normalizeCandidateArchiveString(raw.backlog_fingerprint);
+    const candidateKeys = Array.isArray(raw.candidate_keys)
+      ? raw.candidate_keys.filter((key): key is string => typeof key === 'string' && key.trim().length > 0)
+      : [];
+    if (!id || !generatedAt || !manifestPath || !backlogFingerprint || candidateKeys.length === 0) {
+      warnings.push(`candidate task archive entry[${index}] missing required fields: ${path}`);
+      return;
+    }
+    entries.push({
+      id,
+      run_tag: normalizeCandidateArchiveString(raw.run_tag) ?? undefined,
+      generated_at: generatedAt,
+      manifest_path: manifestPath,
+      backlog_fingerprint: backlogFingerprint,
+      candidate_keys: [...new Set(candidateKeys)].sort(),
+      candidate_count: typeof raw.candidate_count === 'number' ? raw.candidate_count : candidateKeys.length,
+      dedup_checked_count: typeof raw.dedup_checked_count === 'number' ? raw.dedup_checked_count : 0,
+      file_new_count: typeof raw.file_new_count === 'number' ? raw.file_new_count : 0,
+      novelty_score: typeof raw.novelty_score === 'number' ? raw.novelty_score : 0,
+    });
+  });
+
+  return { archive: { version: 1, entries }, warnings };
+}
+
+export function appendCandidateTaskArchiveEntry(manifestPath: string, nowIso = new Date().toISOString()): CandidateTaskArchiveAppendResult {
+  const archivePath = candidateTaskArchivePath(dirname(manifestPath));
+  const parsed = parseCandidateTaskManifest(manifestPath);
+  const warnings = [...parsed.warnings];
+
+  const manifest = existsSync(manifestPath) ? parseJsonObject(readFileSync(manifestPath, 'utf8')) : null;
+  if (!manifest) {
+    warnings.push(`candidate task archive skipped malformed manifest: ${manifestPath}`);
+    return {
+      archivePath,
+      entryId: '',
+      entryCount: 0,
+      backlogFingerprint: '',
+      noveltyScore: 0,
+      warnings,
+    };
+  }
+
+  const { archive, warnings: archiveWarnings } = readCandidateTaskArchive(archivePath);
+  warnings.push(...archiveWarnings);
+
+  const keys = candidateArchiveKeys(manifest);
+  const fingerprint = candidateArchiveBacklogFingerprint(manifest);
+  warnings.push(...fingerprint.warnings);
+
+  const previousKeys = new Set(
+    archive.entries
+      .filter((entry) => entry.backlog_fingerprint === fingerprint.fingerprint)
+      .flatMap((entry) => entry.candidate_keys),
+  );
+  const noveltyScore = keys.filter((key) => !previousKeys.has(key)).length;
+  const runTag = normalizeCandidateArchiveString(manifest.runTag);
+  const entryId = stableHash({
+    runTag,
+    manifestPath: basename(manifestPath),
+    backlogFingerprint: fingerprint.fingerprint,
+    sequence: archive.entries.length + 1,
+  });
+
+  const entry: CandidateTaskArchiveEntry = {
+    id: entryId,
+    run_tag: runTag ?? undefined,
+    generated_at: nowIso,
+    manifest_path: manifestPath,
+    backlog_fingerprint: fingerprint.fingerprint,
+    candidate_keys: keys,
+    candidate_count: parsed.count,
+    dedup_checked_count: parsed.dedupCheckedCount,
+    file_new_count: parsed.fileNewCount,
+    novelty_score: noveltyScore,
+  };
+  const nextArchive: CandidateTaskArchive = {
+    version: 1,
+    entries: [...archive.entries, entry],
+  };
+  writeDurableJsonValueFile(archivePath, nextArchive, { backup: true });
+
+  return {
+    archivePath,
+    entryId,
+    entryCount: nextArchive.entries.length,
+    backlogFingerprint: fingerprint.fingerprint,
+    noveltyScore,
+    warnings,
+  };
+}
+
+export function attachCandidateTaskManifest(result: RunResult, path: string): void {
   const parsed = parseCandidateTaskManifest(path);
   result.candidateManifestPath = parsed.path;
   result.candidateManifestCount = parsed.count;
   result.candidateManifestDedupCheckedCount = parsed.dedupCheckedCount;
   result.candidateManifestFileNewCount = parsed.fileNewCount;
   result.candidateManifestWarnings = parsed.warnings;
+
+  const archive = appendCandidateTaskArchiveEntry(path);
+  result.candidateArchivePath = archive.archivePath;
+  result.candidateArchiveEntryId = archive.entryId || undefined;
+  result.candidateArchiveEntryCount = archive.entryCount;
+  result.candidateArchiveBacklogFingerprint = archive.backlogFingerprint || undefined;
+  result.candidateArchiveNoveltyScore = archive.noveltyScore;
+  result.candidateArchiveWarnings = archive.warnings;
 }
 
 export interface ManifestForcedTarget {
@@ -1358,7 +1633,7 @@ function learnedSignalMode(
  * Compute mode-appropriate success metric for a run.
  * Each mode has its own definition of "success":
  *   - exploit: PRs produced
- *   - explore: dedup-checked candidate-task entries + capped issues filed (durable scouting)
+ *   - explore: novel candidate-task archive entries + capped issues filed (durable scouting)
  *   - reflect: issues filed (insights that become actionable issues)
  *   - subtract: lines deleted + issues pruned (reduction, not addition)
  *   - contemplate: fixed baseline (strategic value not measurable per-run)
@@ -1368,7 +1643,10 @@ export function modeSuccess(mode: string, metrics: RunMetrics): number {
     case 'exploit':
       return metrics.prs.length;
     case 'explore': {
-      const manifestReward = metrics.candidate_manifest_dedup_checked_count ?? metrics.candidate_manifest_count ?? 0;
+      const manifestReward = metrics.candidate_archive_novelty_score
+        ?? metrics.candidate_manifest_dedup_checked_count
+        ?? metrics.candidate_manifest_count
+        ?? 0;
       return Math.min(metrics.issues_filed.length, 2) + manifestReward;
     }
     case 'reflect':

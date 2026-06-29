@@ -31,6 +31,9 @@ import {
   banditExplorationC,
   modeSuccess,
   parseCandidateTaskManifest,
+  appendCandidateTaskArchiveEntry,
+  attachCandidateTaskManifest,
+  candidateTaskArchivePath,
   derivePostMergeVerification,
   deriveRunOutcome,
   buildRunMetrics,
@@ -80,6 +83,44 @@ import { decideAutoMergeSafety } from './auto-dent-merge-policy.js';
 import { projectReplayRuns } from './auto-dent-replay.js';
 
 const AUTO_DENT_RUN_SOURCE = readFileSync(new URL('./auto-dent-run.ts', import.meta.url), 'utf8');
+
+function writeCandidateManifest(path: string, overrides: Record<string, unknown> = {}): void {
+  writeFileSync(path, JSON.stringify({
+    version: 1,
+    runTag: 'batch/run-1',
+    generatedAt: '2026-06-29T00:00:00.000Z',
+    backlog_fingerprint: 'backlog-fp-1',
+    candidates: [
+      {
+        id: 'a',
+        title: 'First',
+        rationale: 'why',
+        refs: ['#1'],
+        suggested_mode: 'exploit',
+        dedup: {
+          query: 'First in:title repo:Garsson-io/kaizen',
+          matches: [],
+          decision: 'file_new',
+          reason: 'No existing issue matched this specific gap',
+        },
+      },
+      {
+        id: 'b',
+        title: 'Second',
+        rationale: 'why',
+        refs: ['#2'],
+        suggested_mode: 'subtract',
+        dedup: {
+          query: 'Second in:title repo:Garsson-io/kaizen',
+          matches: ['#2'],
+          decision: 'comment_existing',
+          reason: 'Existing issue covers the candidate',
+        },
+      },
+    ],
+    ...overrides,
+  }));
+}
 
 describe('buildPrompt', () => {
   it('includes run tag with batch id and run number', () => {
@@ -338,6 +379,7 @@ describe('buildTemplateVars', () => {
     expect(meta.prompt).toContain('Required artifact');
     expect(meta.prompt).toContain(join(tmpDir, 'run-2-candidate-tasks-manifest.json'));
     expect(meta.prompt).toContain('candidate-task manifest');
+    expect(meta.prompt).toContain('backlog_fingerprint');
     expect(meta.prompt).toContain('Search-before-file gate');
     expect(meta.prompt).toContain('gh issue list --search');
     expect(meta.prompt).toContain('comment_existing');
@@ -356,39 +398,7 @@ describe('parseCandidateTaskManifest', () => {
   it('counts candidates from a valid manifest', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-manifest-valid-'));
     const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
-    writeFileSync(path, JSON.stringify({
-      version: 1,
-      runTag: 'batch/run-1',
-      generatedAt: '2026-06-29T00:00:00.000Z',
-      candidates: [
-        {
-          id: 'a',
-          title: 'First',
-          rationale: 'why',
-          refs: ['#1'],
-          suggested_mode: 'exploit',
-          dedup: {
-            query: 'First in:title repo:Garsson-io/kaizen',
-            matches: [],
-            decision: 'file_new',
-            reason: 'No existing issue matched this specific gap',
-          },
-        },
-        {
-          id: 'b',
-          title: 'Second',
-          rationale: 'why',
-          refs: ['#2'],
-          suggested_mode: 'subtract',
-          dedup: {
-            query: 'Second in:title repo:Garsson-io/kaizen',
-            matches: ['#2'],
-            decision: 'comment_existing',
-            reason: 'Existing issue covers the candidate',
-          },
-        },
-      ],
-    }));
+    writeCandidateManifest(path);
 
     const parsed = parseCandidateTaskManifest(path);
 
@@ -511,6 +521,89 @@ describe('parseCandidateTaskManifest', () => {
       count: 0,
       warnings: [expect.stringContaining('candidates')],
     });
+  });
+});
+
+describe('candidate task archive', () => {
+  it('appends explore manifests and scores repeated same-fingerprint candidates as zero novelty', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-archive-'));
+    const firstPath = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    const secondPath = join(tmpDir, 'run-2-candidate-tasks-manifest.json');
+    writeCandidateManifest(firstPath, { runTag: 'batch/run-1' });
+    writeCandidateManifest(secondPath, { runTag: 'batch/run-2' });
+
+    const first = appendCandidateTaskArchiveEntry(firstPath, '2026-06-29T00:00:00.000Z');
+    const second = appendCandidateTaskArchiveEntry(secondPath, '2026-06-29T00:01:00.000Z');
+
+    expect(first).toMatchObject({
+      archivePath: candidateTaskArchivePath(tmpDir),
+      entryCount: 1,
+      backlogFingerprint: 'backlog-fp-1',
+      noveltyScore: 2,
+      warnings: [],
+    });
+    expect(first.entryId).toBeTruthy();
+    expect(second).toMatchObject({
+      archivePath: candidateTaskArchivePath(tmpDir),
+      entryCount: 2,
+      backlogFingerprint: 'backlog-fp-1',
+      noveltyScore: 0,
+      warnings: [],
+    });
+
+    const archive = JSON.parse(readFileSync(candidateTaskArchivePath(tmpDir), 'utf8'));
+    expect(archive.entries).toHaveLength(2);
+    expect(archive.entries[0]).toMatchObject({
+      run_tag: 'batch/run-1',
+      candidate_keys: ['id:a', 'id:b'],
+      novelty_score: 2,
+    });
+    expect(archive.entries[1]).toMatchObject({
+      run_tag: 'batch/run-2',
+      candidate_keys: ['id:a', 'id:b'],
+      novelty_score: 0,
+    });
+  });
+
+  it('attaches archive metrics to the run result when finalizing a manifest', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-archive-result-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeCandidateManifest(path);
+    const result = makeRunResult();
+
+    attachCandidateTaskManifest(result, path);
+
+    expect(result).toMatchObject({
+      candidateManifestPath: path,
+      candidateManifestCount: 2,
+      candidateManifestDedupCheckedCount: 2,
+      candidateManifestFileNewCount: 1,
+      candidateArchivePath: candidateTaskArchivePath(tmpDir),
+      candidateArchiveEntryCount: 1,
+      candidateArchiveBacklogFingerprint: 'backlog-fp-1',
+      candidateArchiveNoveltyScore: 2,
+      candidateArchiveWarnings: [],
+    });
+    expect(result.candidateArchiveEntryId).toBeTruthy();
+  });
+
+  it('fails open with a warning when the existing archive is malformed', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'candidate-archive-malformed-'));
+    const path = join(tmpDir, 'run-1-candidate-tasks-manifest.json');
+    writeCandidateManifest(path);
+    writeFileSync(candidateTaskArchivePath(tmpDir), '{');
+
+    const result = appendCandidateTaskArchiveEntry(path, '2026-06-29T00:00:00.000Z');
+
+    expect(result).toMatchObject({
+      archivePath: candidateTaskArchivePath(tmpDir),
+      entryCount: 1,
+      backlogFingerprint: 'backlog-fp-1',
+      noveltyScore: 2,
+      warnings: [expect.stringContaining('candidate task archive malformed JSON; starting fresh')],
+    });
+    const archive = JSON.parse(readFileSync(candidateTaskArchivePath(tmpDir), 'utf8'));
+    expect(archive.entries).toHaveLength(1);
   });
 });
 
@@ -3168,7 +3261,20 @@ describe('modeSuccess', () => {
     expect(modeSuccess('exploit', makeRunMetrics({ prs: [] }))).toBe(0);
   });
 
-  it('explore uses dedup-checked candidate manifests plus capped issues_filed', () => {
+  it('explore uses candidate archive novelty plus capped issues_filed', () => {
+    expect(modeSuccess('explore', makeRunMetrics({
+      issues_filed: [],
+      candidate_manifest_count: 4,
+      candidate_archive_novelty_score: 0,
+    }))).toBe(0);
+    expect(modeSuccess('explore', makeRunMetrics({
+      issues_filed: ['#1', '#2', '#3'],
+      candidate_manifest_count: 4,
+      candidate_archive_novelty_score: 2,
+    }))).toBe(4);
+  });
+
+  it('explore falls back to dedup-checked candidate manifests for older history', () => {
     expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1', '#2', '#3'] }))).toBe(2);
     expect(modeSuccess('explore', makeRunMetrics({ issues_filed: [], candidate_manifest_count: 4 }))).toBe(4);
     expect(modeSuccess('explore', makeRunMetrics({ issues_filed: ['#1'], candidate_manifest_count: 2 }))).toBe(3);
@@ -3428,14 +3534,30 @@ describe('buildRunMetrics', () => {
       result: makeRunResult({
         candidateManifestPath: '/tmp/run-5-candidate-tasks-manifest.json',
         candidateManifestCount: 3,
+        candidateManifestDedupCheckedCount: 2,
+        candidateManifestFileNewCount: 1,
         candidateManifestWarnings: ['warning'],
+        candidateArchivePath: '/tmp/candidate-task-archive.json',
+        candidateArchiveEntryId: 'abc123',
+        candidateArchiveEntryCount: 4,
+        candidateArchiveBacklogFingerprint: 'backlog-fp-1',
+        candidateArchiveNoveltyScore: 0,
+        candidateArchiveWarnings: ['archive warning'],
       }),
     });
 
     expect(metrics).toMatchObject({
       candidate_manifest_path: '/tmp/run-5-candidate-tasks-manifest.json',
       candidate_manifest_count: 3,
+      candidate_manifest_dedup_checked_count: 2,
+      candidate_manifest_file_new_count: 1,
       candidate_manifest_warnings: ['warning'],
+      candidate_archive_path: '/tmp/candidate-task-archive.json',
+      candidate_archive_entry_id: 'abc123',
+      candidate_archive_entry_count: 4,
+      candidate_archive_backlog_fingerprint: 'backlog-fp-1',
+      candidate_archive_novelty_score: 0,
+      candidate_archive_warnings: ['archive warning'],
     });
   });
 
