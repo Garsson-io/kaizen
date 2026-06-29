@@ -56,6 +56,28 @@ If Langfuse needs promoted top-level trace metadata for filterability, enrich
 the existing OTel projection in `scripts/auto-dent-otel.ts`. Do not add a
 parallel Langfuse-only converter.
 
+## Issue Questions Answered
+
+1. **Ingest:** use OTLP through `scripts/auto-dent-otel.ts`. Do not convert
+   stream-json directly to a vendor SDK format unless a live platform smoke
+   proves OTLP cannot satisfy the UI contract.
+2. **Agent hierarchy:** the current trace projection models the run as a root
+   span and review/fix work as child spans. If future subagent events need their
+   own hierarchy, add child spans to the same OTel projection.
+3. **Cross-run analytics:** use `kaizen.batch.id`, `kaizen.run.*`,
+   issue/PR-reference attributes, and score/lifecycle attributes as the first
+   filter/group-by surface. If a platform only filters top-level trace metadata,
+   promote those same fields in the OTel projection.
+4. **Scoring integration:** push score outputs as span or trace attributes that
+   point back to the scoring artifact. Keep large score artifacts in the
+   existing artifact/attachment chain rather than embedding raw blobs in spans.
+5. **Self-hosted vs cloud:** Langfuse remains first because it supports both
+   cloud and self-host modes. The choice between them depends on credentials,
+   retention, and current pricing at smoke time.
+6. **Cost/free tier:** do not hard-code a pricing claim in repo docs. The
+   credentialed smoke must check current platform pricing/free-tier limits when
+   it runs.
+
 ## Transcript Boundary
 
 Trace platforms are for timelines, span attributes, status, cost, and pointers.
@@ -87,6 +109,11 @@ application/json`. If a platform requires OTLP protobuf, gRPC, custom auth
 headers, or promoted top-level metadata, adapt the single OTel transport or
 projection behind `KAIZEN_OTEL_ENDPOINT`; keep JSONL and transcript artifacts as
 the durable fallback.
+
+Credentialed live smoke is tracked separately in #1723. That issue must verify
+the actual Langfuse UI, metadata filterability, and current pricing/free-tier
+constraints before any platform-specific converter or #556 dashboard work is
+started.
 
 ## Disqualifiers
 
@@ -122,6 +149,7 @@ OTLP payload before building #556's dashboard surface.
 ## Current Limitations
 
 This document does not claim a successful cloud ingestion smoke. That requires
-external credentials or a self-hosted endpoint. The kaizen-side contract is
+external credentials or a self-hosted endpoint and is tracked by #1723. The
+kaizen-side contract is
 covered by deterministic OTLP payload/export tests; the remaining proof is
 vendor availability and UI fidelity.

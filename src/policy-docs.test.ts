@@ -406,7 +406,22 @@ describe('auto-dent trace platform evaluation docs', () => {
   it('documents the credentialed live-smoke boundary honestly', () => {
     expect(evaluation).toMatch(/does not claim a successful cloud ingestion smoke/i);
     expect(evaluation).toMatch(/external credentials or a self-hosted endpoint/i);
+    expect(evaluation).toContain('#1723');
     expect(evaluation).toMatch(/npx vitest run scripts\/auto-dent-otel\.test\.ts scripts\/auto-dent-events\.test\.ts/);
+  });
+
+  it('answers #545 explicit platform questions without hard-coding pricing claims', () => {
+    for (const question of [
+      'Ingest',
+      'Agent hierarchy',
+      'Cross-run analytics',
+      'Scoring integration',
+      'Self-hosted vs cloud',
+      'Cost/free tier',
+    ]) {
+      expect(evaluation).toContain(`**${question}:**`);
+    }
+    expect(evaluation).toMatch(/do not hard-code a pricing claim/i);
   });
 
   it('links operations guidance from KAIZEN_OTEL_ENDPOINT to the evaluation', () => {
