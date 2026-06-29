@@ -378,6 +378,44 @@ describe('.agents/kaizen/README.md — Core Invariants points to canonical', () 
   });
 });
 
+describe('auto-dent trace platform evaluation docs', () => {
+  const evaluation = read('docs/auto-dent-trace-platform-evaluation.md');
+  const operations = read('docs/auto-dent-operations.md');
+
+  it('keeps the existing OTel projection as the single ingestion path', () => {
+    expect(evaluation).toContain('scripts/auto-dent-otel.ts');
+    expect(evaluation).toContain('KAIZEN_OTEL_ENDPOINT');
+    expect(evaluation).toMatch(/single trace ingestion contract/i);
+    expect(evaluation).not.toContain('scripts/log-to-langfuse.ts');
+  });
+
+  it('covers #545 store, view, and mine criteria across current candidates', () => {
+    expect(evaluation).toMatch(/\| Platform \| Store \| View \| Mine \|/);
+    for (const platform of ['Langfuse', 'LangSmith', 'Braintrust', 'Phoenix']) {
+      expect(evaluation).toContain(platform);
+    }
+    expect(evaluation).toMatch(/Generic OTel backend/);
+  });
+
+  it('preserves transcript transport as separate from trace spans', () => {
+    expect(evaluation).toContain('docs/auto-dent-transcript-transport.md');
+    expect(evaluation).toMatch(/not raw reasoning logs/i);
+    expect(evaluation).toMatch(/scrub first/i);
+  });
+
+  it('documents the credentialed live-smoke boundary honestly', () => {
+    expect(evaluation).toMatch(/does not claim a successful cloud ingestion smoke/i);
+    expect(evaluation).toMatch(/external credentials or a self-hosted endpoint/i);
+    expect(evaluation).toMatch(/npx vitest run scripts\/auto-dent-otel\.test\.ts scripts\/auto-dent-events\.test\.ts/);
+  });
+
+  it('links operations guidance from KAIZEN_OTEL_ENDPOINT to the evaluation', () => {
+    expect(operations).toContain('KAIZEN_OTEL_ENDPOINT=https://otel.example/v1/traces');
+    expect(operations).toContain('auto-dent-trace-platform-evaluation.md');
+    expect(operations).toContain('scripts/auto-dent-otel.ts');
+  });
+});
+
 // ── review-requirements.md — check #7 (B18) ────────────────────────
 
 describe('review-requirements.md — B18: premature epic closure check', () => {
