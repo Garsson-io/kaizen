@@ -36,7 +36,8 @@ import {
   resolvePromptsDir,
   renderTemplate,
 } from '../src/review-battery.js';
-import { EventEmitter, makeRunId, type AutoDentEvent, type BanditDecisionTelemetry, type RunCompleteEvent } from './auto-dent-events.js';
+import { EventEmitter, makeRunId, type AutoDentEvent, type BanditDecisionTelemetry, type EventEnvelope, type RunCompleteEvent } from './auto-dent-events.js';
+import { projectReplayRuns, type ReplayRunProjection } from './auto-dent-replay.js';
 import { defaultReviewFixProviders, runFixLoop } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
@@ -344,6 +345,22 @@ export interface RunMetrics {
   process_issue_count?: number;
   /** Compact process evidence summary (#1149) */
   process_summary?: string;
+  /** Canonical workflow gate states (#1533). */
+  workflow_gate_states?: Partial<Record<WorkflowGateId, WorkflowGateState>>;
+  /** Canonical workflow gates that need repair before success/merge readiness (#1533). */
+  workflow_repair_gates?: WorkflowGateId[];
+  /** Evidence repair loop state for PR-producing incomplete runs (#1533). */
+  workflow_repair_state?: RunCompleteEvent['workflow_repair_state'];
+  /** Targeted repair instruction for the next attempt against the same PR (#1533). */
+  workflow_repair_prompt?: string;
+  /** Whether this run crossed the context-delegation pressure threshold (#1629). */
+  context_delegation_required?: boolean;
+  /** Whether this run showed observed subagent/tool delegation before implementation (#1629). */
+  context_delegation_observed?: boolean;
+  /** Machine-readable context/tool-call pressure reasons (#1629). */
+  context_delegation_reasons?: string[];
+  /** Default-delegated sub-work suggested by the pressure analysis (#1629). */
+  context_delegation_recommended_substeps?: string[];
   /** Review battery verdict for PRs created in this run */
   review_verdict?: 'pass' | 'fail' | 'skipped';
   /** Review battery cost (USD) */
@@ -371,6 +388,8 @@ export interface RunMetrics {
    * kaizen plugin absent — the run was NOT gated by kaizen enforcement.
    */
   hook_activation?: HookActivationVerdict;
+  /** Warnings recorded while deriving this row from replay projection (#1680). */
+  replay_projection_warnings?: string[];
 }
 
 export interface RunResult {
@@ -501,6 +520,61 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     final_claim_warnings: result.finalClaimWarnings,
     hook_activation: hookActivation,
     ...metadata,
+  };
+}
+
+export function runMetricsFromReplayProjection(
+  projection: ReplayRunProjection,
+  fallback: RunMetrics,
+): RunMetrics {
+  const warnings = [
+    ...(fallback.replay_projection_warnings ?? []),
+    ...(projection.warnings ?? []),
+    ...projection.missingFromEvents.map((field) => `missing:${field}`),
+  ];
+  return {
+    ...fallback,
+    run: projection.run ?? fallback.run,
+    start_epoch: projection.start_epoch ?? fallback.start_epoch,
+    duration_seconds: projection.duration_seconds ?? fallback.duration_seconds,
+    exit_code: projection.exit_code ?? fallback.exit_code,
+    cost_usd: projection.cost_usd ?? fallback.cost_usd,
+    cost_integrity_warnings: projection.cost_integrity_warnings ?? fallback.cost_integrity_warnings,
+    tool_calls: projection.tool_calls ?? fallback.tool_calls,
+    prs: projection.prs.length > 0 ? projection.prs : fallback.prs,
+    issues_filed: projection.issues_filed ?? fallback.issues_filed,
+    issues_closed: projection.issues_closed ?? fallback.issues_closed,
+    cases: projection.cases ?? fallback.cases,
+    stop_requested: projection.stop_requested ?? fallback.stop_requested,
+    mode: projection.mode ?? fallback.mode,
+    prompt_template: projection.prompt_template ?? fallback.prompt_template,
+    prompt_hash: projection.prompt_hash ?? fallback.prompt_hash,
+    failure_class: projection.failure_class ?? fallback.failure_class,
+    lifecycle_violations: projection.lifecycle_violations ?? fallback.lifecycle_violations,
+    lifecycle_health: projection.lifecycle_health ?? fallback.lifecycle_health,
+    process_verdict: projection.process_verdict ?? fallback.process_verdict,
+    post_merge_verification: projection.post_merge_verification ?? fallback.post_merge_verification,
+    process_issue_count: projection.process_issue_count ?? fallback.process_issue_count,
+    process_summary: projection.process_summary ?? fallback.process_summary,
+    workflow_gate_states: projection.workflow_gate_states ?? fallback.workflow_gate_states,
+    workflow_repair_gates: projection.workflow_repair_gates ?? fallback.workflow_repair_gates,
+    workflow_repair_state: projection.workflow_repair_state ?? fallback.workflow_repair_state,
+    workflow_repair_prompt: projection.workflow_repair_prompt ?? fallback.workflow_repair_prompt,
+    context_delegation_required: projection.context_delegation_required ?? fallback.context_delegation_required,
+    context_delegation_observed: projection.context_delegation_observed ?? fallback.context_delegation_observed,
+    context_delegation_reasons: projection.context_delegation_reasons ?? fallback.context_delegation_reasons,
+    context_delegation_recommended_substeps:
+      projection.context_delegation_recommended_substeps ?? fallback.context_delegation_recommended_substeps,
+    review_verdict: projection.review_verdict ?? fallback.review_verdict,
+    review_cost_usd: projection.review_cost_usd ?? fallback.review_cost_usd,
+    test_health: projection.test_health ?? fallback.test_health,
+    phase_providers: projection.phase_providers ?? fallback.phase_providers,
+    hook_activation: projection.hook_activation ?? fallback.hook_activation,
+    bandit_decision: projection.bandit_decision ?? fallback.bandit_decision,
+    final_claim_status: projection.final_claim_status ?? fallback.final_claim_status,
+    final_claim_path: projection.final_claim_path ?? fallback.final_claim_path,
+    final_claim_warnings: projection.final_claim_warnings ?? fallback.final_claim_warnings,
+    replay_projection_warnings: warnings.length > 0 ? [...new Set(warnings)].sort() : undefined,
   };
 }
 
@@ -1431,13 +1505,17 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     tool_calls: result.toolCalls,
     prs_created: result.prs.length,
     issues_filed: result.issuesFiled.length,
+    issues_filed_refs: result.issuesFiled,
     issues_closed: result.issuesClosed.length,
+    issues_closed_refs: result.issuesClosed,
+    cases: result.cases,
     stop_requested: result.stopRequested,
     failure_class: result.failureClass,
     lifecycle_violations: lifecycleViolationCount,
     lifecycle_health: lifecycleHealth,
     lifecycle_critical: lifecycleCriticalCount,
     process_verdict: processVerdict,
+    post_merge_verification: runMetricsForOutcome.post_merge_verification,
     process_issue_count: processIssueCount,
     process_summary: processSummary,
     workflow_gate_states: workflowGateStates,
@@ -1450,12 +1528,82 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     context_delegation_recommended_substeps: contextDelegationAnalysis?.pressure.recommendedSubsteps,
     review_verdict: reviewVerdict,
     review_cost_usd: reviewCostUsd,
+    test_health: runMetricsForOutcome.test_health,
     phase_providers: phaseProviders,
     hook_activation: runMetricsForOutcome.hook_activation,
     bandit_decision: runMetricsForOutcome.bandit_decision,
+    prompt_template: runMetricsForOutcome.prompt_template,
+    prompt_hash: runMetricsForOutcome.prompt_hash,
+    final_claim_status: runMetricsForOutcome.final_claim_status,
+    final_claim_path: runMetricsForOutcome.final_claim_path,
+    final_claim_warnings: runMetricsForOutcome.final_claim_warnings,
     outcome,
     mode: runMode,
   };
+}
+
+export interface BuildFinalizationReplayEventsInput {
+  runId: string;
+  batchId: string;
+  runNum: number;
+  runStartEpoch: number;
+  runMode: string;
+  runModeReason: string;
+  promptMeta: { template: string; hash: string };
+  pickedIssue?: string;
+  pickedIssueTitle?: string;
+  result: RunResult;
+  completeEvent: RunCompleteEvent;
+}
+
+export function buildFinalizationReplayEvents(input: BuildFinalizationReplayEventsInput): EventEnvelope[] {
+  const startedAt = new Date(input.runStartEpoch * 1000).toISOString();
+  const completedAt = new Date((input.runStartEpoch * 1000) + input.completeEvent.duration_ms).toISOString();
+  const base = {
+    run_id: input.runId,
+    batch_id: input.batchId,
+    run_num: input.runNum,
+  };
+  const events: EventEnvelope[] = [
+    {
+      timestamp: startedAt,
+      event: {
+        type: 'run.start',
+        ...base,
+        mode: input.runMode,
+        mode_reason: input.runModeReason,
+        prompt_template: input.promptMeta.template,
+        prompt_hash: input.promptMeta.hash,
+        start_epoch: input.runStartEpoch,
+      },
+    },
+  ];
+
+  if (input.pickedIssue) {
+    events.push({
+      timestamp: startedAt,
+      event: {
+        type: 'run.issue_picked',
+        ...base,
+        issue: input.pickedIssue,
+        title: input.pickedIssueTitle ?? '',
+      },
+    });
+  }
+
+  for (const prUrl of input.result.prs) {
+    events.push({
+      timestamp: completedAt,
+      event: {
+        type: 'run.pr_created',
+        ...base,
+        pr_url: prUrl,
+      },
+    });
+  }
+
+  events.push({ timestamp: completedAt, event: input.completeEvent });
+  return events;
 }
 
 export function applyContextDelegationAnalysis(
@@ -3715,74 +3863,81 @@ async function main(): Promise<void> {
     }
   }
 
-  // Emit run.complete telemetry event (#647, #657)
-  // Uses mode-aware success: explore/reflect runs that file issues count as success,
-  // not just runs that produce PRs.
-  {
-    const runMetricsForOutcome = buildRunMetrics({
-      runNum,
-      runStartEpoch,
-      duration,
-      exitCode,
-      runMode,
-      result,
-      modeReason: runModeReason,
-      bandit: runBandit,
-      provider: state.provider ?? 'claude',
-    });
-    // Bind the run-success stamp to the verdicts this run already recorded
-    // (#1224, meta #1227): a review FAIL / process-incomplete / critical
-    // lifecycle gap must never roll up to `success` — red runs cannot read as
-    // green in the batch summary.
-    const outcome = deriveRunOutcome({
-      stopRequested: result.stopRequested,
-      exitCode,
-      artifactCount: modeSuccess(runMode, runMetricsForOutcome),
-      reviewVerdict,
-      processVerdict,
-      lifecycleHealth,
-      postMergeVerification,
-    });
-    events.emit(buildRunCompleteEvent({
-      runId,
-      batchId: state.batch_id,
-      runNum,
-      duration,
-      exitCode,
-      result,
-      runMode,
-      outcome,
-      runMetricsForOutcome,
-      lifecycleViolationCount,
-      lifecycleHealth,
-      lifecycleCriticalCount,
-      processVerdict,
-      processIssueCount,
-      processSummary,
-      workflowGateStates,
-      workflowRepairGates,
-      workflowRepairState,
-      workflowRepairPrompt,
-      contextDelegationAnalysis,
-      reviewVerdict,
-      reviewCostUsd,
-      phaseProviders: phaseProvidersForState(state),
-    }));
-  }
+  const runMetricsForOutcome = buildRunMetrics({
+    runNum,
+    runStartEpoch,
+    duration,
+    exitCode,
+    runMode,
+    result,
+    modeReason: runModeReason,
+    bandit: runBandit,
+    provider: state.provider ?? 'claude',
+    metadata: {
+      prompt_template: promptMeta.template,
+      prompt_hash: promptMeta.hash,
+      lifecycle_violations: lifecycleViolationCount,
+      lifecycle_health: lifecycleHealth,
+      process_verdict: processVerdict,
+      post_merge_verification: postMergeVerification,
+      process_issue_count: processIssueCount,
+      process_summary: processSummary,
+      workflow_gate_states: workflowGateStates,
+      workflow_repair_gates: workflowRepairGates,
+      workflow_repair_state: workflowRepairState,
+      workflow_repair_prompt: workflowRepairPrompt,
+      context_delegation_required: contextDelegationAnalysis.pressure.required,
+      context_delegation_observed: contextDelegationAnalysis.delegation.observed,
+      context_delegation_reasons: contextDelegationAnalysis.pressure.reasons,
+      context_delegation_recommended_substeps: contextDelegationAnalysis.pressure.recommendedSubsteps,
+      review_verdict: reviewVerdict,
+      review_cost_usd: reviewCostUsd,
+      test_health: testHealth,
+      phase_providers: phaseProvidersForState(state),
+    },
+  });
+  // Bind the run-success stamp to the verdicts this run already recorded
+  // (#1224, meta #1227): a review FAIL / process-incomplete / critical
+  // lifecycle gap must never roll up to `success` — red runs cannot read as
+  // green in the batch summary.
+  const outcome = deriveRunOutcome({
+    stopRequested: result.stopRequested,
+    exitCode,
+    artifactCount: modeSuccess(runMode, runMetricsForOutcome),
+    reviewVerdict,
+    processVerdict,
+    lifecycleHealth,
+    postMergeVerification,
+  });
+  const runCompleteEvent = buildRunCompleteEvent({
+    runId,
+    batchId: state.batch_id,
+    runNum,
+    duration,
+    exitCode,
+    result,
+    runMode,
+    outcome,
+    runMetricsForOutcome,
+    lifecycleViolationCount,
+    lifecycleHealth,
+    lifecycleCriticalCount,
+    processVerdict,
+    processIssueCount,
+    processSummary,
+    workflowGateStates,
+    workflowRepairGates,
+    workflowRepairState,
+    workflowRepairPrompt,
+    contextDelegationAnalysis,
+    reviewVerdict,
+    reviewCostUsd,
+    phaseProviders: phaseProvidersForState(state),
+  });
 
-  // Write run artifact manifest and bundle (#916)
-  {
-    const manifest = buildRunManifest(logDir, state.batch_id, runNum);
-    const manifestPath = writeRunManifest(logDir, manifest);
-    console.log(`  [artifacts] ${formatManifestSummary(manifest)}`);
-    console.log(`  [artifacts] manifest: ${manifestPath}`);
-    try {
-      const archivePath = bundleArtifacts(logDir, manifest);
-      console.log(`  [artifacts] bundle: ${archivePath}`);
-    } catch (err) {
-      console.warn(`  [artifacts] bundle skipped: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  // Build the base completion event now for the quality/outcome fields. It is
+  // emitted after verify-close refreshes the result identities, so events.jsonl
+  // and the persisted replay projection consume the same finalized event.
 
   // Batch scoreboard (cumulative stats across all runs)
   {
@@ -3955,35 +4110,63 @@ async function main(): Promise<void> {
   freshState.run = runNum;
 
   // Append per-run metrics for batch observability
-  const runMetrics = buildRunMetrics({
+  const finalizedRunCompleteEvent: RunCompleteEvent = {
+    ...runCompleteEvent,
+    prs_created: result.prs.length,
+    issues_filed: result.issuesFiled.length,
+    issues_filed_refs: result.issuesFiled,
+    issues_closed: result.issuesClosed.length,
+    issues_closed_refs: result.issuesClosed,
+    cases: result.cases,
+  };
+  const finalizedFallbackMetrics: RunMetrics = {
+    ...runMetricsForOutcome,
+    prs: result.prs,
+    issues_filed: result.issuesFiled,
+    issues_closed: result.issuesClosed,
+    cases: result.cases,
+  };
+  const replayEventsForRun = buildFinalizationReplayEvents({
+    runId,
+    batchId: state.batch_id,
     runNum,
     runStartEpoch,
-    duration,
-    exitCode,
     runMode,
+    runModeReason,
+    promptMeta,
+    pickedIssue,
+    pickedIssueTitle: result.pickedIssueTitle,
     result,
-    modeReason: runModeReason,
-    bandit: runBandit,
-    provider: state.provider ?? 'claude',
-    metadata: {
-      prompt_template: promptMeta.template,
-      prompt_hash: promptMeta.hash,
-      lifecycle_violations: lifecycleViolationCount,
-      lifecycle_health: lifecycleHealth,
-      process_verdict: processVerdict,
-      post_merge_verification: postMergeVerification,
-      process_issue_count: processIssueCount,
-      process_summary: processSummary,
-      workflow_gate_states: workflowGateStates,
-      workflow_repair_gates: workflowRepairGates,
-      workflow_repair_state: workflowRepairState,
-      workflow_repair_prompt: workflowRepairPrompt,
-      review_verdict: reviewVerdict,
-      review_cost_usd: reviewCostUsd,
-      test_health: testHealth,
-      phase_providers: phaseProvidersForState(state),
-    },
+    completeEvent: finalizedRunCompleteEvent,
   });
+  const projectedRun = projectReplayRuns(replayEventsForRun).find((projection) => projection.run_id === runId);
+  const runMetrics = projectedRun
+    ? runMetricsFromReplayProjection(projectedRun, finalizedFallbackMetrics)
+    : {
+      ...finalizedFallbackMetrics,
+      replay_projection_warnings: [
+        ...(finalizedFallbackMetrics.replay_projection_warnings ?? []),
+        'missing:projection',
+      ],
+    };
+  // Emit run.complete telemetry event (#647, #657) from the same finalized event
+  // shape used to derive the persisted run-history row (#1680).
+  events.emit(finalizedRunCompleteEvent);
+
+  // Write run artifact manifest and bundle (#916) after run.complete is durable,
+  // so the bundle captures the canonical completion event.
+  {
+    const manifest = buildRunManifest(logDir, state.batch_id, runNum);
+    const manifestPath = writeRunManifest(logDir, manifest);
+    console.log(`  [artifacts] ${formatManifestSummary(manifest)}`);
+    console.log(`  [artifacts] manifest: ${manifestPath}`);
+    try {
+      const archivePath = bundleArtifacts(logDir, manifest);
+      console.log(`  [artifacts] bundle: ${archivePath}`);
+    } catch (err) {
+      console.warn(`  [artifacts] bundle skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   // Classify failure: wall-clock timeout is authoritative (#686), then heuristics.
   // Feed the run log so the log-based branch (hook_rejection, infrastructure,
   // etc.) actually runs — without this argument it was dead code (#1102).

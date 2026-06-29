@@ -143,6 +143,9 @@ export interface ReplayRunProjection {
   issue_title?: string;
   labels?: string[];
   prs: string[];
+  issues_filed?: string[];
+  issues_closed?: string[];
+  cases?: string[];
   duration_seconds?: number;
   exit_code?: number;
   cost_usd?: number;
@@ -157,6 +160,7 @@ export interface ReplayRunProjection {
   lifecycle_health?: RunCompleteEvent['lifecycle_health'];
   lifecycle_critical?: number;
   process_verdict?: RunCompleteEvent['process_verdict'];
+  post_merge_verification?: RunCompleteEvent['post_merge_verification'];
   process_issue_count?: number;
   process_summary?: string;
   workflow_gate_states?: RunCompleteEvent['workflow_gate_states'];
@@ -169,9 +173,13 @@ export interface ReplayRunProjection {
   context_delegation_recommended_substeps?: string[];
   review_verdict?: RunCompleteEvent['review_verdict'];
   review_cost_usd?: number;
+  test_health?: RunCompleteEvent['test_health'];
   phase_providers?: RunCompleteEvent['phase_providers'];
   hook_activation?: RunCompleteEvent['hook_activation'];
   bandit_decision?: RunCompleteEvent['bandit_decision'];
+  final_claim_status?: RunCompleteEvent['final_claim_status'];
+  final_claim_path?: string;
+  final_claim_warnings?: string[];
   outcome?: RunCompleteEvent['outcome'];
   missingFromEvents: string[];
   warnings: string[];
@@ -296,13 +304,17 @@ function applyRunComplete(projection: ReplayRunProjection, envelope: EventEnvelo
   projection.tool_calls = event.tool_calls;
   projection.prs_created = event.prs_created;
   projection.issues_filed_count = event.issues_filed;
+  projection.issues_filed = event.issues_filed_refs;
   projection.issues_closed_count = event.issues_closed;
+  projection.issues_closed = event.issues_closed_refs;
+  projection.cases = event.cases;
   projection.stop_requested = event.stop_requested;
   projection.failure_class = event.failure_class;
   projection.lifecycle_violations = event.lifecycle_violations;
   projection.lifecycle_health = event.lifecycle_health;
   projection.lifecycle_critical = event.lifecycle_critical;
   projection.process_verdict = event.process_verdict;
+  projection.post_merge_verification = event.post_merge_verification;
   projection.process_issue_count = event.process_issue_count;
   projection.process_summary = event.process_summary;
   projection.workflow_gate_states = event.workflow_gate_states;
@@ -315,11 +327,17 @@ function applyRunComplete(projection: ReplayRunProjection, envelope: EventEnvelo
   projection.context_delegation_recommended_substeps = event.context_delegation_recommended_substeps;
   projection.review_verdict = event.review_verdict;
   projection.review_cost_usd = event.review_cost_usd;
+  projection.test_health = event.test_health;
   projection.phase_providers = event.phase_providers;
   projection.hook_activation = event.hook_activation;
   projection.bandit_decision = event.bandit_decision;
+  projection.final_claim_status = event.final_claim_status;
+  projection.final_claim_path = event.final_claim_path;
+  projection.final_claim_warnings = event.final_claim_warnings;
   projection.outcome = event.outcome;
   if (event.mode && !projection.mode) projection.mode = event.mode;
+  if (event.prompt_template && !projection.prompt_template) projection.prompt_template = event.prompt_template;
+  if (event.prompt_hash && !projection.prompt_hash) projection.prompt_hash = event.prompt_hash;
 }
 
 function finalizeProjection(entry: MutableProjection): ReplayRunProjection {
@@ -327,11 +345,9 @@ function finalizeProjection(entry: MutableProjection): ReplayRunProjection {
   if (!entry.observedTypes.has('run.start')) missing.add('run.start');
   if (!entry.observedTypes.has('run.complete')) missing.add('run.complete');
 
-  // events.jsonl currently records counts for these fields, not stable identities.
-  // Keep the absence explicit so #1680 does not silently fabricate state arrays.
-  missing.add('cases');
-  missing.add('issues_filed');
-  missing.add('issues_closed');
+  if (!entry.projection.cases) missing.add('cases');
+  if (!entry.projection.issues_filed) missing.add('issues_filed');
+  if (!entry.projection.issues_closed) missing.add('issues_closed');
 
   return {
     ...entry.projection,

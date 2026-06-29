@@ -35,6 +35,8 @@ import {
   deriveRunOutcome,
   buildRunMetrics,
   buildRunCompleteEvent,
+  buildFinalizationReplayEvents,
+  runMetricsFromReplayProjection,
   mergeVerifiedClosedIssuesIntoRunResult,
   weightedModeSelect,
   computeModeDistribution,
@@ -75,6 +77,7 @@ import * as github from './auto-dent-github.js';
 import type { ProviderCapability } from './auto-dent-provider.js';
 import { makeBatchState, makeRunResult } from './auto-dent-test-utils.js';
 import { decideAutoMergeSafety } from './auto-dent-merge-policy.js';
+import { projectReplayRuns } from './auto-dent-replay.js';
 
 const AUTO_DENT_RUN_SOURCE = readFileSync(new URL('./auto-dent-run.ts', import.meta.url), 'utf8');
 
@@ -3652,6 +3655,216 @@ describe('buildRunMetrics', () => {
 
     expect(event.bandit_decision).toEqual(metrics.bandit_decision);
   });
+
+  it('emits run.complete identities and evidence needed for replay-derived run history (#1680)', () => {
+    const result = makeRunResult({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1680'],
+      issuesFiled: ['#1700'],
+      issuesClosed: ['#1680'],
+      cases: ['260629-k1680-replay-finalization'],
+      finalClaimStatus: 'valid',
+      finalClaimPath: '/tmp/final-claim.json',
+      finalClaimWarnings: ['claim warning'],
+    });
+    const metrics = buildRunMetrics({
+      runNum: 12,
+      runStartEpoch: 1742681800,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result,
+      provider: 'claude',
+      metadata: {
+        prompt_template: 'deep-dive-default.md',
+        prompt_hash: 'abc123',
+        post_merge_verification: 'pass',
+        test_health: 'pass',
+        workflow_gate_states: { 'meet-reality': 'done' },
+        workflow_repair_gates: [],
+        workflow_repair_state: 'merge_ready',
+        review_verdict: 'pass',
+        review_cost_usd: 0.12,
+      },
+    });
+
+    const event = buildRunCompleteEvent({
+      runId: 'batch/run-12',
+      batchId: 'batch',
+      runNum: 12,
+      duration: 8,
+      exitCode: 0,
+      result,
+      runMode: 'exploit',
+      outcome: 'success',
+      runMetricsForOutcome: metrics,
+      lifecycleViolationCount: 0,
+      workflowGateStates: { 'meet-reality': 'done' },
+      workflowRepairGates: [],
+      workflowRepairState: 'merge_ready',
+      reviewVerdict: 'pass',
+      reviewCostUsd: 0.12,
+    });
+
+    expect(event).toMatchObject({
+      issues_filed: 1,
+      issues_filed_refs: ['#1700'],
+      issues_closed: 1,
+      issues_closed_refs: ['#1680'],
+      cases: ['260629-k1680-replay-finalization'],
+      post_merge_verification: 'pass',
+      test_health: 'pass',
+      prompt_template: 'deep-dive-default.md',
+      prompt_hash: 'abc123',
+      final_claim_status: 'valid',
+      final_claim_path: '/tmp/final-claim.json',
+      final_claim_warnings: ['claim warning'],
+      workflow_gate_states: { 'meet-reality': 'done' },
+      workflow_repair_state: 'merge_ready',
+      review_verdict: 'pass',
+      review_cost_usd: 0.12,
+    });
+  });
+
+  it('derives persisted run metrics from finalization replay projection (#1680)', () => {
+    const result = makeRunResult({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1680'],
+      issuesFiled: ['#1700'],
+      issuesClosed: ['#1680'],
+      cases: ['260629-k1680-replay-finalization'],
+      cost: 2.25,
+      toolCalls: 9,
+      finalClaimStatus: 'valid',
+      finalClaimPath: '/tmp/final-claim.json',
+      finalClaimWarnings: ['claim warning'],
+    });
+    const fallback = buildRunMetrics({
+      runNum: 13,
+      runStartEpoch: 1742681900,
+      duration: 17,
+      exitCode: 0,
+      runMode: 'exploit',
+      result,
+      provider: 'claude',
+      metadata: {
+        prompt_template: 'deep-dive-default.md',
+        prompt_hash: 'abc123',
+        lifecycle_violations: 0,
+        lifecycle_health: 'clean',
+        process_verdict: 'pass',
+        post_merge_verification: 'pass',
+        process_issue_count: 0,
+        process_summary: 'ok',
+        workflow_gate_states: { 'meet-reality': 'done' },
+        workflow_repair_state: 'merge_ready',
+        review_verdict: 'pass',
+        review_cost_usd: 0.12,
+        test_health: 'pass',
+      },
+    });
+    const completeEvent = buildRunCompleteEvent({
+      runId: 'batch/run-13',
+      batchId: 'batch',
+      runNum: 13,
+      duration: 17,
+      exitCode: 0,
+      result,
+      runMode: 'exploit',
+      outcome: 'success',
+      runMetricsForOutcome: fallback,
+      lifecycleViolationCount: 0,
+      lifecycleHealth: 'clean',
+      processVerdict: 'pass',
+      processIssueCount: 0,
+      processSummary: 'ok',
+      workflowGateStates: { 'meet-reality': 'done' },
+      workflowRepairState: 'merge_ready',
+      reviewVerdict: 'pass',
+      reviewCostUsd: 0.12,
+    });
+
+    const replayEvents = buildFinalizationReplayEvents({
+      runId: 'batch/run-13',
+      batchId: 'batch',
+      runNum: 13,
+      runStartEpoch: 1742681900,
+      runMode: 'exploit',
+      runModeReason: 'test',
+      promptMeta: { template: 'deep-dive-default.md', hash: 'abc123' },
+      pickedIssue: '#1680',
+      pickedIssueTitle: 'Provider-neutral replay integration',
+      result,
+      completeEvent,
+    });
+    const [projection] = projectReplayRuns(replayEvents);
+    const metrics = runMetricsFromReplayProjection(projection, fallback);
+
+    expect(metrics).toMatchObject({
+      run: 13,
+      start_epoch: 1742681900,
+      duration_seconds: 17,
+      cost_usd: 2.25,
+      tool_calls: 9,
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1680'],
+      issues_filed: ['#1700'],
+      issues_closed: ['#1680'],
+      cases: ['260629-k1680-replay-finalization'],
+      prompt_template: 'deep-dive-default.md',
+      prompt_hash: 'abc123',
+      lifecycle_health: 'clean',
+      process_verdict: 'pass',
+      post_merge_verification: 'pass',
+      workflow_gate_states: { 'meet-reality': 'done' },
+      workflow_repair_state: 'merge_ready',
+      review_verdict: 'pass',
+      review_cost_usd: 0.12,
+      test_health: 'pass',
+      final_claim_status: 'valid',
+      final_claim_path: '/tmp/final-claim.json',
+      final_claim_warnings: ['claim warning'],
+    });
+    expect(metrics.replay_projection_warnings).toBeUndefined();
+  });
+
+  it('keeps fallback state and records warnings for incomplete replay projections (#1680)', () => {
+    const fallback = buildRunMetrics({
+      runNum: 14,
+      runStartEpoch: 1742682000,
+      duration: 20,
+      exitCode: 0,
+      runMode: 'exploit',
+      result: makeRunResult({
+        issuesFiled: ['#1700'],
+        issuesClosed: ['#1680'],
+        cases: ['260629-k1680-replay-finalization'],
+      }),
+    });
+    const [projection] = projectReplayRuns([{
+      timestamp: '2026-03-26T00:00:00.000Z',
+      event: {
+        type: 'run.start',
+        run_id: 'batch/run-14',
+        batch_id: 'batch',
+        run_num: 14,
+        mode: 'exploit',
+        mode_reason: 'test',
+        prompt_template: 'deep-dive-default.md',
+        prompt_hash: 'abc123',
+        start_epoch: 1742682000,
+      },
+    }]);
+
+    const metrics = runMetricsFromReplayProjection(projection, fallback);
+
+    expect(metrics.issues_filed).toEqual(['#1700']);
+    expect(metrics.issues_closed).toEqual(['#1680']);
+    expect(metrics.cases).toEqual(['260629-k1680-replay-finalization']);
+    expect(metrics.replay_projection_warnings).toEqual(expect.arrayContaining([
+      'missing:run.complete',
+      'missing:cases',
+      'missing:issues_filed',
+      'missing:issues_closed',
+    ]));
+  });
 });
 
 describe('mergeVerifiedClosedIssuesIntoRunResult (#1210)', () => {
@@ -3685,7 +3898,7 @@ describe('mergeVerifiedClosedIssuesIntoRunResult (#1210)', () => {
 
   it('runs before persisted run metrics are built', () => {
     const mergeIndex = AUTO_DENT_RUN_SOURCE.indexOf('mergeVerifiedClosedIssuesIntoRunResult(result, verifyResults)');
-    const metricsIndex = AUTO_DENT_RUN_SOURCE.indexOf('const runMetrics = buildRunMetrics({');
+    const metricsIndex = AUTO_DENT_RUN_SOURCE.indexOf('const runMetrics = projectedRun');
 
     expect(mergeIndex).toBeGreaterThan(-1);
     expect(metricsIndex).toBeGreaterThan(-1);
@@ -5241,12 +5454,14 @@ describe('auto-merge verdict binding wiring (#1220)', () => {
   it('emits hook_activation on run.complete from the normalized run metrics (#1501)', () => {
     const runCompleteBlock = AUTO_DENT_RUN_SOURCE.slice(
       AUTO_DENT_RUN_SOURCE.indexOf('const runMetricsForOutcome = buildRunMetrics({'),
-      AUTO_DENT_RUN_SOURCE.indexOf('events.emit(buildRunCompleteEvent({') + 900,
+      AUTO_DENT_RUN_SOURCE.indexOf('events.emit(finalizedRunCompleteEvent);') + 900,
     );
 
     expect(runCompleteBlock).toContain("provider: state.provider ?? 'claude'");
     expect(runCompleteBlock).toContain('const outcome = deriveRunOutcome({');
-    expect(runCompleteBlock).toContain('events.emit(buildRunCompleteEvent({');
+    expect(runCompleteBlock).toContain('const runCompleteEvent = buildRunCompleteEvent({');
+    expect(runCompleteBlock).toContain('const finalizedRunCompleteEvent: RunCompleteEvent = {');
+    expect(runCompleteBlock).toContain('events.emit(finalizedRunCompleteEvent);');
     expect(runCompleteBlock).toContain('runMetricsForOutcome,');
     expect(AUTO_DENT_RUN_SOURCE).toContain('hook_activation: runMetricsForOutcome.hook_activation');
   });
