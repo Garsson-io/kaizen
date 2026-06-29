@@ -34,6 +34,7 @@ import { type HookInput, readHookInput, traceHookEvent, writeHookOutput } from '
 import { currentHookBranch } from './lib/current-branch.js';
 import { formatGateSignal, type GateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
+import { postMergeWorkflowVerificationLines } from './lib/post-merge-workflows.js';
 import {
   isGhPrCommand,
   isGitCommand,
@@ -357,7 +358,7 @@ export function processHookInput(
       STATUS: 'needs_post_merge',
       BRANCH: branch,
     });
-    const mergeMsg = `\n\ud83c\udf89 PR merged: ${mergeUrl}\n\nNow complete the post-merge workflow:\n1. **Kaizen reflection (REQUIRED)** \u2014 Run \`/kaizen\` NOW.\n2. **Post-merge action needed** \u2014 classify per CLAUDE.md deploy policy.\n3. **Sync main** \u2014 \`git -C ${mc} fetch origin main && git -C ${mc} merge origin/main --no-edit\`\n4. **Update linked issue** \u2014 Close with lessons learned.\n5. **Spec update** \u2014 Move completed work to "Already Solved".\n\n\u26d4 You will NOT be able to finish until /kaizen is run.\n`;
+    const mergeMsg = `\n\ud83c\udf89 PR merged: ${mergeUrl}\n\nNow complete the post-merge workflow:\n1. **Kaizen reflection (REQUIRED)** \u2014 Run \`/kaizen\` NOW.\n2. **Post-merge action needed** \u2014 classify per CLAUDE.md deploy policy.\n3. ${postMergeWorkflowVerificationLines(mergeUrl)}\n4. **Sync main** \u2014 \`git -C ${mc} fetch origin main && git -C ${mc} merge origin/main --no-edit\`\n5. **Update linked issue** \u2014 Close with lessons learned.\n6. **Spec update** \u2014 Move completed work to "Already Solved".\n\n\u26d4 You will NOT be able to finish until /kaizen is run.\n`;
     return decide('post_merge', 'merge_completed', mergeMsg, { mergeUrl });
   }
 

@@ -140,6 +140,8 @@ describe('processPostMergeClear — Bash trigger (MERGED detection)', () => {
 
     expect(output).toContain('PR merge confirmed');
     expect(output).toContain('pull/50');
+    expect(output).toContain('gh run list --repo org/repo --branch main --commit <merge-sha>');
+    expect(output).toContain('If any run failed');
 
     // awaiting_merge should be cleared, needs_post_merge should be written
     const stateFile = join(TEST_STATE_DIR, 'post-merge-org_repo_50');
