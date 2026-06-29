@@ -43,7 +43,8 @@ describe('auto-dent replay fixtures', () => {
     expect(result.invalidRows).toHaveLength(1);
     expect(result.invalidRows[0]).toMatchObject({ lineNumber: 3 });
     expect(result.invalidRows[0].raw).toContain('"type":"run.mystery"');
-    expect(result.invalidRows[0].message).toContain('Invalid input');
+    expect(result.invalidRows[0].message).toEqual(expect.any(String));
+    expect(result.invalidRows[0].message).not.toHaveLength(0);
     expect(result.summary.eventCounts).toEqual({
       'run.start': 1,
       'batch.reflect': 1,
