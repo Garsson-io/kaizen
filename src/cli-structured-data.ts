@@ -312,9 +312,14 @@ async function handleStoreReviewBatch(a: CliArgs): Promise<void> {
   }
   const findings = parsedBatch as ReviewFindingData[];
   const result = storeReviewBatch(pr, r, findings);
-  // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
-  // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
-  writeReviewSentinel(a.repo, a.pr, r);
+  try {
+    // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
+    // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
+    writeReviewSentinel(a.repo, a.pr, r, { strict: true });
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
   console.log(`Batch stored: ${result.urls.length} findings + summary (round ${r})`);
   console.log(`Summary: ${result.summaryUrl}`);
 }
@@ -339,8 +344,13 @@ async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
-  // #920: Write review sentinel so pr-review-loop.ts can verify outcome
-  writeReviewSentinel(a.repo, a.pr, r);
+  try {
+    // #920: Write review sentinel so pr-review-loop.ts can verify outcome
+    writeReviewSentinel(a.repo, a.pr, r, { strict: true });
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
   console.log(`Review summary stored (round ${r}): ${url}`);
 }
 
