@@ -85,6 +85,33 @@ type Handler = (a: CliArgs) => Promise<void>;
  * Keeps `--stdin` usable without the trap of consuming the next arg.
  */
 const BOOLEAN_FLAGS = new Set(['stdin']);
+const CONTENT_FLAGS = ['file', 'payload-file', 'text', 'payload', 'json', 'stdin'] as const;
+const COMMAND_ALLOWED_FLAGS: Record<string, readonly string[]> = {
+  'next-round': ['pr'],
+  'store-review-finding': ['pr', 'round', 'dimension', ...CONTENT_FLAGS],
+  'store-review-batch': ['pr', 'round', ...CONTENT_FLAGS],
+  'quick-pass': ['pr', 'round', 'dimension', 'summary', 'requirements'],
+  'store-review-summary': ['pr', 'round', 'note', ...CONTENT_FLAGS],
+  'list-review-rounds': ['pr'],
+  'list-review-dims': ['pr', 'round'],
+  'read-review-finding': ['pr', 'round', 'dimension'],
+  'read-review-summary': ['pr', 'round'],
+  'store-plan': ['issue', ...CONTENT_FLAGS],
+  'retrieve-plan': ['issue'],
+  'store-testplan': ['issue', ...CONTENT_FLAGS],
+  'retrieve-testplan': ['issue'],
+  'attach-transcript': ['pr', 'issue', 'file', 'label', 'source-path'],
+  'mine-transcripts': ['prs', 'pr'],
+  'store-friction-candidates': ['prs', 'pr', 'issue', 'pr-target'],
+  'store-metadata': ['issue', ...CONTENT_FLAGS],
+  'retrieve-metadata': ['issue'],
+  'query-connected': ['issue'],
+  'query-pr': ['issue'],
+  'update-pr-section': ['pr', 'name', 'section', ...CONTENT_FLAGS],
+  'store-iteration': ['pr', 'issue', ...CONTENT_FLAGS],
+  'retrieve-iteration': ['pr', 'issue'],
+  'emit-test-review-sentinel': ['pr', 'round'],
+};
 
 export function parseArgs(argv?: string[]): CliArgs {
   const args = argv ?? process.argv.slice(2);
@@ -104,6 +131,21 @@ export function parseArgs(argv?: string[]): CliArgs {
   return { command, ...flags } as CliArgs;
 }
 
+export function unknownFlagsForCommand(a: CliArgs): string[] {
+  const commandFlags = COMMAND_ALLOWED_FLAGS[a.command];
+  if (!commandFlags) return [];
+  const allowed = new Set(['repo', ...commandFlags]);
+  return Object.keys(a).filter((name) => name !== 'command' && !allowed.has(name));
+}
+
+export function validateKnownFlags(a: CliArgs): void {
+  const unknown = unknownFlagsForCommand(a);
+  if (unknown.length === 0) return;
+  const options = unknown.map((name) => `--${name}`).join(', ');
+  console.error(`${a.command}: unknown option${unknown.length === 1 ? '' : 's'}: ${options}`);
+  process.exit(1);
+}
+
 /**
  * Read content from --file / --payload-file, --text / --payload, or stdin.
  *
@@ -117,7 +159,7 @@ export function parseArgs(argv?: string[]): CliArgs {
 export function resolveContent(a: CliArgs): string {
   const file = a.file ?? a['payload-file'];
   if (file) return readFileSync(file, 'utf8');
-  const text = a.text ?? a.payload;
+  const text = a.text ?? a.payload ?? a.json;
   if (text) return text;
 
   if ('stdin' in a) {
@@ -525,6 +567,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  validateKnownFlags(a);
   await handler(a);
 }
 
