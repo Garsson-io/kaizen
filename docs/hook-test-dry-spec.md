@@ -8,7 +8,7 @@ The hook test suite (`.claude/hooks/tests/`) has ~308 lines of duplicated boiler
 
 - **Kaizen #85 implementation:** 3 source files changed (35 lines), 10 test files changed (300+ lines). Test boilerplate was 10x the actual fix.
 - **Ongoing maintenance:** Each new hook or shared-function change requires updating N test files instead of 1.
-- **Bug surface:** Pre-existing bugs in duplicated code (e.g., `create_state()` missing BRANCH field in `harness.py`) went undetected because fixes to one copy didn't propagate.
+- **Bug surface:** Pre-existing bugs in duplicated code (e.g., `create_state()` missing BRANCH field in the legacy lifecycle harness) went undetected because fixes to one copy didn't propagate.
 
 ## 2. Desired End State
 
@@ -18,8 +18,8 @@ Each test file contains only:
 
 All environment setup, mock creation, state management helpers, and decision extractors live in shared files, sourced once.
 
-**What's explicitly NOT in scope:**
-- Consolidating bash and Python test suites (they test different things)
+**What's explicitly NOT in scope for the original refactor:**
+- Consolidating bash and lifecycle test suites (completed later by #1076)
 - Changing hook architecture or behavior
 - Adding new tests — this is purely DRY refactoring of existing infrastructure
 
@@ -31,8 +31,8 @@ All environment setup, mock creation, state management helpers, and decision ext
 |---|---|---|
 | Assertions | `test-helpers.sh`: assert_eq, assert_contains, assert_not_contains, assert_ok, assert_fails | Good — sourced by all bash tests |
 | Integration harness | `harness.sh`: run_single_hook, build_*_input, validate_deny_output | Good — used by integration tests |
-| Python harness | `harness.py`: HookHarness, MockBinDir, PRReviewState | Good — used by test_hooks.py |
-| Python PostToolUse timeout contract | `harness.py`: `run_post_hook()` plus `assert_post_hook_stdout_contains()` | Good — use for PostToolUse tests so slow advisory hooks report timeout diagnostics instead of ambiguous missing-output failures |
+| TypeScript lifecycle runner | `src/e2e/hook-runner.ts`: event builders, mock bins, state helpers, result parsing | Good — used by `hook-wrapper-live.test.ts` |
+| TypeScript PostToolUse timeout contract | `src/e2e/hook-runner.ts`: `runHook()` plus `assertPostHookStdoutContains()` | Good — use for PostToolUse tests so slow advisory hooks report timeout diagnostics instead of ambiguous missing-output failures |
 | Mock creation (harness) | `harness.sh`: setup_gh_git_mocks, setup_mock_dir | Good — but only used by harness-based tests |
 
 ### Needs Building
@@ -40,7 +40,7 @@ All environment setup, mock creation, state management helpers, and decision ext
 | Component | What | Why it doesn't exist yet |
 |---|---|---|
 | `setup_test_env()` | Shared function: creates STATE_DIR, mock gh (returns OPEN), exports PATH | Each file creates its own independently |
-| `create_state()` in test-helpers.sh | Shared state file creation with mandatory BRANCH field | 4 files have identical copies; harness.py had a buggy copy |
+| `create_state()` in test-helpers.sh | Shared state file creation with mandatory BRANCH field | 4 files had identical copies; the legacy lifecycle harness had a buggy copy |
 | `cleanup_test_env()` | Shared teardown: removes STATE_DIR + mock dir | 6 files have identical setup/teardown |
 | Decision extractors | `is_denied()` and `is_blocked()` in test-helpers.sh | 4 files define identical helpers under different names |
 | `backdate_file()` | Cross-platform file backdating helper | 5 files duplicate the `touch -d` / `touch -t` / `date -v` fallback chain |
@@ -52,7 +52,7 @@ All environment setup, mock creation, state management helpers, and decision ext
 | STATE_DIR + DEBUG_LOG setup | 6 | 3 | ~18 | `setup_test_env()` |
 | Mock gh (returns OPEN) | 8 | 7 | ~56 | `setup_test_env()` |
 | `setup()` / `teardown()` | 6 | 6 | ~36 | `reset_state()` / `cleanup_test_env()` |
-| `create_state()` | 4 bash + 1 Python | 8 | ~40 | Move to test-helpers.sh |
+| `create_state()` | 4 bash + 1 legacy lifecycle harness | 8 | ~40 | Move to test-helpers.sh |
 | Decision extractors | 4 | 3 | ~12 | `is_denied()` / `is_blocked()` in test-helpers.sh |
 | `touch -d` backdate pattern | 5 | 2 | ~10 | `backdate_file()` |
 | Hook run wrappers with mock PATH | 4 | 6 | ~24 | Can't fully consolidate (different input JSON shapes) |
@@ -171,15 +171,15 @@ run_gate() {
 
 Note: `run_gate`/`run_stop_hook`/`run_tool_gate` stay per-file because they have different input JSON shapes. But they become 2-3 lines each instead of 6+, since PATH and STATE_DIR are already exported by `setup_test_env`.
 
-### Phase 3: Update harness.py
+### Phase 3: Update lifecycle harness
 
-Update `PRReviewState.create_state()` to always include BRANCH (already done in #125, just ensure it stays correct after refactoring).
+Update `PRReviewState.create_state()` to always include BRANCH (done in #125 and preserved in the TS runner after #1076).
 
 ## 6. What NOT to Do
 
 - **Don't extract test scenarios.** Cross-worktree isolation tests, legacy file tests, and stale file tests are duplicated across files, but they're testing *different hooks* with the same invariant. That's intentional coverage, not duplication. Each hook needs its own test proving it respects the invariant.
 - **Don't consolidate hook invocation wrappers.** `run_gate`, `run_stop_hook`, and `run_tool_gate` build different JSON input shapes. A generic wrapper would need parameters that make it harder to read than the 3-line specializations.
-- **Don't merge bash and Python tests.** The Python tests cover schema validation and multi-file lifecycle — different value than the bash unit tests.
+- **Don't merge bash and lifecycle test intent.** The lifecycle tests cover schema validation and multi-file hook composition — different value than the bash unit tests, even now that both run from the same shell entrypoint.
 
 ## 7. Verification
 
@@ -191,20 +191,20 @@ bash .claude/hooks/tests/run-all-tests.sh
 
 **Pass criteria:** Same pass/fail counts as before. Zero regressions.
 
-### Python PostToolUse tests
+### TypeScript PostToolUse tests
 
-When adding Python lifecycle coverage for a PostToolUse hook, use:
+When adding TypeScript lifecycle coverage for a PostToolUse hook, use:
 
-```python
-result = harness.run_post_hook("kaizen-reflect-ts.sh", post_tool_use_input)
-assert_post_hook_stdout_contains(result, "KAIZEN", "PostToolUse kaizen-reflect")
+```ts
+const result = runHook(hook("kaizen-reflect-ts.sh"), postToolUseInput, { timeout: 30000 });
+assertPostHookStdoutContains(result, "KAIZEN", "PostToolUse kaizen-reflect");
 ```
 
-`run_post_hook()` uses `KAIZEN_POST_TOOL_USE_TEST_TIMEOUT_SECONDS` when set, or
-30 seconds by default. `assert_post_hook_stdout_contains()` checks
-`HookResult.timed_out` before checking stdout, so a slow advisory hook reports
+`runHook()` returns `timedOut` on subprocess timeout.
+`assertPostHookStdoutContains()` checks `HookResult.timedOut` before checking
+stdout, so a slow advisory hook reports
 which hook timed out and what output was expected. Do not hand-roll
-`assert "KAIZEN" in result.stdout` for PostToolUse hooks; that reintroduces the
+`expect(result.stdout).toContain("KAIZEN")` for PostToolUse hooks; that reintroduces the
 #1120 false-red failure mode under fleet load.
 
 ## 8. Open Questions (Resolved)

@@ -5,7 +5,7 @@
 #   bash .claude/hooks/tests/run-all-tests.sh           # Run all
 #   bash .claude/hooks/tests/run-all-tests.sh --unit     # Unit tests only
 #   bash .claude/hooks/tests/run-all-tests.sh --harness  # Integration tests only
-#   bash .claude/hooks/tests/run-all-tests.sh --quick    # Fast subset (python only)
+#   bash .claude/hooks/tests/run-all-tests.sh --quick    # Fast lifecycle subset
 #   KAIZEN_HOOK_TEST_JOBS=1 bash .claude/hooks/tests/run-all-tests.sh  # Serial shell files
 #   bash .claude/hooks/tests/run-all-tests.sh --jobs 4  # Parallel shell file count
 #
@@ -28,7 +28,7 @@ source "$SCRIPT_DIR/runner-dist-isolation.sh"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --unit|--harness|--python|--quick)
+    --unit|--harness|--quick)
       MODE="$1"
       shift
       ;;
@@ -82,8 +82,8 @@ TOTAL_FAIL=0
 TOTAL_TESTS=0
 FAILED_FILES=()
 # Failing test identifiers collected for the #1518 owned-failure classifier
-# (pytest nodeids; shell test file names). A failure is only tolerated if it is
-# owned by an OPEN issue in .agents/kaizen/known-failures.json.
+# (Vitest file names; shell test file names). A failure is only tolerated if it
+# is owned by an OPEN issue in .agents/kaizen/known-failures.json.
 FAILED_IDS=()
 # Failures we could NOT turn into a classifiable test id — a missing test runner,
 # or a test process that failed without emitting parseable test ids. These are
@@ -288,44 +288,18 @@ for f in "$SCRIPT_DIR"/test-*.sh; do
   fi
 done
 
-# Python harness test
-PYTHON_TEST="$SCRIPT_DIR/test_hooks.py"
+LIFECYCLE_TEST="src/e2e/hook-wrapper-live.test.ts"
 
 echo "Hook Test Suite"
 echo "==============="
 echo "Discovered ${#UNIT_TESTS[@]} unit tests, ${#HARNESS_TESTS[@]} integration tests"
 
-# Missing python3/pytest normally means a local "soft skip" — but in the
-# required CI path that silent skip is exactly the #1481 ambiguity (green CI
-# while the local hook lifecycle suite is red). Set KAIZEN_REQUIRE_PYTHON_TESTS=1
-# (CI does) to make the absence of the runner a HARD failure instead.
-python_runner_missing() {
-  local reason="$1"
-  if [ "${KAIZEN_REQUIRE_PYTHON_TESTS:-0}" = "1" ]; then
-    echo "  FAIL: $reason — required in this path (KAIZEN_REQUIRE_PYTHON_TESTS=1). Install pytest (pip install pytest)."
-    TOTAL_FAIL=$((TOTAL_FAIL + 1))
-    FAILED_FILES+=("test_hooks.py (runner unavailable: $reason)")
-    # Infrastructure failure — not a registry-ownable test, so never tolerable.
-    UNCLASSIFIABLE_FAIL=$((UNCLASSIFIABLE_FAIL + 1))
-  else
-    echo "  SKIP: $reason"
-  fi
-}
-
-run_python_tests() {
+run_lifecycle_tests() {
   echo ""
-  echo "━━━ test_hooks.py (pytest) ━━━"
-  if ! command -v python3 &>/dev/null; then
-    python_runner_missing "python3 not available"
-    return
-  fi
-  if ! python3 -c "import pytest" 2>/dev/null; then
-    python_runner_missing "pytest not installed (pip install pytest)"
-    return
-  fi
+  echo "━━━ hook-wrapper-live.test.ts (vitest) ━━━"
 
   local output exit_code
-  output=$(python3 -m pytest "$PYTHON_TEST" -v --tb=short 2>&1)
+  output=$(npx vitest run "$LIFECYCLE_TEST" 2>&1)
   exit_code=$?
 
   local pass fail
@@ -339,19 +313,10 @@ run_python_tests() {
   TOTAL_TESTS=$((TOTAL_TESTS + pass + fail))
 
   if [ "$exit_code" -ne 0 ] || [ "$fail" -gt 0 ]; then
-    echo "$output" | grep -E '(PASSED|FAILED)' | head -20
+    echo "$output" | grep -E '(FAIL|failed|Error:)' | head -40
     echo "  RESULT: $pass passed, $fail failed"
-    FAILED_FILES+=("test_hooks.py")
-    # Collect pytest nodeids ("FAILED <nodeid> - ...") for the #1518 classifier.
-    local nodeids_before=${#FAILED_IDS[@]}
-    while IFS= read -r nodeid; do
-      [ -n "$nodeid" ] && FAILED_IDS+=("$nodeid")
-    done < <(echo "$output" | grep -oP '^FAILED \K\S+' || true)
-    # A pytest failure with no parseable nodeids (e.g. a collection/import error)
-    # cannot be attributed to a registry entry — treat as unclassifiable (fatal).
-    if [ "${#FAILED_IDS[@]}" -eq "$nodeids_before" ]; then
-      UNCLASSIFIABLE_FAIL=$((UNCLASSIFIABLE_FAIL + 1))
-    fi
+    FAILED_FILES+=("$LIFECYCLE_TEST")
+    FAILED_IDS+=("$LIFECYCLE_TEST")
   else
     echo "  RESULT: $pass passed, $fail failed"
   fi
@@ -365,20 +330,16 @@ case "$MODE" in
   --harness)
     echo "Running harness tests only..."
     run_shell_tests "${HARNESS_TESTS[@]}"
-    run_python_tests
-    ;;
-  --python)
-    echo "Running Python tests only..."
-    run_python_tests
+    run_lifecycle_tests
     ;;
   --quick)
     echo "Running quick subset..."
-    run_python_tests
+    run_lifecycle_tests
     ;;
   all|*)
     echo "Running all tests..."
     run_shell_tests "${UNIT_TESTS[@]}" "${HARNESS_TESTS[@]}"
-    run_python_tests
+    run_lifecycle_tests
     ;;
 esac
 

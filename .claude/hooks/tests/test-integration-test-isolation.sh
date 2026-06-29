@@ -3,7 +3,7 @@
 #
 # INVARIANT: Tests NEVER write to production state directories.
 # When STATE_DIR and AUDIT_DIR are set (as done by run-all-tests.sh and
-# harness.py), hooks must write only to those directories, not to the
+# hook-wrapper-live.test.ts), hooks must write only to those directories, not to the
 # default production paths.
 #
 # This test is the category prevention test for kaizen #373, #340, #448.
@@ -122,24 +122,23 @@ HARDCODED_STATE=$(grep -r '/tmp/\.pr-review-state' "$HOOKS_DIR" --include='*.sh'
   | grep -v 'STATE_DIR=' || true)
 assert_eq "no hardcoded /tmp/.pr-review-state in hooks (outside defaults)" "" "$HARDCODED_STATE"
 
-# Phase 5: Verify Python harness auto-sets isolation
+# Phase 5: Verify TypeScript hook runner auto-sets isolation
 echo ""
-echo "--- Phase 5: Python harness auto-isolation ---"
+echo "--- Phase 5: TypeScript hook runner auto-isolation ---"
 
-if command -v python3 &>/dev/null; then
-  HARNESS_CHECK=$(python3 -c "
-import sys
-sys.path.insert(0, '$SCRIPT_DIR')
-from harness import HookHarness
-h = HookHarness()
-print('STATE_DIR' in h.env_overrides and '/tmp/.pr-review-state' not in h.env_overrides['STATE_DIR'])
-print('AUDIT_DIR' in h.env_overrides)
-h.cleanup()
+TSX="$REPO_ROOT/node_modules/.bin/tsx"
+if [ -x "$TSX" ]; then
+  HARNESS_CHECK=$(cd "$REPO_ROOT" && "$TSX" --eval "
+import { createIsolatedHookEnv } from './src/e2e/hook-runner.ts';
+const h = createIsolatedHookEnv();
+console.log('STATE_DIR=' + (h.env.STATE_DIR && !h.env.STATE_DIR.includes('/tmp/.pr-review-state')));
+console.log('AUDIT_DIR=' + Boolean(h.env.AUDIT_DIR));
+h.cleanup();
 " 2>/dev/null || echo "error")
-  assert_contains "harness sets isolated STATE_DIR" "True" "$HARNESS_CHECK"
-  assert_contains "harness sets AUDIT_DIR" "True" "$HARNESS_CHECK"
+  assert_contains "hook runner sets isolated STATE_DIR" "STATE_DIR=true" "$HARNESS_CHECK"
+  assert_contains "hook runner sets AUDIT_DIR" "AUDIT_DIR=true" "$HARNESS_CHECK"
 else
-  echo "  SKIP: python3 not available"
+  echo "  SKIP: tsx not available"
   skip_pass 2
 fi
 
