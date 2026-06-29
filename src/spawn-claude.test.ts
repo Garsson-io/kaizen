@@ -140,7 +140,7 @@ describe('buildSpawnAgentCommand', () => {
         'exec',
         '--json',
         '--cd',
-        '/repo/kaizen',
+        '/repo',
         '--sandbox',
         'read-only',
         '--color',

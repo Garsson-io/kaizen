@@ -16,7 +16,7 @@ import { processStreamMessage } from './auto-dent-stream.js';
 import { makeRunResult } from './auto-dent-test-helpers.js';
 
 describe('buildCodexExecArgs (#1144)', () => {
-  it('constructs codex exec argv for externally sandboxed synthetic runs', () => {
+  it('constructs read-only codex exec argv by default', () => {
     const args = buildCodexExecArgs('/repo/worktree');
 
     expect(args).toEqual([
@@ -25,8 +25,7 @@ describe('buildCodexExecArgs (#1144)', () => {
       '--cd',
       '/repo/worktree',
       '--sandbox',
-      'danger-full-access',
-      '--dangerously-bypass-approvals-and-sandbox',
+      'read-only',
       '--color',
       'never',
       '-',

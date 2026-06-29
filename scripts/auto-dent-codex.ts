@@ -4,6 +4,7 @@
 
 export {
   assessCodexRun,
+  assessCodexRunFields,
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
   hasCodexFailedTerminalEvent,
@@ -16,5 +17,6 @@ export {
   parseCodexJsonl,
   type AutoDentStreamMessage,
   type CodexRunAssessment,
+  type CodexRunAssessmentFields,
   type ParsedCodexJsonl,
 } from '../src/codex-agent.js';

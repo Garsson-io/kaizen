@@ -130,6 +130,11 @@ export const PROVIDER_CAPABILITIES: readonly ProviderCapability[] = [
 /** @deprecated Use PROVIDER_CAPABILITIES. Kept as a compatibility alias. */
 export const CAPABILITY_INVENTORY = PROVIDER_CAPABILITIES;
 
+export function isAcceptedSubscriptionCompatibleCapability(capability: Pick<ProviderCapability, 'acceptedForUnattended' | 'billingMode'>): boolean {
+  return capability.acceptedForUnattended &&
+    SUBSCRIPTION_COMPATIBLE_BILLING.includes(capability.billingMode);
+}
+
 /** A single reason a provider plan was rejected. */
 export const PlanViolationSchema = z.object({
   phase: PhaseSchema,
@@ -159,8 +164,7 @@ function hasSubscriptionCompatibleCapability(
     (c) =>
       c.phase === phase &&
       c.provider === provider &&
-      c.acceptedForUnattended &&
-      SUBSCRIPTION_COMPATIBLE_BILLING.includes(c.billingMode),
+      isAcceptedSubscriptionCompatibleCapability(c),
   );
 }
 
@@ -226,8 +230,7 @@ function subscriptionCompatibleCapabilities(
 ): ProviderCapability[] {
   return inventory.filter((c) =>
     c.phase === phase &&
-    c.acceptedForUnattended &&
-    SUBSCRIPTION_COMPATIBLE_BILLING.includes(c.billingMode)
+    isAcceptedSubscriptionCompatibleCapability(c)
   );
 }
 

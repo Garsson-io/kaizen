@@ -307,8 +307,7 @@ describe('provider-aware review-fix loop (#1148)', () => {
       '--cd',
       '/repo',
       '--sandbox',
-      'danger-full-access',
-      '--dangerously-bypass-approvals-and-sandbox',
+      'workspace-write',
       '--color',
       'never',
       '-',
@@ -482,6 +481,19 @@ describe('checkFixResult (integration: real temp files)', () => {
       expect(r.output).toContain('not authenticated');
     } finally { teardown(); }
   });
+
+  it('treats pid 0 provider-spawn-error logs as completed failures', () => {
+    const dir = setup();
+    try {
+      const logFile = join(dir, 'fix.log');
+      writeFileSync(logFile, 'Provider spawn error: spawn codex ENOENT\n');
+      writeFileSync(logFile + '.stderr', 'Provider spawn error: spawn codex ENOENT\n');
+      const r = checkFixResult(logFile, 0, { provider: 'codex', billing: 'subscription-cli' });
+      expect(r.done).toBe(true);
+      expect(r.success).toBe(false);
+      expect(r.output).toContain('spawn codex ENOENT');
+    } finally { teardown(); }
+  });
 });
 
 describe('launchFix subprocess error visibility', () => {
@@ -493,6 +505,7 @@ describe('launchFix subprocess error visibility', () => {
     );
 
     expect(launchSection).toContain("child.on('error', (spawnError)");
+    expect(launchSection).toContain('cwd: repoRoot');
     expect(launchSection).toContain('Provider spawn error: ${spawnError.message}');
     expect(launchSection).toContain("writeFileSync(logFile + '.stderr', message, { flag: 'a' })");
   });

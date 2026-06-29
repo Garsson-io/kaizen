@@ -29,8 +29,14 @@ export interface CodexRunAssessment {
   failureNotes: string[];
 }
 
+export interface CodexRunAssessmentFields {
+  malformedLineCount: number;
+  hasTerminalEvent: boolean;
+  hasFailedTerminalEvent: boolean;
+}
+
 export function buildCodexExecArgs(repoRoot: string, opts: CodexExecArgsOptions = {}): string[] {
-  const sandbox = opts.sandbox ?? 'danger-full-access';
+  const sandbox = opts.sandbox ?? 'read-only';
   const args = [
     'exec',
     '--json',
@@ -39,7 +45,7 @@ export function buildCodexExecArgs(repoRoot: string, opts: CodexExecArgsOptions 
     '--sandbox',
     sandbox,
   ];
-  if (opts.bypassApprovalsAndSandbox ?? (sandbox === 'danger-full-access')) {
+  if (opts.bypassApprovalsAndSandbox ?? false) {
     args.push('--dangerously-bypass-approvals-and-sandbox');
   }
   args.push(
@@ -92,9 +98,15 @@ export function hasCodexFailedTerminalEvent(parsed: ParsedCodexJsonl): boolean {
 }
 
 export function assessCodexRun(parsed: ParsedCodexJsonl): CodexRunAssessment {
-  const malformedLineCount = parsed.malformedLines.length;
-  const hasTerminalEvent = hasCodexTerminalEvent(parsed);
-  const hasFailedTerminalEvent = hasCodexFailedTerminalEvent(parsed);
+  return assessCodexRunFields({
+    malformedLineCount: parsed.malformedLines.length,
+    hasTerminalEvent: hasCodexTerminalEvent(parsed),
+    hasFailedTerminalEvent: hasCodexFailedTerminalEvent(parsed),
+  });
+}
+
+export function assessCodexRunFields(fields: CodexRunAssessmentFields): CodexRunAssessment {
+  const { malformedLineCount, hasTerminalEvent, hasFailedTerminalEvent } = fields;
   const failureNotes = [
     ...(malformedLineCount > 0 ? [`malformed codex jsonl lines: ${malformedLineCount}`] : []),
     ...(!hasTerminalEvent ? ['missing codex terminal event'] : []),

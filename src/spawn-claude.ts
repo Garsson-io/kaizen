@@ -10,9 +10,10 @@
  * the provider-neutral `spawnAgent`/`buildSpawnAgentCommand` surface (#1580).
  */
 
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { assessCodexRun, buildCodexExecArgs, parseCodexJsonl } from './codex-agent.js';
 import { parseJsonLines } from './lib/json-lines.js';
+import { resolveProjectRoot } from './lib/resolve-project-root.js';
 
 interface StreamJsonContentBlock {
   type?: unknown;
@@ -106,11 +107,7 @@ export interface SpawnAgentCommand {
 }
 
 export function resolveCodexRepoRoot(cwd = process.cwd()): string {
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
-  } catch {
-    return cwd;
-  }
+  return resolveProjectRoot(cwd);
 }
 
 export function buildSpawnClaudeArgs(opts: SpawnClaudeArgsOptions = {}): string[] {

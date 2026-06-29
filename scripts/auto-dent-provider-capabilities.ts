@@ -9,7 +9,7 @@
 import { escapeMarkdownTableCell } from './markdown-table.js';
 import {
   PHASES,
-  SUBSCRIPTION_COMPATIBLE_BILLING,
+  isAcceptedSubscriptionCompatibleCapability,
   type BillingMode,
   type Phase as AutoDentPhase,
   type Provider,
@@ -194,7 +194,10 @@ export function validateProviderCapabilityRuntimeAlignment(
     capabilities.some((cap) =>
       cap.provider === runtime.provider &&
       cap.billingMode === runtime.billingMode &&
-      cap.acceptedForUnattended &&
+      isAcceptedSubscriptionCompatibleCapability({
+        acceptedForUnattended: cap.acceptedForUnattended,
+        billingMode: cap.billingMode,
+      }) &&
       cap.phaseFit[runtime.phase] !== 'not-applicable' &&
       cap.phaseFit[runtime.phase] !== 'avoid'
     );
@@ -208,8 +211,7 @@ export function validateProviderCapabilityRuntimeAlignment(
         candidate.provider === cap.provider &&
         candidate.phase === phase &&
         candidate.billingMode === cap.billingMode &&
-        candidate.acceptedForUnattended &&
-        SUBSCRIPTION_COMPATIBLE_BILLING.includes(candidate.billingMode)
+        isAcceptedSubscriptionCompatibleCapability(candidate)
       );
       if (!runtime) {
         errors.push(`${cap.id}: ${cap.provider}/${phase}/${cap.billingMode} is not accepted by the runtime provider inventory`);
@@ -217,7 +219,7 @@ export function validateProviderCapabilityRuntimeAlignment(
     }
   }
   for (const runtime of runtimeCapabilities) {
-    if (!runtime.acceptedForUnattended || !SUBSCRIPTION_COMPATIBLE_BILLING.includes(runtime.billingMode)) continue;
+    if (!isAcceptedSubscriptionCompatibleCapability(runtime)) continue;
     if (!describesRuntimeCapability(runtime)) {
       errors.push(`runtime ${runtime.provider}/${runtime.phase}/${runtime.billingMode} is accepted but missing from the descriptive provider matrix`);
     }

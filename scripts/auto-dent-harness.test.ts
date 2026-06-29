@@ -192,7 +192,6 @@ describe('replay: edge cases', () => {
       command: 'claude',
       args: [
         '-p',
-        'emit a marker',
         '--output-format',
         'stream-json',
         '--max-budget-usd',

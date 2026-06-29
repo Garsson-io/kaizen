@@ -228,8 +228,8 @@ export function buildFixProviderCommand(input: {
   return {
     command: 'codex',
     args: buildCodexExecArgs(input.repoRoot ?? process.cwd(), {
-      sandbox: 'danger-full-access',
-      bypassApprovalsAndSandbox: true,
+      sandbox: 'workspace-write',
+      bypassApprovalsAndSandbox: false,
     }),
   };
 }
@@ -562,6 +562,7 @@ function launchFix(prompt: string, logDir: string, round: number, provider: Revi
   const command = buildFixProviderCommand({ provider, repoRoot });
 
   const child = asyncSpawn(command.command, command.args, {
+    cwd: repoRoot,
     detached: true,
     stdio: [stdin, out, err],
   });
@@ -594,11 +595,13 @@ function launchFix(prompt: string, logDir: string, round: number, provider: Revi
 export function checkFixResult(logFile: string, pid: number, provider: ReviewFixProvider = DEFAULT_REVIEW_FIX_PROVIDER): { done: boolean; success: boolean; costUsd: number; output: string } {
   // Check if process is still running
   let running = false;
-  try {
-    process.kill(pid, 0); // signal 0 = check if alive
-    running = true;
-  } catch {
-    running = false;
+  if (pid > 0) {
+    try {
+      process.kill(pid, 0); // signal 0 = check if alive
+      running = true;
+    } catch {
+      running = false;
+    }
   }
 
   if (!existsSync(logFile)) {

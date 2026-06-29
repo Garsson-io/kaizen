@@ -26,6 +26,7 @@ import {
   type StreamContext,
 } from './auto-dent-run.js';
 import {
+  assessCodexRunFields,
   buildCodexExecArgs,
   isCodexFailedTerminalEvent,
   isCodexTerminalEvent,
@@ -222,7 +223,7 @@ export function buildLiveProbeCommand(opts: Required<Pick<LiveProbeOpts, 'provid
     provider: 'claude',
     command: 'claude',
     args: [
-      '-p', opts.prompt,
+      '-p',
       '--output-format', 'stream-json',
       '--max-budget-usd', String(opts.maxBudget),
       '--verbose',
@@ -239,16 +240,10 @@ export function normalizeLiveProbeExitCode(
   hasFailedTerminalEvent = false,
 ): number {
   if (provider === 'codex') {
-    return normalizeCodexProcessExitCode(exitCode, {
-      malformedLineCount: malformedJsonlLines,
-      hasTerminalEvent,
-      hasFailedTerminalEvent,
-      failureNotes: [
-        ...(malformedJsonlLines > 0 ? [`malformed codex jsonl lines: ${malformedJsonlLines}`] : []),
-        ...(!hasTerminalEvent ? ['missing codex terminal event'] : []),
-        ...(hasFailedTerminalEvent ? ['codex turn failed'] : []),
-      ],
-    });
+    return normalizeCodexProcessExitCode(
+      exitCode,
+      assessCodexRunFields({ malformedLineCount: malformedJsonlLines, hasTerminalEvent, hasFailedTerminalEvent }),
+    );
   }
   return exitCode;
 }
@@ -281,10 +276,10 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
   return new Promise((resolve) => {
     const child = spawn(command.command, command.args, {
       cwd,
-      stdio: provider === 'codex' ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       timeout: timeoutMs,
     });
-    if (provider === 'codex') child.stdin?.end(prompt);
+    child.stdin?.end(prompt);
 
     // Intercept console.log once for the entire probe
     const realLog = console.log;

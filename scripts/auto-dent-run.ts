@@ -48,8 +48,8 @@ import {
   computeSteeringRecommendations,
 } from './batch-outcome.js';
 import {
+  isAcceptedSubscriptionCompatibleCapability,
   phaseProvidersForAgentProvider,
-  SUBSCRIPTION_COMPATIBLE_BILLING,
   type PhaseProviderRecord,
   type Provider,
   type ProviderCapability,
@@ -170,6 +170,7 @@ import {
 import { degradedRunLogBanner, unknownHookActivationVerdict, type HookActivationVerdict } from './auto-dent-hook-activation.js';
 import {
   assessCodexRun,
+  assessCodexRunFields,
   buildCodexExecArgs,
   extractCodexPhaseMarkers,
   normalizeCodexEventToStreamMessages,
@@ -1706,14 +1707,7 @@ export function normalizeCodexRunExitCode(
   hasFailedTerminalEvent = false,
 ): number {
   return normalizeCodexProcessExitCode(exitCode, {
-    malformedLineCount,
-    hasTerminalEvent,
-    hasFailedTerminalEvent,
-    failureNotes: [
-      ...(malformedLineCount > 0 ? [`malformed codex jsonl lines: ${malformedLineCount}`] : []),
-      ...(!hasTerminalEvent ? ['missing codex terminal event'] : []),
-      ...(hasFailedTerminalEvent ? ['codex turn failed'] : []),
-    ],
+    ...assessCodexRunFields({ malformedLineCount, hasTerminalEvent, hasFailedTerminalEvent }),
   });
 }
 
@@ -1753,8 +1747,8 @@ async function runCodex(
     let raw = '';
     const ctx: StreamContext = { provider: 'codex' };
     const child = spawn('codex', buildCodexExecArgs(input.repoRoot, {
-      sandbox: 'danger-full-access',
-      bypassApprovalsAndSandbox: true,
+      sandbox: 'workspace-write',
+      bypassApprovalsAndSandbox: false,
     }), {
       cwd: input.repoRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -2234,8 +2228,7 @@ export function shouldRunCodexProvider(
   return capabilities.some((cap) =>
     cap.provider === 'codex' &&
     cap.phase === 'implementation' &&
-    cap.acceptedForUnattended &&
-    SUBSCRIPTION_COMPATIBLE_BILLING.includes(cap.billingMode)
+    isAcceptedSubscriptionCompatibleCapability(cap)
   );
 }
 
