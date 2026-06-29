@@ -147,6 +147,10 @@ describe('parseCliArgs', () => {
     expect(() => parseCliArgs(['store', '--file', 'artifact.json', '--debug', '--dry-run'])).toThrow('--debug cannot be combined with --dry-run');
   });
 
+  it('rejects debug mode for run-and-store because it only writes authoritative storage', () => {
+    expect(() => parseCliArgs(['run-and-store', '--debug', '--store-only-if-pass'])).toThrow('--debug is only supported by the store command');
+  });
+
   it('accepts explicit full PR review mode', () => {
     const parsed = parseCliArgs(['run', '--pr', '1735', '--issue', '1732', '--repo', 'Garsson-io/kaizen', '--all-pr']);
 

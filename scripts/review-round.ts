@@ -233,6 +233,9 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
   if (values.debug === true && values['dry-run'] === true) {
     throw new Error('--debug cannot be combined with --dry-run');
   }
+  if (command === 'run-and-store' && values.debug === true) {
+    throw new Error('--debug is only supported by the store command');
+  }
 
   const parsedPrUrl = parseGithubPrUrl(values.pr);
   let repo = values.repo ?? process.env.GITHUB_REPOSITORY;
