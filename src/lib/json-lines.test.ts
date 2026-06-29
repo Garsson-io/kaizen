@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -7,12 +7,7 @@ import {
   parseJsonLines,
   parseJsonLinesWithMalformedRows,
 } from './json-lines.js';
-
-function makeJsonLinesTestDir(suffix: string): string {
-  const base = join(process.cwd(), 'data', 'test-tmp');
-  mkdirSync(base, { recursive: true });
-  return mkdtempSync(join(base, `json-lines-${suffix}-`));
-}
+import { makeIgnoredTestDir } from './test-dirs.js';
 
 describe('parseJsonLines', () => {
   it('parses valid JSON lines while skipping blanks and malformed rows', () => {
@@ -41,7 +36,7 @@ describe('parseJsonLines', () => {
 
 describe('appendJsonLine', () => {
   it('creates parent directories and appends one JSON value per line', () => {
-    const dir = makeJsonLinesTestDir('append-a');
+    const dir = makeIgnoredTestDir('json-lines-append-a');
     const filePath = join(dir, 'nested', 'events.jsonl');
 
     try {
@@ -60,7 +55,7 @@ describe('appendJsonLine', () => {
 
 describe('appendBoundedJsonLine', () => {
   it('creates parent directories and appends one JSON value per line', () => {
-    const dir = makeJsonLinesTestDir('bounded-a');
+    const dir = makeIgnoredTestDir('json-lines-bounded-a');
     const filePath = join(dir, 'nested', 'events.jsonl');
 
     try {
@@ -77,7 +72,7 @@ describe('appendBoundedJsonLine', () => {
   });
 
   it('rotates before the write that would exceed the active file cap', () => {
-    const dir = makeJsonLinesTestDir('bounded-b');
+    const dir = makeIgnoredTestDir('json-lines-bounded-b');
     const filePath = join(dir, 'events.jsonl');
 
     try {
@@ -92,7 +87,7 @@ describe('appendBoundedJsonLine', () => {
   });
 
   it('keeps only the configured number of backup generations', () => {
-    const dir = makeJsonLinesTestDir('bounded-c');
+    const dir = makeIgnoredTestDir('json-lines-bounded-c');
     const filePath = join(dir, 'events.jsonl');
 
     try {
@@ -111,7 +106,7 @@ describe('appendBoundedJsonLine', () => {
   });
 
   it('deletes the previous active file when zero backups are configured', () => {
-    const dir = makeJsonLinesTestDir('bounded-d');
+    const dir = makeIgnoredTestDir('json-lines-bounded-d');
     const filePath = join(dir, 'events.jsonl');
 
     try {
@@ -127,7 +122,7 @@ describe('appendBoundedJsonLine', () => {
   });
 
   it('fills the active file exactly to the cap, then rotates on the next append', () => {
-    const dir = makeJsonLinesTestDir('bounded-e');
+    const dir = makeIgnoredTestDir('json-lines-bounded-e');
     const filePath = join(dir, 'events.jsonl');
     const line = `${JSON.stringify({ a: 1 })}\n`;
 
