@@ -82,6 +82,35 @@ function makeScore(overrides: Partial<BatchScore> = {}): BatchScore {
   };
 }
 
+const degradedSignal = {
+  verdict: 'degraded' as const,
+  score: 0.8,
+  first_half_success_rate: 1,
+  second_half_success_rate: 0,
+  success_rate_delta: -1,
+  trailing_failure_count: 3,
+  trailing_empty_success_count: 2,
+  early_cost_per_success: 1,
+  late_cost_per_success: null,
+  cost_per_success_ratio: null,
+  duration_slope_seconds_per_run: 75,
+  reasons: ['success rate fell from 100% to 0%', '3 trailing failed runs'],
+};
+
+const watchSignal = {
+  ...degradedSignal,
+  verdict: 'watch' as const,
+  score: 0.33,
+  second_half_success_rate: 2 / 3,
+  success_rate_delta: -1 / 3,
+  trailing_failure_count: 0,
+  trailing_empty_success_count: 0,
+  late_cost_per_success: 1,
+  cost_per_success_ratio: 1,
+  duration_slope_seconds_per_run: 0,
+  reasons: ['success rate fell from 100% to 67%'],
+};
+
 describe('buildBatchOutcome — pure derivation', () => {
   it('maps state + score into a schema-valid outcome', () => {
     const outcome = buildBatchOutcome(makeState(), makeScore(), 1_600);
@@ -149,6 +178,17 @@ describe('buildBatchOutcome — pure derivation', () => {
     expect(outcome.totals.runs).toBe(0);
     expect(outcome.wall_seconds).toBe(1);
   });
+
+  it('persists the additive degradation signal when scoreBatch produced one', () => {
+    const outcome = buildBatchOutcome(
+      makeState(),
+      makeScore({ degradation_signal: degradedSignal }),
+      1_600,
+    );
+
+    expect(() => BatchOutcomeSchema.parse(outcome)).not.toThrow();
+    expect(outcome.degradation_signal).toEqual(degradedSignal);
+  });
 });
 
 describe('BatchOutcomeSchema — drift guard', () => {
@@ -161,6 +201,12 @@ describe('BatchOutcomeSchema — drift guard', () => {
     const good: any = buildBatchOutcome(makeState(), makeScore(), 1_600);
     delete good.totals;
     expect(() => BatchOutcomeSchema.parse(good)).toThrow();
+  });
+
+  it('accepts legacy payloads that predate degradation_signal', () => {
+    const legacy: any = buildBatchOutcome(makeState(), makeScore(), 1_600);
+    delete legacy.degradation_signal;
+    expect(BatchOutcomeSchema.parse(legacy).degradation_signal).toBeUndefined();
   });
 });
 
@@ -303,6 +349,37 @@ describe('computeSteeringRecommendations — pure analysis', () => {
     expect(traj?.text).toMatch(/declining/i);
     // Declining trajectory is the highest-priority signal → sorts first.
     expect(r.recommendations[0].kind).toBe('trajectory');
+  });
+
+  it('prioritizes explicit degradation signals from prior batch outcomes', () => {
+    const r = computeSteeringRecommendations([
+      makeOutcome({ batch_id: 'healthy', batch_start: 1 }),
+      makeOutcome({
+        batch_id: 'degraded',
+        batch_start: 2,
+        degradation_signal: degradedSignal,
+      }),
+    ]);
+
+    expect(r.recommendations[0]).toMatchObject({
+      priority: 8,
+      kind: 'trajectory',
+    });
+    expect(r.recommendations[0].text).toContain('degraded long-horizon degradation');
+    expect(r.recommendations[0].text).toContain('Pause broad auto-dent guidance');
+  });
+
+  it('uses watch-specific guidance for watch degradation signals', () => {
+    const r = computeSteeringRecommendations([
+      makeOutcome({
+        batch_id: 'watch',
+        batch_start: 1,
+        degradation_signal: watchSignal,
+      }),
+    ]);
+
+    expect(r.recommendations[0].text).toContain('watch long-horizon degradation');
+    expect(r.recommendations[0].text).toContain('Watch late-run quality');
   });
 
   it('notes an improving trajectory', () => {

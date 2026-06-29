@@ -6,8 +6,10 @@ import {
   scoreModeBreakdown,
   computeModeDiversity,
   computeBatchTrend,
+  computeBatchDegradationSignal,
   formatRunScoreLine,
   formatBatchScoreTable,
+  formatDegradationSignal,
   effectiveIssuesClosed,
   formatIssuesClosedLine,
   formatModeBreakdown,
@@ -1220,6 +1222,120 @@ describe('scoreBatch trend integration', () => {
   });
 });
 
+describe('computeBatchDegradationSignal', () => {
+  it('returns insufficient_data for batches with fewer than 4 runs', () => {
+    const signal = computeBatchDegradationSignal([makeRunScore(), makeRunScore()]);
+    expect(signal.verdict).toBe('insufficient_data');
+    expect(signal.score).toBe(0);
+    expect(signal.first_half_success_rate).toBeNull();
+    expect(formatDegradationSignal(signal)).toBe('insufficient data');
+  });
+
+  it('keeps stable successful batches healthy', () => {
+    const runs = Array.from({ length: 6 }, () => makeRunScore());
+    const signal = computeBatchDegradationSignal(runs);
+    expect(signal.verdict).toBe('healthy');
+    expect(signal.score).toBe(0);
+    expect(signal.reasons).toEqual(['No within-batch degradation detected']);
+    expect(formatDegradationSignal(signal)).toContain('healthy (0.00)');
+  });
+
+  it('flags watch for isolated late-window success-rate decline', () => {
+    const runs = [
+      makeRunScore({ success: true, cost_usd: 1 }),
+      makeRunScore({ success: true, cost_usd: 1 }),
+      makeRunScore({ success: true, cost_usd: 1 }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 0, failure_class: 'crash' }),
+      makeRunScore({ success: true, cost_usd: 1 }),
+      makeRunScore({ success: true, cost_usd: 1 }),
+    ];
+
+    const signal = computeBatchDegradationSignal(runs);
+
+    expect(signal.verdict).toBe('watch');
+    expect(signal.score).toBeCloseTo(1 / 3);
+    expect(signal.trailing_failure_count).toBe(0);
+    expect(formatDegradationSignal(signal)).toContain('watch');
+  });
+
+  it('flags degraded late-run collapse with a trailing failure streak', () => {
+    const runs = [
+      makeRunScore({ success: true, cost_usd: 1, duration_seconds: 100 }),
+      makeRunScore({ success: true, cost_usd: 1, duration_seconds: 120 }),
+      makeRunScore({ success: true, cost_usd: 1, duration_seconds: 140 }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 4, duration_seconds: 500, failure_class: 'crash' }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 4, duration_seconds: 650, failure_class: 'empty_success' }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 4, duration_seconds: 800, failure_class: 'empty_success' }),
+    ];
+
+    const signal = computeBatchDegradationSignal(runs);
+
+    expect(signal.verdict).toBe('degraded');
+    expect(signal.score).toBeGreaterThanOrEqual(0.6);
+    expect(signal.first_half_success_rate).toBe(1);
+    expect(signal.second_half_success_rate).toBe(0);
+    expect(signal.trailing_failure_count).toBe(3);
+    expect(signal.trailing_empty_success_count).toBe(2);
+    expect(formatDegradationSignal(signal)).toContain('success rate fell');
+  });
+
+  it('clamps stacked degradation severity to 1', () => {
+    const runs = [
+      makeRunScore({ success: true, cost_usd: 1, duration_seconds: 100 }),
+      makeRunScore({ success: true, cost_usd: 1, duration_seconds: 120 }),
+      makeRunScore({ success: true, cost_usd: 1, duration_seconds: 140 }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 4, duration_seconds: 700, failure_class: 'empty_success' }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 4, duration_seconds: 900, failure_class: 'empty_success' }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 4, duration_seconds: 1100, failure_class: 'empty_success' }),
+    ];
+
+    const signal = computeBatchDegradationSignal(runs);
+
+    expect(signal.score).toBe(1);
+    expect(signal.verdict).toBe('degraded');
+  });
+
+  it('uses the BatchTrend odd-count split boundary', () => {
+    const runs = [
+      makeRunScore({ success: true }),
+      makeRunScore({ success: true }),
+      makeRunScore({ success: false, pr_count: 0, failure_class: 'timeout' }),
+      makeRunScore({ success: true }),
+      makeRunScore({ success: false, pr_count: 0, failure_class: 'timeout' }),
+    ];
+
+    const signal = computeBatchDegradationSignal(runs);
+
+    expect(signal.first_half_success_rate).toBe(1);
+    expect(signal.second_half_success_rate).toBeCloseTo(1 / 3);
+    expect(signal.success_rate_delta).toBeCloseTo(-2 / 3);
+    expect(signal.reasons.join('; ')).toContain('success rate fell');
+  });
+
+  it('does not emit non-finite numeric fields when late half has no successes', () => {
+    const signal = computeBatchDegradationSignal([
+      makeRunScore({ success: true, cost_usd: 1 }),
+      makeRunScore({ success: true, cost_usd: 1 }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 3, failure_class: 'crash' }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 3, failure_class: 'crash' }),
+    ]);
+
+    expect(signal.late_cost_per_success).toBeNull();
+    expect(signal.cost_per_success_ratio).toBeNull();
+    expect(Number.isFinite(signal.score)).toBe(true);
+  });
+
+  it('scoreBatch includes the degradation signal', () => {
+    const score = scoreBatch([
+      makeRunMetrics({ run: 1, prs: ['pr1'] }),
+      makeRunMetrics({ run: 2, prs: ['pr2'] }),
+      makeRunMetrics({ run: 3, prs: [] }),
+      makeRunMetrics({ run: 4, prs: [] }),
+    ]);
+    expect(score.degradation_signal?.verdict).toBe('degraded');
+  });
+});
+
 describe('formatBatchScoreTable trend integration', () => {
   it('includes trend line when trend is present', () => {
     const score: BatchScore = {
@@ -1274,6 +1390,20 @@ describe('formatBatchScoreTable trend integration', () => {
     };
     const table = formatBatchScoreTable(score);
     expect(table).not.toContain('Trend');
+  });
+
+  it('shows degradation signal line when the signal is watch or degraded', () => {
+    const score = scoreBatch([
+      makeRunMetrics({ run: 1, prs: ['pr1'] }),
+      makeRunMetrics({ run: 2, prs: ['pr2'] }),
+      makeRunMetrics({ run: 3, prs: [] }),
+      makeRunMetrics({ run: 4, prs: [] }),
+    ]);
+
+    const table = formatBatchScoreTable(score);
+
+    expect(table).toContain('| **Degradation signal** | degraded');
+    expect(table).toContain('success rate fell');
   });
 });
 

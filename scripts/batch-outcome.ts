@@ -55,6 +55,22 @@ const BatchTrendSchema = z
   })
   .nullable();
 
+/** Long-horizon degradation signal (mirrors BatchDegradationSignal). */
+const BatchDegradationSignalSchema = z.object({
+  verdict: z.enum(['insufficient_data', 'healthy', 'watch', 'degraded']),
+  score: z.number(),
+  first_half_success_rate: z.number().nullable(),
+  second_half_success_rate: z.number().nullable(),
+  success_rate_delta: z.number().nullable(),
+  trailing_failure_count: z.number(),
+  trailing_empty_success_count: z.number(),
+  early_cost_per_success: z.number().nullable(),
+  late_cost_per_success: z.number().nullable(),
+  cost_per_success_ratio: z.number().nullable(),
+  duration_slope_seconds_per_run: z.number().nullable(),
+  reasons: z.array(z.string()),
+});
+
 /**
  * The structured batch outcome. Derived purely from `BatchState` + `BatchScore`.
  * This is the cross-batch learning record — keep it machine-resolvable, not prose.
@@ -85,6 +101,7 @@ export const BatchOutcomeSchema = z.object({
   cost_anomaly_count: z.number(),
   mode_diversity: z.number(),
   trend: BatchTrendSchema,
+  degradation_signal: BatchDegradationSignalSchema.optional(),
   mode_breakdown: z.array(ModeBreakdownSchema),
   prs: z.array(z.string()),
   issues_closed: z.array(z.string()),
@@ -135,6 +152,7 @@ export function buildBatchOutcome(
     cost_anomaly_count: score.cost_anomaly_count,
     mode_diversity: finite(score.mode_diversity),
     trend: score.trend,
+    ...(score.degradation_signal ? { degradation_signal: score.degradation_signal } : {}),
     mode_breakdown: score.mode_breakdown.map((m) => ({
       mode: m.mode,
       runs: m.runs,
@@ -408,6 +426,25 @@ export function computeSteeringRecommendations(
   const sorted = [...outcomes].sort((a, b) => a.batch_start - b.batch_start);
   const span = { from: sorted[0].batch_start, to: sorted[sorted.length - 1].batch_start };
   const recs: SteeringRecommendation[] = [];
+
+  // --- Explicit within-batch degradation signal -----------------------------
+  const latestDegradation = [...sorted]
+    .reverse()
+    .find((o) => {
+      const verdict = o.degradation_signal?.verdict;
+      return verdict === 'watch' || verdict === 'degraded';
+    });
+  if (latestDegradation?.degradation_signal) {
+    const signal = latestDegradation.degradation_signal;
+    const action = signal.verdict === 'degraded'
+      ? 'Pause broad auto-dent guidance, inspect late-run failures, and resume with smaller leaf issues until the signal clears.'
+      : 'Watch late-run quality: narrow scope and inspect the next reflection before expanding guidance.';
+    recs.push({
+      priority: 8,
+      kind: 'trajectory',
+      text: `Latest batch reported ${signal.verdict} long-horizon degradation (score ${signal.score.toFixed(2)}: ${signal.reasons.join('; ')}). ${action}`,
+    });
+  }
 
   // --- Mode effectiveness: prefer the mode that actually ships work ----------
   // Only rank modes with enough evidence (>=3 runs) to avoid noise.
