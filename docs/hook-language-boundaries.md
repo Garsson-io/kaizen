@@ -155,15 +155,19 @@ Migration approach per script:
 ## Design Decisions
 
 **Q: Should TypeScript hooks use `tsx` (dev), Bun, or compiled JS (prod)?**
-A: Use the shared `run-tsx.sh` resolver for production hook shims. It resolves
+A: Use the shared `run-tsx.sh` trampoline for production hook shims. It honors
+`KAIZEN_TSX_BIN` first for deterministic tests, then prefers precompiled
+`node dist/...` output when `npm run build` has written
+`dist/.kaizen-hook-build` after all non-test `src/**/*.ts` files and the
+matching compiled file exists. If the marker is missing or stale, it resolves
 repo-local or parent-checkout `tsx` without `npx`, works in worktrees where the
 current checkout lacks `node_modules`, and fails open with an actionable
 diagnostic if dependencies are unavailable. A #454 measurement on this host put
 the real `pr-review-loop-ts.sh` resolver path at 0.54-0.90s, direct `npx tsx`
 at 0.68-0.88s, `npx -y bun` at 0.59-0.68s, and precompiled
-`node dist/hooks/pr-review-loop.js` at 0.10s. Keep the resolver as the default
-until #1662 defines a build-freshness contract for precompiled hooks or a
-standard production Bun installation path.
+`node dist/hooks/pr-review-loop.js` at 0.10s. Bun remains out of the production
+hot path unless it becomes a standard installed dependency instead of
+`npx -y bun`.
 
 **Q: Should we migrate `claude-wt.sh`?**
 A: Not yet. It's L2-L3 boundary — orchestration but mostly delegating. Migrate when it breaks or grows.
