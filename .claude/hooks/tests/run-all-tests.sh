@@ -20,8 +20,11 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+RUNNER_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MODE="all"
 REQUESTED_JOBS="${KAIZEN_HOOK_TEST_JOBS:-}"
+
+source "$SCRIPT_DIR/runner-dist-isolation.sh"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -101,7 +104,11 @@ export AUDIT_DIR="$GLOBAL_TEST_AUDIT_DIR"
 export AUDIT_LOG="$GLOBAL_TEST_AUDIT_DIR/no-action.log"
 export DEBUG_LOG="/dev/null"
 export KAIZEN_TEST_RUNNER=1
+
+setup_private_dist_if_symlink "$RUNNER_ROOT"
+
 cleanup_global_isolation() {
+  restore_private_dist
   rm -rf "$GLOBAL_TEST_STATE_DIR" "$GLOBAL_TEST_AUDIT_DIR"
 }
 trap cleanup_global_isolation EXIT
