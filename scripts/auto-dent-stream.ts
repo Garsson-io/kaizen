@@ -596,6 +596,33 @@ export function ingestRunText(
   if (insights.length > 0) (result.reflectionInsights ??= []).push(...insights);
 }
 
+function streamCostCandidate(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function extractStreamCostUsd(msg: Record<string, any>): number | undefined {
+  const candidates = [
+    msg.total_cost_usd,
+    msg.cost_usd,
+    msg.usage?.total_cost_usd,
+    msg.usage?.cost_usd,
+    msg.message?.usage?.total_cost_usd,
+    msg.message?.usage?.cost_usd,
+    msg.message?.cost_usd,
+  ];
+
+  return candidates.map(streamCostCandidate).find((cost) => cost !== undefined);
+}
+
+function updateStreamCost(msg: Record<string, any>, result: RunResult, opts: { terminal: boolean }): void {
+  const cost = extractStreamCostUsd(msg);
+  if (cost === undefined) return;
+
+  if (opts.terminal || cost > result.cost) {
+    result.cost = cost;
+  }
+}
+
 // Main stream message processor
 
 export function processStreamMessage(
@@ -605,6 +632,7 @@ export function processStreamMessage(
   ctx?: StreamContext,
 ): void {
   const elapsed = formatElapsed(runStart);
+  if (msg.type !== 'result') updateStreamCost(msg, result, { terminal: false });
 
   switch (msg.type) {
     case 'system':
@@ -680,9 +708,7 @@ export function processStreamMessage(
       if (ctx) {
         ctx.resultReceivedAt = Date.now();
       }
-      if (msg.total_cost_usd) {
-        result.cost = msg.total_cost_usd;
-      }
+      updateStreamCost(msg, result, { terminal: true });
       if (msg.result) {
         // Final result is agent-authoritative → control signals honoured.
         ingestRunText(msg.result, result, elapsed, ctx, { control: true });

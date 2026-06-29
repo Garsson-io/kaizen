@@ -288,6 +288,8 @@ export interface RunMetrics {
   duration_seconds: number;
   exit_code: number;
   cost_usd: number;
+  /** Cost data-integrity warnings detected from incomplete/ambiguous provider streams. */
+  cost_integrity_warnings?: string[];
   tool_calls: number;
   prs: string[];
   issues_filed: string[];
@@ -422,6 +424,7 @@ type RunMetricsBaseField =
   | 'duration_seconds'
   | 'exit_code'
   | 'cost_usd'
+  | 'cost_integrity_warnings'
   | 'tool_calls'
   | 'prs'
   | 'issues_filed'
@@ -459,12 +462,14 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
   const { runNum, runStartEpoch, duration, exitCode, runMode, result, modeReason, bandit, provider, metadata = {} } = input;
   const hookActivation = result.hookActivation
     ?? (provider ? unknownHookActivationVerdict(provider, 'no system.init observed') : undefined);
+  const costIntegrityWarnings = buildCostIntegrityWarnings(result);
   return {
     run: runNum,
     start_epoch: runStartEpoch,
     duration_seconds: duration,
     exit_code: exitCode,
     cost_usd: result.cost,
+    cost_integrity_warnings: costIntegrityWarnings.length > 0 ? costIntegrityWarnings : undefined,
     tool_calls: result.toolCalls,
     prs: result.prs,
     issues_filed: result.issuesFiled,
@@ -487,6 +492,13 @@ export function buildRunMetrics(input: BuildRunMetricsInput): RunMetrics {
     hook_activation: hookActivation,
     ...metadata,
   };
+}
+
+function buildCostIntegrityWarnings(result: RunResult): string[] {
+  if (result.timedOut && result.cost === 0 && result.toolCalls > 0) {
+    return ['timeout_zero_cost_with_tool_calls'];
+  }
+  return [];
 }
 
 export interface CandidateTaskManifestParseResult {
@@ -1405,6 +1417,7 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     duration_ms: duration * 1000,
     exit_code: exitCode,
     cost_usd: result.cost,
+    cost_integrity_warnings: runMetricsForOutcome.cost_integrity_warnings,
     tool_calls: result.toolCalls,
     prs_created: result.prs.length,
     issues_filed: result.issuesFiled.length,
