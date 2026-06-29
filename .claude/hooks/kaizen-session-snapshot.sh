@@ -13,16 +13,16 @@
 
 set -u
 source "$(dirname "$0")/lib/resolve-kaizen-dir.sh" 2>/dev/null || exit 0
+source "$(dirname "$0")/lib/resolve-tsx-bin.sh" 2>/dev/null || exit 0
 
-# Resolve tsx from the kaizen repo's node_modules, then fall back to npx.
-# Stay silent if neither is available — this hook must never break startup.
+# Resolve tsx through the same shell contract used by TS hook shims. Stay
+# fail-open if unavailable — this hook must never break startup — but do not
+# shell through `npx ... 2>/dev/null`, which recreates #1131's empty-stderr
+# diagnostic black hole.
 TS="${KAIZEN_DIR}/scripts/kaizen-doctor.ts"
-LOCAL_TSX="${KAIZEN_DIR}/node_modules/.bin/tsx"
-if [ -x "${LOCAL_TSX}" ]; then
-  "${LOCAL_TSX}" "${TS}" snapshot >/dev/null 2>&1 || true
-  "${LOCAL_TSX}" "${TS}" hook-syntax --quiet || true
-elif command -v npx >/dev/null 2>&1; then
-  npx --prefix "${KAIZEN_DIR}" tsx "${TS}" snapshot >/dev/null 2>&1 || true
-  npx --prefix "${KAIZEN_DIR}" tsx "${TS}" hook-syntax --quiet || true
+TSX_BIN="$(resolve_tsx_bin "$KAIZEN_DIR" || true)"
+if [ -n "$TSX_BIN" ]; then
+  "$TSX_BIN" "$TS" snapshot >/dev/null 2>&1 || true
+  "$TSX_BIN" "$TS" hook-syntax --quiet || true
 fi
 exit 0

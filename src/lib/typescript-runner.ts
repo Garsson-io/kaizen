@@ -94,7 +94,7 @@ export function resolveTsxBin(repoRoot: string): string | undefined {
     // Not every synthetic fixture is a git worktree.
   }
 
-  return candidates.find(existsSync);
+  return candidates.map(executableFile).find((path): path is string => path !== null);
 }
 
 export function resolveTypeScriptHookRunner(

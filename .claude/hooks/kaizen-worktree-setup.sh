@@ -47,10 +47,10 @@ done
 # and binding contracts stay shared with the plan gate and issue-binding CLI.
 source "$(dirname "$0")/lib/resolve-kaizen-dir.sh" 2>/dev/null || true
 if [ -n "${KAIZEN_DIR:-}" ] && [ -f "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" ]; then
-  if [ -x "$KAIZEN_DIR/node_modules/.bin/tsx" ]; then
-    "$KAIZEN_DIR/node_modules/.bin/tsx" "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" session-setup >/dev/null || true
-  elif command -v npx >/dev/null 2>&1; then
-    npx --prefix "$KAIZEN_DIR" tsx "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" session-setup >/dev/null || true
+  source "$(dirname "$0")/lib/resolve-tsx-bin.sh" 2>/dev/null || true
+  TSX_BIN="$(resolve_tsx_bin "$KAIZEN_DIR" 2>/dev/null || true)"
+  if [ -n "$TSX_BIN" ]; then
+    "$TSX_BIN" "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" session-setup >/dev/null || true
   fi
 fi
 

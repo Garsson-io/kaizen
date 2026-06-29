@@ -2,9 +2,10 @@
 # Part of kAIzen Agent Control Flow
 # run-tsx.sh — Reliable tsx execution for TS hook shims
 #
-# Resolves tsx from KAIZEN_DIR/node_modules, then global npx, then gives up
-# gracefully (exit 0). Prevents hook errors when node_modules is missing
-# (e.g., plugin installations without npm install).
+# Resolves tsx from KAIZEN_DIR/node_modules, parent/worktree installs, or the
+# git common dir, then gives up loudly but fail-open. Prevents opaque hook
+# errors when node_modules is missing (e.g., plugin installations without npm
+# install) while keeping hooks non-blocking.
 #
 # Usage (in a TS shim):
 #   source "$(dirname "$0")/lib/run-tsx.sh"
@@ -35,11 +36,10 @@ run_tsx() {
     exec "$resolved_tsx" "$ts_file"
   fi
 
-  # 2. npx with --prefix — finds tsx in kaizen's node_modules
-  if command -v npx &>/dev/null; then
-    exec npx --prefix "$kaizen_dir" tsx "$ts_file" 2>/dev/null
-  fi
-
-  # 3. tsx not available — exit gracefully instead of crashing
+  # 2. tsx not available — exit gracefully instead of crashing. Do not shell
+  # through `npx --prefix ... 2>/dev/null`: when the bound plugin/worktree root
+  # lacks node_modules, npx exits non-zero with empty stderr and Claude reports
+  # only "Failed with non-blocking status code: No stderr output" (#1131).
+  echo "kaizen hook: tsx not found for $kaizen_dir — run npm install there or symlink node_modules from the main checkout; skipping $ts_file" >&2
   exit 0
 }
