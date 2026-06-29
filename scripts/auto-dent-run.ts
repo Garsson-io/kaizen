@@ -56,6 +56,11 @@ import {
   writeRsiImprovementProposalsForBatch,
 } from './auto-dent-rsi.js';
 import {
+  fileAutoDentAnomalyIncidentsForBatch,
+  formatAutoDentAnomalyIncidentSummary,
+  type AutoDentAnomalyIncidentResult,
+} from './auto-dent-anomaly-incidents.js';
+import {
   isAcceptedSubscriptionCompatibleCapability,
   phaseProvidersForAgentProvider,
   type PhaseProviderRecord,
@@ -3042,6 +3047,7 @@ export interface FormatBatchCompletionAttachmentInput {
   kaizenRepo: string;
   batchDir?: string;
   enrichment?: DashboardEnrichment;
+  anomalyIncidents?: AutoDentAnomalyIncidentResult;
 }
 
 function formatRunLimit(state: BatchState): string {
@@ -3066,6 +3072,7 @@ export function formatBatchCompletionAttachment(input: FormatBatchCompletionAtta
     progressIssueNumber,
     batchDir,
     enrichment,
+    anomalyIncidents,
   } = input;
   const history = state.run_history ?? [];
   const failures = formatFailureDistribution(
@@ -3122,6 +3129,11 @@ export function formatBatchCompletionAttachment(input: FormatBatchCompletionAtta
   const guidanceCompletion = formatGuidanceCompletionMatrix(state.guidance, guidanceEvidence);
   if (guidanceCompletion) {
     lines.push('', guidanceCompletion);
+  }
+
+  const anomalySummary = anomalyIncidents ? formatAutoDentAnomalyIncidentSummary(anomalyIncidents) : '';
+  if (anomalySummary) {
+    lines.push('', '### Anomaly Incidents', '', anomalySummary);
   }
 
   lines.push(
@@ -3183,6 +3195,24 @@ export function closeBatchProgressIssue(
 
   const enrichment = fetchDashboardEnrichment(state, kaizenRepo, deps.gh ?? ghArgs);
 
+  let anomalyIncidents: AutoDentAnomalyIncidentResult | undefined;
+  try {
+    anomalyIncidents = fileAutoDentAnomalyIncidentsForBatch(kaizenRepo, state, {
+      gh: deps.gh ?? ghArgs,
+      progressIssue,
+    });
+    if (anomalyIncidents.signals.length > 0) {
+      const created = anomalyIncidents.refs.filter((ref) => ref.status === 'created').length;
+      const reused = anomalyIncidents.refs.filter((ref) => ref.status === 'reused').length;
+      const skipped = anomalyIncidents.refs.filter((ref) => ref.status === 'skipped').length;
+      console.log(
+        `  [anomaly] filed/reused auto-dent incident issues (${created} created, ${reused} reused, ${skipped} skipped)`,
+      );
+    }
+  } catch (err) {
+    console.log(`  [anomaly] incident filing skipped: ${(err as Error).message}`);
+  }
+
   const summary = formatBatchCompletionAttachment({
     state,
     batchScore,
@@ -3192,6 +3222,7 @@ export function closeBatchProgressIssue(
     kaizenRepo,
     batchDir,
     enrichment,
+    anomalyIncidents,
   });
 
   writeProgressAttachment(
