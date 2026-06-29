@@ -1237,6 +1237,25 @@ describe('computeBatchDegradationSignal', () => {
     expect(signal.verdict).toBe('healthy');
     expect(signal.score).toBe(0);
     expect(signal.reasons).toEqual(['No within-batch degradation detected']);
+    expect(formatDegradationSignal(signal)).toContain('healthy (0.00)');
+  });
+
+  it('flags watch for isolated late-window success-rate decline', () => {
+    const runs = [
+      makeRunScore({ success: true, cost_usd: 1 }),
+      makeRunScore({ success: true, cost_usd: 1 }),
+      makeRunScore({ success: true, cost_usd: 1 }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 0, failure_class: 'crash' }),
+      makeRunScore({ success: true, cost_usd: 1 }),
+      makeRunScore({ success: true, cost_usd: 1 }),
+    ];
+
+    const signal = computeBatchDegradationSignal(runs);
+
+    expect(signal.verdict).toBe('watch');
+    expect(signal.score).toBeCloseTo(1 / 3);
+    expect(signal.trailing_failure_count).toBe(0);
+    expect(formatDegradationSignal(signal)).toContain('watch');
   });
 
   it('flags degraded late-run collapse with a trailing failure streak', () => {
@@ -1258,6 +1277,39 @@ describe('computeBatchDegradationSignal', () => {
     expect(signal.trailing_failure_count).toBe(3);
     expect(signal.trailing_empty_success_count).toBe(2);
     expect(formatDegradationSignal(signal)).toContain('success rate fell');
+  });
+
+  it('clamps stacked degradation severity to 1', () => {
+    const runs = [
+      makeRunScore({ success: true, cost_usd: 1, duration_seconds: 100 }),
+      makeRunScore({ success: true, cost_usd: 1, duration_seconds: 120 }),
+      makeRunScore({ success: true, cost_usd: 1, duration_seconds: 140 }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 4, duration_seconds: 700, failure_class: 'empty_success' }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 4, duration_seconds: 900, failure_class: 'empty_success' }),
+      makeRunScore({ success: false, pr_count: 0, cost_usd: 4, duration_seconds: 1100, failure_class: 'empty_success' }),
+    ];
+
+    const signal = computeBatchDegradationSignal(runs);
+
+    expect(signal.score).toBe(1);
+    expect(signal.verdict).toBe('degraded');
+  });
+
+  it('uses the BatchTrend odd-count split boundary', () => {
+    const runs = [
+      makeRunScore({ success: true }),
+      makeRunScore({ success: true }),
+      makeRunScore({ success: false, pr_count: 0, failure_class: 'timeout' }),
+      makeRunScore({ success: true }),
+      makeRunScore({ success: false, pr_count: 0, failure_class: 'timeout' }),
+    ];
+
+    const signal = computeBatchDegradationSignal(runs);
+
+    expect(signal.first_half_success_rate).toBe(1);
+    expect(signal.second_half_success_rate).toBeCloseTo(1 / 3);
+    expect(signal.success_rate_delta).toBeCloseTo(-2 / 3);
+    expect(signal.reasons.join('; ')).toContain('success rate fell');
   });
 
   it('does not emit non-finite numeric fields when late half has no successes', () => {

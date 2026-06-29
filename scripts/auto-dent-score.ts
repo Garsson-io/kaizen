@@ -892,8 +892,13 @@ export function computeBatchDegradationSignal(
   const mid = Math.floor(runs.length / 2);
   const firstHalf = runs.slice(0, mid);
   const secondHalf = runs.slice(mid);
-  const firstSuccessRate = rate(firstHalf.filter((r) => r.success).length, firstHalf.length);
-  const secondSuccessRate = rate(secondHalf.filter((r) => r.success).length, secondHalf.length);
+  const effectiveTrend = trend ?? computeBatchTrend(runs);
+  const firstSuccessRate =
+    effectiveTrend?.first_half_success_rate ??
+    rate(firstHalf.filter((r) => r.success).length, firstHalf.length);
+  const secondSuccessRate =
+    effectiveTrend?.second_half_success_rate ??
+    rate(secondHalf.filter((r) => r.success).length, secondHalf.length);
   const successDelta = secondSuccessRate - firstSuccessRate;
   const trailingFailures = trailingCount(runs, (r) => !r.success);
   const trailingEmpty = trailingCount(runs, (r) => r.failure_class === 'empty_success');
@@ -903,7 +908,7 @@ export function computeBatchDegradationSignal(
     earlyCostPerSuccess !== null && lateCostPerSuccess !== null && earlyCostPerSuccess > 0
       ? lateCostPerSuccess / earlyCostPerSuccess
       : null;
-  const durationSlope = trend?.duration_slope ?? null;
+  const durationSlope = effectiveTrend?.duration_slope ?? null;
 
   let severity = 0;
   const reasons: string[] = [];

@@ -771,6 +771,7 @@ describe('buildBatchReflection', () => {
     expect(insight).toMatchObject({ type: 'failure_pattern' });
     expect(insight?.message).toContain('degraded');
     expect(insight?.message).toContain('success rate fell');
+    expect(reflection.insights.some((i) => i.message.includes('consecutive failures'))).toBe(false);
     expect(comment).toContain('Long-horizon degradation signal');
   });
 

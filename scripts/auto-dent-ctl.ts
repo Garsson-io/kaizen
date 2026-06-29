@@ -515,7 +515,7 @@ export function buildBatchReflection(
       currentStreak = 0;
     }
   }
-  if (maxConsecFail >= 2) {
+  if (maxConsecFail >= 2 && degradationSignal?.verdict !== 'watch' && degradationSignal?.verdict !== 'degraded') {
     insights.push({
       type: 'failure_pattern',
       message: `Max ${maxConsecFail} consecutive failures detected — may indicate a systemic blocker`,

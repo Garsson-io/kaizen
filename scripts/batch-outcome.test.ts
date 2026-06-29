@@ -97,6 +97,20 @@ const degradedSignal = {
   reasons: ['success rate fell from 100% to 0%', '3 trailing failed runs'],
 };
 
+const watchSignal = {
+  ...degradedSignal,
+  verdict: 'watch' as const,
+  score: 0.33,
+  second_half_success_rate: 2 / 3,
+  success_rate_delta: -1 / 3,
+  trailing_failure_count: 0,
+  trailing_empty_success_count: 0,
+  late_cost_per_success: 1,
+  cost_per_success_ratio: 1,
+  duration_slope_seconds_per_run: 0,
+  reasons: ['success rate fell from 100% to 67%'],
+};
+
 describe('buildBatchOutcome — pure derivation', () => {
   it('maps state + score into a schema-valid outcome', () => {
     const outcome = buildBatchOutcome(makeState(), makeScore(), 1_600);
@@ -353,6 +367,19 @@ describe('computeSteeringRecommendations — pure analysis', () => {
     });
     expect(r.recommendations[0].text).toContain('degraded long-horizon degradation');
     expect(r.recommendations[0].text).toContain('Pause broad auto-dent guidance');
+  });
+
+  it('uses watch-specific guidance for watch degradation signals', () => {
+    const r = computeSteeringRecommendations([
+      makeOutcome({
+        batch_id: 'watch',
+        batch_start: 1,
+        degradation_signal: watchSignal,
+      }),
+    ]);
+
+    expect(r.recommendations[0].text).toContain('watch long-horizon degradation');
+    expect(r.recommendations[0].text).toContain('Watch late-run quality');
   });
 
   it('notes an improving trajectory', () => {
