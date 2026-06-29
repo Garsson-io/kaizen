@@ -14,7 +14,7 @@ echo "=== Hook telemetry tests ==="
 
 # Setup: temp dir for telemetry output
 TELEMETRY_DIR=$(mktemp -d)
-trap 'rm -rf "$TELEMETRY_DIR"' EXIT
+trap 'rm -rf "$TELEMETRY_DIR" "${TS_TELEMETRY_DIR:-}" "${BASH_TELEMETRY_DIR:-}"' EXIT
 
 # Phase 1: Telemetry file is created on hook execution
 echo ""
@@ -138,6 +138,92 @@ else
   echo "  FAIL: invalid JSON found"
   echo "$INVALID"
   FAILED_NAMES+=("all lines valid JSON")
+  ((FAIL++))
+fi
+
+# Phase 10: TS shims emit telemetry through the shared run_tsx trampoline
+echo ""
+echo "--- Phase 10: TS shim telemetry via run_tsx ---"
+
+TS_TELEMETRY_DIR=$(mktemp -d)
+MOCK_TSX="$TS_TELEMETRY_DIR/mock-tsx"
+TS_FILE="$TS_TELEMETRY_DIR/hook.ts"
+TS_SHIM="$TS_TELEMETRY_DIR/sample-ts-hook.sh"
+cat > "$MOCK_TSX" <<'EOF'
+#!/bin/bash
+echo "tsx stdout:$1"
+echo "tsx stderr:$1" >&2
+exit 7
+EOF
+chmod +x "$MOCK_TSX"
+printf 'console.log("hook");\n' > "$TS_FILE"
+cat > "$TS_SHIM" <<EOF
+#!/bin/bash
+source "$HOOKS_DIR/lib/run-tsx.sh"
+run_tsx "$REPO_ROOT" "$TS_FILE"
+EOF
+chmod +x "$TS_SHIM"
+
+TS_OUTPUT=$(KAIZEN_TELEMETRY_DIR="$TS_TELEMETRY_DIR" KAIZEN_TSX_BIN="$MOCK_TSX" bash "$TS_SHIM" 2>&1)
+TS_EXIT=$?
+
+TS_LINE=$(tail -1 "$TS_TELEMETRY_DIR/hooks.jsonl" 2>/dev/null || true)
+TS_HOOK=$(echo "$TS_LINE" | jq -r '.hook // empty' 2>/dev/null)
+TS_EXIT_RECORDED=$(echo "$TS_LINE" | jq -r '.exit_code // empty' 2>/dev/null)
+assert_eq "run_tsx emits telemetry for the caller hook" "sample-ts-hook" "$TS_HOOK"
+assert_eq "run_tsx preserves TS runner exit status" "7" "$TS_EXIT"
+assert_eq "run_tsx records TS runner exit status" "7" "$TS_EXIT_RECORDED"
+assert_contains "run_tsx preserves TS runner stdout" "tsx stdout:$TS_FILE" "$TS_OUTPUT"
+assert_contains "run_tsx preserves TS runner stderr" "tsx stderr:$TS_FILE" "$TS_OUTPUT"
+
+# Phase 11: Previously missing non-TS hooks emit telemetry
+echo ""
+echo "--- Phase 11: Non-TS hook telemetry emission ---"
+
+BASH_TELEMETRY_DIR=$(mktemp -d)
+echo '{"tool_input":{"command":"echo noop"}}' | \
+  KAIZEN_TELEMETRY_DIR="$BASH_TELEMETRY_DIR" bash "$HOOKS_DIR/kaizen-search-before-file.sh" >/dev/null 2>&1
+
+BASH_LINE=$(tail -1 "$BASH_TELEMETRY_DIR/hooks.jsonl" 2>/dev/null || true)
+BASH_HOOK=$(echo "$BASH_LINE" | jq -r '.hook // empty' 2>/dev/null)
+BASH_EXIT_RECORDED=$(echo "$BASH_LINE" | jq -r '.exit_code // empty' 2>/dev/null)
+assert_eq "kaizen-search-before-file emits telemetry" "kaizen-search-before-file" "$BASH_HOOK"
+assert_eq "kaizen-search-before-file records exit status" "0" "$BASH_EXIT_RECORDED"
+
+# Phase 12: Every registered plugin hook has telemetry coverage
+echo ""
+echo "--- Phase 12: Registered hook telemetry coverage ---"
+
+REGISTERED_HOOKS=$(jq -r '
+  .. | objects | select(.type? == "command") | .command
+  | select(contains(".claude/hooks/"))
+  | sub("^.*\\.claude/hooks/"; ".claude/hooks/")
+  | split(" ")[0]
+' "$REPO_ROOT/.claude-plugin/plugin.json" | sort -u)
+
+RUN_TSX_HAS_TELEMETRY=0
+grep -q 'hook-telemetry.sh' "$HOOKS_DIR/lib/run-tsx.sh" && RUN_TSX_HAS_TELEMETRY=1
+
+MISSING_COVERAGE=()
+while IFS= read -r hook; do
+  [ -z "$hook" ] && continue
+  hook_path="$REPO_ROOT/$hook"
+  if grep -q 'hook-telemetry.sh' "$hook_path"; then
+    continue
+  fi
+  if [ "$RUN_TSX_HAS_TELEMETRY" -eq 1 ] && grep -qE '\brun_tsx\b' "$hook_path"; then
+    continue
+  fi
+  MISSING_COVERAGE+=("$hook")
+done <<< "$REGISTERED_HOOKS"
+
+if [ "${#MISSING_COVERAGE[@]}" -eq 0 ]; then
+  echo "  PASS: all registered plugin hooks have telemetry coverage"
+  ((PASS++))
+else
+  echo "  FAIL: registered plugin hooks missing telemetry coverage"
+  printf '    %s\n' "${MISSING_COVERAGE[@]}"
+  FAILED_NAMES+=("registered hook telemetry coverage")
   ((FAIL++))
 fi
 

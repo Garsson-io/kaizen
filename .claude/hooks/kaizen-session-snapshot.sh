@@ -14,6 +14,7 @@
 set -u
 source "$(dirname "$0")/lib/resolve-kaizen-dir.sh" 2>/dev/null || exit 0
 source "$(dirname "$0")/lib/resolve-tsx-bin.sh" 2>/dev/null || exit 0
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
 
 # Resolve tsx through the same shell contract used by TS hook shims. Stay
 # fail-open if unavailable — this hook must never break startup — but do not
