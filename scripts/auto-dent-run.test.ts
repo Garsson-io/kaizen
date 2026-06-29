@@ -1040,6 +1040,7 @@ describe('extractArtifacts', () => {
     extractArtifacts(
       '**PRs created:** https://github.com/Garsson-io/kaizen/pull/1236 (auto-merge queued)',
       result,
+      { allowPrSummary: true },
     );
 
     expect(result.prs).toEqual(['https://github.com/Garsson-io/kaizen/pull/1236']);
@@ -1754,6 +1755,46 @@ describe('processStreamMessage', () => {
       'https://github.com/Garsson-io/kaizen/pull/500',
     );
     expect(result.issuesClosed).toContain('#451');
+  });
+
+  it('extracts final PR summary artifacts only from trusted result text', () => {
+    const result = makeRunResult();
+    processStreamMessage(
+      {
+        type: 'result',
+        subtype: 'success',
+        result: '**PRs created:** https://github.com/Garsson-io/kaizen/pull/1589',
+      },
+      result,
+      Date.now(),
+    );
+
+    expect(result.prs).toEqual(['https://github.com/Garsson-io/kaizen/pull/1589']);
+  });
+
+  it('does not extract PR summary artifacts from untrusted tool output', () => {
+    const result = makeRunResult();
+    processStreamMessage(
+      {
+        type: 'user',
+        message: {
+          content: [{
+            type: 'tool_result',
+            content: [
+              '**PRs created:** https://github.com/Garsson-io/kaizen/pull/1026',
+              '**PRs created:** https://github.com/Garsson-io/kaizen/pull/10',
+              '**PRs created:** https://github.com/Garsson-io/kaizen/pull/100',
+              '**PRs created:** https://github.com/test/test/pull/1',
+              '**PRs created:** https://github.com/Garsson-io/kaizen/pull/1589',
+            ].join('\n'),
+          }],
+        },
+      },
+      result,
+      Date.now(),
+    );
+
+    expect(result.prs).toEqual([]);
   });
 
   it('extracts PR artifacts from Claude Code tool result metadata', () => {

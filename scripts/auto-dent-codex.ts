@@ -85,6 +85,10 @@ function extractPullRequestUrl(text: string): string | undefined {
   return text.match(/https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/)?.[0];
 }
 
+function isPrCreateCommand(command: string): boolean {
+  return /\bgh\s+pr\s+create\b/.test(command);
+}
+
 /**
  * Normalize provider-specific Codex JSONL rows into the same stream-json shape
  * that `processStreamMessage()` already consumes for Claude.
@@ -125,7 +129,7 @@ export function normalizeCodexEventToStreamMessages(event: unknown): AutoDentStr
             content: [{ type: 'tool_result', content: output }],
           },
         };
-        const prUrl = extractPullRequestUrl(output);
+        const prUrl = isPrCreateCommand(command) ? extractPullRequestUrl(output) : undefined;
         if (prUrl) {
           toolResult.tool_use_result = {
             gitOperation: {
