@@ -197,6 +197,20 @@ describe("kaizen-file-issue — Duplicate Decision Table", () => {
     expect(skill).toContain("Related but distinct");
     expect(skill).toContain("Superficially similar");
   });
+
+  it("requires friction and awesome-instead detail for workflow/QoL issues", () => {
+    const skill = loadSkill("kaizen-file-issue");
+
+    expect(skill).toContain("Friction Trail");
+    expect(skill).toContain("What I Needed To Do/Write");
+    expect(skill).toContain("What Would Be Awesome Instead");
+    expect(skill).toContain("workflow, CLI, hook, review-gate, ergonomics, or quality-of-life");
+    expect(skill).toContain("the friction trail is not optional");
+    expect(skill).toContain("what sucked");
+    expect(skill).toContain("desired operator experience");
+    expect(skill).not.toContain("2 minutes from incident to filed issue");
+    expect(skill).not.toContain("File it short and let the implementor investigate");
+  });
 });
 
 // ---------------------------------------------------------------------------
