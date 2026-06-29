@@ -78,7 +78,7 @@ kaizen-audit-issues and kaizen-gaps periodically scan all issues, PRs, and revie
 Auto-dent finalization turns reflection insights, repeated failure classes, degradation signals, and cross-run metric movement into bounded `rsi-improvement-proposals`. Operators inspect the proposal set, apply one proposal as a normal issue/PR with behavioral proof, then evaluate the next batch outcome against the proposal's stored baseline. This closes the self-referential loop without letting the batch runner auto-patch prompts or skills unsupervised.
 
 ### Loop 4b: Anomaly Incidents → Investigation Issues
-Auto-dent finalization turns harness-owned anomaly signals (`empty_success`, hook rejection, lifecycle critical/degraded, process incomplete, too many PRs, cost/duration outliers, failed runs) into deduped GitHub incident issues. The batch completion attachment links created/reused issues so a later operator can investigate from the progress issue without SSHing into logs. False positives are still useful: they become regression fixtures for tightening the detector.
+Auto-dent finalization turns harness-owned anomaly signals (`empty_success`, hook rejection, lifecycle critical, too many PRs, cost/duration outliers, failed runs) into deduped GitHub incident issues. The batch completion attachment links created/reused issues so a later operator can investigate from the progress issue without SSHing into logs. False positives are still useful: they become regression fixtures for tightening the detector.
 
 ### Loop 5: Zen Evolution
 Session learnings produce new principles (e.g., "The diff is proof. The description is the argument." from this session) → added to zen.md → all skills reference zen.md → agent behavior changes → new learnings → new principles.

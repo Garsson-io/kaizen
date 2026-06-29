@@ -354,6 +354,8 @@ export interface RunMetrics {
   prompt_hash?: string;
   /** Structured failure classification (populated post-run) */
   failure_class?: string;
+  /** Local run log path for forensic incident filing and transcript attachment. */
+  log_file?: string;
   /** Reason a hook blocked this run, when failure_class is hook_rejection (#1102) */
   hook_rejection_reason?: string;
   /** Number of lifecycle ordering violations detected post-run */
@@ -5044,6 +5046,7 @@ async function main(): Promise<void> {
   // Feed the run log so the log-based branch (hook_rejection, infrastructure,
   // etc.) actually runs — without this argument it was dead code (#1102).
   runMetrics.failure_class = result.timedOut ? 'timeout' : classifyFailure(runMetrics, runLog);
+  runMetrics.log_file = logFile;
   if (runMetrics.failure_class === 'hook_rejection' && runLog) {
     runMetrics.hook_rejection_reason = firstHookReason(runLog);
   }

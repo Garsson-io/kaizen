@@ -25,6 +25,7 @@ function run(overrides: Partial<RunMetrics> = {}): RunMetrics {
     cases: [],
     stop_requested: false,
     failure_class: 'success',
+    log_file: '/logs/run-1.log',
     ...overrides,
   };
 }
@@ -36,17 +37,16 @@ describe('detectAutoDentAnomalies', () => {
       run_history: [
         run({
           run: 3,
+          log_file: '/logs/run-3.log',
           lifecycle_health: 'critical',
           lifecycle_violations: 2,
-          process_verdict: 'process-incomplete',
-          process_summary: 'missing PR evidence',
         }),
       ],
     });
 
     const signals = detectAutoDentAnomalies(state);
 
-    expect(signals.map((s) => s.trigger)).toEqual(['lifecycle_critical', 'process_incomplete']);
+    expect(signals.map((s) => s.trigger)).toEqual(['lifecycle_critical']);
     expect(signals[0]).toMatchObject({
       severity: 'critical',
       batch_id: 'batch-critical',
@@ -54,6 +54,7 @@ describe('detectAutoDentAnomalies', () => {
     });
     expect(signals[0].dedupe_key).toContain('batch-critical:run-3:lifecycle_critical');
     expect(signals[0].evidence).toContain('lifecycle_violations=2');
+    expect(signals[0].evidence).toContain('run_log=/logs/run-3.log');
   });
 
   it('covers failed, empty, hook, PR-count, cost, and duration triggers without duplicate keys', () => {
@@ -119,7 +120,7 @@ describe('fileAutoDentAnomalyIncident', () => {
   it('creates a labeled incident issue when no existing issue matches', () => {
     const gh = vi.fn()
       .mockReturnValueOnce('[]')
-      .mockReturnValueOnce('https://github.com/Garsson-io/kaizen/issues/901');
+      .mockReturnValueOnce('https://github.com/Garsson-io/kaizen/issues/901/');
 
     const result = fileAutoDentAnomalyIncident('Garsson-io/kaizen', signal, {
       gh,
@@ -139,7 +140,28 @@ describe('fileAutoDentAnomalyIncident', () => {
     expect(body).toContain('## Incident');
     expect(body).toContain(signal.dedupe_key);
     expect(body).toContain('Progress issue: https://github.com/Garsson-io/kaizen/issues/800');
+    expect(body).toContain('- run_log=/logs/run-1.log');
     expect(body).toContain('## Directional Guess');
+  });
+
+  it('fails open when create returns a non-issue URL', () => {
+    const gh = vi.fn()
+      .mockReturnValueOnce('[]')
+      .mockReturnValueOnce('https://github.com/Garsson-io/kaizen/pull/901');
+
+    const result = fileAutoDentAnomalyIncident('Garsson-io/kaizen', signal, { gh });
+
+    expect(result.status).toBe('skipped');
+    expect(result.reason).toContain('could not parse created issue URL');
+  });
+
+  it('fails open when search returns malformed JSON', () => {
+    const result = fileAutoDentAnomalyIncident('Garsson-io/kaizen', signal, {
+      gh: vi.fn(() => 'not json'),
+    });
+
+    expect(result.status).toBe('skipped');
+    expect(result.reason).toContain('Unexpected token');
   });
 
   it('fails open on GitHub errors', () => {
@@ -168,6 +190,31 @@ describe('fileAutoDentAnomalyIncidentsForBatch', () => {
     expect(() => AutoDentAnomalyIncidentResultSchema.parse(result)).not.toThrow();
     expect(formatAutoDentAnomalyIncidentSummary(result)).toContain('1 signal(s); 1 created');
     expect(formatAutoDentAnomalyIncidentSummary(result)).toContain('https://github.com/Garsson-io/kaizen/issues/902');
+  });
+
+  it('caps filed signals when maxSignals is set', () => {
+    const state = makeBatchState({
+      batch_id: 'batch-capped',
+      run_history: [
+        run({ run: 1, exit_code: 1, failure_class: 'crash' }),
+        run({ run: 2, exit_code: 1, failure_class: 'crash' }),
+        run({ run: 3, exit_code: 1, failure_class: 'crash' }),
+      ],
+    });
+    const gh = vi.fn()
+      .mockReturnValueOnce('[]')
+      .mockReturnValueOnce('https://github.com/Garsson-io/kaizen/issues/903')
+      .mockReturnValueOnce('[]')
+      .mockReturnValueOnce('https://github.com/Garsson-io/kaizen/issues/904');
+
+    const result = fileAutoDentAnomalyIncidentsForBatch('Garsson-io/kaizen', state, {
+      gh,
+      maxSignals: 2,
+    });
+
+    expect(result.signals).toHaveLength(2);
+    expect(result.refs).toHaveLength(2);
+    expect(gh).toHaveBeenCalledTimes(4);
   });
 
   it('builds incident bodies with evidence bullets', () => {

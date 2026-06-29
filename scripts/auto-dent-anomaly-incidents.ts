@@ -18,8 +18,6 @@ export const AutoDentAnomalyTriggerSchema = z.enum([
   'empty_success',
   'hook_rejection',
   'lifecycle_critical',
-  'lifecycle_degraded',
-  'process_incomplete',
   'too_many_prs',
   'duration_outlier',
   'cost_outlier',
@@ -79,7 +77,7 @@ function issueUrl(repo: string, issue: number): string {
 }
 
 function extractIssueNumber(url: string): number | null {
-  const match = url.match(/\/issues\/(\d+)(?:$|[#?])/);
+  const match = url.match(/\/issues\/(\d+)(?:$|[/?#])/);
   return match ? Number(match[1]) : null;
 }
 
@@ -128,6 +126,7 @@ export function detectAutoDentAnomalies(
       `exit_code=${run.exit_code}`,
       `prs=${run.prs.length}`,
       `failure_class=${run.failure_class ?? 'unknown'}`,
+      `run_log=${run.log_file ?? 'not captured in run metrics'}`,
     ];
 
     if (run.exit_code !== 0) {
@@ -171,26 +170,6 @@ export function detectAutoDentAnomalies(
         'critical',
         `Run ${run.run} had critical lifecycle gaps or phantom phase evidence.`,
         [...evidenceBase, `lifecycle_violations=${run.lifecycle_violations ?? 0}`],
-      ));
-    } else if ((run.lifecycle_violations ?? 0) > 0 || run.lifecycle_health === 'degraded') {
-      signals.push(signal(
-        state,
-        run,
-        'lifecycle_degraded',
-        'warning',
-        `Run ${run.run} had lifecycle ordering violations.`,
-        [...evidenceBase, `lifecycle_violations=${run.lifecycle_violations ?? 0}`],
-      ));
-    }
-
-    if (run.process_verdict === 'process-incomplete') {
-      signals.push(signal(
-        state,
-        run,
-        'process_incomplete',
-        'critical',
-        `Run ${run.run} had incomplete external process evidence.`,
-        [...evidenceBase, `process_summary=${run.process_summary ?? 'missing'}`],
       ));
     }
 
