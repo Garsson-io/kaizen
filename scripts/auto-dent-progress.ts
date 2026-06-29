@@ -167,11 +167,23 @@ export function formatProgressStepsMarkdown(result: AutoDentProgressResult, repo
 export function hasContextDelegationProgressEvidence(
   steps: RunProgressStep[] | undefined,
 ): boolean {
-  return Boolean(steps?.some((step) => {
+  const implementationIndex = steps?.findIndex((step) => [
+    'IMPLEMENT',
+    'TEST',
+    'PR',
+    'REVIEW',
+    'FIX',
+    'MERGE',
+    'REFLECT',
+    'CLEANUP',
+  ].includes(step.phase)) ?? -1;
+
+  return Boolean(steps?.some((step, index) => {
+    if (implementationIndex !== -1 && index > implementationIndex) return false;
     const state = step.state.trim().toLowerCase().replace(/_/g, '-');
     const hasDetail = step.detail.trim().length > 0;
     if (step.phase === 'DELEGATE') {
-      return hasDetail && (state === 'done' || state === 'delegated');
+      return hasDetail && (state === 'done' || state === 'delegated' || state === 'not applicable' || state === 'not-applicable');
     }
     if (step.phase === 'CONTEXT-DELEGATION') {
       return hasDetail && (state === 'done' || state === 'not applicable' || state === 'not-applicable');

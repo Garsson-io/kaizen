@@ -163,7 +163,7 @@ export function renderAutoDentGoalContract(mode: WorkflowMode): string {
     '- Leave merge commands and auto-merge queueing to the auto-dent harness after review verdicts and process evidence are known.',
     '- Explicitly close every issue the PR fixes in the host repo after creating the PR; do not rely only on PR closing keywords for non-default-branch runs.',
     '- Emit AUTO_DENT_PHASE markers as real phases complete: PICK, EVALUATE, DELEGATE, IMPLEMENT, TEST, PR, MERGE, DECOMPOSE, REFLECT.',
-    '- For delegated context work, emit AUTO_DENT_PHASE: DELEGATE | status=done | evidence=<what was delegated>; if delegation is not applicable, pass context-delegation status evidence explaining why.',
+    '- For delegated context work, emit AUTO_DENT_PHASE: DELEGATE | status=done | evidence=<what was delegated>; for narrow work where delegation is not applicable, emit AUTO_DENT_PHASE: DELEGATE | status=not-applicable | evidence=<why>.',
     '- Emit AUTO_DENT_PHASE: STOP | reason=<reason> only when meaningful matching work is genuinely exhausted, not at the end of a normal run.',
     '- When done, summarize PRs created, issues filed, issues closed, tests, review status, and any remaining blockers with full URLs.',
     '',

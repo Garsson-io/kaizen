@@ -64,6 +64,7 @@ describe('kaizen workflow forcing driver', () => {
     expect(contract).toContain('related-area DRY/refactor pass');
     expect(contract).toContain('delegate context-heavy sub-work');
     expect(contract).toContain('context-delegation evidence');
+    expect(contract).toContain('AUTO_DENT_PHASE: DELEGATE | status=not-applicable | evidence=<why>');
     expect(contract).toContain('meet reality');
   });
 

@@ -32,6 +32,9 @@ describe('auto-dent progress context delegation evidence (#1509)', () => {
       { phase: 'DELEGATE', state: 'done', detail: 'delegated transcript mining to subagent' },
     ])).toBe(true);
     expect(hasContextDelegationProgressEvidence([
+      { phase: 'DELEGATE', state: 'not applicable', detail: 'narrow single-file task' },
+    ])).toBe(true);
+    expect(hasContextDelegationProgressEvidence([
       { phase: 'DELEGATE', state: 'fail', detail: 'did not delegate to a subagent' },
     ])).toBe(false);
     expect(hasContextDelegationProgressEvidence([
@@ -39,6 +42,17 @@ describe('auto-dent progress context delegation evidence (#1509)', () => {
     ])).toBe(false);
     expect(hasContextDelegationProgressEvidence([
       { phase: 'RESEARCH', state: 'done', detail: 'delegated transcript mining to subagent' },
+    ])).toBe(false);
+  });
+
+  it('requires delegation progress before implementation starts', () => {
+    expect(hasContextDelegationProgressEvidence([
+      { phase: 'DELEGATE', state: 'done', detail: 'delegated transcript mining to subagent' },
+      { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+    ])).toBe(true);
+    expect(hasContextDelegationProgressEvidence([
+      { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+      { phase: 'DELEGATE', state: 'done', detail: 'delegated transcript mining to subagent' },
     ])).toBe(false);
   });
 });
