@@ -31,6 +31,7 @@ import {
 import { writeAttachment } from '../src/section-editor.js';
 import { buildCappedBody } from '../src/capped-attachment.js';
 import { gh } from '../src/lib/gh-exec.js';
+import { parseGithubPrUrl } from '../src/lib/github-pr.js';
 import { shellQuote } from '../src/lib/shell-quote.js';
 import {
   parseSubscriptionAgentProvider,
@@ -224,6 +225,9 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
   if (!reviewProvider) {
     throw new Error(`unknown provider ${JSON.stringify(providerName)}; expected claude or codex`);
   }
+  if (values.debug === true && values['dry-run'] === true) {
+    throw new Error('--debug cannot be combined with --dry-run');
+  }
 
   return {
     command,
@@ -247,8 +251,8 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
 
 function normalizePr(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  const match = value.match(/\/pull\/(\d+)/);
-  const normalized = match ? match[1] : value;
+  const parsedUrl = parseGithubPrUrl(value);
+  const normalized = parsedUrl ? String(parsedUrl.number) : value;
   if (!/^\d+$/.test(normalized)) {
     throw new Error('--pr must be a PR number or GitHub pull request URL');
   }
@@ -305,7 +309,8 @@ function selectDimensions(args: ReviewRoundCliArgs, listPr: () => string[]): str
     for (const dim of listPr()) selected.add(dim);
   }
   for (const dim of expandDimensionGroups(args.groups, listPr)) selected.add(dim);
-  return selected.size > 0 ? [...selected] : listPr();
+  const usedExplicitSelector = args.dimensions.length > 0 || args.groups.length > 0 || args.allPrDimensions;
+  return selected.size > 0 || usedExplicitSelector ? [...selected] : listPr();
 }
 
 function parseJsonObject<T>(text: string, label: string): T {
@@ -424,6 +429,12 @@ export function readArtifact(path: string): ReviewRoundArtifact {
 }
 
 export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
+  if (artifact.requestedDimensions.length === 0) {
+    throw new Error('Refusing to store authoritative review round: no requested dimensions');
+  }
+  if (artifact.result.dimensions.length === 0) {
+    throw new Error('Refusing to store authoritative review round: no stored dimensions');
+  }
   if (artifact.result.failedDimensions.length > 0) {
     throw new Error(
       `Refusing to store authoritative review round: provider failures in dimensions ` +
@@ -672,10 +683,12 @@ export function formatDimensionProgress(artifact: ReviewRoundArtifact): string {
 
 export function formatRecoveryCommands(artifact: ReviewRoundArtifact, artifactPath: string): string {
   const failed = new Set(artifact.result.failedDimensions);
+  const stored = new Set(artifact.result.dimensions.map((dimension) => dimension.dimension));
+  const absentRequested = artifact.requestedDimensions.filter((dimension) => !failed.has(dimension) && !stored.has(dimension));
   const incomplete = artifact.result.dimensions
     .filter((dimension) => dimension.findings.some((finding) => finding.status === 'MISSING'))
     .map((dimension) => dimension.dimension);
-  const rerun = [...new Set([...failed, ...incomplete])];
+  const rerun = [...new Set([...failed, ...absentRequested, ...incomplete])];
   const lines: string[] = [];
   if (rerun.length > 0) {
     lines.push(
