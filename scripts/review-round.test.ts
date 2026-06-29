@@ -534,6 +534,44 @@ describe('storeReviewArtifact', () => {
     expect(result).toEqual({ round: 7, urls: [], summaryUrl: undefined, gate: undefined });
   });
 
+  it('allows PARTIAL-only artifacts so structured-data can derive PASS_WITH_PARTIALS', async () => {
+    const deps = {
+      nextReviewRound: vi.fn().mockReturnValue(4),
+      storeReviewBatch: vi.fn().mockReturnValue({ urls: ['u1'], summaryUrl: 'summary-url' }),
+      rerunReviewVerdictGate: vi.fn(),
+      writeReviewSentinel: vi.fn(),
+      writeAttachment: vi.fn(),
+    };
+    const artifact = baseArtifact({
+      requestedDimensions: ['requirements'],
+      result: {
+        ...baseArtifact().result,
+        verdict: 'fail',
+        partialCount: 1,
+        dimensions: [{
+          dimension: 'requirements',
+          verdict: 'fail',
+          summary: 'partial',
+          findings: [{ requirement: 'live running status', status: 'PARTIAL', detail: 'Final status is implemented; live running status is not.' }],
+        }],
+      },
+    });
+
+    const result = await storeReviewArtifact(artifact, { round: 4 }, deps);
+
+    expect(result.summaryUrl).toBe('summary-url');
+    expect(deps.storeReviewBatch).toHaveBeenCalledWith(
+      { kind: 'pr', number: '1735', repo: 'Garsson-io/kaizen' },
+      4,
+      [{
+        dimension: 'requirements',
+        verdict: 'fail',
+        summary: 'partial',
+        findings: [{ requirement: 'live running status', status: 'PARTIAL', detail: 'Final status is implemented; live running status is not.' }],
+      }],
+    );
+  });
+
   it('refuses unstoreable artifacts before any storage side effects', async () => {
     const deps = {
       nextReviewRound: vi.fn().mockReturnValue(4),

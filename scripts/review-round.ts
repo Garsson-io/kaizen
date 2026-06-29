@@ -475,9 +475,6 @@ export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
   if (missing.length > 0) {
     throw new Error(`Refusing to store authoritative review round: MISSING findings present (${missing.join('; ')})`);
   }
-  if (artifact.result.verdict !== 'pass') {
-    throw new Error(`Refusing to store authoritative review round: artifact verdict is ${artifact.result.verdict}`);
-  }
   const stored = new Set(artifact.result.dimensions.map((dimension) => dimension.dimension));
   const missingDimensions = artifact.requestedDimensions.filter((dimension) => !stored.has(dimension));
   if (missingDimensions.length > 0) {
