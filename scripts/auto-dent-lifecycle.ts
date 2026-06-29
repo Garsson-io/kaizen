@@ -198,6 +198,8 @@ export interface ProcessEvidence {
   dryRefactorEvidence?: boolean;
   /** Context-heavy sub-work delegation or explicit not-applicable evidence exists. */
   contextDelegationEvidence?: boolean;
+  /** Context/tool-call pressure reasons that made delegation required for this run. */
+  contextDelegationPressureReasons?: string[];
   /** Meet-reality evidence exists. */
   meetRealityEvidence?: boolean;
   /** Hook/provider activation or external substitute evidence exists. */
@@ -348,9 +350,13 @@ export function validateProcessEvidence(
     'context-delegation',
     needsPr,
     evidence.contextDelegationEvidence,
-    'a PR exists or was claimed without context-delegation evidence',
+    evidence.contextDelegationPressureReasons && evidence.contextDelegationPressureReasons.length > 0
+      ? `a PR exists or was claimed without context-delegation evidence after context pressure crossed threshold: ${evidence.contextDelegationPressureReasons.join('; ')}`
+      : 'a PR exists or was claimed without context-delegation evidence',
     'context-delegation evidence exists',
-    'record context-heavy sub-work delegated to subagents or the explicit reason delegation was not applicable',
+    evidence.contextDelegationPressureReasons && evidence.contextDelegationPressureReasons.length > 0
+      ? 'delegate the named sub-work before continuing implementation, then record context-heavy sub-work delegated to subagents'
+      : 'record context-heavy sub-work delegated to subagents or the explicit reason delegation was not applicable',
   );
   addCheck(
     checks,

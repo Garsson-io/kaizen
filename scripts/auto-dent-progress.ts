@@ -217,3 +217,25 @@ export function upsertProgressStep(
   existing.detail = step.detail || existing.detail;
   existing.url = step.url || existing.url;
 }
+
+export function upsertContextDelegationProgressStep(
+  result: AutoDentProgressResult,
+  step: RunProgressStep,
+): void {
+  result.progressSteps = result.progressSteps || [];
+  const implementationIndex = result.progressSteps.findIndex((existing) => [
+    'IMPLEMENT',
+    'TEST',
+    'PR',
+    'REVIEW',
+    'FIX',
+    'MERGE',
+    'REFLECT',
+    'CLEANUP',
+  ].includes(existing.phase));
+  if (implementationIndex === -1) {
+    upsertProgressStep(result, step);
+    return;
+  }
+  result.progressSteps.splice(implementationIndex, 0, step);
+}

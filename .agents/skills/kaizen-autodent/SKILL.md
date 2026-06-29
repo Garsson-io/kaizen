@@ -99,6 +99,8 @@ npx tsx scripts/kaizen-workflow-driver.ts status --issue <N> --repo "$ISSUES_REP
 
 The canonical evidence contract is `docs/workflow-gate-ledger.md`. Producers and consumers must use that ledger shape instead of inventing ad hoc booleans, progress rows, or prompt-local lifecycle lists.
 
+Context-heavy sub-work is delegated by default: broad code search, multi-file summarization, independent investigations, review dimensions, and related-area DRY/dead-code sweeps should be fanned out before main-thread implementation continues. Auto-dent records observed subagent/tool delegation as `AUTO_DENT_PHASE: DELEGATE`; if context/tool-call pressure crosses threshold without that evidence, the existing `context-delegation` gate produces the repair/reflection signal.
+
 ## Stop Conditions
 
 The inside-harness loop may stop only at one of these states:

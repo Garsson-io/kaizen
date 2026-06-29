@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildKaizenCycleSteps,
   hasContextDelegationProgressEvidence,
+  upsertContextDelegationProgressStep,
   upsertProgressStep,
   type AutoDentProgressResult,
 } from './auto-dent-progress.js';
@@ -71,5 +72,30 @@ describe('auto-dent progress context delegation evidence (#1509)', () => {
 
     expect(result.progressSteps?.filter((step) => step.phase === 'DELEGATE')).toHaveLength(2);
     expect(hasContextDelegationProgressEvidence(result.progressSteps)).toBe(false);
+  });
+
+  it('inserts automatic delegation evidence before implementation progress', () => {
+    const result: AutoDentProgressResult = {
+      prs: [],
+      cases: [],
+      stopRequested: false,
+      progressSteps: [
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+        { phase: 'TEST', state: 'pass', detail: '12 tests' },
+      ],
+    };
+
+    upsertContextDelegationProgressStep(result, {
+      phase: 'DELEGATE',
+      state: 'done',
+      detail: 'delegated broad search to explorer subagent',
+    });
+
+    expect(result.progressSteps?.map((step) => step.phase)).toEqual([
+      'DELEGATE',
+      'IMPLEMENT',
+      'TEST',
+    ]);
+    expect(hasContextDelegationProgressEvidence(result.progressSteps)).toBe(true);
   });
 });

@@ -58,9 +58,15 @@ import {
   formatProgressStepsMarkdown,
   hasContextDelegationProgressEvidence,
   formatReviewForDisplay,
+  upsertContextDelegationProgressStep,
   upsertProgressStep,
   type RunProgressStep,
 } from './auto-dent-progress.js';
+import {
+  analyzeContextDelegation,
+  buildAutomaticContextDelegationStep,
+  type ContextDelegationAnalysis,
+} from './auto-dent-context-delegation.js';
 import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
@@ -1346,6 +1352,7 @@ export interface BuildRunCompleteEventInput {
   workflowRepairGates?: WorkflowGateId[];
   workflowRepairState?: RunCompleteEvent['workflow_repair_state'];
   workflowRepairPrompt?: string;
+  contextDelegationAnalysis?: ContextDelegationAnalysis;
   reviewVerdict?: RunCompleteEvent['review_verdict'];
   reviewCostUsd?: number;
   phaseProviders?: PhaseProviderRecord;
@@ -1372,6 +1379,7 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     workflowRepairGates,
     workflowRepairState,
     workflowRepairPrompt,
+    contextDelegationAnalysis,
     reviewVerdict,
     reviewCostUsd,
     phaseProviders,
@@ -1400,6 +1408,10 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     workflow_repair_gates: workflowRepairGates,
     workflow_repair_state: workflowRepairState,
     workflow_repair_prompt: workflowRepairPrompt,
+    context_delegation_required: contextDelegationAnalysis?.pressure.required,
+    context_delegation_observed: contextDelegationAnalysis?.delegation.observed,
+    context_delegation_reasons: contextDelegationAnalysis?.pressure.reasons,
+    context_delegation_recommended_substeps: contextDelegationAnalysis?.pressure.recommendedSubsteps,
     review_verdict: reviewVerdict,
     review_cost_usd: reviewCostUsd,
     phase_providers: phaseProviders,
@@ -3344,8 +3356,18 @@ async function main(): Promise<void> {
   let workflowRepairGates: WorkflowGateId[] = [];
   let workflowRepairState: 'not_required' | 'repair_scheduled' | 'merge_ready' | 'blocked_with_reason' | 'repair_budget_exhausted' = 'not_required';
   let workflowRepairPrompt: string | undefined;
+  let contextDelegationAnalysis: ContextDelegationAnalysis | undefined;
   try {
     const lifecycle = validateRunLifecycle(logFile);
+    contextDelegationAnalysis = analyzeContextDelegation(readFileSync(logFile, 'utf8'));
+    const automaticContextDelegationStep = buildAutomaticContextDelegationStep(contextDelegationAnalysis);
+    if (automaticContextDelegationStep) {
+      upsertContextDelegationProgressStep(result, automaticContextDelegationStep);
+      appendFileSync(logFile, `context_delegation_evidence=${automaticContextDelegationStep.detail}\n`);
+    }
+    if (contextDelegationAnalysis.pressure.required) {
+      appendFileSync(logFile, `context_delegation_pressure=${contextDelegationAnalysis.pressure.reasons.join('; ')}\n`);
+    }
 
     // External evidence cross-check (#1138, epic #1134): the markers above are
     // the agent's self-report; here we judge them against the outcomes the
@@ -3390,6 +3412,7 @@ async function main(): Promise<void> {
       ),
       contextDelegationEvidence: Boolean(state.test_task) ||
         hasContextDelegationProgressEvidence(result.progressSteps),
+      contextDelegationPressureReasons: contextDelegationAnalysis.pressure.reasons,
       meetRealityEvidence: Boolean(state.test_task) || result.progressSteps?.some((step) =>
         step.phase === 'MEET-REALITY' || /meet reality|dogfood|tried|observed output/i.test(`${step.phase} ${step.detail}`),
       ),
@@ -3595,6 +3618,7 @@ async function main(): Promise<void> {
       workflowRepairGates,
       workflowRepairState,
       workflowRepairPrompt,
+      contextDelegationAnalysis,
       reviewVerdict,
       reviewCostUsd,
       phaseProviders: phaseProvidersForState(state),

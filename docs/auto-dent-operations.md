@@ -72,6 +72,8 @@ Key variables: `{{guidance}}`, `{{run_tag}}`, `{{run_context}}`, `{{issues_close
 
 `{{goal_forcing_contract}}` comes from `scripts/kaizen-workflow-driver.ts`. It is the headless equivalent of `/goal`: a run should not finish while applicable kaizen gates remain pending. Keep lifecycle gate wording there instead of copying checklists into individual prompt templates.
 
+Context-heavy work is delegated by default through that same contract. Auto-dent tells the worker to fan out broad code search, multi-file summarization, independent investigations, review dimensions, and related-area DRY/dead-code sweeps before continuing implementation. `scripts/auto-dent-context-delegation.ts` then mines the run log for context pressure (`context_growth`, `missing_subagent`, high main-thread discovery/tool-call volume) and observed subagent tool use. Observed delegation becomes a `DELEGATE` progress row; threshold-crossing PR runs without delegation repair the existing `context-delegation` gate.
+
 Status for a run or issue uses the same shared model:
 
 ```bash
@@ -362,6 +364,7 @@ Add to the batch loop in `auto-dent.ts` (between runs) or to `auto-dent-run.ts` 
 | `scripts/auto-dent.sh` | Compatibility wrapper for the TS batch runner |
 | `scripts/auto-dent.ts` | TypeScript batch runner (outer loop, self-update, stop conditions, summaries) |
 | `scripts/auto-dent-run.ts` | Single-run TypeScript runner (prompt building, stream-json parsing, state updates) |
+| `scripts/auto-dent-context-delegation.ts` | Context pressure and observed delegation analysis for the `context-delegation` gate |
 | `scripts/auto-dent-ctl.ts` | Control plane (status, halt, reflect, dry-sweep) |
 | `scripts/auto-dent-dry-sweep.ts` | Cross-PR/codebase DRY drift candidate collector |
 | `scripts/auto-dent-score.ts` | Run and batch quality scoring |

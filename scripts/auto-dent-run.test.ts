@@ -3299,6 +3299,54 @@ describe('buildRunMetrics', () => {
     });
   });
 
+  it('emits context-delegation pressure diagnostics on run.complete telemetry', () => {
+    const result = makeRunResult();
+    const metrics = buildRunMetrics({
+      runNum: 10,
+      runStartEpoch: 1742681500,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result,
+    });
+
+    const event = buildRunCompleteEvent({
+      runId: 'batch/run-10',
+      batchId: 'batch',
+      runNum: 10,
+      duration: 8,
+      exitCode: 0,
+      result,
+      runMode: 'exploit',
+      outcome: 'empty_success',
+      runMetricsForOutcome: metrics,
+      lifecycleViolationCount: 0,
+      contextDelegationAnalysis: {
+        pressure: {
+          required: true,
+          reasons: ['main_thread_discovery:14/10'],
+          recommendedSubsteps: ['broad code search'],
+          mainThreadToolCalls: 14,
+          discoveryToolCalls: 14,
+          contextGrowthEvents: 0,
+          missingSubagentPatterns: 0,
+          repeatedReads: 0,
+          repeatedSearches: 1,
+        },
+        delegation: {
+          observed: false,
+        },
+      },
+    });
+
+    expect(event).toMatchObject({
+      context_delegation_required: true,
+      context_delegation_observed: false,
+      context_delegation_reasons: ['main_thread_discovery:14/10'],
+      context_delegation_recommended_substeps: ['broad code search'],
+    });
+  });
+
   it('emits bandit decision metadata on run.complete telemetry', () => {
     const bandit = computeBanditWeights([
       ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: [`pr-${i}`] })),
@@ -4763,6 +4811,20 @@ describe('context-delegation evidence wiring (#1509)', () => {
     expect(validationIndex).toBeGreaterThanOrEqual(0);
     expect(helperIndex).toBeGreaterThan(evidenceFieldIndex);
     expect(helperIndex).toBeLessThan(validationIndex);
+  });
+
+  it('analyzes run context pressure before process validation and run telemetry', () => {
+    const analysisIndex = AUTO_DENT_RUN_SOURCE.indexOf('analyzeContextDelegation(readFileSync(logFile');
+    const automaticStepIndex = AUTO_DENT_RUN_SOURCE.indexOf('buildAutomaticContextDelegationStep(contextDelegationAnalysis)');
+    const pressureReasonsIndex = AUTO_DENT_RUN_SOURCE.indexOf('contextDelegationPressureReasons: contextDelegationAnalysis.pressure.reasons');
+    const validationIndex = AUTO_DENT_RUN_SOURCE.indexOf('validateProcessEvidence(lifecycle, processEvidence)');
+    const eventIndex = AUTO_DENT_RUN_SOURCE.lastIndexOf('contextDelegationAnalysis,');
+
+    expect(analysisIndex).toBeGreaterThanOrEqual(0);
+    expect(automaticStepIndex).toBeGreaterThan(analysisIndex);
+    expect(pressureReasonsIndex).toBeGreaterThan(automaticStepIndex);
+    expect(pressureReasonsIndex).toBeLessThan(validationIndex);
+    expect(eventIndex).toBeGreaterThan(validationIndex);
   });
 });
 

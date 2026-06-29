@@ -497,6 +497,28 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     }));
   });
 
+  it('includes context-pressure reasons in context-delegation repair output', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({
+        contextDelegationEvidence: false,
+        contextDelegationPressureReasons: [
+          'main_thread_discovery:14/10',
+          'context_growth:1',
+        ],
+      }),
+    );
+
+    const check = result.checks.find((entry) => entry.id === 'context-delegation');
+    expect(check).toMatchObject({
+      id: 'context-delegation',
+      status: 'fail',
+    });
+    expect(check?.reason).toContain('main_thread_discovery:14/10');
+    expect(check?.reason).toContain('context_growth:1');
+    expect(check?.remediation).toContain('delegate the named sub-work before continuing implementation');
+  });
+
   it('derives the context-delegation process gate from ordered progress evidence', () => {
     const processResult = (steps: RunProgressStep[]) => validateProcessEvidence(
       validationWith(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR']),

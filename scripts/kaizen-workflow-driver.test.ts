@@ -49,6 +49,10 @@ describe('kaizen workflow forcing driver', () => {
     expect(directive).toContain('related-area DRY/refactor pass');
     expect(directive).toContain('reduce competing mechanisms, schemas, and drift');
     expect(directive).toContain('delegate context-heavy sub-work');
+    expect(directive).toContain('fan out broad code search');
+    expect(directive).toContain('multi-file summarization');
+    expect(directive).toContain('review dimensions');
+    expect(directive).toContain('DRY/dead-code sweeps');
     expect(directive).toContain('record context-delegation evidence');
     expect(directive).toContain('meet reality');
     expect(directive).toContain('observe outputs and side effects');
@@ -63,6 +67,11 @@ describe('kaizen workflow forcing driver', () => {
     expect(contract).toContain('review/requirements/impact gates');
     expect(contract).toContain('related-area DRY/refactor pass');
     expect(contract).toContain('delegate context-heavy sub-work');
+    expect(contract).toContain('fan out broad code search');
+    expect(contract).toContain('multi-file summarization');
+    expect(contract).toContain('review dimensions');
+    expect(contract).toContain('DRY/dead-code sweeps');
+    expect(contract).toContain('before continuing implementation');
     expect(contract).toContain('context-delegation evidence');
     expect(contract).toContain('AUTO_DENT_PHASE: DELEGATE | status=not-applicable | evidence=<why>');
     expect(contract).toContain('meet reality');
