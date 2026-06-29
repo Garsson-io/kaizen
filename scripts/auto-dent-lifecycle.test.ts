@@ -497,6 +497,50 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     }));
   });
 
+  it('includes context-pressure reasons in context-delegation repair output', () => {
+    const result = validateProcessEvidence(
+      validationWith(['IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({
+        contextDelegationEvidence: false,
+        contextDelegationPressureReasons: [
+          'main_thread_discovery:14/10',
+          'context_growth:1',
+        ],
+      }),
+    );
+
+    const check = result.checks.find((entry) => entry.id === 'context-delegation');
+    expect(check).toMatchObject({
+      id: 'context-delegation',
+      status: 'fail',
+    });
+    expect(check?.reason).toContain('main_thread_discovery:14/10');
+    expect(check?.reason).toContain('context_growth:1');
+    expect(check?.remediation).toContain('delegate the named sub-work before continuing implementation');
+  });
+
+  it('does not accept not-applicable delegation evidence when context pressure crossed threshold', () => {
+    const pressureReasons = ['main_thread_discovery:14/10'];
+    const steps: RunProgressStep[] = [
+      { phase: 'DELEGATE', state: 'not-applicable', detail: 'narrow single-file task' },
+      { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+    ];
+    const result = validateProcessEvidence(
+      validationWith(['DELEGATE', 'IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({
+        contextDelegationEvidence: hasContextDelegationProgressEvidence(steps, {
+          allowNotApplicable: pressureReasons.length === 0,
+        }),
+        contextDelegationPressureReasons: pressureReasons,
+      }),
+    );
+
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'context-delegation',
+      status: 'fail',
+    }));
+  });
+
   it('derives the context-delegation process gate from ordered progress evidence', () => {
     const processResult = (steps: RunProgressStep[]) => validateProcessEvidence(
       validationWith(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR']),

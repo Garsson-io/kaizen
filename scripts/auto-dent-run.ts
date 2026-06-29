@@ -24,7 +24,7 @@ import { spawn, execFileSync, execSync } from 'child_process';
 import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { createInterface } from 'readline';
-import { dirname, join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
 import { firstHookReason } from './hook-signals.js';
 import { claimNextItem, markItem, resetAssignedItems, readPlan, themeProgress } from './auto-dent-plan.js';
@@ -58,9 +58,15 @@ import {
   formatProgressStepsMarkdown,
   hasContextDelegationProgressEvidence,
   formatReviewForDisplay,
+  upsertContextDelegationProgressStep,
   upsertProgressStep,
   type RunProgressStep,
 } from './auto-dent-progress.js';
+import {
+  analyzeContextDelegation,
+  buildAutomaticContextDelegationStep,
+  type ContextDelegationAnalysis,
+} from './auto-dent-context-delegation.js';
 import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
@@ -1346,6 +1352,7 @@ export interface BuildRunCompleteEventInput {
   workflowRepairGates?: WorkflowGateId[];
   workflowRepairState?: RunCompleteEvent['workflow_repair_state'];
   workflowRepairPrompt?: string;
+  contextDelegationAnalysis?: ContextDelegationAnalysis;
   reviewVerdict?: RunCompleteEvent['review_verdict'];
   reviewCostUsd?: number;
   phaseProviders?: PhaseProviderRecord;
@@ -1372,6 +1379,7 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     workflowRepairGates,
     workflowRepairState,
     workflowRepairPrompt,
+    contextDelegationAnalysis,
     reviewVerdict,
     reviewCostUsd,
     phaseProviders,
@@ -1400,6 +1408,10 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     workflow_repair_gates: workflowRepairGates,
     workflow_repair_state: workflowRepairState,
     workflow_repair_prompt: workflowRepairPrompt,
+    context_delegation_required: contextDelegationAnalysis?.pressure.required,
+    context_delegation_observed: contextDelegationAnalysis?.delegation.observed,
+    context_delegation_reasons: contextDelegationAnalysis?.pressure.reasons,
+    context_delegation_recommended_substeps: contextDelegationAnalysis?.pressure.recommendedSubsteps,
     review_verdict: reviewVerdict,
     review_cost_usd: reviewCostUsd,
     phase_providers: phaseProviders,
@@ -1408,6 +1420,70 @@ export function buildRunCompleteEvent(input: BuildRunCompleteEventInput): RunCom
     outcome,
     mode: runMode,
   };
+}
+
+export function applyContextDelegationAnalysis(
+  result: RunResult,
+  logText: string,
+  appendDiagnostic: (line: string) => void = () => {},
+): ContextDelegationAnalysis {
+  const analysis = analyzeContextDelegation(logText);
+  const automaticContextDelegationStep = buildAutomaticContextDelegationStep(analysis);
+  if (automaticContextDelegationStep) {
+    upsertContextDelegationProgressStep(result, automaticContextDelegationStep);
+    appendDiagnostic(`context_delegation_evidence=${automaticContextDelegationStep.detail}\n`);
+  }
+  if (analysis.pressure.required) {
+    appendDiagnostic(`context_delegation_pressure=${analysis.pressure.reasons.join('; ')}\n`);
+  }
+  return analysis;
+}
+
+function normalizeCodexJsonlForAnalysis(jsonl: string): string {
+  const rows: string[] = [];
+  for (const line of jsonl.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const event = parseJsonObject(line);
+    if (!event) continue;
+    for (const message of normalizeCodexEventToStreamMessages(event)) {
+      rows.push(JSON.stringify(message));
+    }
+  }
+  return rows.join('\n');
+}
+
+function resolveContextDelegationRawJsonl(logFile: string, rawJsonlPath: string): string | null {
+  const logDir = resolve(dirname(logFile));
+  const resolved = resolve(logDir, rawJsonlPath);
+  if (dirname(resolved) !== logDir) return null;
+  if (!/^run-\d+-codex\.jsonl$/.test(basename(resolved))) return null;
+  return resolved;
+}
+
+export function buildContextDelegationAnalysisLog(
+  logFile: string,
+  readText: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+): string {
+  const logText = readText(logFile);
+  const parts = [logText];
+  const rawJsonlPaths = Array.from(logText.matchAll(/^\[provider\] raw_jsonl=(.+)$/gm))
+    .map((match) => match[1]?.trim())
+    .filter((path): path is string => Boolean(path));
+
+  for (const rawJsonlPath of rawJsonlPaths) {
+    const resolvedRawJsonl = resolveContextDelegationRawJsonl(logFile, rawJsonlPath);
+    if (!resolvedRawJsonl) continue;
+    try {
+      const normalized = normalizeCodexJsonlForAnalysis(
+        readText(resolvedRawJsonl),
+      );
+      if (normalized) parts.push(normalized);
+    } catch {
+      // The primary run log remains the durable analysis surface; sidecars are best-effort.
+    }
+  }
+
+  return parts.join('\n');
 }
 
 function processCheckState(status: ProcessValidation['checks'][number]['status']): WorkflowGateState {
@@ -3344,8 +3420,14 @@ async function main(): Promise<void> {
   let workflowRepairGates: WorkflowGateId[] = [];
   let workflowRepairState: 'not_required' | 'repair_scheduled' | 'merge_ready' | 'blocked_with_reason' | 'repair_budget_exhausted' = 'not_required';
   let workflowRepairPrompt: string | undefined;
+  let contextDelegationAnalysis: ContextDelegationAnalysis | undefined;
   try {
     const lifecycle = validateRunLifecycle(logFile);
+    contextDelegationAnalysis = applyContextDelegationAnalysis(
+      result,
+      buildContextDelegationAnalysisLog(logFile),
+      (line) => appendFileSync(logFile, line),
+    );
 
     // External evidence cross-check (#1138, epic #1134): the markers above are
     // the agent's self-report; here we judge them against the outcomes the
@@ -3369,6 +3451,10 @@ async function main(): Promise<void> {
           : mergeStatuses.some((status) => status === 'closed') ? 'not-ready'
             : mergeStatuses.every((status) => status === 'merged' || status === 'auto_queued') ? 'ready'
               : 'unknown';
+    const contextDelegationPressureReasons = contextDelegationAnalysis.pressure.reasons;
+    const contextDelegationProgressEvidence = hasContextDelegationProgressEvidence(result.progressSteps, {
+      allowNotApplicable: contextDelegationPressureReasons.length === 0,
+    });
     const intentionalNoOp =
       exitCode === 0 &&
       result.stopRequested &&
@@ -3389,7 +3475,8 @@ async function main(): Promise<void> {
         step.phase === 'DRY' || step.phase === 'DRY-REFACTOR' || /dry|refactor|simplification/i.test(`${step.phase} ${step.detail}`),
       ),
       contextDelegationEvidence: Boolean(state.test_task) ||
-        hasContextDelegationProgressEvidence(result.progressSteps),
+        contextDelegationProgressEvidence,
+      contextDelegationPressureReasons,
       meetRealityEvidence: Boolean(state.test_task) || result.progressSteps?.some((step) =>
         step.phase === 'MEET-REALITY' || /meet reality|dogfood|tried|observed output/i.test(`${step.phase} ${step.detail}`),
       ),
@@ -3595,6 +3682,7 @@ async function main(): Promise<void> {
       workflowRepairGates,
       workflowRepairState,
       workflowRepairPrompt,
+      contextDelegationAnalysis,
       reviewVerdict,
       reviewCostUsd,
       phaseProviders: phaseProvidersForState(state),

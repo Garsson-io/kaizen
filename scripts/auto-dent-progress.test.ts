@@ -6,6 +6,7 @@ import {
   formatProgressStepsMarkdown,
   hasContextDelegationProgressEvidence,
   orderedProgressSteps,
+  upsertContextDelegationProgressStep,
   upsertProgressStep,
   type AutoDentProgressResult,
   type RunProgressStep,
@@ -186,6 +187,12 @@ describe('auto-dent progress context delegation evidence (#1509)', () => {
       { phase: 'DELEGATE', state: 'not applicable', detail: 'narrow single-file task' },
     ])).toBe(true);
     expect(hasContextDelegationProgressEvidence([
+      { phase: 'DELEGATE', state: 'not applicable', detail: 'narrow single-file task' },
+    ], { allowNotApplicable: false })).toBe(false);
+    expect(hasContextDelegationProgressEvidence([
+      { phase: 'DELEGATE', state: 'done', detail: 'delegated transcript mining to subagent' },
+    ], { allowNotApplicable: false })).toBe(true);
+    expect(hasContextDelegationProgressEvidence([
       { phase: 'DELEGATE', state: 'fail', detail: 'did not delegate to a subagent' },
     ])).toBe(false);
     expect(hasContextDelegationProgressEvidence([
@@ -220,5 +227,30 @@ describe('auto-dent progress context delegation evidence (#1509)', () => {
 
     expect(result.progressSteps?.filter((step) => step.phase === 'DELEGATE')).toHaveLength(2);
     expect(hasContextDelegationProgressEvidence(result.progressSteps)).toBe(false);
+  });
+
+  it('inserts automatic delegation evidence before implementation progress', () => {
+    const result: AutoDentProgressResult = {
+      prs: [],
+      cases: [],
+      stopRequested: false,
+      progressSteps: [
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+        { phase: 'TEST', state: 'pass', detail: '12 tests' },
+      ],
+    };
+
+    upsertContextDelegationProgressStep(result, {
+      phase: 'DELEGATE',
+      state: 'done',
+      detail: 'delegated broad search to explorer subagent',
+    });
+
+    expect(result.progressSteps?.map((step) => step.phase)).toEqual([
+      'DELEGATE',
+      'IMPLEMENT',
+      'TEST',
+    ]);
+    expect(hasContextDelegationProgressEvidence(result.progressSteps)).toBe(true);
   });
 });

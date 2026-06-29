@@ -60,7 +60,10 @@ import {
   populateCrossBatchSteering,
   shouldRunCodexProvider,
   attachRunTranscripts,
+  applyContextDelegationAnalysis,
+  buildContextDelegationAnalysisLog,
 } from './auto-dent-run.js';
+import { analyzeContextDelegation } from './auto-dent-context-delegation.js';
 import {
   resolveProviderWorkspaceRoot,
 } from './auto-dent-provider-workspace.js';
@@ -3310,6 +3313,54 @@ describe('buildRunMetrics', () => {
     });
   });
 
+  it('emits context-delegation pressure diagnostics on run.complete telemetry', () => {
+    const result = makeRunResult();
+    const metrics = buildRunMetrics({
+      runNum: 10,
+      runStartEpoch: 1742681500,
+      duration: 8,
+      exitCode: 0,
+      runMode: 'exploit',
+      result,
+    });
+
+    const event = buildRunCompleteEvent({
+      runId: 'batch/run-10',
+      batchId: 'batch',
+      runNum: 10,
+      duration: 8,
+      exitCode: 0,
+      result,
+      runMode: 'exploit',
+      outcome: 'empty_success',
+      runMetricsForOutcome: metrics,
+      lifecycleViolationCount: 0,
+      contextDelegationAnalysis: {
+        pressure: {
+          required: true,
+          reasons: ['main_thread_discovery:14/10'],
+          recommendedSubsteps: ['broad code search'],
+          mainThreadToolCalls: 14,
+          discoveryToolCalls: 14,
+          contextGrowthEvents: 0,
+          missingSubagentPatterns: 0,
+          repeatedReads: 0,
+          repeatedSearches: 1,
+        },
+        delegation: {
+          observed: false,
+        },
+      },
+    });
+
+    expect(event).toMatchObject({
+      context_delegation_required: true,
+      context_delegation_observed: false,
+      context_delegation_reasons: ['main_thread_discovery:14/10'],
+      context_delegation_recommended_substeps: ['broad code search'],
+    });
+  });
+
   it('emits bandit decision metadata on run.complete telemetry', () => {
     const bandit = computeBanditWeights([
       ...Array.from({ length: 5 }, (_, i) => makeRunMetrics({ run: i, mode: 'exploit', prs: [`pr-${i}`] })),
@@ -4764,16 +4815,111 @@ describe('workflow gate repair scheduling (#1533)', () => {
 });
 
 describe('context-delegation evidence wiring (#1509)', () => {
+  it('includes Codex raw JSONL sidecar tool telemetry in context pressure analysis', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'codex-context-pressure-'));
+    try {
+      const logFile = join(dir, 'run-1.log');
+      const rawFile = join(dir, 'run-1-codex.jsonl');
+      writeFileSync(logFile, [
+        '[provider] codex subscription-cli',
+        '[provider] raw_jsonl=run-1-codex.jsonl',
+        'AUTO_DENT_PHASE: DELEGATE | status=not-applicable | evidence=narrow task',
+      ].join('\n'));
+      writeFileSync(rawFile, Array.from({ length: 12 }, (_, i) => JSON.stringify({
+        type: 'item.completed',
+        item: {
+          type: 'command_execution',
+          command: `npx tsx scripts/probe-${i}.ts`,
+          aggregated_output: 'ok',
+          exit_code: 0,
+          status: 'completed',
+        },
+      })).join('\n'));
+
+      const logText = buildContextDelegationAnalysisLog(logFile);
+      const analysis = analyzeContextDelegation(logText);
+
+      expect(analysis.pressure.required).toBe(true);
+      expect(analysis.pressure.mainThreadToolCalls).toBe(12);
+      expect(analysis.pressure.reasons).toContain('main_thread_tool_calls:12/12');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores raw_jsonl pointers outside the run log directory or expected Codex sidecar shape', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'codex-context-pressure-path-'));
+    try {
+      const logFile = join(dir, 'run-1.log');
+      writeFileSync(logFile, [
+        '[provider] raw_jsonl=../../outside.jsonl',
+        '[provider] raw_jsonl=/dev/zero',
+        '[provider] raw_jsonl=run-1-codex.jsonl',
+      ].join('\n'));
+      const reads: string[] = [];
+      const logText = buildContextDelegationAnalysisLog(logFile, (path) => {
+        reads.push(path);
+        if (path === logFile) return readFileSync(path, 'utf8');
+        if (path === join(dir, 'run-1-codex.jsonl')) {
+          return JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'command_execution',
+              command: 'git status --short',
+              aggregated_output: '',
+            },
+          });
+        }
+        throw new Error(`unexpected read: ${path}`);
+      });
+
+      expect(reads).toEqual([logFile, join(dir, 'run-1-codex.jsonl')]);
+      expect(logText).toContain('"name":"Bash"');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('routes auto-dent progress evidence into process validation', () => {
-    const helperIndex = AUTO_DENT_RUN_SOURCE.indexOf('hasContextDelegationProgressEvidence(result.progressSteps)');
-    const evidenceFieldIndex = AUTO_DENT_RUN_SOURCE.indexOf('contextDelegationEvidence: Boolean(state.test_task) ||');
+    const reasonsIndex = AUTO_DENT_RUN_SOURCE.indexOf('const contextDelegationPressureReasons = contextDelegationAnalysis.pressure.reasons;');
+    const helperIndex = AUTO_DENT_RUN_SOURCE.indexOf('const contextDelegationProgressEvidence = hasContextDelegationProgressEvidence(result.progressSteps, {');
+    const pressureOptionIndex = AUTO_DENT_RUN_SOURCE.indexOf('allowNotApplicable: contextDelegationPressureReasons.length === 0');
+    const evidenceFieldIndex = AUTO_DENT_RUN_SOURCE.indexOf('contextDelegationEvidence: Boolean(state.test_task) ||\n        contextDelegationProgressEvidence,');
     const validationIndex = AUTO_DENT_RUN_SOURCE.indexOf('validateProcessEvidence(lifecycle, processEvidence)');
 
+    expect(reasonsIndex).toBeGreaterThanOrEqual(0);
     expect(helperIndex).toBeGreaterThanOrEqual(0);
+    expect(pressureOptionIndex).toBeGreaterThan(helperIndex);
     expect(evidenceFieldIndex).toBeGreaterThanOrEqual(0);
     expect(validationIndex).toBeGreaterThanOrEqual(0);
-    expect(helperIndex).toBeGreaterThan(evidenceFieldIndex);
+    expect(helperIndex).toBeGreaterThan(reasonsIndex);
+    expect(evidenceFieldIndex).toBeGreaterThan(helperIndex);
     expect(helperIndex).toBeLessThan(validationIndex);
+  });
+
+  it('applies run context analysis as progress evidence and diagnostics', () => {
+    const result = makeRunResult({
+      progressSteps: [
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+      ],
+    });
+    const diagnostics: string[] = [];
+    const row = (name: string, input: Record<string, unknown>) => JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name, input }] },
+    });
+    const logText = [
+      row('Agent', { description: 'Fan out broad code search', subagent_type: 'explorer' }),
+      ...Array.from({ length: 12 }, () => row('Read', { file_path: 'src/auto-dent-run.ts' })),
+    ].join('\n');
+
+    const analysis = applyContextDelegationAnalysis(result, logText, (line) => diagnostics.push(line));
+
+    expect(analysis.pressure.required).toBe(true);
+    expect(analysis.delegation.observed).toBe(true);
+    expect(result.progressSteps?.map((step) => step.phase)).toEqual(['DELEGATE', 'IMPLEMENT']);
+    expect(diagnostics.join('')).toContain('context_delegation_evidence=delegated Fan out broad code search');
+    expect(diagnostics.join('')).toContain('context_delegation_pressure=');
   });
 });
 

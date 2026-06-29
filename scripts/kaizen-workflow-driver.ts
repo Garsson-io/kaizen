@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { currentBranch, makeGitRun, type GitRun } from '../src/issue-binding.js';
 import { resolveProjectRoot } from '../src/lib/resolve-project-root.js';
+import { renderContextDelegationPolicy } from './auto-dent-context-delegation.js';
 import { CANONICAL_WORKFLOW_GATES } from './workflow-gate-ledger.js';
 
 export type WorkflowMode = 'manual' | 'exploit' | 'explore' | 'reflect' | 'subtract' | 'contemplate' | string;
@@ -139,6 +140,7 @@ export function buildManualGoalDirective(input: ManualGoalInput): string {
     FULL_KAIZEN_GATE_LABELS.join(' -> '),
     'Do a related-area DRY/refactor pass to reduce competing mechanisms, schemas, and drift.',
     'For broad work, delegate context-heavy sub-work to subagents when work is parallelizable or self-contained, and record context-delegation evidence or why delegation was not applicable.',
+    renderContextDelegationPolicy(),
     'Meet reality: try the PR/workflow, observe outputs and side effects, and record whether the ticket goal was achieved.',
   ].join(' ');
   return `/goal ${objective}`;
@@ -157,6 +159,7 @@ export function renderAutoDentGoalContract(mode: WorkflowMode): string {
     '',
     'The related-area DRY/refactor pass is required for implementation work: reduce competing mechanisms, schemas, and drift in the area touched by the ticket.',
     'For broad work, delegate context-heavy sub-work to subagents when work is parallelizable or self-contained; record context-delegation evidence or an explicit not-applicable reason.',
+    renderContextDelegationPolicy(),
     'Meet reality before declaring done: try the PR/workflow, observe outputs and side effects, and record whether the original goal changed in reality.',
     '',
     'Harness terminal protocol:',

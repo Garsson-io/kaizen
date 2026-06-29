@@ -55,6 +55,8 @@ Worker final claims are not authoritative evidence. They are diagnostic inputs c
 
 Hook output remains useful because it is close to the enforcement point, but hook output is a producer of ledger evidence, not a separate gate language.
 
+`scripts/auto-dent-context-delegation.ts` is the context-delegation pressure producer. It mines run logs for transcript taxonomy signals (`context_growth`, `missing_subagent`), high main-thread discovery/tool-call volume, and observed subagent tool use. Observed delegation normalizes to `AUTO_DENT_PHASE: DELEGATE`; threshold pressure without delegation remains a `context-delegation` repair, not a new gate.
+
 ## Repair Loop
 
 When a PR-producing run has missing, invalid, stale, or contradictory gate evidence, the ledger produces a targeted repair request for that same PR. Repair requests identify the run, issue, PR, branch, missing gates, invalid gates, and the exact evidence to fill.
