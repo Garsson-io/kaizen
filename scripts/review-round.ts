@@ -9,9 +9,12 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { parseArgs as parseNodeArgs } from 'node:util';
+import { z } from 'zod';
 import {
   reviewBattery,
   listPrDimensions,
+  loadDimensionMetas,
   type BatteryResult,
   type DimensionReview,
   type ReviewDimensionFailure,
@@ -21,6 +24,7 @@ import {
   nextReviewRound,
   prTarget,
   retrievePlan,
+  retrieveTestPlan,
   storeReviewBatch,
   type ReviewFindingData,
 } from '../src/structured-data.js';
@@ -30,6 +34,8 @@ import {
   subscriptionAgentProvider,
   type SubscriptionAgentProvider,
 } from '../src/provider-contract.js';
+import { validateReviewFindingPayload } from '../src/review-finding-contract.js';
+import { writeReviewSentinel } from '../src/cli-structured-data.js';
 import { rerunReviewVerdictGate, type RerunResult } from './rerun-review-verdict-gate.js';
 
 export type ReviewRoundCommand = 'run' | 'store' | 'run-and-store';
@@ -40,6 +46,7 @@ export interface ReviewRoundCliArgs {
   issue?: string;
   repo?: string;
   dimensions: string[];
+  groups: string[];
   allPrDimensions: boolean;
   reviewProvider: SubscriptionAgentProvider;
   timeoutMs?: number;
@@ -71,6 +78,7 @@ export interface ReviewRoundArtifact {
     skippedDimensions: string[];
     durationMs: number;
     costUsd: number;
+    error?: string;
   };
   context: {
     issueTitle?: string;
@@ -79,6 +87,7 @@ export interface ReviewRoundArtifact {
     prBodyChars?: number;
     diffChars?: number;
     planChars?: number;
+    testPlanChars?: number;
   };
 }
 
@@ -92,6 +101,7 @@ export interface StoreReviewArtifactDeps {
   nextReviewRound: typeof nextReviewRound;
   storeReviewBatch: typeof storeReviewBatch;
   rerunReviewVerdictGate: typeof rerunReviewVerdictGate;
+  writeReviewSentinel: typeof writeReviewSentinel;
 }
 
 export interface StoreReviewArtifactResult {
@@ -114,6 +124,7 @@ interface ReviewRoundContext {
   prBody?: string;
   prDiff?: string;
   planText?: string;
+  testPlanText?: string;
   result: BatteryResult;
   nowIso?: string;
 }
@@ -123,22 +134,12 @@ interface RunReviewRoundDeps {
   listPrDimensions: typeof listPrDimensions;
   gh: typeof gh;
   retrievePlan: typeof retrievePlan;
+  retrieveTestPlan: typeof retrieveTestPlan;
   writeArtifact: typeof writeArtifact;
   now: () => string;
 }
 
 const DEFAULT_PROVIDER = subscriptionAgentProvider('claude');
-
-function readFlag(args: string[], name: string): string | undefined {
-  const idx = args.indexOf(name);
-  if (idx < 0) return undefined;
-  const value = args[idx + 1];
-  return value && !value.startsWith('--') ? value : undefined;
-}
-
-function hasFlag(args: string[], name: string): boolean {
-  return args.includes(name);
-}
 
 function splitCsv(value: string | undefined): string[] {
   return (value ?? '')
@@ -149,6 +150,7 @@ function splitCsv(value: string | undefined): string[] {
 
 function parsePositiveInt(value: string | undefined, flag: string): number | undefined {
   if (!value) return undefined;
+  if (!/^\d+$/.test(value)) throw new Error(`${flag} must be a positive integer`);
   const parsed = Number.parseInt(value, 10);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${flag} must be a positive integer`);
@@ -173,6 +175,7 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
     return {
       command: 'run',
       dimensions: [],
+      groups: [],
       allPrDimensions: false,
       reviewProvider: DEFAULT_PROVIDER,
       dryRun: false,
@@ -184,7 +187,31 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
     throw new Error(`unknown command ${JSON.stringify(command)}`);
   }
 
-  const providerName = readFlag(argv, '--provider') ?? readFlag(argv, '--review-provider') ?? 'claude';
+  const parsed = parseNodeArgs({
+    args: argv.slice(1),
+    allowPositionals: false,
+    strict: true,
+    options: {
+      pr: { type: 'string' },
+      issue: { type: 'string' },
+      repo: { type: 'string' },
+      provider: { type: 'string' },
+      'review-provider': { type: 'string' },
+      dimensions: { type: 'string' },
+      group: { type: 'string' },
+      'all-pr': { type: 'boolean' },
+      timeout: { type: 'string' },
+      out: { type: 'string' },
+      file: { type: 'string' },
+      round: { type: 'string' },
+      'dry-run': { type: 'boolean' },
+      'rerun-gate': { type: 'boolean' },
+      'store-only-if-pass': { type: 'boolean' },
+    },
+  });
+  const values = parsed.values;
+
+  const providerName = values.provider ?? values['review-provider'] ?? 'claude';
   const reviewProvider = parseSubscriptionAgentProvider(providerName);
   if (!reviewProvider) {
     throw new Error(`unknown provider ${JSON.stringify(providerName)}; expected claude or codex`);
@@ -192,19 +219,20 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
 
   return {
     command,
-    pr: normalizePr(readFlag(argv, '--pr')),
-    issue: readFlag(argv, '--issue'),
-    repo: readFlag(argv, '--repo') ?? process.env.GITHUB_REPOSITORY,
-    dimensions: splitCsv(readFlag(argv, '--dimensions')),
-    allPrDimensions: hasFlag(argv, '--all-pr'),
+    pr: normalizePr(values.pr),
+    issue: values.issue,
+    repo: values.repo ?? process.env.GITHUB_REPOSITORY,
+    dimensions: splitCsv(values.dimensions),
+    groups: splitCsv(values.group),
+    allPrDimensions: values['all-pr'] === true,
     reviewProvider,
-    timeoutMs: parseTimeoutMs(readFlag(argv, '--timeout')),
-    out: readFlag(argv, '--out'),
-    file: readFlag(argv, '--file'),
-    round: parsePositiveInt(readFlag(argv, '--round'), '--round'),
-    dryRun: hasFlag(argv, '--dry-run'),
-    rerunGate: hasFlag(argv, '--rerun-gate'),
-    storeOnlyIfPass: hasFlag(argv, '--store-only-if-pass'),
+    timeoutMs: parseTimeoutMs(values.timeout),
+    out: values.out,
+    file: values.file,
+    round: parsePositiveInt(values.round, '--round'),
+    dryRun: values['dry-run'] === true,
+    rerunGate: values['rerun-gate'] === true,
+    storeOnlyIfPass: values['store-only-if-pass'] === true,
   };
 }
 
@@ -223,9 +251,48 @@ function required(value: string | undefined, label: string): string {
   return value;
 }
 
+export function expandDimensionGroups(groups: string[], listPr: () => string[]): string[] {
+  const metas = loadDimensionMetas();
+  const prDims = new Set(listPr());
+  const byName = (name: string) => metas.find((meta) => meta.name === name);
+  const selected = new Set<string>();
+  for (const group of groups) {
+    let recognized = false;
+    if (group === 'all-pr') {
+      for (const dim of prDims) selected.add(dim);
+      recognized = true;
+      continue;
+    }
+    for (const dim of prDims) {
+      const meta = byName(dim);
+      const needs = new Set(meta?.needs ?? []);
+      const include =
+        (group === 'diff' && needs.size === 1 && needs.has('diff')) ||
+        (group === 'issue' && needs.has('issue') && !needs.has('plan') && !needs.has('tests')) ||
+        (group === 'plan' && needs.has('plan')) ||
+        (group === 'tests' && needs.has('tests')) ||
+        (group === 'description' && dim === 'pr-description') ||
+        (group === 'skills' && dim === 'skill-changes');
+      if (include) {
+        selected.add(dim);
+        recognized = true;
+      }
+    }
+    if (!recognized && !['diff', 'issue', 'plan', 'tests', 'description', 'skills'].includes(group)) {
+      throw new Error(`unknown dimension group ${JSON.stringify(group)}`);
+    }
+  }
+  return [...selected];
+}
+
 function selectDimensions(args: ReviewRoundCliArgs, listPr: () => string[]): string[] {
-  if (args.dimensions.length > 0) return args.dimensions;
-  return listPr();
+  const selected = new Set<string>();
+  for (const dim of args.dimensions) selected.add(dim);
+  if (args.allPrDimensions) {
+    for (const dim of listPr()) selected.add(dim);
+  }
+  for (const dim of expandDimensionGroups(args.groups, listPr)) selected.add(dim);
+  return selected.size > 0 ? [...selected] : listPr();
 }
 
 function parseJsonObject<T>(text: string, label: string): T {
@@ -263,6 +330,7 @@ export function reviewResultToArtifact(ctx: ReviewRoundContext): ReviewRoundArti
       skippedDimensions: ctx.result.skippedDimensions,
       durationMs: ctx.result.durationMs,
       costUsd: ctx.result.costUsd,
+      error: (ctx.result as BatteryResult & { error?: string }).error,
     },
     context: {
       issueTitle: ctx.issueTitle,
@@ -271,9 +339,58 @@ export function reviewResultToArtifact(ctx: ReviewRoundContext): ReviewRoundArti
       prBodyChars: ctx.prBody?.length,
       diffChars: ctx.prDiff?.length,
       planChars: ctx.planText?.length,
+      testPlanChars: ctx.testPlanText?.length,
     },
   };
 }
+
+const FindingSchema = z.object({
+  requirement: z.string(),
+  status: z.enum(['DONE', 'PARTIAL', 'MISSING']),
+  detail: z.string(),
+  analysis: z.string().optional(),
+});
+
+const DimensionSchema = z.object({
+  dimension: z.string().min(1),
+  verdict: z.enum(['pass', 'fail']),
+  summary: z.string(),
+  findings: z.array(FindingSchema),
+  provider: z.unknown().optional(),
+});
+
+const ArtifactSchema = z.object({
+  schemaVersion: z.literal(1),
+  generatedAt: z.string(),
+  repo: z.string().min(1),
+  pr: z.string().min(1),
+  prUrl: z.string().optional(),
+  issue: z.string().optional(),
+  headSha: z.string().optional(),
+  provider: z.object({ provider: z.enum(['claude', 'codex']), billing: z.literal('subscription-cli') }),
+  requestedDimensions: z.array(z.string().min(1)),
+  result: z.object({
+    verdict: z.enum(['pass', 'fail']),
+    dimensions: z.array(DimensionSchema),
+    missingCount: z.number(),
+    partialCount: z.number(),
+    failedDimensions: z.array(z.string()),
+    failedDimensionFailures: z.array(z.unknown()).default([]),
+    skippedDimensions: z.array(z.string()),
+    durationMs: z.number(),
+    costUsd: z.number(),
+    error: z.string().optional(),
+  }),
+  context: z.object({
+    issueTitle: z.string().optional(),
+    prTitle: z.string().optional(),
+    issueChars: z.number().optional(),
+    prBodyChars: z.number().optional(),
+    diffChars: z.number().optional(),
+    planChars: z.number().optional(),
+    testPlanChars: z.number().optional(),
+  }),
+});
 
 export function writeArtifact(path: string, artifact: ReviewRoundArtifact): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -289,7 +406,8 @@ export function defaultArtifactPath(pr: string, nowIso: string): string {
 }
 
 export function readArtifact(path: string): ReviewRoundArtifact {
-  return JSON.parse(readFileSync(path, 'utf8')) as ReviewRoundArtifact;
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+  return ArtifactSchema.parse(parsed) as ReviewRoundArtifact;
 }
 
 export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
@@ -315,6 +433,17 @@ export function assertArtifactStoreable(artifact: ReviewRoundArtifact): void {
   if (artifact.result.verdict !== 'pass') {
     throw new Error(`Refusing to store authoritative review round: artifact verdict is ${artifact.result.verdict}`);
   }
+  const stored = new Set(artifact.result.dimensions.map((dimension) => dimension.dimension));
+  const missingDimensions = artifact.requestedDimensions.filter((dimension) => !stored.has(dimension));
+  if (missingDimensions.length > 0) {
+    throw new Error(`Refusing to store authoritative review round: missing requested dimensions ${missingDimensions.join(', ')}`);
+  }
+  for (const dimension of artifact.result.dimensions) {
+    const validation = validateReviewFindingPayload(dimension);
+    if (!validation.ok) {
+      throw new Error(`Refusing to store authoritative review round: ${dimension.dimension} payload invalid: ${validation.error}`);
+    }
+  }
 }
 
 function toReviewFindingData(dimension: DimensionReview): ReviewFindingData {
@@ -329,7 +458,7 @@ function toReviewFindingData(dimension: DimensionReview): ReviewFindingData {
 export async function storeReviewArtifact(
   artifact: ReviewRoundArtifact,
   options: StoreReviewArtifactOptions = {},
-  deps: StoreReviewArtifactDeps = { nextReviewRound, storeReviewBatch, rerunReviewVerdictGate },
+  deps: StoreReviewArtifactDeps = { nextReviewRound, storeReviewBatch, rerunReviewVerdictGate, writeReviewSentinel },
 ): Promise<StoreReviewArtifactResult> {
   assertArtifactStoreable(artifact);
   const target = prTarget(artifact.pr, artifact.repo);
@@ -339,6 +468,7 @@ export async function storeReviewArtifact(
   }
 
   const stored = deps.storeReviewBatch(target, round, artifact.result.dimensions.map(toReviewFindingData));
+  deps.writeReviewSentinel(artifact.repo, artifact.pr, round);
   let gate: string | undefined;
   if (options.rerunGate) {
     const rerun: RerunResult = deps.rerunReviewVerdictGate(artifact.repo, artifact.pr);
@@ -354,6 +484,7 @@ export async function runReviewRound(
     listPrDimensions,
     gh,
     retrievePlan,
+    retrieveTestPlan,
     writeArtifact,
     now: () => new Date().toISOString(),
   },
@@ -363,59 +494,140 @@ export async function runReviewRound(
   const issue = required(args.issue, '--issue');
   const dimensions = selectDimensions(args, deps.listPrDimensions);
   if (dimensions.length === 0) throw new Error('No review dimensions selected');
-
-  const issueInfo = ghJson<{ title?: string; body?: string }>(
-    deps.gh,
-    ['issue', 'view', issue, '--repo', repo, '--json', 'title,body'],
-    'gh issue view',
-  );
-  const prInfo = ghJson<{ title?: string; body?: string; headRefOid?: string; url?: string }>(
-    deps.gh,
-    ['pr', 'view', pr, '--repo', repo, '--json', 'title,body,headRefOid,url'],
-    'gh pr view',
-  );
-  const diff = deps.gh(['pr', 'diff', pr, '--repo', repo], 120_000);
-  const planText = deps.retrievePlan(issueTarget(issue, repo)) ?? undefined;
-
-  const result = await deps.reviewBattery({
-    dimensions,
-    prUrl: prInfo.url ?? prUrl(repo, pr),
-    issueNum: issue,
-    repo,
-    issueBody: [issueInfo.title, issueInfo.body].filter(Boolean).join('\n\n'),
-    prBody: [prInfo.title, prInfo.body].filter(Boolean).join('\n\n'),
-    prDiffStat: diff,
-    planText,
-    timeoutMs: args.timeoutMs,
-    reviewProvider: args.reviewProvider,
-  });
-
   const nowIso = deps.now();
-  const artifact = reviewResultToArtifact({
-    repo,
-    pr,
-    prUrl: prInfo.url ?? prUrl(repo, pr),
-    issue,
-    headSha: prInfo.headRefOid,
-    requestedDimensions: dimensions,
-    issueTitle: issueInfo.title,
-    prTitle: prInfo.title,
-    issueBody: issueInfo.body,
-    prBody: prInfo.body,
-    prDiff: diff,
-    planText,
-    result,
-    nowIso,
-  });
-  deps.writeArtifact(args.out ?? defaultArtifactPath(pr, nowIso), artifact);
-  return artifact;
+  const outPath = args.out ?? defaultArtifactPath(pr, nowIso);
+
+  let issueInfo: { title?: string; body?: string } = {};
+  let prInfo: { title?: string; body?: string; headRefOid?: string; url?: string } = {};
+  let diff = '';
+  let planText: string | undefined;
+  let testPlanText: string | undefined;
+
+  try {
+    issueInfo = ghJson(deps.gh, ['issue', 'view', issue, '--repo', repo, '--json', 'title,body'], 'gh issue view');
+    prInfo = ghJson(deps.gh, ['pr', 'view', pr, '--repo', repo, '--json', 'title,body,headRefOid,url'], 'gh pr view');
+    diff = deps.gh(['pr', 'diff', pr, '--repo', repo], 120_000);
+    planText = deps.retrievePlan(issueTarget(issue, repo)) ?? undefined;
+    testPlanText = deps.retrieveTestPlan(issueTarget(issue, repo)) ?? undefined;
+
+    console.log(`  [review-round] queued ${dimensions.length} dimension(s): ${dimensions.join(', ')}`);
+    const result = await deps.reviewBattery({
+      dimensions,
+      prUrl: prInfo.url ?? prUrl(repo, pr),
+      issueNum: issue,
+      repo,
+      issueBody: [issueInfo.title, issueInfo.body].filter(Boolean).join('\n\n'),
+      prBody: [prInfo.title, prInfo.body].filter(Boolean).join('\n\n'),
+      prDiffStat: diff,
+      planText,
+      extraVars: { test_plan: testPlanText ?? '' },
+      timeoutMs: args.timeoutMs,
+      reviewProvider: args.reviewProvider,
+    });
+
+    const artifact = reviewResultToArtifact({
+      repo,
+      pr,
+      prUrl: prInfo.url ?? prUrl(repo, pr),
+      issue,
+      headSha: prInfo.headRefOid,
+      requestedDimensions: dimensions,
+      issueTitle: issueInfo.title,
+      prTitle: prInfo.title,
+      issueBody: issueInfo.body,
+      prBody: prInfo.body,
+      prDiff: diff,
+      planText,
+      testPlanText,
+      result,
+      nowIso,
+    });
+    deps.writeArtifact(outPath, artifact);
+    return artifact;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const result = failedBatteryResult(dimensions, args.reviewProvider, message);
+    const artifact = reviewResultToArtifact({
+      repo,
+      pr,
+      prUrl: prInfo.url ?? prUrl(repo, pr),
+      issue,
+      headSha: prInfo.headRefOid,
+      requestedDimensions: dimensions,
+      issueTitle: issueInfo.title,
+      prTitle: prInfo.title,
+      issueBody: issueInfo.body,
+      prBody: prInfo.body,
+      prDiff: diff,
+      planText,
+      testPlanText,
+      result,
+      nowIso,
+    });
+    deps.writeArtifact(outPath, artifact);
+    throw err;
+  }
+}
+
+function failedBatteryResult(dimensions: string[], provider: SubscriptionAgentProvider, error: string): BatteryResult & { error: string } {
+  return {
+    dimensions: [],
+    reviewProvider: provider,
+    verdict: 'fail',
+    missingCount: 0,
+    partialCount: 0,
+    durationMs: 0,
+    costUsd: 0,
+    failedDimensions: dimensions,
+    failedDimensionFailures: dimensions.map((dimension) => ({
+      dimension,
+      provider,
+      failureClass: provider.provider === 'codex' ? 'codex_review_failed' : 'claude_review_failed',
+    })),
+    skippedDimensions: [],
+    error,
+  };
+}
+
+export function formatDimensionProgress(artifact: ReviewRoundArtifact): string {
+  const failed = new Set(artifact.result.failedDimensions);
+  const byDimension = new Map(artifact.result.dimensions.map((dimension) => [dimension.dimension, dimension]));
+  return artifact.requestedDimensions.map((dimension) => {
+    if (failed.has(dimension)) return `${dimension}: PROVIDER_FAILED`;
+    const result = byDimension.get(dimension);
+    if (!result) return `${dimension}: MISSING`;
+    const missing = result.findings.filter((finding) => finding.status === 'MISSING').length;
+    const partial = result.findings.filter((finding) => finding.status === 'PARTIAL').length;
+    if (missing > 0) return `${dimension}: MISSING (${missing})`;
+    if (partial > 0) return `${dimension}: PARTIAL (${partial})`;
+    return `${dimension}: PASS`;
+  }).join('\n');
+}
+
+export function formatRecoveryCommands(artifact: ReviewRoundArtifact, artifactPath: string): string {
+  const failed = new Set(artifact.result.failedDimensions);
+  const incomplete = artifact.result.dimensions
+    .filter((dimension) => dimension.findings.some((finding) => finding.status === 'MISSING'))
+    .map((dimension) => dimension.dimension);
+  const rerun = [...new Set([...failed, ...incomplete])];
+  const lines: string[] = [];
+  if (rerun.length > 0) {
+    lines.push(
+      `Rerun failed/missing dimensions: npx tsx scripts/review-round.ts run --pr ${artifact.pr} --issue ${artifact.issue ?? '<issue>'} --repo ${artifact.repo} --dimensions ${rerun.join(',')} --provider ${artifact.provider.provider} --out ${artifactPath}`,
+    );
+  } else {
+    lines.push(
+      `Store after inspection: npx tsx scripts/review-round.ts store --file ${artifactPath} --repo ${artifact.repo} --rerun-gate`,
+    );
+  }
+  return lines.join('\n');
 }
 
 export function buildHelp(): string {
   return `review-round - run and store focused authoritative review rounds
 
 Usage:
-  npx tsx scripts/review-round.ts run --pr N --issue N --repo owner/repo [--dimensions a,b|--all-pr] [--provider claude|codex] [--timeout 360s] --out file.json
+  npx tsx scripts/review-round.ts run --pr N --issue N --repo owner/repo [--dimensions a,b|--group diff,plan|--all-pr] [--provider claude|codex] [--timeout 360s] [--out file.json]
   npx tsx scripts/review-round.ts store --file file.json [--round N] [--dry-run] [--rerun-gate]
   npx tsx scripts/review-round.ts run-and-store --pr N --issue N --repo owner/repo --store-only-if-pass --out file.json [--rerun-gate]
 
@@ -425,6 +637,9 @@ Examples:
 
   # full PR review
   npx tsx scripts/review-round.ts run --pr 1735 --issue 1732 --repo Garsson-io/kaizen --all-pr --out logs/review/pr-1735-full.json
+
+  # dimension group
+  npx tsx scripts/review-round.ts run --pr 1735 --issue 1732 --repo Garsson-io/kaizen --group diff,tests --out logs/review/pr-1735-focused.json
 
   # dry-run artifact only
   npx tsx scripts/review-round.ts store --file logs/review/pr-1735-r2.json --dry-run
@@ -446,8 +661,11 @@ async function main(): Promise<void> {
   const args = parseCliArgs();
   if (args.command === 'run') {
     const artifact = await runReviewRound(args);
-    console.log(`Review round artifact: ${args.out ?? defaultArtifactPath(artifact.pr, artifact.generatedAt)}`);
+    const artifactPath = args.out ?? defaultArtifactPath(artifact.pr, artifact.generatedAt);
+    console.log(`Review round artifact: ${artifactPath}`);
     console.log(`Verdict: ${artifact.result.verdict}; missing=${artifact.result.missingCount}; failed=${artifact.result.failedDimensions.length}`);
+    console.log(formatDimensionProgress(artifact));
+    console.log(formatRecoveryCommands(artifact, artifactPath));
     return;
   }
 
@@ -467,6 +685,7 @@ async function main(): Promise<void> {
     throw new Error('run-and-store requires --store-only-if-pass');
   }
   const artifact = await runReviewRound(args);
+  const artifactPath = args.out ?? defaultArtifactPath(artifact.pr, artifact.generatedAt);
   const stored = await storeReviewArtifact(artifact, {
     round: args.round,
     dryRun: args.dryRun,
@@ -474,6 +693,7 @@ async function main(): Promise<void> {
   });
   console.log(args.dryRun ? `Dry-run OK: would store round ${stored.round}` : `Stored review round ${stored.round}: ${stored.summaryUrl}`);
   if (stored.gate) console.log(`Review verdict gate: ${stored.gate}`);
+  console.log(formatRecoveryCommands(artifact, artifactPath));
 }
 
 if (process.argv[1]?.endsWith('review-round.ts') || process.argv[1]?.endsWith('review-round.js')) {

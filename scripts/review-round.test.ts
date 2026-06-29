@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   assertArtifactStoreable,
   buildHelp,
+  expandDimensionGroups,
+  formatRecoveryCommands,
   parseCliArgs,
   reviewResultToArtifact,
   runReviewRound,
@@ -77,11 +79,26 @@ describe('parseCliArgs', () => {
     expect(() => parseCliArgs(['run', '--provider', 'local'])).toThrow('unknown provider');
   });
 
+  it('rejects malformed integer flags instead of truncating them', () => {
+    expect(() => parseCliArgs(['store', '--file', 'artifact.json', '--round', '7abc'])).toThrow('--round must be a positive integer');
+    expect(() => parseCliArgs(['store', '--file', 'artifact.json', '--round', '1.5'])).toThrow('--round must be a positive integer');
+  });
+
   it('accepts explicit full PR review mode', () => {
     const parsed = parseCliArgs(['run', '--pr', '1735', '--issue', '1732', '--repo', 'Garsson-io/kaizen', '--all-pr']);
 
     expect(parsed.allPrDimensions).toBe(true);
     expect(parsed.dimensions).toEqual([]);
+  });
+});
+
+describe('expandDimensionGroups', () => {
+  it('expands common dimension groups without hard-coding dimensions at the callsite', () => {
+    expect(expandDimensionGroups(['diff'], () => ['correctness', 'dry', 'requirements', 'security'])).toEqual([
+      'correctness',
+      'dry',
+      'security',
+    ]);
   });
 });
 
@@ -112,6 +129,7 @@ describe('reviewResultToArtifact', () => {
         failedDimensions: ['test-quality'],
         failedDimensionFailures: [{ dimension: 'test-quality', provider, failureClass: 'codex_review_failed' }],
         skippedDimensions: [],
+        error: 'provider timed out',
       },
     });
 
@@ -128,6 +146,7 @@ describe('reviewResultToArtifact', () => {
       diffChars: 4,
       planChars: 4,
     });
+    expect(artifact.result.error).toBe('provider timed out');
   });
 });
 
@@ -168,6 +187,7 @@ describe('runReviewRound', () => {
         listPrDimensions: vi.fn().mockReturnValue(['security']),
         gh: gh as any,
         retrievePlan: vi.fn().mockReturnValue('stored plan'),
+        retrieveTestPlan: vi.fn().mockReturnValue('stored test plan'),
         writeArtifact,
         now: () => '2026-06-30T10:00:00.000Z',
       },
@@ -180,6 +200,7 @@ describe('runReviewRound', () => {
       prBody: 'PR title\n\nPR body',
       prDiffStat: 'diff --git a/file b/file',
       planText: 'stored plan',
+      extraVars: { test_plan: 'stored test plan' },
     }));
     expect(artifact.result.failedDimensions).toEqual(['security']);
     expect(writeArtifact).toHaveBeenCalledWith('logs/review/result.json', artifact);
@@ -213,12 +234,42 @@ describe('runReviewRound', () => {
         listPrDimensions: vi.fn(),
         gh: gh as any,
         retrievePlan: vi.fn().mockReturnValue('stored plan'),
+        retrieveTestPlan: vi.fn().mockReturnValue('stored test plan'),
         writeArtifact,
         now: () => '2026-06-30T10:00:00.000Z',
       },
     );
 
     expect(writeArtifact).toHaveBeenCalledWith('logs/review/pr-1735-20260630T100000Z.json', artifact);
+  });
+
+  it('writes a failure artifact when reviewBattery throws', async () => {
+    const writeArtifact = vi.fn();
+    const gh = vi.fn((args: string[]) => {
+      if (args[0] === 'issue') return JSON.stringify({ title: 'Issue title', body: 'Issue body' });
+      if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ title: 'PR title', body: 'PR body', headRefOid: 'c'.repeat(40), url: 'https://github.com/Garsson-io/kaizen/pull/1735' });
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff';
+      throw new Error(`unexpected gh call ${args.join(' ')}`);
+    });
+
+    await expect(runReviewRound(
+      parseCliArgs(['run', '--pr', '1735', '--issue', '1732', '--repo', 'Garsson-io/kaizen', '--dimensions', 'security', '--provider', 'codex']),
+      {
+        reviewBattery: vi.fn().mockRejectedValue(new Error('provider timeout')),
+        listPrDimensions: vi.fn(),
+        gh: gh as any,
+        retrievePlan: vi.fn().mockReturnValue('stored plan'),
+        retrieveTestPlan: vi.fn().mockReturnValue('stored test plan'),
+        writeArtifact,
+        now: () => '2026-06-30T10:00:00.000Z',
+      },
+    )).rejects.toThrow('provider timeout');
+
+    const [, artifact] = writeArtifact.mock.calls[0];
+    expect(writeArtifact.mock.calls[0][0]).toBe('logs/review/pr-1735-20260630T100000Z.json');
+    expect(artifact.result.verdict).toBe('fail');
+    expect(artifact.result.failedDimensions).toEqual(['security']);
+    expect(artifact.result.error).toBe('provider timeout');
   });
 });
 
@@ -255,6 +306,18 @@ describe('assertArtifactStoreable', () => {
 
     expect(() => assertArtifactStoreable(artifact)).toThrow(/provider failures/);
   });
+
+  it('fails closed when requested dimensions are missing from the artifact results', () => {
+    const artifact = baseArtifact({
+      requestedDimensions: ['security', 'test-quality'],
+      result: {
+        ...baseArtifact().result,
+        dimensions: [baseArtifact().result.dimensions[0]],
+      },
+    });
+
+    expect(() => assertArtifactStoreable(artifact)).toThrow(/missing requested dimensions/);
+  });
 });
 
 describe('storeReviewArtifact', () => {
@@ -263,9 +326,11 @@ describe('storeReviewArtifact', () => {
       nextReviewRound: vi.fn().mockReturnValue(4),
       storeReviewBatch: vi.fn().mockReturnValue({ urls: ['u1'], summaryUrl: 'summary-url' }),
       rerunReviewVerdictGate: vi.fn().mockReturnValue({ action: 'rerun', runId: 123, message: 'rerun requested' }),
+      writeReviewSentinel: vi.fn(),
     };
 
-    const result = await storeReviewArtifact(baseArtifact(), { rerunGate: true }, deps);
+    const artifact = baseArtifact({ requestedDimensions: ['security'] });
+    const result = await storeReviewArtifact(artifact, { rerunGate: true }, deps);
 
     expect(deps.nextReviewRound).toHaveBeenCalledWith({ kind: 'pr', number: '1735', repo: 'Garsson-io/kaizen' });
     expect(deps.storeReviewBatch).toHaveBeenCalledWith(
@@ -280,6 +345,7 @@ describe('storeReviewArtifact', () => {
         },
       ],
     );
+    expect(deps.writeReviewSentinel).toHaveBeenCalledWith('Garsson-io/kaizen', '1735', 4);
     expect(deps.rerunReviewVerdictGate).toHaveBeenCalledWith('Garsson-io/kaizen', '1735');
     expect(result).toEqual({ round: 4, urls: ['u1'], summaryUrl: 'summary-url', gate: 'rerun requested' });
   });
@@ -289,12 +355,14 @@ describe('storeReviewArtifact', () => {
       nextReviewRound: vi.fn().mockReturnValue(4),
       storeReviewBatch: vi.fn(),
       rerunReviewVerdictGate: vi.fn(),
+      writeReviewSentinel: vi.fn(),
     };
 
-    const result = await storeReviewArtifact(baseArtifact(), { dryRun: true, rerunGate: true, round: 7 }, deps);
+    const result = await storeReviewArtifact(baseArtifact({ requestedDimensions: ['security'] }), { dryRun: true, rerunGate: true, round: 7 }, deps);
 
     expect(deps.storeReviewBatch).not.toHaveBeenCalled();
     expect(deps.rerunReviewVerdictGate).not.toHaveBeenCalled();
+    expect(deps.writeReviewSentinel).not.toHaveBeenCalled();
     expect(result).toEqual({ round: 7, urls: [], summaryUrl: undefined, gate: undefined });
   });
 });
@@ -308,5 +376,30 @@ describe('help text', () => {
     expect(help).toContain('dry-run artifact only');
     expect(help).toContain('store after inspection');
     expect(help).toContain('run-and-store');
+    expect(help).toContain('--group diff,tests');
+  });
+});
+
+describe('formatRecoveryCommands', () => {
+  it('prints a tailored rerun command for missing dimensions', () => {
+    const artifact = baseArtifact({
+      requestedDimensions: ['security', 'requirements'],
+      result: {
+        ...baseArtifact().result,
+        verdict: 'fail',
+        missingCount: 1,
+        dimensions: [
+          baseArtifact().result.dimensions[0],
+          {
+            dimension: 'requirements',
+            verdict: 'fail',
+            summary: 'missing',
+            findings: [{ requirement: 'store command', status: 'MISSING', detail: 'missing' }],
+          },
+        ],
+      },
+    });
+
+    expect(formatRecoveryCommands(artifact, 'logs/review/pr-1735-r1.json')).toContain('--dimensions requirements');
   });
 });

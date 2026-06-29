@@ -213,7 +213,7 @@ function writeSentinelRecord(
   });
 }
 
-function writeReviewSentinel(repo: string, pr: string | undefined, round: number): void {
+export function writeReviewSentinel(repo: string, pr: string | undefined, round: number): void {
   if (!pr) return;
   try {
     const target = prTarget(pr, repo);
