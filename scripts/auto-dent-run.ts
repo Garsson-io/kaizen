@@ -25,7 +25,7 @@ import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { createInterface } from 'readline';
 import { basename, dirname, join, resolve } from 'path';
-import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution } from './auto-dent-score.js';
+import { scoreRunResult, scoreBatch, formatRunScoreLine, formatBatchScoreTable, formatIssuesClosedLine, postHocScoreBatch, formatPostHocLine, detectCostAnomaly, classifyFailure, failureClassLabel, formatFailureDistribution, type BatchScore } from './auto-dent-score.js';
 import { firstHookReason } from './hook-signals.js';
 import { claimNextItem, markItem, resetAssignedItems, readPlan, themeProgress } from './auto-dent-plan.js';
 import { writeAttachment, addSection } from '../src/section-editor.js';
@@ -2794,6 +2794,94 @@ export function runPostHocScoring(
   return postHocScoreBatch(prStatuses, totalCostUsd);
 }
 
+export interface FormatBatchCompletionAttachmentInput {
+  state: BatchState;
+  batchScore: BatchScore;
+  wallTimeSeconds: number;
+  reconciledClosed: string[] | null;
+  progressIssueNumber: string;
+  kaizenRepo: string;
+  batchDir?: string;
+}
+
+function formatRunLimit(state: BatchState): string {
+  return state.max_runs > 0 ? String(state.max_runs) : 'unlimited';
+}
+
+function formatModeDistributionLine(history: RunMetrics[]): string {
+  if (history.length === 0) return 'none';
+  const rendered = Object.entries(computeModeDistribution(history))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([mode, count]) => `${mode} x${count}`)
+    .join(', ');
+  return rendered || 'none';
+}
+
+export function formatBatchCompletionAttachment(input: FormatBatchCompletionAttachmentInput): string {
+  const {
+    state,
+    batchScore,
+    wallTimeSeconds,
+    reconciledClosed,
+    progressIssueNumber,
+    batchDir,
+  } = input;
+  const history = state.run_history ?? [];
+  const failures = formatFailureDistribution(
+    batchScore.runs
+      .map((run) => run.failure_class)
+      .filter((failureClass) => failureClass !== 'success'),
+  );
+  const postHoc = batchScore.post_hoc;
+  const guidanceTitle = cleanGuidanceForTitle(state.guidance) || state.batch_id;
+
+  const lines = [
+    `### Batch Complete: ${guidanceTitle}`,
+    '',
+    '### Final Scorecard',
+    '',
+    formatBatchScoreTable(batchScore),
+    '',
+    '### Batch Activity',
+    '',
+    `- **Runs:** ${state.run} of ${formatRunLimit(state)}`,
+    `- **Wall time:** ${formatDurationHoursMinutes(wallTimeSeconds)}`,
+    `- **Stop reason:** ${state.stop_reason || 'completed'}`,
+    `- **PRs:** ${state.prs.length > 0 ? state.prs.join(', ') : 'none'}`,
+    `- **Issues filed:** ${state.issues_filed.length > 0 ? state.issues_filed.join(', ') : 'none'}`,
+    `- **Issues closed:** ${formatIssuesClosedLine(reconciledClosed, state.issues_closed)}`,
+    '',
+    '### Modes And Failures',
+    '',
+    `- **Modes:** ${formatModeDistributionLine(history)}`,
+    `- **Failures:** ${failures || 'none'}`,
+    '',
+    '### Merge Audit',
+    '',
+  ];
+
+  if (postHoc) {
+    lines.push(
+      `- **Merged PRs:** ${postHoc.merged_count}/${postHoc.prs.length}`,
+      `- **Pending PRs:** ${postHoc.pending_count}`,
+      `- **Closed PRs:** ${postHoc.closed_count}`,
+      `- **Effective efficiency:** ${postHoc.effective_efficiency.toFixed(2)} merged/$`,
+    );
+  } else {
+    lines.push('- **Merged PRs:** not checked');
+  }
+
+  lines.push(
+    '',
+    '### Durable Attachments',
+    '',
+    `- **Machine outcome:** \`batch-outcome\` on #${progressIssueNumber}`,
+    `- **Raw artifacts:** ${batchDir ? `\`batch-artifacts\` on #${progressIssueNumber}` : 'not uploaded for this close path'}`,
+  );
+
+  return lines.join('\n');
+}
+
 export function closeBatchProgressIssue(
   progressIssue: string,
   kaizenRepo: string,
@@ -2806,8 +2894,6 @@ export function closeBatchProgressIssue(
   if (!issueNum) return;
 
   const elapsed = Math.floor(Date.now() / 1000) - state.batch_start;
-  const hours = Math.floor(elapsed / 3600);
-  const mins = Math.floor((elapsed % 3600) / 60);
 
   const batchScore = scoreBatch(state.run_history || []);
 
@@ -2836,17 +2922,15 @@ export function closeBatchProgressIssue(
     console.log(`  [post-hoc] ${formatPostHocLine(postHoc)}`);
   }
 
-  const summary = [
-    `### Batch Complete`,
-    '',
-    formatBatchScoreTable(batchScore),
-    `| **Wall time** | ${hours}h ${mins}m |`,
-    `| **Stop reason** | ${state.stop_reason || 'completed'} |`,
-    '',
-    `**PRs:** ${state.prs.length > 0 ? state.prs.join(', ') : 'none'}`,
-    `**Issues filed:** ${state.issues_filed.length > 0 ? state.issues_filed.join(', ') : 'none'}`,
-    `**Issues closed:** ${formatIssuesClosedLine(reconciledClosed, state.issues_closed)}`,
-  ].join('\n');
+  const summary = formatBatchCompletionAttachment({
+    state,
+    batchScore,
+    wallTimeSeconds: elapsed,
+    reconciledClosed,
+    progressIssueNumber: issueNum,
+    kaizenRepo,
+    batchDir,
+  });
 
   writeProgressAttachment(
     progressIssue,

@@ -60,6 +60,7 @@ import {
   findExistingProgressIssue,
   formatBatchProgressIssueBody,
   formatRunProgressAttachment,
+  formatBatchCompletionAttachment,
   ensureBatchProgressIssue,
   updateBatchProgressIssue,
   extractModeOutput,
@@ -83,6 +84,7 @@ import type { ProviderCapability } from './auto-dent-provider.js';
 import { makeBatchState, makeRunResult } from './auto-dent-test-utils.js';
 import { decideAutoMergeSafety } from './auto-dent-merge-policy.js';
 import { projectReplayRuns } from './auto-dent-replay.js';
+import { postHocScoreBatch, scoreBatch } from './auto-dent-score.js';
 
 const AUTO_DENT_RUN_SOURCE = readFileSync(new URL('./auto-dent-run.ts', import.meta.url), 'utf8');
 
@@ -253,6 +255,116 @@ describe('buildPrompt', () => {
 });
 
 describe('closeBatchProgressIssue maintenance wiring', () => {
+  describe('formatBatchCompletionAttachment', () => {
+    it('renders a final retrospective from structured batch state and score data', () => {
+      const state = makeBatchState({
+        batch_id: 'batch-260629-demo',
+        batch_start: 1742680800,
+        run: 3,
+        max_runs: 5,
+        guidance: 'improve auto-dent observability',
+        prs: [
+          'https://github.com/Garsson-io/kaizen/pull/1227',
+          'https://github.com/Garsson-io/kaizen/pull/1228',
+        ],
+        issues_filed: ['#1300'],
+        issues_closed: ['#1225'],
+        stop_reason: 'budget exhausted',
+        run_history: [
+          makeRunMetrics({
+            run: 1,
+            mode: 'exploit',
+            prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+            issues_closed: ['#1225'],
+            cost_usd: 1.25,
+            duration_seconds: 120,
+          }),
+          makeRunMetrics({
+            run: 2,
+            mode: 'explore',
+            issues_filed: ['#1300'],
+            exit_code: 0,
+            cost_usd: 0.75,
+            duration_seconds: 90,
+          }),
+          makeRunMetrics({
+            run: 3,
+            mode: 'exploit',
+            prs: ['https://github.com/Garsson-io/kaizen/pull/1228'],
+            exit_code: 1,
+            cost_usd: 2.00,
+            duration_seconds: 60,
+          }),
+        ],
+      });
+      const batchScore = scoreBatch(state.run_history || []);
+      batchScore.reconciled_issues_closed = 2;
+      batchScore.post_hoc = postHocScoreBatch([
+        { url: 'https://github.com/Garsson-io/kaizen/pull/1227', status: 'merged' },
+        { url: 'https://github.com/Garsson-io/kaizen/pull/1228', status: 'open' },
+      ], batchScore.total_cost_usd);
+
+      const body = formatBatchCompletionAttachment({
+        state,
+        batchScore,
+        wallTimeSeconds: 3661,
+        reconciledClosed: ['#1225', '#1226'],
+        progressIssueNumber: '1226',
+        kaizenRepo: 'Garsson-io/kaizen',
+        batchDir: '/tmp/auto-dent/batch-260629-demo',
+      });
+
+      expect(body).toContain('### Batch Complete: improve auto-dent observability');
+      expect(body).toContain('### Final Scorecard');
+      expect(body).toContain('| **Runs** | 3 (1 successful) |');
+      expect(body).toContain('| **Issues closed** | 2 |');
+      expect(body).toContain('### Batch Activity');
+      expect(body).toContain('- **Runs:** 3 of 5');
+      expect(body).toContain('- **Wall time:** 1h 1m');
+      expect(body).toContain('- **Stop reason:** budget exhausted');
+      expect(body).toContain('- **PRs:** https://github.com/Garsson-io/kaizen/pull/1227, https://github.com/Garsson-io/kaizen/pull/1228');
+      expect(body).toContain('- **Issues filed:** #1300');
+      expect(body).toContain('- **Issues closed:** #1225 #1226');
+      expect(body).toContain('### Modes And Failures');
+      expect(body).toContain('- **Modes:** exploit x2, explore x1');
+      expect(body).toContain('- **Failures:** crash:1');
+      expect(body).toContain('### Merge Audit');
+      expect(body).toContain('- **Merged PRs:** 1/2');
+      expect(body).toContain('### Durable Attachments');
+      expect(body).toContain('- **Machine outcome:** `batch-outcome` on #1226');
+      expect(body).toContain('- **Raw artifacts:** `batch-artifacts` on #1226');
+      expect(body).not.toContain('\n**PRs:**');
+    });
+
+    it('renders empty-state defaults without batch artifacts', () => {
+      const state = makeBatchState({
+        run: 0,
+        max_runs: 0,
+        prs: [],
+        issues_filed: [],
+        issues_closed: [],
+        run_history: [],
+        stop_reason: '',
+      });
+
+      const body = formatBatchCompletionAttachment({
+        state,
+        batchScore: scoreBatch([]),
+        wallTimeSeconds: 30,
+        reconciledClosed: null,
+        progressIssueNumber: '1226',
+        kaizenRepo: 'Garsson-io/kaizen',
+      });
+
+      expect(body).toContain('### Batch Complete: improve hooks reliability');
+      expect(body).toContain('- **Runs:** 0 of unlimited');
+      expect(body).toContain('- **PRs:** none');
+      expect(body).toContain('- **Issues filed:** none');
+      expect(body).toContain('- **Issues closed:** none');
+      expect(body).toContain('- **Raw artifacts:** not uploaded for this close path');
+    });
+  });
+
   it('runs backlog-health maintenance during batch finalize', () => {
     const closeSection = AUTO_DENT_RUN_SOURCE.slice(
       AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
@@ -280,6 +392,17 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
       AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
     );
 
+    expect(closeSection).toContain("'progress/batch-complete'");
+    expect(closeSection).toContain('writeProgressAttachment');
+  });
+
+  it('wires the formatted batch completion retrospective to the stable attachment key', () => {
+    const closeSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
+    );
+
+    expect(closeSection).toContain('formatBatchCompletionAttachment({');
     expect(closeSection).toContain("'progress/batch-complete'");
     expect(closeSection).toContain('writeProgressAttachment');
   });
