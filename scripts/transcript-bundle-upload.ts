@@ -8,8 +8,13 @@ import {
   type BuildTranscriptBundleResult,
   type TranscriptBundleManifest,
 } from '../src/transcript-bundle.js';
+import {
+  BATCH_TRANSCRIPT_BUNDLE_ATTACHMENT,
+} from './transcript-bundle-constants.js';
 
-export const BATCH_TRANSCRIPT_BUNDLE_ATTACHMENT = 'batch-transcript-bundle';
+export {
+  BATCH_TRANSCRIPT_BUNDLE_ATTACHMENT,
+};
 export const DEFAULT_TRANSCRIPT_ARTIFACT_RETENTION_DAYS = 90;
 
 export type ArtifactUploader = (
