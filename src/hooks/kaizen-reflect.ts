@@ -21,6 +21,7 @@ import { type HookInput, readHookInput, writeHookOutput, traceNullInput } from '
 import { currentHookBranch } from './lib/current-branch.js';
 import { formatGateSignal } from './lib/gate-signal.js';
 import { gitStdout } from './lib/git-state.js';
+import { safeMainSyncCommand } from './lib/post-merge-workflows.js';
 import {
   extractRepoFlag,
   isGhPrCommand,
@@ -285,7 +286,7 @@ Valid categories: docs-only, formatting, typo, config-only, test-only, trivial-r
 
 **Also complete post-merge steps** (while the subagent runs reflection):
 - Follow Post-Merge deployment procedure in CLAUDE.md
-- Sync main: \`git -C ${mainCheckout} fetch origin main && git -C ${mainCheckout} merge --ff-only origin/main\`
+- Sync main: \`${safeMainSyncCommand(mainCheckout)}\`
 - Close resolved kaizen issues
 - Delete merged branch and worktree
 ${auditIssuesAdvisory}

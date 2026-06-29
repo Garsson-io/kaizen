@@ -38,6 +38,8 @@ describe('processPostMergeClear — Skill trigger', () => {
 
     expect(output).toContain('Post-merge gate cleared');
     expect(output).toContain('1 PR');
+    expect(output).toContain('merge --ff-only origin/main');
+    expect(output).not.toContain('merge origin/main --no-edit');
     // State file should be gone
     expect(existsSync(join(TEST_STATE_DIR, 'post-merge-org_repo_42'))).toBe(false);
   });
@@ -142,6 +144,8 @@ describe('processPostMergeClear — Bash trigger (MERGED detection)', () => {
     expect(output).toContain('pull/50');
     expect(output).toContain('gh run list --repo org/repo --branch main --commit <merge-sha>');
     expect(output).toContain('If any run failed');
+    expect(output).toContain('merge --ff-only origin/main');
+    expect(output).not.toContain('merge origin/main --no-edit');
 
     // awaiting_merge should be cleared, needs_post_merge should be written
     const stateFile = join(TEST_STATE_DIR, 'post-merge-org_repo_50');

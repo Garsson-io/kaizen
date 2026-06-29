@@ -36,7 +36,7 @@ Merge (gated)
   │  If branch behind → merge main, push (auto-merge retries)
   ▼
 Post-Merge
-  │  Sync main: git fetch origin main && git merge origin/main
+  │  Sync main: git fetch origin main && git merge --ff-only origin/main
   │  kaizen-reflect.sh (PostToolUse) prompts for process improvement
   │  check-cleanup-on-stop.sh verifies worktree cleanup
   ▼
@@ -65,7 +65,7 @@ Branch protection has `strict: true` status checks. Auto-merge is enabled. Moder
 3. **L3 repo backstop**: branch protection should require `Review verdict gate / Review verdict gate`, which fails when the latest stored review round derives `FAIL`.
 4. **Wait**: `gh pr checks <url> --repo Garsson-io/kaizen --watch` or `gh run watch <id>`
 5. **Verify**: `gh pr view <url> --json state --jq .state` → expect `MERGED`
-6. **Sync**: `MAIN_CHECKOUT="$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"; git -C "$MAIN_CHECKOUT" fetch origin main && git -C "$MAIN_CHECKOUT" merge origin/main --no-edit`
+6. **Sync**: `MAIN_CHECKOUT="$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"; git -C "$MAIN_CHECKOUT" fetch origin main && git -C "$MAIN_CHECKOUT" merge --ff-only origin/main`
 
 **Failure handling** (agent does this autonomously, no human needed):
 - **CI fails**: fix the issue, commit, push. Auto-merge stays queued, CI re-runs.

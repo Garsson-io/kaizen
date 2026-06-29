@@ -19,3 +19,12 @@ export function postMergeWorkflowVerificationLines(prUrl: string): string {
     '   - If any run failed, investigate and report or fix it before declaring the work done.',
   ].join('\n');
 }
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+export function safeMainSyncCommand(mainCheckout?: string): string {
+  const prefix = mainCheckout ? `git -C ${shellQuote(mainCheckout)}` : 'git';
+  return `${prefix} fetch origin main && ${prefix} merge --ff-only origin/main`;
+}

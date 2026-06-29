@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { postMergeWorkflowVerificationLines } from './post-merge-workflows.js';
+import { postMergeWorkflowVerificationLines, safeMainSyncCommand } from './post-merge-workflows.js';
 
 describe('postMergeWorkflowVerificationLines', () => {
   it('builds a concrete main workflow verification command from a PR URL', () => {
@@ -16,5 +16,21 @@ describe('postMergeWorkflowVerificationLines', () => {
 
     expect(lines).toContain('gh run list --branch main --commit <merge-sha>');
     expect(lines).not.toContain('--repo');
+  });
+});
+
+describe('safeMainSyncCommand', () => {
+  it('uses ff-only sync without creating a local main merge commit', () => {
+    expect(safeMainSyncCommand()).toBe('git fetch origin main && git merge --ff-only origin/main');
+  });
+
+  it('quotes main checkout paths used with git -C', () => {
+    expect(safeMainSyncCommand('/tmp/main checkout')).toBe(
+      "git -C '/tmp/main checkout' fetch origin main && git -C '/tmp/main checkout' merge --ff-only origin/main",
+    );
+  });
+
+  it('quotes single quotes in main checkout paths', () => {
+    expect(safeMainSyncCommand("/tmp/main's checkout")).toContain("'/tmp/main'\\''s checkout'");
   });
 });

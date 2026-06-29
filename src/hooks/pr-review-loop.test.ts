@@ -674,6 +674,8 @@ describe('pr-review-loop: gh pr merge', () => {
     expect(output).toContain('gh run list --repo Garsson-io/kaizen --branch main --commit <merge-sha>');
     expect(output).toContain('If any run failed');
     expect(output).toContain('Sync main');
+    expect(output).toContain('merge --ff-only origin/main');
+    expect(output).not.toContain('merge origin/main --no-edit');
   });
 
   it('creates post-merge state file', () => {
