@@ -228,6 +228,8 @@ export interface BatchScore {
   post_hoc?: PostHocBatchResult;
   /** Batch trend analysis (null if fewer than 4 runs) */
   trend: BatchTrend | null;
+  /** Long-horizon quality degradation signal derived from within-batch run history. */
+  degradation_signal?: BatchDegradationSignal;
   /** Number of runs where requirements review verdict was 'fail'. Advisory signal only. */
   review_fail_count: number;
   /** Fraction of reviewed runs (runs with a PR) that failed requirements review. */
@@ -275,6 +277,24 @@ export interface BatchTrend {
   duration_slope: number;
   /** Human-readable trend summary */
   summary: string;
+}
+
+export type BatchDegradationVerdict = 'insufficient_data' | 'healthy' | 'watch' | 'degraded';
+
+export interface BatchDegradationSignal {
+  verdict: BatchDegradationVerdict;
+  /** Bounded severity score: 0 = no signal, 1 = strongest degradation signal. */
+  score: number;
+  first_half_success_rate: number | null;
+  second_half_success_rate: number | null;
+  success_rate_delta: number | null;
+  trailing_failure_count: number;
+  trailing_empty_success_count: number;
+  early_cost_per_success: number | null;
+  late_cost_per_success: number | null;
+  cost_per_success_ratio: number | null;
+  duration_slope_seconds_per_run: number | null;
+  reasons: string[];
 }
 
 export interface PostHocPRResult {
@@ -423,6 +443,7 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
   const reviewFailRate = reviewedRuns.length > 0 ? reviewFailCount / reviewedRuns.length : 0;
   const reviewTotalCost = runs.reduce((s, r) => s + (r.review_cost_usd ?? 0), 0);
   const hookActivationCounts = computeHookActivationCounts(runs.map(run => run.hook_activation_status));
+  const trend = computeBatchTrend(runs);
 
   return {
     total_runs: runs.length,
@@ -445,7 +466,8 @@ export function scoreBatch(runHistory: RunMetrics[]): BatchScore {
     mode_breakdown: scoreModeBreakdown(runs),
     cost_anomaly_count: costAnomalyCount,
     mode_diversity: computeModeDiversity(runs),
-    trend: computeBatchTrend(runs),
+    trend,
+    degradation_signal: computeBatchDegradationSignal(runs, trend),
     review_fail_count: reviewFailCount,
     review_fail_rate: reviewFailRate,
     review_total_cost_usd: reviewTotalCost,
@@ -612,6 +634,9 @@ export function formatBatchScoreTable(score: BatchScore): string {
 
   if (score.trend) {
     lines.push(`| **Trend** | ${score.trend.summary} |`);
+  }
+  if (score.degradation_signal && score.degradation_signal.verdict !== 'healthy') {
+    lines.push(`| **Degradation signal** | ${formatDegradationSignal(score.degradation_signal)} |`);
   }
 
   // Append per-mode breakdown if there are multiple modes
@@ -815,6 +840,130 @@ export function computeBatchTrend(runs: RunScore[]): BatchTrend | null {
     duration_slope: durationSlope,
     summary,
   };
+}
+
+function rate(count: number, total: number): number {
+  return total > 0 ? count / total : 0;
+}
+
+function costPerSuccess(runs: RunScore[]): number | null {
+  const successes = runs.filter((r) => r.success).length;
+  if (successes === 0) return null;
+  const cost = runs.reduce((sum, r) => sum + r.cost_usd, 0);
+  return cost / successes;
+}
+
+function trailingCount<T>(items: T[], predicate: (item: T) => boolean): number {
+  let count = 0;
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (!predicate(items[i])) break;
+    count++;
+  }
+  return count;
+}
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+/** Compute the within-batch long-horizon degradation signal (#1358). */
+export function computeBatchDegradationSignal(
+  runs: RunScore[],
+  trend: BatchTrend | null = computeBatchTrend(runs),
+): BatchDegradationSignal {
+  if (runs.length < 4) {
+    return {
+      verdict: 'insufficient_data',
+      score: 0,
+      first_half_success_rate: null,
+      second_half_success_rate: null,
+      success_rate_delta: null,
+      trailing_failure_count: trailingCount(runs, (r) => !r.success),
+      trailing_empty_success_count: trailingCount(runs, (r) => r.failure_class === 'empty_success'),
+      early_cost_per_success: null,
+      late_cost_per_success: null,
+      cost_per_success_ratio: null,
+      duration_slope_seconds_per_run: null,
+      reasons: ['Need at least 4 runs before comparing early vs late batch quality'],
+    };
+  }
+
+  const mid = Math.floor(runs.length / 2);
+  const firstHalf = runs.slice(0, mid);
+  const secondHalf = runs.slice(mid);
+  const firstSuccessRate = rate(firstHalf.filter((r) => r.success).length, firstHalf.length);
+  const secondSuccessRate = rate(secondHalf.filter((r) => r.success).length, secondHalf.length);
+  const successDelta = secondSuccessRate - firstSuccessRate;
+  const trailingFailures = trailingCount(runs, (r) => !r.success);
+  const trailingEmpty = trailingCount(runs, (r) => r.failure_class === 'empty_success');
+  const earlyCostPerSuccess = costPerSuccess(firstHalf);
+  const lateCostPerSuccess = costPerSuccess(secondHalf);
+  const costRatio =
+    earlyCostPerSuccess !== null && lateCostPerSuccess !== null && earlyCostPerSuccess > 0
+      ? lateCostPerSuccess / earlyCostPerSuccess
+      : null;
+  const durationSlope = trend?.duration_slope ?? null;
+
+  let severity = 0;
+  const reasons: string[] = [];
+
+  if (successDelta <= -0.15) {
+    severity += Math.min(0.45, Math.abs(successDelta));
+    reasons.push(
+      `success rate fell from ${(firstSuccessRate * 100).toFixed(0)}% to ${(secondSuccessRate * 100).toFixed(0)}%`,
+    );
+  }
+  if (trailingFailures >= 2) {
+    severity += trailingFailures >= 3 ? 0.35 : 0.25;
+    reasons.push(`${trailingFailures} trailing failed runs`);
+  }
+  if (trailingEmpty >= 2) {
+    severity += 0.2;
+    reasons.push(`${trailingEmpty} trailing empty-success runs`);
+  }
+  if (costRatio !== null && costRatio >= 1.5) {
+    severity += costRatio >= 2 ? 0.25 : 0.15;
+    reasons.push(`late cost per success is ${costRatio.toFixed(1)}x early cost`);
+  }
+  if (durationSlope !== null && durationSlope > 60) {
+    severity += durationSlope > 120 ? 0.15 : 0.1;
+    reasons.push(`run duration rising ${durationSlope.toFixed(0)}s/run`);
+  }
+
+  const score = clamp01(severity);
+  const collapse = firstSuccessRate >= 0.5 && secondSuccessRate <= 0.25;
+  const verdict: BatchDegradationVerdict =
+    score >= 0.6 || collapse
+      ? 'degraded'
+      : score >= 0.3
+        ? 'watch'
+        : 'healthy';
+
+  return {
+    verdict,
+    score,
+    first_half_success_rate: firstSuccessRate,
+    second_half_success_rate: secondSuccessRate,
+    success_rate_delta: successDelta,
+    trailing_failure_count: trailingFailures,
+    trailing_empty_success_count: trailingEmpty,
+    early_cost_per_success: earlyCostPerSuccess,
+    late_cost_per_success: lateCostPerSuccess,
+    cost_per_success_ratio: costRatio,
+    duration_slope_seconds_per_run: durationSlope,
+    reasons: reasons.length > 0 ? reasons : ['No within-batch degradation detected'],
+  };
+}
+
+export function formatDegradationSignal(signal: BatchDegradationSignal): string {
+  if (signal.verdict === 'insufficient_data') return 'insufficient data';
+  const label = signal.verdict === 'degraded'
+    ? 'degraded'
+    : signal.verdict === 'watch'
+      ? 'watch'
+      : 'healthy';
+  return `${label} (${signal.score.toFixed(2)}) — ${signal.reasons.join('; ')}`;
 }
 
 /** Format per-mode breakdown as a markdown table. */

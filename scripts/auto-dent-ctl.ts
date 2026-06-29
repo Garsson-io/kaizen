@@ -441,6 +441,8 @@ export function buildBatchReflection(
   const successRate = scores.length > 0 ? successfulRuns.length / scores.length : 0;
   const avgCostPerPr = totalPrs > 0 ? totalCost / totalPrs : 0;
   const exploreExploitConversion = computeExploreExploitConversion(history);
+  const batchScore = scoreBatch(history);
+  const degradationSignal = batchScore.degradation_signal;
 
   // Insight: overall success rate
   if (scores.length >= 3) {
@@ -455,6 +457,16 @@ export function buildBatchReflection(
         message: `Low success rate: only ${(successRate * 100).toFixed(0)}% of runs produced PRs — consider narrowing guidance`,
       });
     }
+  }
+
+  if (
+    degradationSignal &&
+    (degradationSignal.verdict === 'watch' || degradationSignal.verdict === 'degraded')
+  ) {
+    insights.push({
+      type: degradationSignal.verdict === 'degraded' ? 'failure_pattern' : 'recommendation',
+      message: `Long-horizon degradation signal: ${degradationSignal.verdict} (score ${degradationSignal.score.toFixed(2)}) — ${degradationSignal.reasons.join('; ')}`,
+    });
   }
 
   // Insight: expensive failures (runs that cost > avg but produced nothing)

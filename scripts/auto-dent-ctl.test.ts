@@ -749,6 +749,31 @@ describe('buildBatchReflection', () => {
     expect(stopInsight).toBeDefined();
   });
 
+  it('surfaces long-horizon degradation in reflection insights and comments', () => {
+    const batch = makeBatchInfo({
+      state: makeBatchState({
+        run: 6,
+        run_history: [
+          makeRunMetrics({ run: 1, cost_usd: 1, prs: ['pr1'], duration_seconds: 100 }),
+          makeRunMetrics({ run: 2, cost_usd: 1, prs: ['pr2'], duration_seconds: 120 }),
+          makeRunMetrics({ run: 3, cost_usd: 1, prs: ['pr3'], duration_seconds: 140 }),
+          makeRunMetrics({ run: 4, cost_usd: 4, prs: [], exit_code: 1, duration_seconds: 500 }),
+          makeRunMetrics({ run: 5, cost_usd: 4, prs: [], exit_code: 1, duration_seconds: 650 }),
+          makeRunMetrics({ run: 6, cost_usd: 4, prs: [], exit_code: 1, duration_seconds: 800 }),
+        ],
+      }),
+    });
+
+    const reflection = buildBatchReflection(batch);
+    const insight = reflection.insights.find((i) => i.message.includes('Long-horizon degradation signal'));
+    const comment = formatBatchReflectionComment(reflection);
+
+    expect(insight).toMatchObject({ type: 'failure_pattern' });
+    expect(insight?.message).toContain('degraded');
+    expect(insight?.message).toContain('success rate fell');
+    expect(comment).toContain('Long-horizon degradation signal');
+  });
+
   it('surfaces dry-sweep findings as advisory reflection insight', () => {
     const drySweepReport: DrySweepReport = {
       generatedAt: '2026-06-29T00:00:00.000Z',
