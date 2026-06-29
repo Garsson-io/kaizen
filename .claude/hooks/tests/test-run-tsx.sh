@@ -52,4 +52,26 @@ resolved=$(
 )
 assert_eq "resolve_tsx_bin finds parent worktree tsx" "$TMP_DIR/parent/node_modules/.bin/tsx" "$resolved"
 
+mkdir -p "$TMP_DIR/missing-deps-root"
+cat > "$TMP_DIR/npx" <<'EOF'
+#!/bin/bash
+exit 1
+EOF
+chmod +x "$TMP_DIR/npx"
+
+result=$(
+  PATH="$TMP_DIR:$PATH" bash -c "
+    source '$RUN_TSX'
+    run_tsx '$TMP_DIR/missing-deps-root' '$TMP_DIR/hook.ts'
+  " 2>&1
+)
+exit_code=$?
+
+assert_eq "missing tsx exits 0 instead of opaque non-blocking failure" "0" "$exit_code"
+assert_contains "missing tsx emits actionable diagnostic" "kaizen hook: tsx not found" "$result"
+assert_contains "missing tsx diagnostic names root" "$TMP_DIR/missing-deps-root" "$result"
+
+legacy_fallbacks=$(grep -R -nE 'npx --prefix .+tsx.+2>/dev/null' "$REPO_ROOT/.claude/hooks" --exclude-dir=tests || true)
+assert_eq "runtime hooks avoid silent npx tsx fallbacks" "" "$legacy_fallbacks"
+
 print_results

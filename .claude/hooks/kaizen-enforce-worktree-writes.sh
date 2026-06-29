@@ -96,10 +96,10 @@ REASON="Cannot write to '$FILE_PATH' — it's source code in the main checkout (
 source "$(dirname "$0")/lib/resolve-kaizen-dir.sh" 2>/dev/null || true
 WORKTREE_HINT=""
 if [ -n "${KAIZEN_DIR:-}" ] && [ -f "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" ]; then
-  if [ -x "$KAIZEN_DIR/node_modules/.bin/tsx" ]; then
-    WORKTREE_HINT=$("$KAIZEN_DIR/node_modules/.bin/tsx" "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" main-edit-hint --main-root "$MAIN_ROOT" --rel-path "$REL_PATH" 2>/dev/null || true)
-  elif command -v npx >/dev/null 2>&1; then
-    WORKTREE_HINT=$(npx --prefix "$KAIZEN_DIR" tsx "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" main-edit-hint --main-root "$MAIN_ROOT" --rel-path "$REL_PATH" 2>/dev/null || true)
+  source "$(dirname "$0")/lib/resolve-tsx-bin.sh" 2>/dev/null || true
+  TSX_BIN="$(resolve_tsx_bin "$KAIZEN_DIR" 2>/dev/null || true)"
+  if [ -n "$TSX_BIN" ]; then
+    WORKTREE_HINT=$("$TSX_BIN" "$KAIZEN_DIR/src/hooks/worktree-integrity.ts" main-edit-hint --main-root "$MAIN_ROOT" --rel-path "$REL_PATH" 2>/dev/null || true)
   fi
 fi
 

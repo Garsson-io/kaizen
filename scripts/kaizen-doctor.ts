@@ -34,6 +34,7 @@ import { homedir } from 'node:os';
 import { readJsonValueFile } from '../src/lib/json-file.js';
 import { KAIZEN_PLUGIN_SOURCE } from '../src/kaizen-plugin-identity.js';
 import { checkDevLinkStatus } from './kaizen-dev-link.js';
+import { resolveTsxBin } from '../src/lib/typescript-runner.js';
 
 export type CheckStatus = 'PASS' | 'WARN' | 'FAIL';
 
@@ -487,6 +488,65 @@ export function checkHookExecSmoke(opts: DoctorOpts): CheckResult {
   };
 }
 
+function hookRootFor(hook: ReferencedHook, projectRoot: string): string {
+  if (hook.command.includes('${CLAUDE_PLUGIN_ROOT}')) return projectRoot;
+  const marker = '/.claude/hooks/';
+  const idx = hook.path.indexOf(marker);
+  if (idx >= 0) return hook.path.slice(0, idx);
+  return dirname(dirname(hook.path));
+}
+
+function hookUsesTypeScriptTrampoline(path: string): boolean {
+  try {
+    const body = readFileSync(path, 'utf8');
+    return body.includes('run-tsx.sh') || /\brun_tsx\b/.test(body);
+  } catch {
+    return false;
+  }
+}
+
+/** Check: registered TypeScript hook roots must have a runnable tsx dependency.
+ *
+ * Path/executable/syntax checks can all pass while TS hook shims still fail at
+ * runtime because the bound plugin/worktree root lacks node_modules. This is the
+ * #1131 diagnostic black hole: hooks look installed but every TS dispatch skips
+ * or fails. Check roots, not individual files, because many hooks share one
+ * dependency contract.
+ */
+export function checkHookDependencyRoots(opts: DoctorOpts): CheckResult {
+  const roots = new Set<string>();
+  for (const hook of collectReferencedHooks(opts)) {
+    if (!existsSync(hook.path)) continue;
+    if (!hookUsesTypeScriptTrampoline(hook.path)) continue;
+    roots.add(hookRootFor(hook, opts.projectRoot));
+  }
+
+  if (roots.size === 0) {
+    return {
+      name: 'hook-dependency-roots',
+      status: 'PASS',
+      detail: 'no TS hook roots to check.',
+    };
+  }
+
+  const missing = [...roots].filter(root => !resolveTsxBin(root));
+  if (missing.length > 0) {
+    return {
+      name: 'hook-dependency-roots',
+      status: 'FAIL',
+      detail: `tsx not found for ${missing.length}/${roots.size} TS hook root(s): ${missing.slice(0, 3).join('; ')}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ''}. Run npm install there or symlink node_modules from the main checkout.`,
+    };
+  }
+
+  return {
+    name: 'hook-dependency-roots',
+    status: 'PASS',
+    detail: roots.size === 1
+      ? 'all 1 TS hook root has runnable tsx dependencies.'
+      : `all ${roots.size} TS hook roots have runnable tsx dependencies.`,
+  };
+}
+
 function bounded(text: string, max = 240): string {
   const compact = text.replace(/\s+/g, ' ').trim();
   if (compact.length <= max) return compact;
@@ -724,6 +784,7 @@ export function runAllChecks(opts: DoctorOpts): CheckResult[] {
     checkStalePluginCache(opts),
     checkDevLinkOverride(opts),
     checkRestartNeeded(opts),
+    checkHookDependencyRoots(opts),
     checkHookExecSmoke(opts),
     checkHookSyntaxSmoke(opts),
     checkCodexReadiness(opts.codexReadiness),

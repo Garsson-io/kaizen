@@ -10,6 +10,7 @@ import {
   checkStalePluginCache,
   checkRestartNeeded,
   checkHookExecSmoke,
+  checkHookDependencyRoots,
   checkHookSyntaxSmoke,
   checkDevLinkOverride,
   checkSingleRegistrationPath,
@@ -381,6 +382,68 @@ describe('checkHookExecSmoke', () => {
   });
 });
 
+describe('checkHookDependencyRoots (#1131)', () => {
+  let proj: string, home: string;
+  beforeEach(() => { proj = makeProject(); home = makeHome(); });
+  afterEach(() => { rmSync(proj, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+
+  function writeTsHookRegistration(): void {
+    writeHook(proj, '.claude/hooks/kaizen-enforce-plan-stored-ts.sh', true, [
+      '#!/bin/bash',
+      'source "$(dirname "$0")/lib/run-tsx.sh"',
+      'run_tsx "$KAIZEN_DIR" "$KAIZEN_DIR/src/hooks/enforce-plan-stored.ts"',
+      '',
+    ].join('\n'));
+    writePluginJson(proj, {
+      hooks: {
+        PreToolUse: [{
+          matcher: 'Write',
+          hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/kaizen-enforce-plan-stored-ts.sh' }],
+        }],
+      },
+    });
+  }
+
+  it('FAILS when a registered TS hook root has no runnable tsx dependency', () => {
+    writeTsHookRegistration();
+
+    const result = checkHookDependencyRoots({ projectRoot: proj, homeDir: home });
+
+    expect(result.status).toBe('FAIL');
+    expect(result.name).toBe('hook-dependency-roots');
+    expect(result.detail).toContain('tsx not found');
+    expect(result.detail).toContain(proj);
+  });
+
+  it('PASSES when the registered TS hook root has a local tsx binary', () => {
+    writeTsHookRegistration();
+    mkdirSync(join(proj, 'node_modules/.bin'), { recursive: true });
+    writeFileSync(join(proj, 'node_modules/.bin/tsx'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+
+    const result = checkHookDependencyRoots({ projectRoot: proj, homeDir: home });
+
+    expect(result.status).toBe('PASS');
+    expect(result.detail).toContain('all 1 TS hook root');
+  });
+
+  it('PASSES when no registered hooks use the TS trampoline', () => {
+    writeHook(proj, '.claude/hooks/plain.sh', true, '#!/bin/bash\nexit 0\n');
+    writePluginJson(proj, {
+      hooks: {
+        PreToolUse: [{
+          matcher: 'Write',
+          hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/plain.sh' }],
+        }],
+      },
+    });
+
+    const result = checkHookDependencyRoots({ projectRoot: proj, homeDir: home });
+
+    expect(result.status).toBe('PASS');
+    expect(result.detail).toContain('no TS hook roots');
+  });
+});
+
 describe('checkHookSyntaxSmoke', () => {
   let proj: string, home: string;
   beforeEach(() => { proj = makeProject(); home = makeHome(); });
@@ -735,6 +798,7 @@ describe('runAllChecks + exitCodeFor', () => {
       'stale-plugin-cache',
       'dev-link-override',
       'restart-needed',
+      'hook-dependency-roots',
       'hook-exec-smoke',
       'hook-syntax-smoke',
       'codex-readiness',
