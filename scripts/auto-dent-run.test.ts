@@ -340,6 +340,56 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
       expect(body).not.toContain('\n**PRs:**');
     });
 
+    it('renders anomaly incident refs when finalization filed or reused them', () => {
+      const state = makeBatchState({
+        run: 1,
+        run_history: [
+          makeRunMetrics({
+            run: 1,
+            lifecycle_health: 'critical',
+            lifecycle_violations: 1,
+          }),
+        ],
+      });
+
+      const body = formatBatchCompletionAttachment({
+        state,
+        batchScore: scoreBatch(state.run_history || []),
+        wallTimeSeconds: 60,
+        reconciledClosed: null,
+        progressIssueNumber: '1226',
+        kaizenRepo: 'Garsson-io/kaizen',
+        anomalyIncidents: {
+          signals: [
+            {
+              trigger: 'lifecycle_critical',
+              severity: 'critical',
+              dedupe_key: 'batch-260322-2100-a1b2:run-1:lifecycle_critical:abc',
+              batch_id: 'batch-260322-2100-a1b2',
+              run: 1,
+              title: '[auto-dent incident] lifecycle critical in batch-260322-2100-a1b2 run 1',
+              summary: 'Run 1 had critical lifecycle gaps.',
+              evidence: ['batch=batch-260322-2100-a1b2'],
+              search_query: '"batch-260322-2100-a1b2:run-1:lifecycle_critical" in:body',
+            },
+          ],
+          refs: [
+            {
+              signal_key: 'batch-260322-2100-a1b2:run-1:lifecycle_critical:abc',
+              status: 'created',
+              issue: 901,
+              url: 'https://github.com/Garsson-io/kaizen/issues/901',
+            },
+          ],
+          diagnostics: [],
+        },
+      });
+
+      expect(body).toContain('### Anomaly Incidents');
+      expect(body).toContain('- **Anomaly incidents:** 1 signal(s); 1 created, 0 reused, 0 skipped');
+      expect(body).toContain('- **Incident refs:** https://github.com/Garsson-io/kaizen/issues/901');
+    });
+
     it('renders empty-state defaults without batch artifacts', () => {
       const state = makeBatchState({
         run: 0,
@@ -478,6 +528,21 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
     expect(closeSection).toContain('[intelligence] stored RSI improvement proposals');
     expect(closeSection).toContain('cross-run ${rsiWrite.crossRunVerdict}');
     expect(closeSection).toContain('[intelligence] RSI proposal write skipped');
+  });
+
+  it('files anomaly incident issues during batch finalize before rendering the completion attachment', () => {
+    const closeSection = AUTO_DENT_RUN_SOURCE.slice(
+      AUTO_DENT_RUN_SOURCE.indexOf('export function closeBatchProgressIssue'),
+      AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
+    );
+
+    expect(closeSection).toContain('fileAutoDentAnomalyIncidentsForBatch(kaizenRepo, state');
+    expect(closeSection).toContain('progressIssue');
+    expect(closeSection).toContain('[anomaly] filed/reused auto-dent incident issues');
+    expect(closeSection.indexOf('fileAutoDentAnomalyIncidentsForBatch')).toBeLessThan(
+      closeSection.indexOf('formatBatchCompletionAttachment({'),
+    );
+    expect(closeSection).toContain('anomalyIncidents,');
   });
 
   it('wires the formatted batch completion retrospective to the stable attachment key', () => {

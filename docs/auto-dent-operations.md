@@ -323,6 +323,12 @@ After a batch completes:
 
    At close the harness writes durable attachments on the progress issue
    (both idempotent marker comments — re-running finalize edits in place):
+   - anomaly incident links (`scripts/auto-dent-anomaly-incidents.ts`) — when a
+     run has failed, `empty_success`, hook rejection, critical lifecycle gaps,
+     more than 3 PRs, or 2x cost/duration outliers, the harness searches
+     for an existing matching issue and files one if absent. The batch completion
+     attachment lists created/reused refs under `### Anomaly Incidents`. Filing is
+     best-effort and fail-open; a GitHub outage must not block batch close.
    - `batch-outcome` (`scripts/batch-outcome.ts`) — schema-validated summary for
      cross-batch learning (#1108, #940).
    - `rsi-improvement-proposals` (`scripts/auto-dent-rsi.ts`) — bounded RSI

@@ -56,6 +56,11 @@ import {
   writeRsiImprovementProposalsForBatch,
 } from './auto-dent-rsi.js';
 import {
+  fileAutoDentAnomalyIncidentsForBatch,
+  formatAutoDentAnomalyIncidentSummary,
+  type AutoDentAnomalyIncidentResult,
+} from './auto-dent-anomaly-incidents.js';
+import {
   isAcceptedSubscriptionCompatibleCapability,
   phaseProvidersForAgentProvider,
   type PhaseProviderRecord,
@@ -349,6 +354,8 @@ export interface RunMetrics {
   prompt_hash?: string;
   /** Structured failure classification (populated post-run) */
   failure_class?: string;
+  /** Local run log path for forensic incident filing and transcript attachment. */
+  log_file?: string;
   /** Reason a hook blocked this run, when failure_class is hook_rejection (#1102) */
   hook_rejection_reason?: string;
   /** Number of lifecycle ordering violations detected post-run */
@@ -3042,6 +3049,7 @@ export interface FormatBatchCompletionAttachmentInput {
   kaizenRepo: string;
   batchDir?: string;
   enrichment?: DashboardEnrichment;
+  anomalyIncidents?: AutoDentAnomalyIncidentResult;
 }
 
 function formatRunLimit(state: BatchState): string {
@@ -3066,6 +3074,7 @@ export function formatBatchCompletionAttachment(input: FormatBatchCompletionAtta
     progressIssueNumber,
     batchDir,
     enrichment,
+    anomalyIncidents,
   } = input;
   const history = state.run_history ?? [];
   const failures = formatFailureDistribution(
@@ -3122,6 +3131,11 @@ export function formatBatchCompletionAttachment(input: FormatBatchCompletionAtta
   const guidanceCompletion = formatGuidanceCompletionMatrix(state.guidance, guidanceEvidence);
   if (guidanceCompletion) {
     lines.push('', guidanceCompletion);
+  }
+
+  const anomalySummary = anomalyIncidents ? formatAutoDentAnomalyIncidentSummary(anomalyIncidents) : '';
+  if (anomalySummary) {
+    lines.push('', '### Anomaly Incidents', '', anomalySummary);
   }
 
   lines.push(
@@ -3183,6 +3197,24 @@ export function closeBatchProgressIssue(
 
   const enrichment = fetchDashboardEnrichment(state, kaizenRepo, deps.gh ?? ghArgs);
 
+  let anomalyIncidents: AutoDentAnomalyIncidentResult | undefined;
+  try {
+    anomalyIncidents = fileAutoDentAnomalyIncidentsForBatch(kaizenRepo, state, {
+      gh: deps.gh ?? ghArgs,
+      progressIssue,
+    });
+    if (anomalyIncidents.signals.length > 0) {
+      const created = anomalyIncidents.refs.filter((ref) => ref.status === 'created').length;
+      const reused = anomalyIncidents.refs.filter((ref) => ref.status === 'reused').length;
+      const skipped = anomalyIncidents.refs.filter((ref) => ref.status === 'skipped').length;
+      console.log(
+        `  [anomaly] filed/reused auto-dent incident issues (${created} created, ${reused} reused, ${skipped} skipped)`,
+      );
+    }
+  } catch (err) {
+    console.log(`  [anomaly] incident filing skipped: ${(err as Error).message}`);
+  }
+
   const summary = formatBatchCompletionAttachment({
     state,
     batchScore,
@@ -3192,6 +3224,7 @@ export function closeBatchProgressIssue(
     kaizenRepo,
     batchDir,
     enrichment,
+    anomalyIncidents,
   });
 
   writeProgressAttachment(
@@ -5013,6 +5046,7 @@ async function main(): Promise<void> {
   // Feed the run log so the log-based branch (hook_rejection, infrastructure,
   // etc.) actually runs — without this argument it was dead code (#1102).
   runMetrics.failure_class = result.timedOut ? 'timeout' : classifyFailure(runMetrics, runLog);
+  runMetrics.log_file = logFile;
   if (runMetrics.failure_class === 'hook_rejection' && runLog) {
     runMetrics.hook_rejection_reason = firstHookReason(runLog);
   }
