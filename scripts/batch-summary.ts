@@ -15,9 +15,9 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { parseJsonLines } from '../src/lib/json-lines.js';
 import type { EventEnvelope, RunCompleteEvent, RunIssuePickedEvent, RunPrCreatedEvent } from './auto-dent-events.js';
 import type { ProcessVerdict } from './auto-dent-lifecycle.js';
+import { parseReplayEventsJsonl } from './auto-dent-replay.js';
 import { parseBatchArtifactCliArgs } from './batch-artifacts-cli.js';
 import { readArtifactPartsFromProgressIssue } from './batch-artifacts-upload.js';
 import {
@@ -109,7 +109,7 @@ export function parseEventsFile(eventsPath: string): EventEnvelope[] {
 export function parseEventsJsonl(content: string): EventEnvelope[] {
   const trimmed = content.trim();
   if (!trimmed) return [];
-  return parseJsonLines<EventEnvelope>(trimmed);
+  return parseReplayEventsJsonl(trimmed).events;
 }
 
 export function parseEventsFromProgressIssue(issueNumber: string, repo: string): EventEnvelope[] {
