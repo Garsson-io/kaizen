@@ -17,9 +17,9 @@
  */
 
 import { spawn } from 'child_process';
-import { closeSync, constants, openSync, readFileSync, writeFileSync, existsSync, writeSync } from 'fs';
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
-import { dirname, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { z } from 'zod';
 import {
   type BatchState,
@@ -273,8 +273,21 @@ export function formatPlanningFailure(provider: PhaseProvider, message: string):
   return `  [plan:${planningProviderName(provider)}] ${message}`;
 }
 
-export function planningRawOutputFile(logDir: string, provider: PlanningProviderName): string {
-  return resolve(logDir, provider === 'codex' ? 'plan-codex.jsonl' : 'plan-claude-stream.jsonl');
+export function planningRawOutputFilename(provider: PlanningProviderName): string {
+  return provider === 'codex' ? 'plan-codex.jsonl' : 'plan-claude-stream.jsonl';
+}
+
+export function createPlanningRawOutputFile(
+  logDir: string,
+  provider: PlanningProviderName,
+  deps: { mkdtemp?: typeof mkdtempSync } = {},
+): string | null {
+  try {
+    const rawDir = (deps.mkdtemp ?? mkdtempSync)(resolve(logDir, `planning-${provider}-`));
+    return join(rawDir, planningRawOutputFilename(provider));
+  } catch {
+    return null;
+  }
 }
 
 function formatBytes(bytes: number): string {
@@ -344,12 +357,13 @@ export function formatPlanningProgress(input: {
   stdoutBytes: number;
   stderrBytes: number;
   lastActivity?: string;
-  rawOutputFile: string;
+  rawOutputFile?: string;
 }): string {
   const elapsed = `${Math.floor(input.elapsedMs / 1000)}s elapsed`;
   const activity = input.lastActivity || 'waiting for provider output';
+  const raw = input.rawOutputFile ? `; raw ${input.rawOutputFile}` : '';
   return [
-    formatPlanningFailure(input.provider, `still planning (${elapsed}; ${activity}; stdout ${input.stdoutLines} lines/${formatBytes(input.stdoutBytes)}; stderr ${formatBytes(input.stderrBytes)}; raw ${input.rawOutputFile})`),
+    formatPlanningFailure(input.provider, `still planning (${elapsed}; ${activity}; stdout ${input.stdoutLines} lines/${formatBytes(input.stdoutBytes)}; stderr ${formatBytes(input.stderrBytes)}${raw})`),
   ].join('');
 }
 
@@ -370,55 +384,13 @@ export function clearPlanningTimers(
 export function appendPlanningRawOutput(
   rawOutputFile: string,
   text: string,
-  deps: {
-    openFile?: typeof openSync;
-    writeFile?: typeof writeSync;
-    closeFile?: typeof closeSync;
-  } = {},
+  deps: { appendFile?: typeof appendFileSync } = {},
 ): boolean {
-  let fd: number | undefined;
   try {
-    const noFollow = constants.O_NOFOLLOW ?? 0;
-    fd = (deps.openFile ?? openSync)(rawOutputFile, constants.O_WRONLY | constants.O_APPEND | noFollow);
-    (deps.writeFile ?? writeSync)(fd, text);
+    (deps.appendFile ?? appendFileSync)(rawOutputFile, text, { mode: 0o600 });
     return true;
   } catch {
     return false;
-  } finally {
-    if (fd !== undefined) {
-      try { (deps.closeFile ?? closeSync)(fd); } catch { /* fail-open capture only */ }
-    }
-  }
-}
-
-export function initializePlanningRawOutput(
-  rawOutputFile: string,
-  deps: {
-    openFile?: typeof openSync;
-    closeFile?: typeof closeSync;
-  } = {},
-): boolean {
-  let fd: number | undefined;
-  const noFollow = constants.O_NOFOLLOW ?? 0;
-  try {
-    fd = (deps.openFile ?? openSync)(
-      rawOutputFile,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow,
-      0o600,
-    );
-    return true;
-  } catch (err: any) {
-    if (err?.code !== 'EEXIST') return false;
-    try {
-      fd = (deps.openFile ?? openSync)(rawOutputFile, constants.O_WRONLY | constants.O_APPEND | noFollow);
-      return true;
-    } catch {
-      return false;
-    }
-  } finally {
-    if (fd !== undefined) {
-      try { (deps.closeFile ?? closeSync)(fd); } catch { /* fail-open capture only */ }
-    }
   }
 }
 
@@ -684,7 +656,7 @@ async function runPlanning(
   const providerName = planningProviderName(provider);
   const schemaFile = providerName === 'codex' ? buildPlanningSchemaFile(logDir) : undefined;
   const command = buildPlanningCommand(provider, prompt, state, repoRoot, schemaFile);
-  const rawOutputFile = planningRawOutputFile(logDir, providerName);
+  const rawOutputFile = createPlanningRawOutputFile(logDir, providerName);
   let rawOutput = '';
   let stdoutLines = 0;
   let stdoutBytes = 0;
@@ -694,12 +666,11 @@ async function runPlanning(
   let rawCaptureWarningPrinted = false;
 
   return new Promise((resolve) => {
-    const rawCaptureAvailable = initializePlanningRawOutput(rawOutputFile);
-    if (rawCaptureAvailable) {
+    if (rawOutputFile) {
       console.log(formatPlanningFailure(provider, `raw provider output: ${rawOutputFile}`));
     } else {
       rawCaptureWarningPrinted = true;
-      console.log(formatPlanningFailure(provider, `warning: raw provider output capture failed for ${rawOutputFile}; continuing without raw transcript`));
+      console.log(formatPlanningFailure(provider, 'warning: raw provider output capture failed; continuing without raw transcript'));
     }
     const startedAt = Date.now();
     const child = spawn(command.command, command.args, {
@@ -727,7 +698,7 @@ async function runPlanning(
     }, 15_000);
 
     const appendRawOutput = (text: string) => {
-      if (!rawCaptureAvailable) return;
+      if (!rawOutputFile) return;
       if (appendPlanningRawOutput(rawOutputFile, text) || rawCaptureWarningPrinted) return;
       rawCaptureWarningPrinted = true;
       console.log(formatPlanningFailure(provider, `warning: raw provider output capture failed for ${rawOutputFile}; continuing without complete raw transcript`));

@@ -16,7 +16,7 @@ import {
   buildPlanningCommand,
   buildPlanningSchemaFile,
   appendPlanningRawOutput,
-  initializePlanningRawOutput,
+  createPlanningRawOutputFile,
   clearPlanningTimers,
   titleTokens,
   deriveThemes,
@@ -25,7 +25,7 @@ import {
   formatPlanningStderrRawLine,
   formatPlanningProgress,
   formatPlanningFailure,
-  planningRawOutputFile,
+  planningRawOutputFilename,
   selectPlanningProvider,
   summarizePlanningActivity,
   validatePlanningOutputContract,
@@ -375,9 +375,21 @@ describe('provider-aware planning (#1146)', () => {
     })).toBe('  [plan:claude] still planning (0s elapsed; waiting for provider output; stdout 0 lines/1.0 KB; stderr 1023 B; raw /tmp/plan-claude-stream.jsonl)');
   });
 
-  it('uses a stable raw planning output path per provider', () => {
-    expect(planningRawOutputFile('/tmp/batch', 'codex')).toBe('/tmp/batch/plan-codex.jsonl');
-    expect(planningRawOutputFile('/tmp/batch', 'claude')).toBe('/tmp/batch/plan-claude-stream.jsonl');
+  it('uses provider-specific raw planning output filenames', () => {
+    expect(planningRawOutputFilename('codex')).toBe('plan-codex.jsonl');
+    expect(planningRawOutputFilename('claude')).toBe('plan-claude-stream.jsonl');
+  });
+
+  it('creates raw planning output paths inside a private batch-log temp dir', () => {
+    const mkdtemp = vi.fn(() => '/logs/planning-codex-abc123');
+
+    expect(createPlanningRawOutputFile('/logs', 'codex', { mkdtemp: mkdtemp as any }))
+      .toBe('/logs/planning-codex-abc123/plan-codex.jsonl');
+    expect(mkdtemp).toHaveBeenCalledWith('/logs/planning-codex-');
+
+    expect(createPlanningRawOutputFile('/logs', 'claude', {
+      mkdtemp: vi.fn(() => { throw new Error('read-only log dir'); }) as any,
+    })).toBeNull();
   });
 
   it('clears both planning timeout and progress timers', () => {
@@ -393,37 +405,15 @@ describe('provider-aware planning (#1146)', () => {
   });
 
   it('captures raw planning output fail-open inside stream callbacks', () => {
-    const openFile = vi.fn(() => 7);
-    const writeFile = vi.fn();
-    const closeFile = vi.fn();
+    const appendFile = vi.fn();
 
     expect(appendPlanningRawOutput('/tmp/raw.jsonl', 'ok', {
-      openFile: openFile as any,
-      writeFile: writeFile as any,
-      closeFile: closeFile as any,
+      appendFile: appendFile as any,
     })).toBe(true);
 
-    expect(openFile).toHaveBeenCalledWith('/tmp/raw.jsonl', expect.any(Number));
-    expect(writeFile).toHaveBeenCalledWith(7, 'ok');
-    expect(closeFile).toHaveBeenCalledWith(7);
+    expect(appendFile).toHaveBeenCalledWith('/tmp/raw.jsonl', 'ok', { mode: 0o600 });
     expect(appendPlanningRawOutput('/tmp/raw.jsonl', 'boom', {
-      openFile: vi.fn(() => { throw new Error('disk full'); }) as any,
-    })).toBe(false);
-  });
-
-  it('initializes raw planning output fail-open before provider spawn', () => {
-    const openFile = vi.fn(() => 8);
-    const closeFile = vi.fn();
-
-    expect(initializePlanningRawOutput('/tmp/raw.jsonl', {
-      openFile: openFile as any,
-      closeFile: closeFile as any,
-    })).toBe(true);
-
-    expect(openFile).toHaveBeenCalledWith('/tmp/raw.jsonl', expect.any(Number), 0o600);
-    expect(closeFile).toHaveBeenCalledWith(8);
-    expect(initializePlanningRawOutput('/tmp/raw.jsonl', {
-      openFile: vi.fn(() => { throw new Error('read-only log dir'); }) as any,
+      appendFile: vi.fn(() => { throw new Error('disk full'); }) as any,
     })).toBe(false);
   });
 
@@ -440,8 +430,7 @@ describe('provider-aware planning (#1146)', () => {
     const runPlanningEnd = source.indexOf('/**\n * Read plan.json', runPlanningStart);
     const runPlanningSection = source.slice(runPlanningStart, runPlanningEnd);
 
-    expect(runPlanningSection).toContain('planningRawOutputFile');
-    expect(runPlanningSection).toContain('initializePlanningRawOutput');
+    expect(runPlanningSection).toContain('createPlanningRawOutputFile');
     expect(runPlanningSection).toContain('appendRawOutput(line +');
     expect(runPlanningSection).toContain('warning: raw provider output capture failed');
     expect(runPlanningSection).toContain('formatPlanningProgress');
