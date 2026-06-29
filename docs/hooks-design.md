@@ -200,6 +200,26 @@ When a gate blocks commands, it needs an allowlist of commands that ARE permitte
 - **Cross-branch lookup:** Active declarations (KAIZEN_IMPEDIMENTS) use `_any_branch` variants since the agent may submit from a different worktree
 - **Staleness:** Files older than `MAX_STATE_AGE` (2 hours) are ignored
 
+### Direct Hook Smoke Tests
+
+Directly invoking a TS hook binary is not the same as running through the real
+hook wrapper. State-writing hooks refuse to write to the shared default
+`/tmp/.pr-review-state` unless one of these is true:
+
+- `STATE_DIR` is set explicitly, preferably `STATE_DIR=$(mktemp -d)` for smoke
+  tests and local repros.
+- A real wrapper has exported `KAIZEN_TRUST_DEFAULT_STATE_DIR=1` before
+  dispatching the TS hook.
+- An operator deliberately sets `KAIZEN_ALLOW_DEFAULT_STATE_DIR=1` for an
+  emergency manual write.
+
+Use an isolated state dir in every direct smoke:
+
+```bash
+STATE_DIR=$(mktemp -d) CLAUDECODE=1 \
+  npx tsx src/hooks/pre-push.ts origin https://github.com/Garsson-io/kaizen
+```
+
 ### Testing Hooks
 
 **TypeScript hooks (preferred):**

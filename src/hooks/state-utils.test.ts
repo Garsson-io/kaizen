@@ -8,6 +8,7 @@ import {
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  ALLOW_DEFAULT_STATE_DIR_ENV,
   clearAllStatesWithStatus,
   clearStateWithStatus,
   clearStateWithStatusAnyBranch,
@@ -22,6 +23,8 @@ import {
   parseStateFile,
   prUrlToStateKey,
   serializeStateFile,
+  SHARED_DEFAULT_STATE_DIR,
+  TRUSTED_DEFAULT_STATE_DIR_ENV,
   writeStateFile,
 } from './state-utils.js';
 
@@ -30,6 +33,34 @@ const STATE_UTILS_SOURCE = readFileSync(
   new URL('./state-utils.ts', import.meta.url),
   'utf-8',
 );
+
+function withDefaultStateEnv<T>(
+  env: Record<string, string | undefined>,
+  fn: () => T,
+): T {
+  const keys = ['STATE_DIR', TRUSTED_DEFAULT_STATE_DIR_ENV, ALLOW_DEFAULT_STATE_DIR_ENV];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) {
+    const value = env[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
 
 beforeEach(() => {
   if (existsSync(TEST_STATE_DIR)) {
@@ -132,6 +163,58 @@ describe('writeStateFile', () => {
       BRANCH: 'branch',
     });
     expect(existsSync(join(subDir, 'test'))).toBe(true);
+  });
+
+  it('refuses untrusted writes to the shared default state dir', () => {
+    const leakedFile = join(SHARED_DEFAULT_STATE_DIR, 'kaizen-1072-untrusted-write');
+
+    withDefaultStateEnv({}, () => {
+      expect(() => writeStateFile(SHARED_DEFAULT_STATE_DIR, 'kaizen-1072-untrusted-write', {
+        PR_URL: 'https://github.com/Garsson-io/kaizen/pull/1072',
+        STATUS: 'needs_review',
+        BRANCH: 'case/1072',
+      })).toThrow(/STATE_DIR=.*mktemp -d/);
+    });
+
+    expect(existsSync(leakedFile)).toBe(false);
+  });
+
+  it('allows shared default writes from trusted hook wrappers', () => {
+    const filename = `kaizen-1072-trusted-${Date.now()}`;
+    const filepath = join(SHARED_DEFAULT_STATE_DIR, filename);
+
+    try {
+      withDefaultStateEnv({ [TRUSTED_DEFAULT_STATE_DIR_ENV]: '1' }, () => {
+        expect(writeStateFile(SHARED_DEFAULT_STATE_DIR, filename, {
+          PR_URL: 'https://github.com/Garsson-io/kaizen/pull/1072',
+          STATUS: 'needs_review',
+          BRANCH: 'case/1072',
+        })).toBe(filepath);
+      });
+
+      expect(existsSync(filepath)).toBe(true);
+    } finally {
+      rmSync(filepath, { force: true });
+    }
+  });
+
+  it('allows explicit emergency override for default state writes', () => {
+    const filename = `kaizen-1072-override-${Date.now()}`;
+    const filepath = join(SHARED_DEFAULT_STATE_DIR, filename);
+
+    try {
+      withDefaultStateEnv({ [ALLOW_DEFAULT_STATE_DIR_ENV]: '1' }, () => {
+        expect(writeStateFile(SHARED_DEFAULT_STATE_DIR, filename, {
+          PR_URL: 'https://github.com/Garsson-io/kaizen/pull/1072',
+          STATUS: 'needs_review',
+          BRANCH: 'case/1072',
+        })).toBe(filepath);
+      });
+
+      expect(existsSync(filepath)).toBe(true);
+    } finally {
+      rmSync(filepath, { force: true });
+    }
   });
 });
 
