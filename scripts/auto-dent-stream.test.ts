@@ -13,7 +13,6 @@ import {
   collapseWhitespace,
   type StreamContext,
 } from './auto-dent-stream.js';
-import * as github from './auto-dent-github.js';
 import { makeRunResult } from './auto-dent-test-helpers.js';
 import { buildKaizenCycleSteps } from './auto-dent-progress.js';
 import { parsePhaseMarkers } from './auto-dent-stream.js';
@@ -44,8 +43,8 @@ describe('postInFlightUpdate', () => {
     expect(postInFlightUpdate('not-a-url', 'owner/repo', 1, Date.now(), result, ctx)).toBe(false);
   });
 
-  it('posts a comment and returns true on success', () => {
-    const ghExecSpy = vi.spyOn(github, 'ghExec').mockReturnValue('ok');
+  it('stores a named in-flight attachment and returns true on success', () => {
+    const writeAttachment = vi.fn(() => 'https://github.com/o/r/issues/42#issuecomment-1');
     const result = makeRunResult({ toolCalls: 5, cost: 1.23 });
     const ctx: StreamContext = {};
 
@@ -56,17 +55,18 @@ describe('postInFlightUpdate', () => {
       Date.now() - 60_000,
       result,
       ctx,
+      writeAttachment,
     );
 
     expect(posted).toBe(true);
-    expect(ghExecSpy).toHaveBeenCalledOnce();
-    const cmd = ghExecSpy.mock.calls[0][0];
-    expect(cmd).toContain('gh issue comment 42');
-    expect(cmd).toContain('--repo owner/repo');
+    expect(writeAttachment).toHaveBeenCalledOnce();
+    expect(writeAttachment.mock.calls[0][0]).toEqual({ kind: 'issue', number: '42', repo: 'owner/repo' });
+    expect(writeAttachment.mock.calls[0][1]).toBe('progress/run-3/in-flight');
+    expect(writeAttachment.mock.calls[0][2]).toContain('Run #3');
   });
 
-  it('returns false when ghExec returns empty string', () => {
-    vi.spyOn(github, 'ghExec').mockReturnValue('');
+  it('returns false when writeAttachment returns empty string', () => {
+    const writeAttachment = vi.fn(() => '');
     const result = makeRunResult();
     const ctx: StreamContext = {};
 
@@ -77,9 +77,30 @@ describe('postInFlightUpdate', () => {
       Date.now(),
       result,
       ctx,
+      writeAttachment,
     );
 
     expect(posted).toBe(false);
+  });
+
+  it('returns false when writeAttachment throws', () => {
+    const writeAttachment = vi.fn(() => {
+      throw new Error('network failed');
+    });
+    const result = makeRunResult();
+    const ctx: StreamContext = {};
+
+    expect(
+      postInFlightUpdate(
+        'https://github.com/o/r/issues/42',
+        'owner/repo',
+        1,
+        Date.now(),
+        result,
+        ctx,
+        writeAttachment,
+      ),
+    ).toBe(false);
   });
 });
 

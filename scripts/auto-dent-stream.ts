@@ -10,7 +10,6 @@
 
 import type { RunResult } from './auto-dent-run.js';
 import { parseFinalRunClaim } from './auto-dent-final-claim.js';
-import { ghExec } from './auto-dent-github.js';
 import {
   buildKaizenCycleSteps,
   formatIssueForDisplay,
@@ -24,6 +23,7 @@ import {
 } from './auto-dent-display.js';
 import { parseHookOutputs, type HookOutput } from '../src/hooks/lib/gate-signal.js';
 import { parsePhaseMarkers, type PhaseMarker } from '../src/phase-marker.js';
+import { writeAttachment, type AttachmentTarget } from '../src/section-editor.js';
 import type { Provider } from './auto-dent-provider.js';
 import {
   evaluateHookActivation,
@@ -486,17 +486,25 @@ export function postInFlightUpdate(
   runStart: number,
   result: RunResult,
   ctx: StreamContext,
+  write: (target: AttachmentTarget, name: string, content: string) => string = writeAttachment,
 ): boolean {
   if (!progressIssue || !kaizenRepo) return false;
   const m = progressIssue.match(/issues\/(\d+)/);
   if (!m) return false;
 
   const comment = buildInFlightComment(runNum, runStart, result, ctx, kaizenRepo);
-  const out = ghExec(
-    `gh issue comment ${m[1]} --repo ${kaizenRepo} --body ${JSON.stringify(comment)}`,
-  );
-  if (out) {
-    console.log(`  [in-flight] posted progress update for run #${runNum}`);
+  let url = '';
+  try {
+    url = write(
+      { kind: 'issue', number: m[1], repo: kaizenRepo },
+      `progress/run-${runNum}/in-flight`,
+      comment,
+    );
+  } catch {
+    return false;
+  }
+  if (url) {
+    console.log(`  [in-flight] posted progress update for run #${runNum}: ${url}`);
     return true;
   }
   return false;

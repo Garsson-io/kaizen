@@ -182,6 +182,28 @@ describe('runReviewWiring', () => {
     expect(result.reviewVerdict).toBe('fail');
   });
 
+  it('stores an exhausted fix loop notice as a named PR attachment', async () => {
+    const deps = makeDeps({
+      reviewBattery: vi.fn().mockResolvedValue(makeFailingBatteryResult()),
+      runFixLoop: vi.fn().mockResolvedValue(makeReviewFixState({
+        currentRound: 2,
+        totalCostUsd: 0.30,
+        outcome: 'max_rounds',
+      })),
+      writeAttachment: vi.fn().mockReturnValue('https://github.com/test/repo/pull/1#issuecomment-10'),
+    });
+    const result = await runReviewWiring(makeInput(), deps);
+
+    expect(result.reviewVerdict).toBe('fail');
+    expect(result.reviewUrls).toEqual(['https://github.com/test/repo/pull/1#issuecomment-10']);
+    expect(deps.writeAttachment).toHaveBeenCalledWith(
+      { kind: 'pr', number: '1', repo: 'test/repo' },
+      'review-fix-loop',
+      expect.stringContaining('## Review Fix Loop: Exhausted'),
+    );
+    expect(deps.ghExec).not.toHaveBeenCalled();
+  });
+
   it('INVARIANT: no PRs → verdict is skipped', async () => {
     const deps = makeDeps();
     const result = await runReviewWiring(makeInput({ prs: [] }), deps);
