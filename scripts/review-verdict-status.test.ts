@@ -18,8 +18,11 @@ describe('decideReviewVerdictStatus', () => {
     expect(decideReviewVerdictStatus(1, 'PASS_WITH_PARTIALS').outcome).toBe('pass');
   });
 
-  it('does not fail when no stored review data exists', () => {
-    expect(decideReviewVerdictStatus(0, null).outcome).toBe('no_data');
+  it('fails when no stored review data exists', () => {
+    const status = decideReviewVerdictStatus(0, null);
+    expect(status.outcome).toBe('fail');
+    expect(status.message).toContain('No stored review rounds found');
+    expect(status.message).toContain('merge is blocked');
   });
 });
 
@@ -84,7 +87,7 @@ describe('getReviewVerdictStatus', () => {
     expect(derive).toHaveBeenCalledWith({ kind: 'pr', number: '1498', repo: 'Garsson-io/kaizen' }, 2);
   });
 
-  it('does not read a round verdict when no review rounds exist', () => {
+  it('fails closed and does not read a round verdict when no review rounds exist', () => {
     const authoritative = vi.fn(() => 0);
     const derive = vi.fn(() => 'FAIL' as const);
 
@@ -93,7 +96,7 @@ describe('getReviewVerdictStatus', () => {
       deriveStoredRoundVerdict: derive,
     });
 
-    expect(status.outcome).toBe('no_data');
+    expect(status.outcome).toBe('fail');
     expect(derive).not.toHaveBeenCalled();
   });
 });

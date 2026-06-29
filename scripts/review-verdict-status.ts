@@ -16,7 +16,7 @@ import {
 import type { RoundVerdict } from '../src/review-finding-contract.js';
 
 export interface ReviewVerdictStatus {
-  outcome: 'pass' | 'fail' | 'no_data';
+  outcome: 'pass' | 'fail';
   message: string;
   round: number;
   verdict: RoundVerdict | null;
@@ -25,8 +25,8 @@ export interface ReviewVerdictStatus {
 export function decideReviewVerdictStatus(round: number, verdict: RoundVerdict | null): ReviewVerdictStatus {
   if (round === 0 || verdict === null) {
     return {
-      outcome: 'no_data',
-      message: 'No stored review rounds found; review verdict gate has no failing verdict to block.',
+      outcome: 'fail',
+      message: 'No stored review rounds found; merge is blocked until /kaizen-review-pr stores an authoritative PASS review round.',
       round,
       verdict: null,
     };
