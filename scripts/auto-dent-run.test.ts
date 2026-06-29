@@ -59,6 +59,9 @@ import {
   shouldRunCodexProvider,
   attachRunTranscripts,
 } from './auto-dent-run.js';
+import {
+  resolveProviderWorkspaceRoot,
+} from './auto-dent-provider-workspace.js';
 import { deriveRunTestHealth } from './auto-dent-test-health.js';
 import * as github from './auto-dent-github.js';
 import { makeBatchState, makeRunResult } from './auto-dent-test-utils.js';
@@ -4015,6 +4018,172 @@ describe('runOnce stream-json line parsing', () => {
     expect(runCodexSection).toContain('normalizeCodexEventToStreamMessages');
     expect(runCodexSection).toContain('processStreamMessage(streamMessage');
     expect(runCodexSection).not.toContain('extractArtifacts([parsed.text, parsed.finalText]');
+  });
+});
+
+describe('provider workspace contract', () => {
+  const repoRoot = '/repo/main';
+  const caseRoot = '/repo/.claude/worktrees/260629-0120-k1164-cross-pr-dry-sweep';
+
+  it('uses the invocation case worktree when its binding matches the assigned issue', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: caseRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [],
+      readBoundIssue: (root) => root === caseRoot ? 1164 : 1586,
+    });
+
+    expect(resolved).toEqual({
+      ok: true,
+      providerRoot: caseRoot,
+      issue: 1164,
+      source: 'invocation-root',
+    });
+  });
+
+  it('fails closed when the invocation worktree binding mismatches the assigned issue', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: caseRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [{ path: caseRoot, branch: 'case/260629-0120-k1164-cross-pr-dry-sweep' }],
+      readBoundIssue: () => 1586,
+    });
+
+    expect(resolved).toMatchObject({
+      ok: false,
+      issue: 1164,
+      reason: 'binding-mismatch',
+      providerRoot: caseRoot,
+      actualIssue: 1586,
+    });
+  });
+
+  it('selects an existing matching case worktree instead of the main checkout', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: 'https://github.com/Garsson-io/kaizen/issues/1164',
+    }, {
+      listWorktrees: () => [
+        { path: repoRoot, branch: 'main' },
+        { path: caseRoot, branch: 'case/260629-0120-k1164-cross-pr-dry-sweep' },
+      ],
+      readBoundIssue: (root) => root === caseRoot ? 1164 : 1586,
+    });
+
+    expect(resolved).toMatchObject({
+      ok: true,
+      providerRoot: caseRoot,
+      source: 'worktree-list',
+      issue: 1164,
+    });
+  });
+
+  it('does not trust known case paths outside the managed worktree directory', () => {
+    const externalRoot = '/tmp/not-a-kaizen-case';
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: '#1164',
+      knownCases: [externalRoot],
+    }, {
+      listWorktrees: () => [{ path: repoRoot, branch: 'main' }],
+      readBoundIssue: (root) => root === externalRoot ? 1164 : 1586,
+    });
+
+    expect(resolved).toMatchObject({
+      ok: false,
+      reason: 'missing-worktree',
+      issue: 1164,
+    });
+  });
+
+  it('fails closed when an assigned issue has no matching case worktree', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [{ path: repoRoot, branch: 'main' }],
+      readBoundIssue: () => 1586,
+    });
+
+    expect(resolved).toMatchObject({
+      ok: false,
+      reason: 'missing-worktree',
+      issue: 1164,
+    });
+  });
+
+  it('does not select another worktree whose issue token only shares a prefix', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [
+        { path: repoRoot, branch: 'main' },
+        { path: '/repo/.claude/worktrees/260629-k11640-prefix-collision', branch: 'case/260629-k11640-prefix-collision' },
+      ],
+      readBoundIssue: () => 11640,
+    });
+
+    expect(resolved).toMatchObject({
+      ok: false,
+      reason: 'missing-worktree',
+      issue: 1164,
+    });
+  });
+
+  it('leaves unassigned synthetic runs on the harness root', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: undefined,
+    }, {
+      listWorktrees: () => [],
+      readBoundIssue: () => null,
+    });
+
+    expect(resolved).toEqual({
+      ok: true,
+      providerRoot: repoRoot,
+      issue: null,
+      source: 'unassigned',
+    });
+  });
+
+  it('threads the resolved provider root through Codex argv and cwd', () => {
+    const source = AUTO_DENT_RUN_SOURCE;
+    const runCodexStart = source.indexOf('async function runCodex');
+    const runCodexEnd = source.indexOf('async function runClaude', runCodexStart);
+    const runCodexSection = source.slice(runCodexStart, runCodexEnd);
+
+    expect(runCodexSection).toContain('providerRoot: string');
+    expect(runCodexSection).toContain('buildCodexExecArgs(input.providerRoot)');
+    expect(runCodexSection).toContain('cwd: input.providerRoot');
+    expect(runCodexSection).not.toContain('buildCodexExecArgs(input.repoRoot)');
+  });
+
+  it('resolves and validates the provider root before either provider can spawn', () => {
+    const source = AUTO_DENT_RUN_SOURCE;
+    const runClaudeStart = source.indexOf('async function runClaude');
+    const runClaudeEnd = source.indexOf('// Execute one run', runClaudeStart);
+    const runClaudeSection = source.slice(runClaudeStart, runClaudeEnd);
+    const resolverIndex = runClaudeSection.indexOf('resolveProviderWorkspaceRoot');
+    const codexIndex = runClaudeSection.indexOf('runCodex({');
+    const claudeSpawnIndex = runClaudeSection.indexOf("spawn('claude'");
+
+    expect(resolverIndex).toBeGreaterThanOrEqual(0);
+    expect(runClaudeSection).toContain('providerWorkspaceFailureResult');
+    expect(resolverIndex).toBeLessThan(codexIndex);
+    expect(resolverIndex).toBeLessThan(claudeSpawnIndex);
+    expect(runClaudeSection).toContain('providerRoot: providerWorkspace.providerRoot');
+    expect(runClaudeSection).toContain('cwd: providerWorkspace.providerRoot');
   });
 });
 
