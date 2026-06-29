@@ -61,6 +61,9 @@ import {
   formatBatchProgressIssueBody,
   formatRunProgressAttachment,
   formatBatchCompletionAttachment,
+  extractGuidancePriorities,
+  formatGuidanceCompletionMatrix,
+  fetchDashboardEnrichment,
   ensureBatchProgressIssue,
   updateBatchProgressIssue,
   extractModeOutput,
@@ -362,6 +365,60 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
       expect(body).toContain('- **Issues filed:** none');
       expect(body).toContain('- **Issues closed:** none');
       expect(body).toContain('- **Raw artifacts:** not uploaded for this close path');
+    });
+
+    it('renders enriched PR and issue summaries plus guidance completion', () => {
+      const state = makeBatchState({
+        guidance: '- Improve hook reliability\n- Surface PR titles',
+        run: 1,
+        prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+        issues_filed: ['#1300'],
+        issues_closed: ['#1225'],
+        run_history: [
+          makeRunMetrics({
+            run: 1,
+            mode: 'exploit',
+            prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+            issues_filed: ['#1300'],
+            issues_closed: ['#1225'],
+          }),
+        ],
+      });
+
+      const body = formatBatchCompletionAttachment({
+        state,
+        batchScore: scoreBatch(state.run_history || []),
+        wallTimeSeconds: 120,
+        reconciledClosed: ['#1225'],
+        progressIssueNumber: '1226',
+        kaizenRepo: 'Garsson-io/kaizen',
+        enrichment: {
+          prs: {
+            'https://github.com/Garsson-io/kaizen/pull/1227': {
+              ref: 'https://github.com/Garsson-io/kaizen/pull/1227',
+              title: 'Improve hook reliability',
+              state: 'MERGED',
+            },
+          },
+          issues: {
+            '#1225': {
+              ref: '#1225',
+              title: 'Hook reliability issue',
+              state: 'CLOSED',
+            },
+            '#1300': {
+              ref: '#1300',
+              title: 'Dashboard follow-up',
+              state: 'OPEN',
+            },
+          },
+        },
+      });
+
+      expect(body).toContain('https://github.com/Garsson-io/kaizen/pull/1227 — Improve hook reliability (MERGED)');
+      expect(body).toContain('https://github.com/Garsson-io/kaizen/issues/1300 — Dashboard follow-up (OPEN)');
+      expect(body).toContain('https://github.com/Garsson-io/kaizen/issues/1225 — Hook reliability issue (CLOSED)');
+      expect(body).toContain('| Improve hook reliability | observed | https://github.com/Garsson-io/kaizen/pull/1227 — Improve hook reliability (MERGED) |');
     });
   });
 
@@ -4552,6 +4609,135 @@ describe('formatBatchProgressIssueBody', () => {
     expect(body).toContain('| Wall time | 2h 0m |');
     expect(body).toContain('| Modes used | exploit x2, explore x1 |');
   });
+
+  it('renders enriched work artifacts when lookup data is available', () => {
+    const state = makeBatchState({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+      issues_filed: ['#1300'],
+      issues_closed: ['#1225'],
+    });
+
+    const body = formatBatchProgressIssueBody(state, 1742688000, {
+      prs: {
+        'https://github.com/Garsson-io/kaizen/pull/1227': {
+          ref: 'https://github.com/Garsson-io/kaizen/pull/1227',
+          title: 'Dashboard guidance renderer',
+          state: 'MERGED',
+        },
+      },
+      issues: {
+        '#1300': {
+          ref: '#1300',
+          title: 'Dashboard follow-up',
+          state: 'OPEN',
+        },
+        '#1225': {
+          ref: '#1225',
+          title: 'Hook reliability issue',
+          state: 'CLOSED',
+        },
+      },
+    });
+
+    expect(body).toContain('### Work Artifacts');
+    expect(body).toContain('- **PRs:** https://github.com/Garsson-io/kaizen/pull/1227 — Dashboard guidance renderer (MERGED)');
+    expect(body).toContain('- **Issues filed:** https://github.com/Garsson-io/kaizen/issues/1300 — Dashboard follow-up (OPEN)');
+    expect(body).toContain('- **Issues closed:** https://github.com/Garsson-io/kaizen/issues/1225 — Hook reliability issue (CLOSED)');
+  });
+});
+
+describe('dashboard guidance and enrichment helpers', () => {
+  it('extracts readable guidance priorities from multiline bullets', () => {
+    expect(extractGuidancePriorities([
+      '- Improve hook reliability',
+      '* Surface PR titles in dashboards',
+      '3. Keep GitHub failures fail-open',
+      '',
+    ].join('\n'))).toEqual([
+      'Improve hook reliability',
+      'Surface PR titles in dashboards',
+      'Keep GitHub failures fail-open',
+    ]);
+  });
+
+  it('renders guidance completion evidence against observed titles', () => {
+    const matrix = formatGuidanceCompletionMatrix(
+      '- Improve hook reliability\n- Add stale dashboard magic\n- Escape a\\\\b | markdown',
+      [
+        'PR #1227 Improve hook reliability (MERGED)',
+        'Issue #1300 Dashboard follow-up (OPEN)',
+        'Escape a\\\\b | markdown evidence',
+      ],
+    );
+
+    expect(matrix).toContain('### Guidance Completion');
+    expect(matrix).toContain('| Improve hook reliability | observed | PR #1227 Improve hook reliability (MERGED) |');
+    expect(matrix).toContain('| Add stale dashboard magic | not observed | - |');
+    expect(matrix).toContain('| Escape a\\\\\\\\b \\| markdown | observed | Escape a\\\\\\\\b \\| markdown evidence |');
+  });
+
+  it('fetches PR and issue enrichment with argv gh calls', () => {
+    const calls: string[][] = [];
+    const gh = vi.fn((args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'pr') {
+        return JSON.stringify({
+          title: 'Dashboard guidance renderer',
+          state: 'MERGED',
+          url: 'https://github.com/Garsson-io/kaizen/pull/1227',
+        });
+      }
+      return JSON.stringify({
+        title: 'Hook reliability issue',
+        state: 'CLOSED',
+        url: 'https://github.com/Garsson-io/kaizen/issues/1225',
+      });
+    });
+    const state = makeBatchState({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+      issues_closed: ['#1225'],
+      run_history: [
+        makeRunMetrics({
+          prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+          issues_closed: ['#1225'],
+        }),
+      ],
+    });
+
+    const enrichment = fetchDashboardEnrichment(state, 'Garsson-io/kaizen', gh);
+
+    expect(enrichment.prs?.['https://github.com/Garsson-io/kaizen/pull/1227']).toMatchObject({
+      title: 'Dashboard guidance renderer',
+      state: 'MERGED',
+    });
+    expect(enrichment.issues?.['#1225']).toMatchObject({
+      title: 'Hook reliability issue',
+      state: 'CLOSED',
+    });
+    expect(calls).toContainEqual([
+      'pr', 'view', '1227',
+      '--repo', 'Garsson-io/kaizen',
+      '--json', 'title,state,url',
+    ]);
+    expect(calls).toContainEqual([
+      'issue', 'view', '1225',
+      '--repo', 'Garsson-io/kaizen',
+      '--json', 'title,state,url',
+    ]);
+  });
+
+  it('keeps enrichment fail-open when GitHub lookup fails', () => {
+    const state = makeBatchState({
+      prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+      issues_filed: ['#1300'],
+    });
+
+    const enrichment = fetchDashboardEnrichment(state, 'Garsson-io/kaizen', () => {
+      throw new Error('offline');
+    });
+
+    expect(enrichment).toEqual({ prs: {}, issues: {} });
+  });
 });
 
 describe('run state checkpointing', () => {
@@ -5365,6 +5551,41 @@ describe('updateBatchProgressIssue', () => {
       expect(body).toContain('#### Kaizen Work Cycle');
       expect(body).toContain('| REVIEW | pass | round 1 passed | https://github.com/Garsson-io/kaizen/pull/1227#issuecomment-2 |');
       expect(body).not.toContain('| **Issue worked** |');
+    });
+
+    it('renders enriched issue and PR labels when lookup data is available', () => {
+      const body = formatRunProgressAttachment({
+        runNum: 3,
+        exitCode: 0,
+        duration: 3661,
+        mode: 'exploit',
+        kaizenRepo: 'Garsson-io/kaizen',
+        enrichment: {
+          prs: {
+            'https://github.com/Garsson-io/kaizen/pull/1227': {
+              ref: 'https://github.com/Garsson-io/kaizen/pull/1227',
+              title: 'Dashboard guidance renderer',
+              state: 'MERGED',
+            },
+          },
+          issues: {
+            '#1225': {
+              ref: '#1225',
+              title: 'Hook reliability issue',
+              state: 'CLOSED',
+            },
+          },
+        },
+        result: makeRunResult({
+          pickedIssue: '#1225',
+          prs: ['https://github.com/Garsson-io/kaizen/pull/1227'],
+          cost: 1.25,
+          toolCalls: 42,
+        }),
+      });
+
+      expect(body).toContain('- **Issue:** https://github.com/Garsson-io/kaizen/issues/1225 — Hook reliability issue (CLOSED)');
+      expect(body).toContain('- **PR:** https://github.com/Garsson-io/kaizen/pull/1227 — Dashboard guidance renderer (MERGED)');
     });
 
     it('renders no-pr and stop-requested runs without losing stop evidence', () => {
