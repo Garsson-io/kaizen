@@ -12,6 +12,8 @@
 #
 # SessionStart hook — always exits 0 (advisory only, never blocks).
 
+source "$(dirname "$0")/lib/hook-telemetry.sh" 2>/dev/null || true
+
 # Fix A (advisory) for #934/#939: warn when the .worktree-will-delete sentinel is present.
 # worktree-du.ts writes this sentinel before calling git worktree remove, giving sessions
 # a chance to notice the worktree is about to disappear.

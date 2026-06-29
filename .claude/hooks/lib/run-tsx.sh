@@ -14,6 +14,16 @@
 source "$(dirname "${BASH_SOURCE[0]}")/resolve-kaizen-dir.sh" || exit 0
 source "$(dirname "${BASH_SOURCE[0]}")/resolve-tsx-bin.sh" || exit 0
 
+# When sourced by a real hook shim, measure the outer shim once. Direct library
+# tests source run-tsx.sh without a caller script, so avoid writing telemetry
+# just for loading the helper.
+if [ -n "${BASH_SOURCE[1]:-}" ]; then
+  export KAIZEN_HOOK_TELEMETRY_NAME
+  KAIZEN_HOOK_TELEMETRY_NAME="$(basename "${BASH_SOURCE[1]}" .sh)"
+  source "$(dirname "${BASH_SOURCE[0]}")/hook-telemetry.sh" 2>/dev/null || true
+  unset KAIZEN_HOOK_TELEMETRY_NAME
+fi
+
 run_tsx() {
   local kaizen_dir="$1"
   local ts_file="$2"
@@ -26,14 +36,16 @@ run_tsx() {
   # whose node_modules is absent or incomplete. Let them provide a known-good
   # tsx binary while still running the source file from this kaizen_dir.
   if [ -n "${KAIZEN_TSX_BIN:-}" ] && [ -x "$KAIZEN_TSX_BIN" ]; then
-    exec "$KAIZEN_TSX_BIN" "$ts_file"
+    "$KAIZEN_TSX_BIN" "$ts_file"
+    exit $?
   fi
 
   # 1. Shared resolver — local node_modules, parent worktree installs, git common dir
   local resolved_tsx
   resolved_tsx="$(resolve_tsx_bin "$kaizen_dir" || true)"
   if [ -n "$resolved_tsx" ]; then
-    exec "$resolved_tsx" "$ts_file"
+    "$resolved_tsx" "$ts_file"
+    exit $?
   fi
 
   # 2. tsx not available — exit gracefully instead of crashing. Do not shell
