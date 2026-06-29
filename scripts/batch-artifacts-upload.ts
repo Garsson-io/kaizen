@@ -220,10 +220,11 @@ export function uploadBatchArtifacts(
   repo: string,
   batchDir: string,
   nowIso: string,
+  write: typeof writeAttachment = writeAttachment,
 ): string | null {
   const parts = readArtifactParts(batchDir);
   if (!parts.stateJson && !parts.eventsJsonl && !parts.summary) return null;
 
   const body = buildArtifactsComment(parts, nowIso);
-  return writeAttachment({ kind: 'issue', number: issueNumber, repo }, BATCH_ARTIFACTS_ATTACHMENT, body);
+  return write({ kind: 'issue', number: issueNumber, repo }, BATCH_ARTIFACTS_ATTACHMENT, body);
 }

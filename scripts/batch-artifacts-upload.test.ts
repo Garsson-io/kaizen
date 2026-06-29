@@ -1,11 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { makeIgnoredTestDir } from '../src/lib/test-dirs.js';
 import {
   buildArtifactsComment,
   parseArtifactsComment,
   readArtifactParts,
+  uploadBatchArtifacts,
   type ArtifactParts,
   BATCH_ARTIFACTS_ATTACHMENT,
   ARTIFACTS_BODY_BUDGET,
@@ -144,7 +145,7 @@ describe('readArtifactParts', () => {
     writeFileSync(join(dir, 'batch-summary.txt'), 'all good');
 
     const parts = readArtifactParts(dir);
-    expect(parts.batchId).toBe(dir.split('/').pop());
+    expect(parts.batchId).toBe(basename(dir));
     expect(parts.stateJson).toBe('{"run":2}');
     expect(parts.eventsJsonl).toBe('{"kind":"run_start"}');
     expect(parts.summary).toBe('all good');
@@ -163,6 +164,47 @@ describe('readArtifactParts', () => {
     const dir = freshBatchDir();
     writeFileSync(join(dir, 'batch-summary-report.md'), '# report');
     expect(readArtifactParts(dir).summary).toBe('# report');
+  });
+});
+
+describe('uploadBatchArtifacts', () => {
+  it('returns null and does not write when a batch dir has no artifacts', () => {
+    const dir = freshBatchDir();
+    const writes: Array<{ name: string; body: string }> = [];
+
+    const url = uploadBatchArtifacts('1183', 'owner/repo', dir, NOW, (_target, name, body) => {
+      writes.push({ name, body });
+      return 'https://github.com/owner/repo/issues/1183#issuecomment-1';
+    });
+
+    expect(url).toBeNull();
+    expect(writes).toEqual([]);
+  });
+
+  it('reads a batch dir and writes the stable batch-artifacts attachment body', () => {
+    const dir = freshBatchDir();
+    writeFileSync(join(dir, 'state.json'), JSON.stringify({ batch_id: 'fixture-batch', run: 2 }));
+    writeFileSync(join(dir, 'events.jsonl'), [
+      JSON.stringify({ timestamp: NOW, event: { type: 'run.start', batch_id: 'fixture-batch', run_num: 1 } }),
+      JSON.stringify({ timestamp: NOW, event: { type: 'run.complete', batch_id: 'fixture-batch', run_num: 1 } }),
+    ].join('\n'));
+    writeFileSync(join(dir, 'batch-summary-report.md'), 'Fixture batch summary');
+    const calls: Array<{ target: unknown; name: string; body: string }> = [];
+
+    const url = uploadBatchArtifacts('1183', 'owner/repo', dir, NOW, (target, name, body) => {
+      calls.push({ target, name, body });
+      return 'https://github.com/owner/repo/issues/1183#issuecomment-2';
+    });
+
+    expect(url).toContain('issuecomment-2');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].target).toEqual({ kind: 'issue', number: '1183', repo: 'owner/repo' });
+    expect(calls[0].name).toBe(BATCH_ARTIFACTS_ATTACHMENT);
+    const parts = parseArtifactsComment(calls[0].body);
+    expect(parts.batchId).toBe(dir.split('/').pop());
+    expect(parts.eventsJsonl).toContain('"run.complete"');
+    expect(parts.stateJson).toContain('"fixture-batch"');
+    expect(parts.summary).toBe('Fixture batch summary');
   });
 });
 
