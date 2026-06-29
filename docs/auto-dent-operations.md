@@ -375,6 +375,12 @@ After a batch completes:
    ```
    Export is best-effort and fail-open: a collector outage must not block the
    auto-dent run or prevent `events.jsonl` from being written.
+   The platform decision and live-smoke boundary are documented in
+   [`docs/auto-dent-trace-platform-evaluation.md`](auto-dent-trace-platform-evaluation.md):
+   use the existing `scripts/auto-dent-otel.ts` projection first, try an OTLP
+   trace UI such as Langfuse before adding vendor-specific converters, and keep
+   complete transcript bundles on the transcript artifact transport rather than
+   raw trace span attributes.
 
 ## Scoring
 
