@@ -41,6 +41,7 @@ import { projectReplayRuns, type ReplayRunProjection } from './auto-dent-replay.
 import { defaultReviewFixProviders, runFixLoop } from './review-fix.js';
 import { buildRunManifest, writeRunManifest, bundleArtifacts, formatManifestSummary } from './auto-dent-artifacts.js';
 import { uploadBatchArtifacts } from './batch-artifacts-upload.js';
+import { uploadBatchTranscriptBundle } from './transcript-bundle-upload.js';
 import { attachTranscript } from '../src/transcript-attach.js';
 import {
   buildBatchOutcome,
@@ -3135,8 +3136,13 @@ export function closeBatchProgressIssue(
   kaizenRepo: string,
   state: BatchState,
   batchDir?: string,
-  deps: { writeAttachment?: ProgressAttachmentWriter; gh?: (args: string[]) => string } = {},
-): void {
+  deps: {
+    writeAttachment?: ProgressAttachmentWriter;
+    gh?: (args: string[]) => string;
+    uploadTranscriptBundle?: typeof uploadBatchTranscriptBundle;
+  } = {},
+): Promise<void> {
+  return (async () => {
   if (!progressIssue || !kaizenRepo) return;
   const issueNum = parseProgressIssueNumber(progressIssue);
   if (!issueNum) return;
@@ -3214,6 +3220,26 @@ export function closeBatchProgressIssue(
     } catch (err) {
       console.log(`  [intelligence] batch-artifacts upload skipped: ${(err as Error).message}`);
     }
+
+    try {
+      const result = await (deps.uploadTranscriptBundle ?? uploadBatchTranscriptBundle)({
+        issueNumber: issueNum,
+        repo: kaizenRepo,
+        batchDir,
+        nowIso: new Date().toISOString(),
+        write: deps.writeAttachment ?? writeAttachment,
+      });
+      if (result.status === 'uploaded') {
+        console.log(`  [intelligence] uploaded transcript bundle to #${issueNum}`);
+      } else {
+        console.log(
+          `  [intelligence] transcript bundle upload skipped: ${result.manifest.status}` +
+            (result.manifest.diagnostic ? ` — ${result.manifest.diagnostic}` : ''),
+        );
+      }
+    } catch (err) {
+      console.log(`  [intelligence] transcript bundle upload skipped: ${(err as Error).message}`);
+    }
   }
 
   // Backlog-health maintenance (#1497, PRD #951 DoD item 4): surface the
@@ -3277,6 +3303,7 @@ export function closeBatchProgressIssue(
   } catch (err) {
     console.log(`  [hygiene] progress issue close skipped: ${(err as Error).message}`);
   }
+  })();
 }
 
 // Execute Claude
@@ -5173,7 +5200,7 @@ function postPlan(): void {
 
 // Close batch subcommand
 
-function closeBatch(): void {
+async function closeBatch(): Promise<void> {
   const stateFile = process.argv[3];
   if (!stateFile || !existsSync(stateFile)) {
     console.error('Usage: auto-dent-run.ts --close-batch <state-file>');
@@ -5183,7 +5210,7 @@ function closeBatch(): void {
   if (state.progress_issue) {
     // state.json lives inside the batch directory; its parent is the batch dir
     // that holds events.jsonl + the raw artifacts (#696).
-    closeBatchProgressIssue(state.progress_issue, state.kaizen_repo, state, dirname(stateFile));
+    await closeBatchProgressIssue(state.progress_issue, state.kaizen_repo, state, dirname(stateFile));
   }
 }
 
@@ -5224,7 +5251,10 @@ const isDirectRun =
 
 if (isDirectRun) {
   if (process.argv[2] === '--close-batch') {
-    closeBatch();
+    closeBatch().catch((err) => {
+      console.error('Fatal error:', err);
+      process.exit(1);
+    });
   } else if (process.argv[2] === '--post-plan') {
     postPlan();
   } else if (process.argv[2] === '--post-hoc-score') {

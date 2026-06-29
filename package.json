@@ -29,6 +29,7 @@
     "vitest": "^4.0.0"
   },
   "dependencies": {
+    "@actions/artifact": "^6.2.1",
     "tsx": "^4.22.4",
     "unique-names-generator": "^4.7.1",
     "yaml": "^2.9.0",
