@@ -19,8 +19,11 @@ import {
   deriveThemes,
   ensureThemes,
   extractPlanningText,
+  formatPlanningProgress,
   formatPlanningFailure,
+  planningRawOutputFile,
   selectPlanningProvider,
+  summarizePlanningActivity,
   validatePlanningOutputContract,
   withPlanningProvider,
   themeProgress,
@@ -280,6 +283,55 @@ describe('provider-aware planning (#1146)', () => {
     expect(formatPlanningFailure({ provider: 'codex', billing: 'subscription-cli' }, 'could not extract plan JSON')).toBe(
       '  [plan:codex] could not extract plan JSON',
     );
+  });
+
+  it('summarizes Codex planning activity into operator-readable labels', () => {
+    const issueList = summarizePlanningActivity('codex', JSON.stringify({
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        command: 'gh issue list --repo Garsson-io/kaizen --label epic --state open',
+      },
+    }));
+    const fileRead = summarizePlanningActivity('codex', JSON.stringify({
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        command: 'rg -n "dashboard" docs scripts src',
+      },
+    }));
+
+    expect(issueList).toBe('reading GitHub issues');
+    expect(fileRead).toBe('inspecting files');
+  });
+
+  it('formats bounded planning progress with elapsed time, activity, counts, and raw log path', () => {
+    expect(formatPlanningProgress({
+      provider: { provider: 'codex', billing: 'subscription-cli' },
+      elapsedMs: 45_000,
+      stdoutLines: 12,
+      stdoutBytes: 2048,
+      stderrBytes: 140,
+      lastActivity: 'checking worktrees',
+      rawOutputFile: '/tmp/plan-codex.jsonl',
+    })).toBe('  [plan:codex] still planning (45s elapsed; checking worktrees; stdout 12 lines/2.0 KB; stderr 140 B; raw /tmp/plan-codex.jsonl)');
+  });
+
+  it('uses a stable raw planning output path per provider', () => {
+    expect(planningRawOutputFile('/tmp/batch', 'codex')).toBe('/tmp/batch/plan-codex.jsonl');
+    expect(planningRawOutputFile('/tmp/batch', 'claude')).toBe('/tmp/batch/plan-claude-stream.jsonl');
+  });
+
+  it('captures raw planning output and starts progress inside the provider wait path', () => {
+    const source = readFileSync(new URL('./auto-dent-plan.ts', import.meta.url), 'utf8');
+    const runPlanningStart = source.indexOf('async function runPlanning');
+    const runPlanningEnd = source.indexOf('/**\n * Read plan.json', runPlanningStart);
+    const runPlanningSection = source.slice(runPlanningStart, runPlanningEnd);
+
+    expect(runPlanningSection).toContain('planningRawOutputFile');
+    expect(runPlanningSection).toContain('appendFileSync(rawOutputFile');
+    expect(runPlanningSection).toContain('formatPlanningProgress');
+    expect(runPlanningSection).toContain('setInterval');
   });
 });
 

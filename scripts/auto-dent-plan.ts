@@ -17,7 +17,7 @@
  */
 
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { appendFileSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { dirname, resolve } from 'path';
 import { z } from 'zod';
@@ -270,6 +270,87 @@ export function withPlanningProvider(plan: BatchPlan, provider: PhaseProvider): 
 
 export function formatPlanningFailure(provider: PhaseProvider, message: string): string {
   return `  [plan:${planningProviderName(provider)}] ${message}`;
+}
+
+export function planningRawOutputFile(logDir: string, provider: PlanningProviderName): string {
+  return resolve(logDir, provider === 'codex' ? 'plan-codex.jsonl' : 'plan-claude-stream.jsonl');
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function parsePlanningJsonLine(rawLine: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(rawLine);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function commandActivity(command: string): string {
+  if (/\bgh\s+issue\s+(list|view|search)\b/.test(command)) return 'reading GitHub issues';
+  if (/\bgh\s+pr\s+(list|view)\b/.test(command)) return 'checking GitHub PRs';
+  if (/\bgit\s+worktree\b/.test(command) || /\bgit\s+status\b/.test(command)) return 'checking worktrees';
+  if (/^(rg|grep|sed|cat|ls|find|jq|head|tail|wc)\b/.test(command.trim())) return 'inspecting files';
+  return `running command: ${command.trim().replace(/\s+/g, ' ').slice(0, 80)}`;
+}
+
+export function summarizePlanningActivity(provider: PlanningProviderName, line: string): string | null {
+  const obj = parsePlanningJsonLine(line);
+  if (!obj) return null;
+
+  if (provider === 'codex') {
+    const item = obj.item;
+    if (item && typeof item === 'object') {
+      const itemObj = item as Record<string, unknown>;
+      if (itemObj.type === 'command_execution' && typeof itemObj.command === 'string') {
+        return commandActivity(itemObj.command);
+      }
+      if (itemObj.type === 'agent_message') return 'drafting batch plan';
+    }
+    const type = String(obj.type ?? '');
+    if (type === 'thread.started' || type === 'turn.started') return 'provider turn started';
+    return null;
+  }
+
+  const message = obj.message;
+  if (message && typeof message === 'object') {
+    const content = (message as Record<string, unknown>).content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const record = block as Record<string, unknown>;
+        if (record.type === 'tool_use' && record.name === 'Bash') {
+          const input = record.input;
+          if (input && typeof input === 'object' && typeof (input as Record<string, unknown>).command === 'string') {
+            return commandActivity((input as Record<string, string>).command);
+          }
+        }
+        if (record.type === 'text') return 'drafting batch plan';
+      }
+    }
+  }
+  if (obj.type === 'result') return 'finalizing plan';
+  return null;
+}
+
+export function formatPlanningProgress(input: {
+  provider: PhaseProvider;
+  elapsedMs: number;
+  stdoutLines: number;
+  stdoutBytes: number;
+  stderrBytes: number;
+  lastActivity?: string;
+  rawOutputFile: string;
+}): string {
+  const elapsed = `${Math.floor(input.elapsedMs / 1000)}s elapsed`;
+  const activity = input.lastActivity || 'waiting for provider output';
+  return [
+    formatPlanningFailure(input.provider, `still planning (${elapsed}; ${activity}; stdout ${input.stdoutLines} lines/${formatBytes(input.stdoutBytes)}; stderr ${formatBytes(input.stderrBytes)}; raw ${input.rawOutputFile})`),
+  ].join('');
 }
 
 /**
@@ -530,9 +611,18 @@ async function runPlanning(
   const providerName = planningProviderName(provider);
   const schemaFile = providerName === 'codex' ? buildPlanningSchemaFile(logDir) : undefined;
   const command = buildPlanningCommand(provider, prompt, state, repoRoot, schemaFile);
+  const rawOutputFile = planningRawOutputFile(logDir, providerName);
   let rawOutput = '';
+  let stdoutLines = 0;
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  let lastActivity: string | undefined;
+  let lastPrintedActivity: string | undefined;
 
   return new Promise((resolve) => {
+    writeFileSync(rawOutputFile, '');
+    console.log(formatPlanningFailure(provider, `raw provider output: ${rawOutputFile}`));
+    const startedAt = Date.now();
     const child = spawn(command.command, command.args, {
       cwd: repoRoot,
       stdio: [command.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
@@ -545,18 +635,42 @@ async function runPlanning(
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 10_000);
     }, 5 * 60 * 1000);
+    const progressTimer = setInterval(() => {
+      console.log(formatPlanningProgress({
+        provider,
+        elapsedMs: Date.now() - startedAt,
+        stdoutLines,
+        stdoutBytes,
+        stderrBytes,
+        lastActivity,
+        rawOutputFile,
+      }));
+    }, 15_000);
 
     const rl = createInterface({ input: child.stdout! });
     rl.on('line', (line) => {
       rawOutput += line + '\n';
+      appendFileSync(rawOutputFile, line + '\n');
+      stdoutLines++;
+      stdoutBytes += Buffer.byteLength(line + '\n');
+      const activity = summarizePlanningActivity(providerName, line);
+      if (activity) {
+        lastActivity = activity;
+        if (activity !== lastPrintedActivity) {
+          console.log(formatPlanningFailure(provider, activity));
+          lastPrintedActivity = activity;
+        }
+      }
     });
 
-    child.stderr?.on('data', () => {
-      // Ignore stderr for planning
+    child.stderr?.on('data', (data: Buffer) => {
+      stderrBytes += data.length;
+      appendFileSync(rawOutputFile, data.toString());
     });
 
     child.on('close', () => {
       clearTimeout(timer);
+      clearInterval(progressTimer);
       const fullText = extractPlanningText(providerName, rawOutput);
       const parsed = extractPlanJson(fullText);
       if (parsed) {
@@ -575,6 +689,7 @@ async function runPlanning(
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      clearInterval(progressTimer);
       console.log(formatPlanningFailure(provider, `error: ${err.message}`));
       resolve(null);
     });

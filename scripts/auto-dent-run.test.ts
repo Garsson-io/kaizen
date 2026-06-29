@@ -76,6 +76,8 @@ import {
   attachRunTranscripts,
   applyContextDelegationAnalysis,
   buildContextDelegationAnalysisLog,
+  formatHarnessFailureForDisplay,
+  formatProviderWorkspaceFailureDiagnosis,
 } from './auto-dent-run.js';
 import { analyzeContextDelegation } from './auto-dent-context-delegation.js';
 import {
@@ -5409,6 +5411,26 @@ describe('provider workspace contract', () => {
     });
   });
 
+  it('formats provider workspace failures as diagnosis-first harness failures', () => {
+    const resolved = resolveProviderWorkspaceRoot({
+      repoRoot,
+      invocationRoot: repoRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [{ path: repoRoot, branch: 'main' }],
+      readBoundIssue: () => null,
+    });
+    expect(resolved.ok).toBe(false);
+
+    const diagnosis = formatProviderWorkspaceFailureDiagnosis(resolved as any);
+
+    expect(diagnosis.phase).toBe('provider workspace resolution');
+    expect(diagnosis.summary).toBe('provider workspace resolution failed for #1164');
+    expect(diagnosis.detail).toContain('no non-main case worktree found for assigned issue #1164');
+    expect(diagnosis.nextAction).toContain('Create or enter a non-main case worktree bound to #1164');
+    expect(formatHarnessFailureForDisplay(diagnosis)).toContain('Root cause: provider workspace resolution failed for #1164');
+  });
+
   it('does not select another worktree whose issue token only shares a prefix', () => {
     const resolved = resolveProviderWorkspaceRoot({
       repoRoot,
@@ -5476,6 +5498,23 @@ describe('provider workspace contract', () => {
     expect(resolverIndex).toBeLessThan(claudeSpawnIndex);
     expect(runClaudeSection).toContain('providerRoot: providerWorkspace.providerRoot');
     expect(runClaudeSection).toContain('cwd: providerWorkspace.providerRoot');
+  });
+
+  it('does not model provider workspace failures as undefined agent stops', () => {
+    const source = AUTO_DENT_RUN_SOURCE;
+    const failureStart = source.indexOf('function providerWorkspaceFailureResult');
+    const failureEnd = source.indexOf('async function runCodex', failureStart);
+    const failureSection = source.slice(failureStart, failureEnd);
+    const finalizationStart = source.indexOf('if (result.stopRequested)');
+    const finalizationEnd = source.indexOf('// #1255: rescue stranded work', finalizationStart);
+    const finalizationSection = source.slice(finalizationStart, finalizationEnd);
+
+    expect(failureSection).toContain('formatProviderWorkspaceFailureDiagnosis');
+    expect(failureSection).toContain('harnessFailure');
+    expect(failureSection).not.toContain('stopRequested = true');
+    expect(finalizationSection).not.toContain('Claude requested batch stop');
+    expect(finalizationSection).toContain('Agent requested batch stop');
+    expect(finalizationSection).toContain('requested without reason');
   });
 });
 
