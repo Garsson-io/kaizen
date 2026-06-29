@@ -368,6 +368,12 @@ After a batch completes:
    that contract uses GitHub Actions artifacts for the complete scrubbed bundle
    and keeps the progress issue as a small manifest/index.
 
+   The read-only dashboard data contract over these progress issue artifacts is
+   documented in
+   [`docs/auto-dent-dashboard-data-contract.md`](auto-dent-dashboard-data-contract.md).
+   Dashboard UI code must consume that typed projection instead of scraping local
+   logs or inventing a second lifecycle model.
+
 4. **OpenTelemetry GenAI traces** — JSONL remains the durable source of truth.
    To mirror completed runs to an OTLP/GenAI-compatible HTTP collector, set:
    ```bash
