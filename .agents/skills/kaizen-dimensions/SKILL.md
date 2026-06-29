@@ -60,7 +60,6 @@ Status values: `DONE` (addressed), `PARTIAL` (gaps remain), `MISSING` (not addre
 |----------|-----------------|------|
 | `auto-dent-run.ts` | All where `applies_to != plan` | After each run produces a PR (advisory) |
 | `review-fix.ts` | All where `applies_to != plan` | CLI review→fix cycle |
-| `review-round.ts` | Selected groups, explicit names, or all where `applies_to != plan` | Focused authoritative review rounds and storage |
 | `kaizen-evaluate` Phase 5.5 | `plan-coverage` | After formulating a plan |
 | `kaizen-implement` Step 5b | `requirements` | Before merge |
 | `kaizen-review-pr` Phase 2 | All (data-driven table) | During self-review |
@@ -71,7 +70,7 @@ Consumers call `listDimensions()` or `loadDimensionMetas()` from `src/review-bat
 
 1. **Scaffold**: `npx tsx src/cli-dimensions.ts add <name> --description "..." --applies-to pr`
 2. **Edit** the generated `prompts/review-<name>.md` — add your specific criteria and instructions
-3. **Test**: `npx tsx scripts/review-fix.ts --pr <known-pr> --issue <N> --repo <repo> --dry-run` for repair-loop coverage, or `npx tsx scripts/review-round.ts run --pr <known-pr> --issue <N> --repo <repo> --dimensions <name> --out logs/review/<name>-smoke.json` for focused review-round coverage — verify it produces sensible findings
+3. **Test**: `npx tsx scripts/review-fix.ts --pr <known-pr> --issue <N> --repo <repo> --dry-run` — verify it produces sensible findings
 4. **Validate**: `npx tsx src/cli-dimensions.ts validate` — confirm frontmatter is correct
 5. **Commit** — the dimension is now live in all consumers automatically
 
