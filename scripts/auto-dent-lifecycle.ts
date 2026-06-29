@@ -1,7 +1,7 @@
 // Auto-dent run lifecycle validation.
 //
 // The agent emits AUTO_DENT_PHASE markers as it moves through the pipeline
-// (PICK -> EVALUATE -> IMPLEMENT -> TEST -> PR -> MERGE -> REFLECT). Those
+// (PICK -> EVALUATE -> DELEGATE -> IMPLEMENT -> TEST -> PR -> MERGE -> REFLECT). Those
 // markers are *claims*. This module turns the claims into a verified, classified
 // signal so the harness can see — and steer on — when a run's narrative doesn't
 // hold together:
@@ -21,10 +21,10 @@ import { parsePhaseMarkers } from './auto-dent-stream.js';
 import type { WorkflowGateId } from './workflow-gate-ledger.js';
 
 /** Canonical phase order. Phases not in this list (floating) are ignored for ordering. */
-export const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
+export const LIFECYCLE_ORDER = ['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT'];
 
 /** Phases that can appear anywhere without breaking ordering. */
-export const FLOATING_PHASES = new Set(['DECOMPOSE', 'DELEGATE', 'STOP']);
+export const FLOATING_PHASES = new Set(['DECOMPOSE', 'STOP']);
 
 /**
  * Phases that, when present, require an earlier phase to also be present.

@@ -47,7 +47,7 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 | 6 | Record lessons and decide | Capture admin input, record calibration, output GO/NO-GO with scope |
 
 **What comes next:**
-- **GO → single PR:** `/kaizen-implement` — will create case, worktree, and 11 implementation tasks
+- **GO → single PR:** `/kaizen-implement` — will create case, worktree, and 12 implementation tasks
 - **GO → multi-PR:** `/kaizen-plan` first (breaks into sub-issues), then `/kaizen-implement` per sub-issue
 - **Needs spec:** `/kaizen-prd` first, then back to evaluate
 - **NO-GO:** Close with reason
@@ -76,21 +76,22 @@ For skills with ≤2 tasks, skip TaskCreate — it adds overhead without value.
 
 **What comes next:** `/kaizen-evaluate` or `/kaizen-plan` to break into implementable pieces, then `/kaizen-implement`.
 
-### /kaizen-implement (11 tasks)
+### /kaizen-implement (12 tasks)
 
 | # | Task | Description |
 |---|------|-------------|
 | 1 | Assess architecture/tooling fitness | Validate language, runtime, libraries, E2E harness. Re-examine spec freshness. |
 | 2 | Write failing tests (TDD RED) | Express target invariants as tests. They must fail before implementation. |
 | 3 | Implement (TDD GREEN) | Make failing tests pass with simplest correct change. Full test suite green. |
-| 4 | Self-review: `/kaizen-review-pr` | Read `prompts/review-*.md`. Check all dimensions (DRY, testability, tooling, security, failure modes). Cite findings with confidence 0-100. Drop < 75. |
-| 5 | Review fix loop | Fix all MUST-FIX (≥90) and SHOULD-FIX (75-89) findings. Re-review after fixes. Max 3 rounds until clean. |
-| 6 | Commit + push | Stage changes, commit with descriptive message, push to remote branch. |
-| 7 | Create PR | `gh pr create` with `Fixes Garsson-io/kaizen#N` in body. Add `status:has-pr` label. |
-| 8 | Wait for CI | `gh pr checks` — watch for failures, fix and push if needed. |
-| 9 | Merge (squash) | Verify no conflicts, squash merge, verify merge completes cleanly. |
-| 10 | Kaizen reflection | Launch kaizen-bg subagent with session impediments. Wait for KAIZEN_IMPEDIMENTS to clear gate. |
-| 11 | Cleanup | Delete worktree (`ExitWorktree remove`), verify branch deleted, issue closed. |
+| 4 | Context delegation evidence | Delegate broad/context-heavy sub-work to subagents, or record why delegation was not applicable for a narrow task. |
+| 5 | Self-review: `/kaizen-review-pr` | Read `prompts/review-*.md`. Check all dimensions (DRY, testability, tooling, security, failure modes). Cite findings with confidence 0-100. Drop < 75. |
+| 6 | Review fix loop | Fix all MUST-FIX (≥90) and SHOULD-FIX (75-89) findings. Re-review after fixes. Max 3 rounds until clean. |
+| 7 | Commit + push | Stage changes, commit with descriptive message, push to remote branch. |
+| 8 | Create PR | `gh pr create` with `Fixes Garsson-io/kaizen#N` in body. Add `status:has-pr` label. |
+| 9 | Wait for CI | `gh pr checks` — watch for failures, fix and push if needed. |
+| 10 | Merge (squash) | Verify no conflicts, squash merge, verify merge completes cleanly. |
+| 11 | Kaizen reflection | Launch kaizen-bg subagent with session impediments. Wait for KAIZEN_IMPEDIMENTS to clear gate. |
+| 12 | Cleanup | Delete worktree (`ExitWorktree remove`), verify branch deleted, issue closed. |
 
 **Hooks that fire during implementation:**
 - **PreToolUse(Edit/Write):** `enforce-case-exists` (blocks edits without case), `enforce-worktree-writes` (blocks edits in main checkout)
@@ -222,7 +223,7 @@ Have a specific issue number?
   → /kaizen-evaluate #N (evaluate before implementing)
 
 Issue already evaluated, admin approved?
-  → /kaizen-implement (creates case, worktree, 11 tasks)
+  → /kaizen-implement (creates case, worktree, 12 tasks)
 
 Large work already planned with sub-issues?
   → /kaizen-implement for sub-issue #1 (skip evaluate — already done)
@@ -244,7 +245,7 @@ Want autonomous category fix?
 
 ```
 /kaizen-pick  →  /kaizen-evaluate  →  /kaizen-implement
-    (4 tasks)      (6 tasks)           (11 tasks)
+    (4 tasks)      (6 tasks)           (12 tasks)
                                            │
                    ┌───────────────────────┘
                    ↓

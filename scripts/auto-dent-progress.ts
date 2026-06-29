@@ -167,12 +167,17 @@ export function formatProgressStepsMarkdown(result: AutoDentProgressResult, repo
 export function hasContextDelegationProgressEvidence(
   steps: RunProgressStep[] | undefined,
 ): boolean {
-  return Boolean(steps?.some((step) =>
-    step.phase === 'DELEGATE' ||
-    step.phase === 'CONTEXT-DELEGATION' ||
-    /context[- ]delegation|context-heavy|subagent|delegat|explorer agent|worker agent|parallel research/i
-      .test(`${step.phase} ${step.detail}`),
-  ));
+  return Boolean(steps?.some((step) => {
+    const state = step.state.trim().toLowerCase().replace(/_/g, '-');
+    const hasDetail = step.detail.trim().length > 0;
+    if (step.phase === 'DELEGATE') {
+      return hasDetail && (state === 'done' || state === 'delegated');
+    }
+    if (step.phase === 'CONTEXT-DELEGATION') {
+      return hasDetail && (state === 'done' || state === 'not applicable' || state === 'not-applicable');
+    }
+    return false;
+  }));
 }
 
 export function upsertProgressStep(

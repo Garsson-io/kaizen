@@ -3988,6 +3988,7 @@ describe('validateRunLifecycle', () => {
     writeFileSync(logFile, [
       'AUTO_DENT_PHASE: PICK | issue=#1 | title=test',
       'AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=ok',
+      'AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated search to explorer subagent',
       'AUTO_DENT_PHASE: IMPLEMENT | case=test-case',
       'AUTO_DENT_PHASE: TEST | result=pass | count=5',
       'AUTO_DENT_PHASE: PR | url=https://example.com/pr/1',
@@ -3999,7 +4000,7 @@ describe('validateRunLifecycle', () => {
     expect(result.valid).toBe(true);
     expect(result.violations).toEqual([]);
     expect(result.phasesMissing).toEqual([]);
-    expect(result.phasesPresent).toEqual(['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']);
+    expect(result.phasesPresent).toEqual(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']);
   });
 
   it('detects ordering violations', () => {
@@ -4051,7 +4052,7 @@ describe('validateRunLifecycle', () => {
     const result = validateRunLifecycle(logFile);
     expect(result.valid).toBe(true);
     expect(result.phasesPresent).toEqual([]);
-    expect(result.phasesMissing).toEqual(['PICK', 'EVALUATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']);
+    expect(result.phasesMissing).toEqual(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR', 'MERGE', 'REFLECT']);
   });
 
   it('handles phases mixed with JSON stream messages', () => {
@@ -4062,6 +4063,7 @@ describe('validateRunLifecycle', () => {
       'AUTO_DENT_PHASE: PICK | issue=#1',
       '{"type":"content_block_delta","delta":{"text":"working..."}}',
       'AUTO_DENT_PHASE: EVALUATE | verdict=proceed',
+      'AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated search to explorer subagent',
       'AUTO_DENT_PHASE: IMPLEMENT | case=test',
     ].join('\n'));
 
@@ -4069,6 +4071,7 @@ describe('validateRunLifecycle', () => {
     expect(result.valid).toBe(true);
     expect(result.phasesPresent).toContain('PICK');
     expect(result.phasesPresent).toContain('EVALUATE');
+    expect(result.phasesPresent).toContain('DELEGATE');
     expect(result.phasesPresent).toContain('IMPLEMENT');
   });
 });
@@ -4571,6 +4574,20 @@ describe('workflow gate repair scheduling (#1533)', () => {
     expect(AUTO_DENT_RUN_SOURCE).toContain('workflowRepairState,');
     expect(AUTO_DENT_RUN_SOURCE).toContain('fill evidence for these exact gates on the existing PR');
     expect(AUTO_DENT_RUN_SOURCE).toContain('do not restart unrelated implementation');
+  });
+});
+
+describe('context-delegation evidence wiring (#1509)', () => {
+  it('routes auto-dent progress evidence into process validation', () => {
+    const helperIndex = AUTO_DENT_RUN_SOURCE.indexOf('hasContextDelegationProgressEvidence(result.progressSteps)');
+    const evidenceFieldIndex = AUTO_DENT_RUN_SOURCE.indexOf('contextDelegationEvidence: Boolean(state.test_task) ||');
+    const validationIndex = AUTO_DENT_RUN_SOURCE.indexOf('validateProcessEvidence(lifecycle, processEvidence)');
+
+    expect(helperIndex).toBeGreaterThanOrEqual(0);
+    expect(evidenceFieldIndex).toBeGreaterThanOrEqual(0);
+    expect(validationIndex).toBeGreaterThanOrEqual(0);
+    expect(helperIndex).toBeGreaterThan(evidenceFieldIndex);
+    expect(helperIndex).toBeLessThan(validationIndex);
   });
 });
 

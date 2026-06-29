@@ -42,6 +42,7 @@ describe('validateRunLifecycle — back-compat (ordering + presence)', () => {
     const f = logWith([
       'AUTO_DENT_PHASE: PICK | issue=#1 | title=test',
       'AUTO_DENT_PHASE: EVALUATE | verdict=proceed | reason=ok',
+      'AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated search to explorer subagent',
       'AUTO_DENT_PHASE: IMPLEMENT | case=test-case',
       'AUTO_DENT_PHASE: TEST | result=pass | count=5',
       'AUTO_DENT_PHASE: PR | url=https://example.com/pr/1',
@@ -63,12 +64,12 @@ describe('validateRunLifecycle — back-compat (ordering + presence)', () => {
       'AUTO_DENT_PHASE: PICK | issue=#1',
       'AUTO_DENT_PHASE: IMPLEMENT | case=c',
       'AUTO_DENT_PHASE: TEST | result=pass | count=3',
-      'AUTO_DENT_PHASE: EVALUATE | verdict=proceed',
+      'AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated search to explorer subagent',
       'AUTO_DENT_PHASE: PR | url=u',
     ]);
     const r = validateRunLifecycle(f);
     expect(r.valid).toBe(false);
-    expect(r.violations).toContainEqual({ phase: 'EVALUATE', after: 'TEST' });
+    expect(r.violations).toContainEqual({ phase: 'DELEGATE', after: 'TEST' });
     // ordering-only problem (no gaps/phantoms) => degraded, not critical
     expect(r.criticalGaps).toEqual([]);
     expect(r.phantomPhases).toEqual([]);
@@ -167,6 +168,7 @@ describe('validateRunLifecycle — phantom test claims (verify outcomes not clai
   const fullExcept = (testLine: string) => [
     'AUTO_DENT_PHASE: PICK | issue=#1',
     'AUTO_DENT_PHASE: EVALUATE | verdict=proceed',
+    'AUTO_DENT_PHASE: DELEGATE | status=done | evidence=delegated search to explorer subagent',
     'AUTO_DENT_PHASE: IMPLEMENT | case=c',
     testLine,
     'AUTO_DENT_PHASE: PR | url=u',
