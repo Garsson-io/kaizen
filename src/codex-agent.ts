@@ -6,6 +6,7 @@
  */
 
 import { parseJsonLinesWithMalformedRows } from './lib/json-lines.js';
+import { extractPrUrl } from './lib/github-pr.js';
 import { formatPhaseMarkerLine, parsePhaseMarkers } from './phase-marker.js';
 
 export interface ParsedCodexJsonl {
@@ -147,10 +148,6 @@ export function normalizeCodexFinalTextToStreamMessages(text: string): AutoDentS
   return text ? [resultText(text)] : [];
 }
 
-function extractPullRequestUrl(text: string): string | undefined {
-  return text.match(/https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/)?.[0];
-}
-
 /**
  * Normalize provider-specific Codex JSONL rows into the same stream-json shape
  * that auto-dent's stream processor already consumes for Claude.
@@ -191,7 +188,7 @@ export function normalizeCodexEventToStreamMessages(event: unknown): AutoDentStr
             content: [{ type: 'tool_result', content: output }],
           },
         };
-        const prUrl = extractPullRequestUrl(output);
+        const prUrl = extractPrUrl(output);
         if (prUrl) {
           toolResult.tool_use_result = {
             gitOperation: {

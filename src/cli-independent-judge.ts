@@ -8,7 +8,7 @@
  * Usage:
  *   npx tsx src/cli-independent-judge.ts judge --charter mock-defeat --artifact-file diff.patch
  *   git diff origin/main | npx tsx src/cli-independent-judge.ts judge --charter red-team,staff-engineer
- *   git diff origin/main | npx tsx src/cli-independent-judge.ts judge --provider codex --cwd "$(git rev-parse --show-toplevel)"
+ *   ROOT="$(git -C "$PWD" rev-parse --show-toplevel)" && git -C "$ROOT" diff origin/main | npx tsx "$ROOT/src/cli-independent-judge.ts" judge --provider codex --cwd "$ROOT"
  *   npx tsx src/cli-independent-judge.ts charters        # list the charter library
  *
  * Exit code: 0 if the panel verdict is PASS, 1 if FAIL — so a gate can branch on `$?`.

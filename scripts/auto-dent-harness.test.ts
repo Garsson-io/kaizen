@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, readdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { tmpdir } from 'os';
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import {
   buildLiveProbeCommand,
   normalizeLiveProbeExitCode,
@@ -41,6 +41,18 @@ import { parseReviewOutput } from '../src/review-battery.js';
 // Resolve repo root (works from worktrees too)
 function getRepoRoot(): string {
   try {
+    return execFileSync(
+      'git',
+      ['-C', dirname(new URL(import.meta.url).pathname), 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { encoding: 'utf8' },
+    ).trim().replace(/\/\.git$/, '');
+  } catch {
+    return resolve(dirname(new URL(import.meta.url).pathname), '..');
+  }
+}
+
+function getWorktreeRoot(): string {
+  try {
     return execSync(
       'git rev-parse --show-toplevel',
       { encoding: 'utf8' },
@@ -51,6 +63,7 @@ function getRepoRoot(): string {
 }
 
 const REPO_ROOT = getRepoRoot();
+const WORKTREE_ROOT = getWorktreeRoot();
 const LOGS_DIR = join(REPO_ROOT, 'logs/auto-dent');
 
 // Replay tests — feed real captured logs through the pipeline
@@ -730,7 +743,7 @@ describe('live: smoke test', () => {
   testFn('pipeline smoke test — phase markers round-trip through real claude', async () => {
     const capture = await runLiveProbe({
       prompt: SMOKE_TEST_PROMPT,
-      cwd: REPO_ROOT,
+      cwd: WORKTREE_ROOT,
       maxBudget: 0.05,
       timeoutMs: 30_000,
     });
@@ -759,7 +772,7 @@ describe('live: Codex smoke test', () => {
     const capture = await runLiveProbe({
       provider: 'codex',
       prompt: 'Emit exactly one line: AUTO_DENT_PHASE: STOP | reason=codex smoke test. Do not edit files.',
-      cwd: REPO_ROOT,
+      cwd: WORKTREE_ROOT,
       timeoutMs: 30_000,
     });
 

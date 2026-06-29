@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 /**
  * phase-marker.ts — the ONE parser/formatter for `AUTO_DENT_PHASE` marker lines.
  *
@@ -7,8 +5,8 @@ import { z } from 'zod';
  * stream ingestor (`scripts/auto-dent-stream.ts` `parsePhaseMarkers`) reads back
  * into the work-cycle ledger and live console. Historically every emitter
  * hand-wrote the legacy `AUTO_DENT_PHASE: X | k=v` string; the parser lived
- * elsewhere. The emitter keeps that public protocol, while the parser also
- * accepts JSON payloads for machine-authored diagnostics.
+ * elsewhere. The parser now lives beside the formatter so Codex and Claude
+ * stream consumers read exactly the marker protocol the emitter writes.
  *
  * #1502: the `store-plan`/`store-testplan` CLI emits a `PLAN` marker through
  * here so the console can confirm a substantive plan/test-plan was stored, via a
@@ -21,21 +19,6 @@ export const PHASE_MARKER_PREFIX = 'AUTO_DENT_PHASE';
 export interface PhaseMarker {
   phase: string;
   fields: Record<string, string>;
-}
-
-export const PhaseMarkerSchema = z.object({
-  phase: z.string().min(1),
-  fields: z.record(z.string(), z.string()).default({}),
-}).strict();
-
-function parseJsonMarker(raw: string): PhaseMarker | null {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    const marker = PhaseMarkerSchema.safeParse(parsed);
-    return marker.success ? marker.data : null;
-  } catch {
-    return null;
-  }
 }
 
 function parseLegacyMarker(raw: string): PhaseMarker | null {
@@ -63,7 +46,7 @@ export function parsePhaseMarkers(text: string): PhaseMarker[] {
     const trimmed = line.trimStart();
     if (!trimmed.startsWith(`${PHASE_MARKER_PREFIX}:`)) continue;
     const raw = trimmed.slice(PHASE_MARKER_PREFIX.length + 1).trim();
-    const marker = raw.startsWith('{') ? parseJsonMarker(raw) : parseLegacyMarker(raw);
+    const marker = parseLegacyMarker(raw);
     if (marker) markers.push(marker);
   }
 

@@ -2293,6 +2293,9 @@ export async function runReviewWiring(
     for (const prUrl of input.prs) {
       // #899: Shared event fields to avoid repetition
       const reviewEventBase = { run_id: input.runId, batch_id: input.batchId, run_num: input.runNum, pr_url: prUrl };
+      const phaseProviders = phaseProvidersForAgentProvider((input.provider ?? 'claude') as any);
+      const reviewProvider = subscriptionAgentProvider(phaseProviders.review?.provider === 'codex' ? 'codex' : 'claude');
+      const fixProvider = subscriptionAgentProvider(phaseProviders.fix?.provider === 'codex' ? 'codex' : 'claude');
 
       deps.emit({
         ...reviewEventBase,
@@ -2308,6 +2311,7 @@ export async function runReviewWiring(
         repo: input.repo,
         cwd: input.repoRoot,
         timeoutMs: 120_000,
+        reviewProvider,
       });
       reviewCostUsd += batteryResult.costUsd;
 
@@ -2348,10 +2352,9 @@ export async function runReviewWiring(
           } as AutoDentEvent);
 
           try {
-            const phaseProviders = phaseProvidersForAgentProvider((input.provider ?? 'claude') as any);
             const reviewFixProviders = {
-              reviewProvider: subscriptionAgentProvider(phaseProviders.review?.provider === 'codex' ? 'codex' : 'claude'),
-              fixProvider: subscriptionAgentProvider(phaseProviders.fix?.provider === 'codex' ? 'codex' : 'claude'),
+              reviewProvider,
+              fixProvider,
             };
             const fixState = await deps.runFixLoop({
               prUrl,

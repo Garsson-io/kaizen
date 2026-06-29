@@ -64,6 +64,10 @@ export function parseGithubIssueUrl(issueUrl: string | undefined | null): Github
   return { repo: match[1], number };
 }
 
+export function extractPrUrl(text: string): string | undefined {
+  return text.match(/https:\/\/github\.com\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+\/pull\/\d+/)?.[0];
+}
+
 export function parseFirstPrUrl(output: string): string | undefined {
   const parsed = parseJsonArray(output);
   const url = (parsed[0] as { url?: unknown } | undefined)?.url;

@@ -5,6 +5,8 @@
  * pipelines with proper string handling.
  */
 
+import { extractPrUrl as extractGithubPrUrl } from '../lib/github-pr.js';
+
 /**
  * Strip heredoc body from a command string.
  * Heredocs (<<'EOF' ... EOF) can contain arbitrary text that causes
@@ -227,10 +229,7 @@ export function getPrChangedFiles(
  * Extract a GitHub PR URL from text (stdout, stderr, or command args).
  */
 export function extractPrUrl(text: string): string | undefined {
-  const match = text.match(
-    /https:\/\/github\.com\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+\/pull\/\d+/,
-  );
-  return match?.[0];
+  return extractGithubPrUrl(text);
 }
 
 /**
