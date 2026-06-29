@@ -116,7 +116,7 @@ export const DashboardDataProjectionSchema = z.object({
       success_rate: z.number(),
       review_fail_rate: z.number(),
       overall_efficiency: z.number(),
-      degradation_verdict: z.string().nullable(),
+      degradation_status: z.string().nullable(),
       anomaly_refs: z.array(z.object({
         status: z.string().min(1),
         issue: z.number().int().positive().optional(),
@@ -125,7 +125,7 @@ export const DashboardDataProjectionSchema = z.object({
       rsi_proposals: z.object({
         attachment: z.literal(RSI_IMPROVEMENT_PROPOSALS_ATTACHMENT),
         proposal_count: z.number().int().nonnegative(),
-        cross_run_verdict: z.string().optional(),
+        cross_run_status: z.string().optional(),
       }),
       source: z.literal(BATCH_OUTCOME_ATTACHMENT),
     }),
@@ -317,7 +317,7 @@ export function buildDashboardDataProjection(
         success_rate: input.outcome.success_rate,
         review_fail_rate: input.outcome.review_fail_rate,
         overall_efficiency: input.outcome.overall_efficiency,
-        degradation_verdict: input.outcome.degradation_signal?.verdict ?? null,
+        degradation_status: input.outcome.degradation_signal?.verdict ?? null,
         anomaly_refs: (input.anomalyIncidents?.refs ?? []).map((ref) => ({
           status: ref.status,
           ...(ref.issue ? { issue: ref.issue } : {}),
@@ -326,7 +326,7 @@ export function buildDashboardDataProjection(
         rsi_proposals: {
           attachment: RSI_IMPROVEMENT_PROPOSALS_ATTACHMENT,
           proposal_count: input.rsi?.proposalCount ?? 0,
-          ...(input.rsi?.crossRunVerdict ? { cross_run_verdict: input.rsi.crossRunVerdict } : {}),
+          ...(input.rsi?.crossRunVerdict ? { cross_run_status: input.rsi.crossRunVerdict } : {}),
         },
         source: BATCH_OUTCOME_ATTACHMENT,
       },

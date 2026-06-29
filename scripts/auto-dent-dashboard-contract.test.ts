@@ -189,7 +189,7 @@ describe('buildDashboardDataProjection', () => {
     });
     expect(projection.panels.score_quality).toMatchObject({
       success_rate: 0.5,
-      degradation_verdict: 'watch',
+      degradation_status: 'watch',
     });
     expect(projection.panels.score_quality.anomaly_refs[0]).toMatchObject({
       status: 'created',
@@ -198,7 +198,7 @@ describe('buildDashboardDataProjection', () => {
     expect(projection.panels.score_quality.rsi_proposals).toEqual({
       attachment: RSI_IMPROVEMENT_PROPOSALS_ATTACHMENT,
       proposal_count: 2,
-      cross_run_verdict: 'watch',
+      cross_run_status: 'watch',
     });
   });
 
