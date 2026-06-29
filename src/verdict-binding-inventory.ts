@@ -234,6 +234,16 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       rationale: 'Analytics copy of the review verdict; terminal binding is represented by review-battery-verdict.',
     },
     {
+      signature: 'scripts/auto-dent-replay.ts:field:process_verdict',
+      label: 'Auto-dent replay process verdict projection',
+      rationale: 'Replay-state reporting copy of the process verdict from events.jsonl; terminal binding is represented by process-evidence-verdict.',
+    },
+    {
+      signature: 'scripts/auto-dent-replay.ts:field:review_verdict',
+      label: 'Auto-dent replay review verdict projection',
+      rationale: 'Replay-state reporting copy of the review verdict from events.jsonl; terminal binding is represented by review-battery-verdict.',
+    },
+    {
       signature: 'scripts/batch-summary.ts:field:process_verdict_distribution',
       label: 'Batch summary process verdict distribution',
       rationale: 'Aggregated reporting over process verdicts; terminal binding is represented by process-evidence-verdict.',
