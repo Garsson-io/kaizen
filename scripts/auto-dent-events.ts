@@ -22,6 +22,7 @@ import type { PhaseProviderRecord } from './auto-dent-provider.js';
 import type { HookActivationVerdict } from './auto-dent-hook-activation.js';
 import type { WorkflowGateId, WorkflowGateState } from './workflow-gate-ledger.js';
 import type { PostMergeVerificationVerdict, TestHealthVerdict } from '../src/verdict-binding-policy.js';
+import { createOtelSinkFromEnv, type AutoDentOtelSink } from './auto-dent-otel.js';
 
 // Event type definitions
 
@@ -207,6 +208,10 @@ export interface EventEnvelope {
   event: AutoDentEvent;
 }
 
+export interface EventEmitterOptions {
+  otelSink?: AutoDentOtelSink;
+}
+
 /**
  * EventEmitter writes structured JSONL events to a file.
  *
@@ -218,9 +223,11 @@ export interface EventEnvelope {
  */
 export class EventEmitter {
   private readonly filePath: string;
+  private readonly otelSink?: AutoDentOtelSink;
 
-  constructor(logDir: string) {
+  constructor(logDir: string, options: EventEmitterOptions = {}) {
     this.filePath = resolve(logDir, 'events.jsonl');
+    this.otelSink = options.otelSink ?? createOtelSinkFromEnv();
   }
 
   emit(event: AutoDentEvent): void {
@@ -237,6 +244,11 @@ export class EventEmitter {
       appendJsonLine(this.filePath, envelope);
     } catch {
       // Telemetry is best-effort — never break the run
+    }
+    try {
+      this.otelSink?.emit(envelope);
+    } catch {
+      // OTel export is best-effort — never break the run
     }
   }
 

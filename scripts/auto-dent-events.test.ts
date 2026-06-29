@@ -8,6 +8,7 @@ import {
   type AutoDentEvent,
   type EventEnvelope,
 } from './auto-dent-events.js';
+import { AutoDentOtelSink, MemoryOtelTransport, type AutoDentOtelTransport } from './auto-dent-otel.js';
 
 const AUTO_DENT_EVENTS_SOURCE = readFileSync(new URL('./auto-dent-events.ts', import.meta.url), 'utf8');
 
@@ -408,5 +409,115 @@ describe('EventEmitter', () => {
         prompt_hash: 'abc',
       }),
     ).not.toThrow();
+  });
+
+  it('exports OTel traces through a configured sink while preserving JSONL output', () => {
+    const transport = new MemoryOtelTransport();
+    emitter = new EventEmitter(tmpDir, { otelSink: new AutoDentOtelSink(transport) });
+
+    emitter.emitAt(new Date('2026-06-29T10:00:00.000Z'), {
+      type: 'run.start',
+      run_id: 'batch-test/run-1',
+      batch_id: 'batch-test',
+      run_num: 1,
+      mode: 'exploit',
+      mode_reason: 'schedule',
+      prompt_template: 'deep-dive-default.md',
+      prompt_hash: 'abc123',
+    });
+    emitter.emitAt(new Date('2026-06-29T10:01:00.000Z'), {
+      type: 'run.complete',
+      run_id: 'batch-test/run-1',
+      batch_id: 'batch-test',
+      run_num: 1,
+      duration_ms: 60_000,
+      exit_code: 0,
+      cost_usd: 1.25,
+      tool_calls: 5,
+      prs_created: 1,
+      issues_filed: 0,
+      issues_closed: 1,
+      issues_closed_refs: ['#1188'],
+      stop_requested: false,
+      lifecycle_violations: 0,
+      outcome: 'success',
+      mode: 'exploit',
+    });
+
+    expect(readEvents(emitter.getFilePath())).toHaveLength(2);
+    expect(transport.traces).toHaveLength(1);
+    expect(transport.traces[0].spans[0].attributes).toMatchObject({
+      'gen_ai.operation.name': 'invoke_agent',
+      'gen_ai.agent.name': 'kaizen-auto-dent',
+      'kaizen.run.issues_closed_refs': ['#1188'],
+    });
+  });
+
+  it('keeps OTel export failures fail-open and still writes JSONL', () => {
+    const failingTransport: AutoDentOtelTransport = {
+      exportTrace: () => {
+        throw new Error('network down');
+      },
+    };
+    const sink = new AutoDentOtelSink(failingTransport);
+    emitter = new EventEmitter(tmpDir, { otelSink: sink });
+
+    emitter.emit({
+      type: 'run.complete',
+      run_id: 'batch-test/run-2',
+      batch_id: 'batch-test',
+      run_num: 2,
+      duration_ms: 1,
+      exit_code: 0,
+      cost_usd: 0,
+      tool_calls: 0,
+      prs_created: 0,
+      issues_filed: 0,
+      issues_closed: 0,
+      stop_requested: false,
+      lifecycle_violations: 0,
+      outcome: 'empty_success',
+    });
+
+    expect(readEvents(emitter.getFilePath())).toHaveLength(1);
+    expect(sink.warnings).toContain('missing:run.start');
+    expect(sink.warnings.some((warning) => warning.includes('otel_export_failed:network down'))).toBe(true);
+  });
+
+  it('uses emitAt timestamps in exported OTel spans', () => {
+    const transport = new MemoryOtelTransport();
+    emitter = new EventEmitter(tmpDir, { otelSink: new AutoDentOtelSink(transport) });
+
+    emitter.emitAt(new Date('2026-06-29T10:00:00.000Z'), {
+      type: 'run.start',
+      run_id: 'batch-test/run-3',
+      batch_id: 'batch-test',
+      run_num: 3,
+      mode: 'exploit',
+      mode_reason: 'schedule',
+      prompt_template: 'test.md',
+      prompt_hash: 'def456',
+    });
+    emitter.emitAt(new Date('2026-06-29T10:00:05.000Z'), {
+      type: 'run.complete',
+      run_id: 'batch-test/run-3',
+      batch_id: 'batch-test',
+      run_num: 3,
+      duration_ms: 5_000,
+      exit_code: 0,
+      cost_usd: 0.5,
+      tool_calls: 1,
+      prs_created: 0,
+      issues_filed: 0,
+      issues_closed: 0,
+      stop_requested: false,
+      lifecycle_violations: 0,
+      outcome: 'empty_success',
+    });
+
+    expect(transport.traces[0].spans[0]).toMatchObject({
+      startTimeUnixNano: '1782727200000000000',
+      endTimeUnixNano: '1782727205000000000',
+    });
   });
 });
