@@ -413,7 +413,7 @@ export function cleanupWorktrees(
       continue;
     }
 
-    if (ms !== "at-main") {
+    if (ms !== "at-main" && ms !== "squash-merged") {
       const unpushed = getUnpushedCount(wtPath, deps);
       if (unpushed > 0) {
         result.actions.push({
