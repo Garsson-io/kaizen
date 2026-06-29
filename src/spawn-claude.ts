@@ -11,9 +11,15 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { assessCodexRun, buildCodexExecArgs, parseCodexJsonl } from './codex-agent.js';
+import { assessCodexRun, buildCodexExecArgs, parseCodexJsonl, type CodexExecArgsOptions } from './codex-agent.js';
 import { parseJsonLines } from './lib/json-lines.js';
 import { resolveProjectRoot } from './lib/resolve-project-root.js';
+import {
+  parseSubscriptionAgentProvider,
+  subscriptionAgentProvider,
+  type AgentProvider,
+  type SubscriptionAgentProvider,
+} from './provider-contract.js';
 
 interface StreamJsonContentBlock {
   type?: unknown;
@@ -38,21 +44,17 @@ export interface SpawnClaudeResult {
   args: string[];
 }
 
-export interface SpawnAgentProvider {
-  provider: 'claude' | 'codex';
-  billing: 'subscription-cli';
-}
+export type SpawnAgentProvider = SubscriptionAgentProvider;
 
 export function parseSpawnAgentProvider(value: string): SpawnAgentProvider | null {
-  if (value === 'claude' || value === 'codex') return { provider: value, billing: 'subscription-cli' };
-  return null;
+  return parseSubscriptionAgentProvider(value);
 }
 
 export interface SpawnClaudeOptions {
   cwd?: string;
   timeoutMs?: number;
-  /** Model override. Defaults to REVIEW_MODEL env var, then 'sonnet'. */
-  model?: string;
+  /** Model override. Defaults to REVIEW_MODEL env var, then 'sonnet'. Use null to omit. */
+  model?: string | null;
   /** Optional local plugin dir for live plugin/skill tests. */
   pluginDir?: string | null;
   /** Optional max-turn guard for bounded live skill runs. */
@@ -72,6 +74,14 @@ export interface SpawnClaudeArgsOptions extends SpawnClaudeOptions {
   verbose?: boolean;
   /** Append prompt as argv instead of stdin. Used by JSON-mode live skill tests. */
   promptArg?: string;
+  /** Whether to pass Claude's permissions bypass flag. Defaults to true for compatibility. */
+  skipPermissions?: boolean;
+  /** Codex sandbox mode for provider-specific phases. Defaults to read-only. */
+  codexSandbox?: CodexExecArgsOptions['sandbox'];
+  /** Codex approval/sandbox bypass. Defaults to false. */
+  codexBypassApprovalsAndSandbox?: boolean;
+  /** Use cwd directly for Codex --cd instead of resolving to the git root. */
+  codexUseProvidedCwd?: boolean;
 }
 
 /**
@@ -116,16 +126,18 @@ export function resolveCodexRepoRoot(cwd = process.cwd()): string {
 }
 
 export function buildSpawnClaudeArgs(opts: SpawnClaudeArgsOptions = {}): string[] {
-  const model = opts.model ?? process.env.REVIEW_MODEL ?? 'sonnet';
+  const model = opts.model === null ? null : opts.model ?? process.env.REVIEW_MODEL ?? 'sonnet';
   const outputFormat = opts.outputFormat ?? 'stream-json';
   const verbose = opts.verbose ?? outputFormat === 'stream-json';
+  const skipPermissions = opts.skipPermissions ?? true;
   const args = [
     '-p',
     '--output-format', outputFormat,
   ];
 
   if (verbose) args.push('--verbose');
-  args.push('--dangerously-skip-permissions', '--model', model);
+  if (skipPermissions) args.push('--dangerously-skip-permissions');
+  if (model) args.push('--model', model);
   if (opts.maxTurns !== undefined) {
     args.push('--max-turns', String(opts.maxTurns));
   }
@@ -141,13 +153,16 @@ export function buildSpawnClaudeArgs(opts: SpawnClaudeArgsOptions = {}): string[
 }
 
 export function buildSpawnAgentCommand(opts: SpawnClaudeArgsOptions = {}): SpawnAgentCommand {
-  const provider = opts.provider?.provider ?? 'claude';
+  const provider: AgentProvider = opts.provider?.provider ?? 'claude';
   if (provider === 'codex') {
+    const repoRoot = opts.codexUseProvidedCwd
+      ? opts.cwd ?? process.cwd()
+      : resolveCodexRepoRoot(opts.cwd);
     return {
       command: 'codex',
-      args: buildCodexExecArgs(resolveCodexRepoRoot(opts.cwd), {
-        sandbox: 'read-only',
-        bypassApprovalsAndSandbox: false,
+      args: buildCodexExecArgs(repoRoot, {
+        sandbox: opts.codexSandbox ?? 'read-only',
+        bypassApprovalsAndSandbox: opts.codexBypassApprovalsAndSandbox ?? false,
       }),
       stdin: true,
     };
@@ -304,4 +319,4 @@ export const spawnAgent: SpawnClaudeFn = (prompt, opts) => {
 };
 
 export const spawnClaude: SpawnClaudeFn = (prompt, opts) =>
-  spawnAgent(prompt, { ...opts, provider: { provider: 'claude', billing: 'subscription-cli' } });
+  spawnAgent(prompt, { ...opts, provider: subscriptionAgentProvider('claude') });

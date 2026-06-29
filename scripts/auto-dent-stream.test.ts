@@ -743,7 +743,7 @@ describe('PLAN phase marker (#1502)', () => {
       url: 'https://github.com/o/r/issues/1508#issuecomment-1',
     });
     expect(line).toBe(
-      'AUTO_DENT_PHASE: PLAN | kind=plan | url=https://github.com/o/r/issues/1508#issuecomment-1',
+      'AUTO_DENT_PHASE: {"phase":"PLAN","fields":{"kind":"plan","url":"https://github.com/o/r/issues/1508#issuecomment-1"}}',
     );
     const [marker] = parsePhaseMarkers(line);
     expect(marker.phase).toBe('PLAN');

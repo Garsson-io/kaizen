@@ -39,8 +39,9 @@ import {
 import { addSection, writeAttachment } from '../src/section-editor.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 import { readJsonValueFile, writeJsonObjectFile } from '../src/lib/json-file.js';
+import { buildSpawnAgentCommand, parseSpawnAgentProvider } from '../src/spawn-claude.js';
 import { ghExec } from './auto-dent-github.js';
-import { assessCodexRun, buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
+import { assessCodexRun, parseCodexJsonl } from './auto-dent-codex.js';
 import {
   PROVIDER_CAPABILITIES,
   validateProviderPlan,
@@ -199,9 +200,8 @@ export function validateReviewFixProviderPlan(
 }
 
 function parseProviderName(value: string, flag: string): ReviewFixProvider {
-  if (value === 'claude' || value === 'codex') {
-    return { provider: value, billing: 'subscription-cli' };
-  }
+  const provider = parseSpawnAgentProvider(value);
+  if (provider) return provider;
   console.error(`Invalid ${flag}: "${value}". Valid providers: claude, codex. API-token-only repair strategies are not subscription-compatible.`);
   process.exit(1);
 }
@@ -219,19 +219,17 @@ export function buildFixProviderCommand(input: {
   provider: ReviewFixProvider;
   repoRoot?: string;
 }): FixProviderCommand {
-  if (input.provider.provider === 'claude') {
-    return {
-      command: 'claude',
-      args: ['-p', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--model', 'sonnet'],
-    };
-  }
-  return {
-    command: 'codex',
-    args: buildCodexExecArgs(input.repoRoot ?? process.cwd(), {
-      sandbox: 'workspace-write',
-      bypassApprovalsAndSandbox: false,
-    }),
-  };
+  const command = buildSpawnAgentCommand({
+    provider: input.provider,
+    cwd: input.repoRoot,
+    model: 'sonnet',
+    outputFormat: 'stream-json',
+    verbose: true,
+    codexSandbox: 'workspace-write',
+    codexBypassApprovalsAndSandbox: false,
+    codexUseProvidedCwd: true,
+  });
+  return { command: command.command, args: command.args };
 }
 
 function normalizeRoundProvider(

@@ -1028,6 +1028,29 @@ describe('spawnBatchReview', () => {
     expect(results[1].costUsd).toBeCloseTo(0.10);
   });
 
+  it('runs Codex batch review through the shared provider adapter', async () => {
+    const batchText = [
+      `\`\`\`json\n${JSON.stringify({ dimension: 'correctness', summary: 'ok', findings: [] })}\n\`\`\``,
+      `\`\`\`json\n${JSON.stringify({ dimension: 'security', summary: 'gap', findings: [{ requirement: 'S1', status: 'MISSING', detail: 'missing' }] })}\n\`\`\``,
+    ].join('\n\n');
+    mockClaudeOnce(codexJsonlPayload(batchText));
+
+    const results = await spawnBatchReview({
+      dimensions: ['correctness', 'security'],
+      repo: 'test/test',
+      reviewProvider: { provider: 'codex', billing: 'subscription-cli' },
+    });
+
+    expect(results).toHaveLength(2);
+    expect(results[0].review?.dimension).toBe('correctness');
+    expect(results[0].review?.provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(results[1].review?.dimension).toBe('security');
+    expect(results[1].review?.verdict).toBe('fail');
+    expect(results[1].provider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(results[0].costUsd).toBe(0);
+    expect(vi.mocked(spawn)).toHaveBeenCalledWith('codex', expect.arrayContaining(['exec', '--json']), expect.any(Object));
+  });
+
   it('returns all nulls when claude fails', async () => {
     mockClaudeOnce('', 1);
     const results = await spawnBatchReview({ dimensions: ['correctness', 'security'], repo: 'test/test' });

@@ -22,6 +22,11 @@
  */
 
 import { z } from 'zod';
+import {
+  AGENT_PROVIDER_VALUES,
+  AgentProviderSchema,
+  type AgentProvider,
+} from '../src/provider-contract.js';
 
 /** Agent providers auto-dent can reason about. */
 export const PROVIDERS = ['claude', 'codex', 'provider-independent'] as const;
@@ -29,9 +34,7 @@ export const ProviderSchema = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof ProviderSchema>;
 
 /** Providers that can run the agent-facing lifecycle phases. */
-export const AGENT_PROVIDERS = ['claude', 'codex'] as const;
-export const AgentProviderSchema = z.enum(AGENT_PROVIDERS);
-export type AgentProvider = z.infer<typeof AgentProviderSchema>;
+export const AGENT_PROVIDERS = AGENT_PROVIDER_VALUES;
 
 /** Lifecycle phases where a provider choice is meaningful (epic #1134 vocabulary). */
 export const PHASES = [

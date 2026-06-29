@@ -27,12 +27,12 @@ import {
 } from './auto-dent-run.js';
 import {
   assessCodexRunFields,
-  buildCodexExecArgs,
   isCodexFailedTerminalEvent,
   isCodexTerminalEvent,
   normalizeCodexEventToStreamMessages,
   normalizeCodexProcessExitCode,
 } from './auto-dent-codex.js';
+import { buildSpawnAgentCommand } from '../src/spawn-claude.js';
 import { parsePhaseMarkers as parsePhaseMarkersLocal } from './auto-dent-stream.js';
 import {
   type EventEnvelope,
@@ -62,6 +62,8 @@ export interface StreamCapture {
   rawMessages: Record<string, any>[];
   /** Wall-clock duration in ms (meaningful for live probes) */
   durationMs: number;
+  /** Raw provider log path for live probes. */
+  logFile?: string;
 }
 
 // Helpers
@@ -209,26 +211,20 @@ export interface LiveProbeCommand {
 }
 
 export function buildLiveProbeCommand(opts: Required<Pick<LiveProbeOpts, 'provider' | 'prompt' | 'cwd' | 'maxBudget' | 'extraArgs'>>): LiveProbeCommand {
-  if (opts.provider === 'codex') {
-    return {
-      provider: 'codex',
-      command: 'codex',
-      args: buildCodexExecArgs(opts.cwd, {
-        sandbox: 'read-only',
-        bypassApprovalsAndSandbox: false,
-      }),
-    };
-  }
+  const command = buildSpawnAgentCommand({
+    provider: { provider: opts.provider, billing: 'subscription-cli' },
+    cwd: opts.cwd,
+    maxBudgetUsd: opts.maxBudget,
+    model: null,
+    skipPermissions: false,
+    codexSandbox: 'read-only',
+    codexBypassApprovalsAndSandbox: false,
+    codexUseProvidedCwd: true,
+  });
   return {
-    provider: 'claude',
-    command: 'claude',
-    args: [
-      '-p',
-      '--output-format', 'stream-json',
-      '--max-budget-usd', String(opts.maxBudget),
-      '--verbose',
-      ...opts.extraArgs,
-    ],
+    provider: opts.provider,
+    command: command.command,
+    args: opts.provider === 'claude' ? [...command.args, ...opts.extraArgs] : command.args,
   };
 }
 
@@ -248,7 +244,7 @@ export function normalizeLiveProbeExitCode(
   return exitCode;
 }
 
-export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture & { exitCode: number }> {
+export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture & { exitCode: number; logFile: string }> {
   const {
     provider = 'claude',
     prompt,
@@ -340,6 +336,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
         phases: extractPhasesFromLog(logLines),
         rawMessages,
         durationMs,
+        logFile,
         exitCode: normalizeLiveProbeExitCode(provider, providerExitCode, malformedJsonlLines, hasTerminalEvent, hasFailedTerminalEvent),
       });
     });
@@ -354,6 +351,7 @@ export async function runLiveProbe(opts: LiveProbeOpts): Promise<StreamCapture &
         phases: extractPhasesFromLog(logLines),
         rawMessages,
         durationMs: Date.now() - start,
+        logFile,
         exitCode: 1,
       });
     });
