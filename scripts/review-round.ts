@@ -515,6 +515,23 @@ export function storeDebugArtifact(
   return deps.writeAttachment(prTarget(artifact.pr, artifact.repo), debugAttachmentName(artifact), buildDebugAttachmentBody(artifact, artifactPath));
 }
 
+export async function runAndStoreReviewRound(
+  args: ReviewRoundCliArgs,
+  runDeps?: RunReviewRoundDeps,
+  storeDeps?: StoreReviewArtifactDeps,
+): Promise<{ artifact: ReviewRoundArtifact; stored: StoreReviewArtifactResult }> {
+  if (!args.storeOnlyIfPass) {
+    throw new Error('run-and-store requires --store-only-if-pass');
+  }
+  const artifact = await runReviewRound(args, runDeps);
+  const stored = await storeReviewArtifact(artifact, {
+    round: args.round,
+    dryRun: args.dryRun,
+    rerunGate: args.rerunGate,
+  }, storeDeps);
+  return { artifact, stored };
+}
+
 export async function runReviewRound(
   args: ReviewRoundCliArgs,
   deps: RunReviewRoundDeps = {
@@ -642,6 +659,11 @@ export function formatDimensionProgress(artifact: ReviewRoundArtifact): string {
   }).join('\n');
 }
 
+export function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 export function formatRecoveryCommands(artifact: ReviewRoundArtifact, artifactPath: string): string {
   const failed = new Set(artifact.result.failedDimensions);
   const incomplete = artifact.result.dimensions
@@ -651,11 +673,11 @@ export function formatRecoveryCommands(artifact: ReviewRoundArtifact, artifactPa
   const lines: string[] = [];
   if (rerun.length > 0) {
     lines.push(
-      `Rerun failed/missing dimensions: npx tsx scripts/review-round.ts run --pr ${artifact.pr} --issue ${artifact.issue ?? '<issue>'} --repo ${artifact.repo} --dimensions ${rerun.join(',')} --provider ${artifact.provider.provider} --out ${artifactPath}`,
+      `Rerun failed/missing dimensions: npx tsx scripts/review-round.ts run --pr ${shellQuote(artifact.pr)} --issue ${shellQuote(artifact.issue ?? '<issue>')} --repo ${shellQuote(artifact.repo)} --dimensions ${shellQuote(rerun.join(','))} --provider ${shellQuote(artifact.provider.provider)} --out ${shellQuote(artifactPath)}`,
     );
   } else {
     lines.push(
-      `Store after inspection: npx tsx scripts/review-round.ts store --file ${artifactPath} --repo ${artifact.repo} --rerun-gate`,
+      `Store after inspection: npx tsx scripts/review-round.ts store --file ${shellQuote(artifactPath)} --repo ${shellQuote(artifact.repo)} --rerun-gate`,
     );
   }
   return lines.join('\n');
@@ -728,16 +750,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!args.storeOnlyIfPass) {
-    throw new Error('run-and-store requires --store-only-if-pass');
-  }
-  const artifact = await runReviewRound(args);
+  const { artifact, stored } = await runAndStoreReviewRound(args);
   const artifactPath = args.out ?? defaultArtifactPath(artifact.pr, artifact.generatedAt);
-  const stored = await storeReviewArtifact(artifact, {
-    round: args.round,
-    dryRun: args.dryRun,
-    rerunGate: args.rerunGate,
-  });
   console.log(args.dryRun ? `Dry-run OK: would store round ${stored.round}` : `Stored review round ${stored.round}: ${stored.summaryUrl}`);
   if (stored.gate) console.log(`Review verdict gate: ${stored.gate}`);
   console.log(formatRecoveryCommands(artifact, artifactPath));

@@ -7,7 +7,9 @@ import {
   parseCliArgs,
   parseTimeoutMs,
   reviewResultToArtifact,
+  runAndStoreReviewRound,
   runReviewRound,
+  shellQuote,
   storeDebugArtifact,
   storeReviewArtifact,
   type ReviewRoundArtifact,
@@ -372,6 +374,35 @@ describe('storeReviewArtifact', () => {
     expect(deps.writeReviewSentinel).not.toHaveBeenCalled();
     expect(result).toEqual({ round: 7, urls: [], summaryUrl: undefined, gate: undefined });
   });
+
+  it('refuses unstoreable artifacts before any storage side effects', async () => {
+    const deps = {
+      nextReviewRound: vi.fn().mockReturnValue(4),
+      storeReviewBatch: vi.fn(),
+      rerunReviewVerdictGate: vi.fn(),
+      writeReviewSentinel: vi.fn(),
+      writeAttachment: vi.fn(),
+    };
+
+    await expect(storeReviewArtifact(baseArtifact({
+      requestedDimensions: ['security'],
+      result: {
+        ...baseArtifact().result,
+        verdict: 'fail',
+        missingCount: 1,
+        dimensions: [{
+          dimension: 'security',
+          verdict: 'fail',
+          summary: 'missing',
+          findings: [{ requirement: 'store command', status: 'MISSING', detail: 'missing' }],
+        }],
+      },
+    }), {}, deps)).rejects.toThrow(/MISSING findings/);
+
+    expect(deps.storeReviewBatch).not.toHaveBeenCalled();
+    expect(deps.writeReviewSentinel).not.toHaveBeenCalled();
+    expect(deps.rerunReviewVerdictGate).not.toHaveBeenCalled();
+  });
 });
 
 describe('storeDebugArtifact', () => {
@@ -428,5 +459,61 @@ describe('formatRecoveryCommands', () => {
     });
 
     expect(formatRecoveryCommands(artifact, 'logs/review/pr-1735-r1.json')).toContain('--dimensions requirements');
+  });
+
+  it('shell-quotes generated command arguments', () => {
+    const artifact = baseArtifact({ requestedDimensions: ['security'] });
+    const command = formatRecoveryCommands(artifact, 'logs/review/pr 1735-r1.json');
+
+    expect(command).toContain("--file 'logs/review/pr 1735-r1.json'");
+    expect(shellQuote("a'b")).toBe("'a'\\''b'");
+  });
+});
+
+describe('runAndStoreReviewRound', () => {
+  it('rejects combined storage without the explicit pass guard', async () => {
+    await expect(runAndStoreReviewRound(parseCliArgs(['run-and-store']))).rejects.toThrow('--store-only-if-pass');
+  });
+
+  it('runs first and stores only the returned passable artifact', async () => {
+    const gh = vi.fn((args: string[]) => {
+      if (args[0] === 'issue') return JSON.stringify({ title: 'Issue title', body: 'Issue body' });
+      if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ title: 'PR title', body: 'PR body', headRefOid: 'c'.repeat(40), url: 'https://github.com/Garsson-io/kaizen/pull/1735' });
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff';
+      throw new Error(`unexpected gh call ${args.join(' ')}`);
+    });
+    const runDeps = {
+      reviewBattery: vi.fn().mockResolvedValue({
+        verdict: 'pass',
+        reviewProvider: provider,
+        dimensions: [baseArtifact().result.dimensions[0]],
+        missingCount: 0,
+        partialCount: 0,
+        durationMs: 10,
+        costUsd: 0,
+        failedDimensions: [],
+        failedDimensionFailures: [],
+        skippedDimensions: [],
+      }),
+      listPrDimensions: vi.fn().mockReturnValue(['security']),
+      gh: gh as any,
+      retrievePlan: vi.fn().mockReturnValue('stored plan'),
+      retrieveTestPlan: vi.fn().mockReturnValue('stored test plan'),
+      writeArtifact: vi.fn(),
+      now: () => '2026-06-30T10:00:00.000Z',
+    };
+    const storeDeps = {
+      nextReviewRound: vi.fn().mockReturnValue(2),
+      storeReviewBatch: vi.fn().mockReturnValue({ urls: ['u'], summaryUrl: 's' }),
+      rerunReviewVerdictGate: vi.fn(),
+      writeReviewSentinel: vi.fn(),
+      writeAttachment: vi.fn(),
+    };
+    const args = parseCliArgs(['run-and-store', '--store-only-if-pass', '--pr', '1735', '--issue', '1732', '--repo', 'Garsson-io/kaizen', '--dimensions', 'security']);
+    const result = await runAndStoreReviewRound(args, runDeps, storeDeps);
+
+    expect(result.stored.summaryUrl).toBe('s');
+    expect(runDeps.writeArtifact).toHaveBeenCalled();
+    expect(storeDeps.storeReviewBatch).toHaveBeenCalled();
   });
 });
