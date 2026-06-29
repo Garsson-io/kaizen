@@ -5,6 +5,10 @@
 # `git rebase --abort` is always allowed (recovery path).
 # `git merge origin/main` is always allowed (safe alternative).
 # Non-rebase git commands are not affected.
+#
+# Paired TS coverage: src/e2e/block-git-rebase-live.test.ts (#1675).
+# Keep this shell test as the temporary #761 cross-check until the broader bash
+# hook-test migration has enough burn-in.
 source "$(dirname "$0")/test-helpers.sh"
 
 HOOK="$(dirname "$0")/../kaizen-block-git-rebase.sh"
