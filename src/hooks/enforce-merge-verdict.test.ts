@@ -1,12 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkMergeVerdict,
   decideMergeGate,
+  defaultVerdictReader,
   inferGithubRepoFromCommandTarget,
   MERGE_OVERRIDE_ENV,
   parseMergeTarget,
   type VerdictReader,
 } from './enforce-merge-verdict.js';
+import { clearCommentCache } from '../section-editor.js';
+
+vi.mock('node:child_process', () => ({
+  spawnSync: vi.fn(),
+}));
+
+const mockGh = vi.mocked(spawnSync);
+
+function ghReturns(stdout: string) {
+  mockGh.mockReturnValueOnce({ status: 0, stdout, stderr: '', signal: null, pid: 0, output: [null, stdout, ''] } as any);
+}
+
+beforeEach(() => {
+  mockGh.mockReset();
+  clearCommentCache();
+});
 
 const gitRunner = (remoteUrl = 'https://github.com/Garsson-io/kaizen.git') => (args: readonly string[]) => {
   if (args.join(' ').includes('remote get-url origin')) {
@@ -149,5 +167,28 @@ describe('checkMergeVerdict', () => {
     expect(checkMergeVerdict('gh pr create --title x', { readVerdict: failReader }).action).toBe('allow');
     expect(checkMergeVerdict('git push origin HEAD', { readVerdict: failReader }).action).toBe('allow');
     expect(checkMergeVerdict('echo gh pr merge 1', { readVerdict: failReader }).action).toBe('allow');
+  });
+});
+
+describe('defaultVerdictReader', () => {
+  it('permits active r2 PASS even when stale higher r3 findings fail', () => {
+    ghReturns(JSON.stringify({
+      url: 'u',
+      body: '<!-- kaizen:review/active-round -->\n<!-- meta:{"round":2} -->\nActive review round: r2',
+    }));
+    ghReturns([
+      JSON.stringify({ url: 'u', body: '<!-- kaizen:review/r2/correctness -->' }),
+      JSON.stringify({ url: 'u', body: '<!-- kaizen:review/r2/summary -->' }),
+      JSON.stringify({ url: 'u', body: '<!-- kaizen:review/r3/security -->' }),
+      JSON.stringify({ url: 'u', body: '<!-- kaizen:review/r3/summary -->' }),
+    ].join('\n'));
+    const r2Finding = JSON.stringify({
+      url: 'u',
+      body: '<!-- kaizen:review/r2/correctness -->\n<!-- meta:{"round":2,"dimension":"correctness","verdict":"pass","done":2,"partial":0,"missing":0} -->',
+    });
+    ghReturns(r2Finding);
+    ghReturns(r2Finding);
+
+    expect(defaultVerdictReader({ pr: '1212', repo: 'Garsson-io/kaizen' })).toBe('PASS');
   });
 });
