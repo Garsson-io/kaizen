@@ -33,6 +33,7 @@ import {
   type HookActivationStatus,
 } from './auto-dent-hook-activation.js';
 import {
+  formatTranscriptBundleMissingDiagnostic,
   formatTranscriptBundleUnavailableDiagnostic,
   readProgressIssueTranscriptBundle,
 } from './transcript-bundle-download.js';
@@ -1053,6 +1054,12 @@ async function main(): Promise<void> {
 
       if (bundle.status === 'missing') {
         const parts = readArtifactPartsFromProgressIssue(progressIssue, args.repo);
+        console.error(formatTranscriptBundleMissingDiagnostic({
+          issueNumber: progressIssue,
+          repo: args.repo,
+          result: bundle,
+        }));
+        console.error('');
         console.error(formatProgressIssueAnalysisDiagnostic({
           issueNumber: progressIssue,
           repo: args.repo,

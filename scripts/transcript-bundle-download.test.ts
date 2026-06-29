@@ -10,6 +10,7 @@ import {
 import { analyzeBatch } from './auto-dent-analyze.js';
 import { formatTranscriptBundleAttachment } from './transcript-bundle-upload.js';
 import {
+  formatTranscriptBundleMissingDiagnostic,
   formatTranscriptBundleUnavailableDiagnostic,
   parseTranscriptBundleAttachment,
   parseWorkflowRunId,
@@ -131,7 +132,17 @@ describe('transcript bundle progress issue reader', () => {
     });
 
     expect(result.status).toBe('missing');
+    expect(result.reason).toBe('missing');
     expect(result.diagnostic).toContain('No batch-transcript-bundle attachment');
+    if (result.status !== 'missing') throw new Error('expected missing');
+    const diagnostic = formatTranscriptBundleMissingDiagnostic({
+      issueNumber: '1706',
+      repo: 'Garsson-io/kaizen',
+      result,
+    });
+    expect(diagnostic).toContain('missing manifest');
+    expect(diagnostic).toContain('wait for upload');
+    expect(diagnostic).toContain('Analyze the local batch directory');
   });
 
   it('reports malformed manifest attachments without downloading', async () => {
@@ -145,7 +156,14 @@ describe('transcript bundle progress issue reader', () => {
     });
 
     expect(result.status).toBe('unavailable');
+    if (result.status !== 'unavailable') throw new Error('expected unavailable');
+    expect(result.reason).toBe('malformed');
     expect(result.diagnostic).toContain('manifest is malformed');
+    expect(formatTranscriptBundleUnavailableDiagnostic({
+      issueNumber: '1706',
+      repo: 'Garsson-io/kaizen',
+      result,
+    })).toContain('malformed transcript bundle metadata');
   });
 
   it('reports missing artifacts with an unavailable diagnostic', async () => {
@@ -164,12 +182,95 @@ describe('transcript bundle progress issue reader', () => {
     expect(result.status).toBe('unavailable');
     expect(result.diagnostic).toContain('artifact not found');
     if (result.status === 'unavailable') {
+      expect(result.reason).toBe('download_failed');
       expect(formatTranscriptBundleUnavailableDiagnostic({
         issueNumber: '1706',
         repo: 'Garsson-io/kaizen',
         result,
-      })).toContain('Run transcript logs are not available');
+      })).toContain('artifact download failed');
     }
+  });
+
+  it.each([
+    {
+      status: 'absent' as const,
+      expected: ['absent run logs', 'no run-*.log transcript files', 'Rerun with transcript logging'],
+    },
+    {
+      status: 'expired' as const,
+      expected: ['expired artifact', 'retention window has elapsed', 'choose archival storage'],
+    },
+    {
+      status: 'unauthorized' as const,
+      expected: ['unauthorized artifact access', 'GITHUB_TOKEN or GH_TOKEN', 'actions:read'],
+    },
+    {
+      status: 'malformed' as const,
+      expected: ['malformed transcript bundle metadata', 'expected schema/format', 'rerun finalization'],
+    },
+    {
+      status: 'too_large' as const,
+      expected: ['bundle too large', 'withheld without truncation', 'archival storage'],
+    },
+    {
+      status: 'upload_failed' as const,
+      expected: ['artifact upload failed', 'upload failed during finalization', 'rerun finalization'],
+    },
+    {
+      status: 'scrub_failed' as const,
+      expected: ['secret scrub failed', 'failed closed', 'do not bypass scrubbing'],
+    },
+  ])('formats operator guidance for $status manifests', async ({ status, expected }) => {
+    const result = await readProgressIssueTranscriptBundle({
+      issueNumber: '1707',
+      repo: 'Garsson-io/kaizen',
+      read: () => ({
+        name: 'batch-transcript-bundle',
+        content: formatTranscriptBundleAttachment(manifest({
+          status,
+          diagnostic: `fixture diagnostic for ${status}`,
+          bundle: undefined,
+        })),
+      }),
+      download: async () => {
+        throw new Error('download should not run');
+      },
+    });
+
+    expect(result.status).toBe('unavailable');
+    if (result.status !== 'unavailable') throw new Error('expected unavailable');
+    expect(result.reason).toBe(status);
+    const diagnostic = formatTranscriptBundleUnavailableDiagnostic({
+      issueNumber: '1707',
+      repo: 'Garsson-io/kaizen',
+      result,
+    });
+    for (const phrase of expected) {
+      expect(diagnostic).toContain(phrase);
+    }
+    expect(diagnostic).toContain(`fixture diagnostic for ${status}`);
+  });
+
+  it('classifies ready manifests as expired under an injected clock before downloading', async () => {
+    const result = await readProgressIssueTranscriptBundle({
+      issueNumber: '1707',
+      repo: 'Garsson-io/kaizen',
+      nowIso: '2026-10-01T00:00:00.000Z',
+      read: () => ({
+        name: 'batch-transcript-bundle',
+        content: formatTranscriptBundleAttachment(manifest({
+          expires_at: '2026-09-27T00:00:00.000Z',
+        })),
+      }),
+      download: async () => {
+        throw new Error('download should not run for expired manifests');
+      },
+    });
+
+    expect(result.status).toBe('unavailable');
+    if (result.status !== 'unavailable') throw new Error('expected unavailable');
+    expect(result.reason).toBe('expired');
+    expect(result.diagnostic).toContain('expired at 2026-09-27T00:00:00.000Z');
   });
 
   it('rejects unsafe tar entries before extraction', () => {
