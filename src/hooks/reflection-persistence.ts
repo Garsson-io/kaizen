@@ -3,7 +3,7 @@
  *
  * Closes the observability gap where KAIZEN_IMPEDIMENTS data was only in
  * PR comments and flat audit logs. Stores full structured reflection records
- * in data/telemetry/reflections.jsonl, enabling:
+ * in bounded data/telemetry/reflections.jsonl, enabling:
  *   - Gap analysis: aggregate by category, find recurring friction
  *   - Quality trends: track filed vs no-action ratio over time
  *   - Cross-session learning: future agents can query past reflections
@@ -12,8 +12,12 @@
  */
 
 import { resolve } from 'node:path';
-import { appendJsonLine } from '../lib/json-lines.js';
-import { resolveTelemetryDir } from './session-telemetry.js';
+import { appendBoundedJsonLine } from '../lib/json-lines.js';
+import {
+  INTERACTIVE_TELEMETRY_MAX_BACKUPS,
+  INTERACTIVE_TELEMETRY_MAX_BYTES,
+  resolveTelemetryDir,
+} from './session-telemetry.js';
 
 export interface ReflectionImpediment {
   impediment?: string;
@@ -82,12 +86,15 @@ export function buildReflectionRecord(options: {
  */
 export function persistReflection(
   record: ReflectionRecord,
-  options?: { telemetryDir?: string },
+  options?: { telemetryDir?: string; maxBytes?: number; maxBackups?: number },
 ): void {
   try {
     const dir = options?.telemetryDir ?? resolveTelemetryDir();
     const filePath = resolve(dir, 'reflections.jsonl');
-    appendJsonLine(filePath, record);
+    appendBoundedJsonLine(filePath, record, {
+      maxBytes: options?.maxBytes ?? INTERACTIVE_TELEMETRY_MAX_BYTES,
+      maxBackups: options?.maxBackups ?? INTERACTIVE_TELEMETRY_MAX_BACKUPS,
+    });
   } catch {
     // Best-effort — never break the hook
   }

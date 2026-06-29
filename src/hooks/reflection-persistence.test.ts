@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -13,9 +13,15 @@ const REFLECTION_PERSISTENCE_SOURCE = readFileSync(
   'utf-8',
 );
 
+function makeReflectionTestDir(suffix: string): string {
+  const base = join(process.cwd(), 'data', 'test-tmp');
+  mkdirSync(base, { recursive: true });
+  return mkdtempSync(join(base, `reflection-${suffix}-`));
+}
+
 describe('json-lines helper source invariant', () => {
-  it('routes reflection JSONL appends through appendJsonLine', () => {
-    expect(REFLECTION_PERSISTENCE_SOURCE).toContain('appendJsonLine');
+  it('routes reflection JSONL appends through the bounded append helper', () => {
+    expect(REFLECTION_PERSISTENCE_SOURCE).toContain('appendBoundedJsonLine');
     expect(REFLECTION_PERSISTENCE_SOURCE).toContain("from '../lib/json-lines.js'");
     expect(REFLECTION_PERSISTENCE_SOURCE).not.toContain('appendFileSync(filePath, JSON.stringify');
   });
@@ -86,7 +92,7 @@ describe('buildReflectionRecord', () => {
 
 describe('persistReflection', () => {
   it('writes reflection record to reflections.jsonl', () => {
-    const dir = `/tmp/.test-rp-${Date.now()}-a`;
+    const dir = makeReflectionTestDir('a');
     const record = buildReflectionRecord({
       prUrl: 'https://github.com/Garsson-io/kaizen/pull/77',
       branch: 'test-branch',
@@ -111,7 +117,7 @@ describe('persistReflection', () => {
   });
 
   it('appends multiple records', () => {
-    const dir = `/tmp/.test-rp-${Date.now()}-b`;
+    const dir = makeReflectionTestDir('b');
     const base = {
       branch: 'b',
       clearType: 'impediments' as const,
@@ -133,6 +139,30 @@ describe('persistReflection', () => {
     expect(lines).toHaveLength(2);
     expect((JSON.parse(lines[0]) as ReflectionRecord).pr_url).toBe('url1');
     expect((JSON.parse(lines[1]) as ReflectionRecord).pr_url).toBe('url2');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rotates reflection telemetry when the next record would exceed the local cap', () => {
+    const dir = makeReflectionTestDir('rotate');
+    const base = {
+      branch: 'b',
+      clearType: 'impediments' as const,
+      clearReason: 'ok',
+      quality: 'medium' as const,
+      impediments: [{ impediment: 'long enough to force a small cap rollover', disposition: 'filed' }],
+    };
+
+    persistReflection(
+      buildReflectionRecord({ ...base, prUrl: 'url1' }),
+      { telemetryDir: dir, maxBytes: 180, maxBackups: 2 },
+    );
+    persistReflection(
+      buildReflectionRecord({ ...base, prUrl: 'url2' }),
+      { telemetryDir: dir, maxBytes: 180, maxBackups: 2 },
+    );
+
+    expect(readFileSync(join(dir, 'reflections.jsonl'), 'utf-8')).toContain('url2');
+    expect(readFileSync(join(dir, 'reflections.jsonl.1'), 'utf-8')).toContain('url1');
     rmSync(dir, { recursive: true, force: true });
   });
 
