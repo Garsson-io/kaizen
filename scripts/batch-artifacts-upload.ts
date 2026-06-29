@@ -24,7 +24,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { writeAttachment } from '../src/section-editor.js';
+import { readAttachment, writeAttachment } from '../src/section-editor.js';
 import {
   buildCappedBody,
   GITHUB_COMMENT_LIMIT,
@@ -51,6 +51,17 @@ export interface ArtifactParts {
   summary: string | null;
 }
 
+interface DetailsBlock {
+  summary: string;
+  fence: string;
+  content: string;
+}
+
+const DETAILS_BLOCK_RE =
+  /<details>\s*<summary>([^<]*)<\/summary>\s*```([^\n`]*)\n([\s\S]*?)\n```\s*<\/details>/g;
+const TRUNCATION_MARKER_RE =
+  /\[(?:\d+ lines truncated|comment truncated) — full data on disk at [^\]]+\]/;
+
 function readIfExists(path: string): string | null {
   try {
     return existsSync(path) ? readFileSync(path, 'utf8') : null;
@@ -73,6 +84,70 @@ export function readArtifactParts(batchDir: string): ArtifactParts {
       readIfExists(join(batchDir, 'batch-summary.txt')) ??
       readIfExists(join(batchDir, 'batch-summary-report.md')),
   };
+}
+
+function detailsBlocks(body: string): DetailsBlock[] {
+  return [...body.matchAll(DETAILS_BLOCK_RE)].map((match) => ({
+    summary: match[1],
+    fence: match[2],
+    content: match[3],
+  }));
+}
+
+function findDetailsBlock(
+  body: string,
+  summaryPrefix: string,
+  expectedFence: string,
+): DetailsBlock | null {
+  return detailsBlocks(body).find((block) =>
+    block.summary.startsWith(summaryPrefix) && block.fence === expectedFence,
+  ) ?? null;
+}
+
+function blockWasTruncated(block: DetailsBlock): boolean {
+  return block.summary.includes('(truncated)') || TRUNCATION_MARKER_RE.test(block.content);
+}
+
+/**
+ * Parse the idempotent progress-issue `batch-artifacts` attachment back into
+ * raw artifact parts. This is the cloud-reader counterpart to
+ * {@link buildArtifactsComment}, used by analysis tooling when local batch
+ * directories are unavailable.
+ */
+export function parseArtifactsComment(body: string): ArtifactParts {
+  const batchId = body.match(/^## Batch Artifacts: `([^`]+)`/m)?.[1] ?? 'unknown';
+  const eventBlock = findDetailsBlock(body, 'events.jsonl', 'jsonl');
+  const stateBlock = findDetailsBlock(body, 'state.json', 'json');
+
+  if (eventBlock && blockWasTruncated(eventBlock)) {
+    throw new Error(
+      `Batch artifacts for ${batchId} contain a truncated events.jsonl block; analysis requires the complete artifact.`,
+    );
+  }
+
+  const summary = body.match(/### Batch Summary\s+```\n([\s\S]*?)\n```/)?.[1] ?? null;
+
+  return {
+    batchId,
+    eventsJsonl: eventBlock?.content ?? null,
+    stateJson: stateBlock?.content ?? null,
+    summary,
+  };
+}
+
+/**
+ * Read and parse the `batch-artifacts` attachment from a progress issue.
+ * Returns `null` when the attachment has not been posted yet.
+ */
+export function readArtifactPartsFromProgressIssue(
+  issueNumber: string,
+  repo: string,
+): ArtifactParts | null {
+  const attachment = readAttachment(
+    { kind: 'issue', number: issueNumber, repo },
+    BATCH_ARTIFACTS_ATTACHMENT,
+  );
+  return attachment ? parseArtifactsComment(attachment.content) : null;
 }
 
 /**
