@@ -38,6 +38,8 @@ fi
 # ── Dispatch ───────────────────────────────────────────────────────────
 # Pass stdin (git's pre-push refs) straight through; forward exit code.
 # PATH may not include tsx on first run — fall back to node_modules/.bin.
+export KAIZEN_TRUST_DEFAULT_STATE_DIR=1
+
 if command -v npx >/dev/null 2>&1; then
   exec npx --no-install tsx "$HOOK_TS" "$@"
 fi

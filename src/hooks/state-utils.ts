@@ -16,7 +16,10 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
-export const DEFAULT_STATE_DIR = process.env.STATE_DIR || '/tmp/.pr-review-state';
+export const SHARED_DEFAULT_STATE_DIR = '/tmp/.pr-review-state';
+export const DEFAULT_STATE_DIR = process.env.STATE_DIR || SHARED_DEFAULT_STATE_DIR;
+export const TRUSTED_DEFAULT_STATE_DIR_ENV = 'KAIZEN_TRUST_DEFAULT_STATE_DIR';
+export const ALLOW_DEFAULT_STATE_DIR_ENV = 'KAIZEN_ALLOW_DEFAULT_STATE_DIR';
 const DEFAULT_MAX_STATE_AGE = 7200; // 2 hours
 
 // Default audit directory. Override via AUDIT_DIR env var for test isolation (kaizen #429).
@@ -89,6 +92,21 @@ export function ensureStateDir(stateDir: string = DEFAULT_STATE_DIR): void {
   }
 }
 
+/** Refuse accidental writes to the shared production default from direct hook smokes. */
+export function assertStateDirWritable(stateDir: string): void {
+  if (stateDir !== SHARED_DEFAULT_STATE_DIR) return;
+  if (process.env.STATE_DIR) return;
+  if (process.env[TRUSTED_DEFAULT_STATE_DIR_ENV] === '1') return;
+  if (process.env[ALLOW_DEFAULT_STATE_DIR_ENV] === '1') return;
+
+  throw new Error([
+    `Direct hook invocation would write to shared default STATE_DIR ${SHARED_DEFAULT_STATE_DIR}.`,
+    'For smoke tests, run with STATE_DIR=$(mktemp -d) so hook state is isolated.',
+    `Real hook wrappers set ${TRUSTED_DEFAULT_STATE_DIR_ENV}=1 before dispatch.`,
+    `For emergency manual writes only, set ${ALLOW_DEFAULT_STATE_DIR_ENV}=1 explicitly.`,
+  ].join(' '));
+}
+
 /**
  * Write a state file atomically.
  * Creates the state directory if needed.
@@ -98,6 +116,7 @@ export function writeStateFile(
   filename: string,
   state: StateFile,
 ): string {
+  assertStateDirWritable(stateDir);
   ensureStateDir(stateDir);
   const filepath = join(stateDir, filename);
   writeFileSync(filepath, serializeStateFile(state), { mode: 0o600 });

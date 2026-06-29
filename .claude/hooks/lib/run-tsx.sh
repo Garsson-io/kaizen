@@ -17,6 +17,10 @@ run_tsx() {
   local kaizen_dir="$1"
   local ts_file="$2"
 
+  # This trampoline is a real hook entrypoint. Direct TS hook smoke tests must
+  # set STATE_DIR explicitly; wrappers mark production dispatch as trusted.
+  export KAIZEN_TRUST_DEFAULT_STATE_DIR=1
+
   # Test harnesses may execute hooks from a worktree whose source is current but
   # whose node_modules is absent or incomplete. Let them provide a known-good
   # tsx binary while still running the source file from this kaizen_dir.
