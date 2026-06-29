@@ -3,25 +3,29 @@ import { dirname } from 'node:path';
 
 export interface ParsedJsonLines<T = unknown> {
   rows: T[];
+  rowsWithLineNumbers: Array<{ lineNumber: number; value: T }>;
   malformedRows: string[];
   malformed: Array<{ lineNumber: number; raw: string }>;
 }
 
 export function parseJsonLinesWithMalformedRows<T = unknown>(text: string): ParsedJsonLines<T> {
   const rows: T[] = [];
+  const rowsWithLineNumbers: Array<{ lineNumber: number; value: T }> = [];
   const malformedRows: string[] = [];
   const malformed: Array<{ lineNumber: number; raw: string }> = [];
   for (const [index, raw] of text.split(/\r?\n/).entries()) {
     const trimmed = raw.trim();
     if (!trimmed) continue;
     try {
-      rows.push(JSON.parse(trimmed) as T);
+      const value = JSON.parse(trimmed) as T;
+      rows.push(value);
+      rowsWithLineNumbers.push({ lineNumber: index + 1, value });
     } catch {
       malformedRows.push(raw);
       malformed.push({ lineNumber: index + 1, raw });
     }
   }
-  return { rows, malformedRows, malformed };
+  return { rows, rowsWithLineNumbers, malformedRows, malformed };
 }
 
 export function parseJsonLines<T = unknown>(text: string): T[] {

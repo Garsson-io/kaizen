@@ -1,0 +1,4 @@
+{"timestamp":"2026-03-26T00:00:00.000Z","event":{"type":"run.start","run_id":"fixture-batch/run-2","batch_id":"fixture-batch","run_num":2,"mode":"explore","mode_reason":"fixture","prompt_template":"deep-dive-default.md","prompt_hash":"def456"}}
+not-json
+{"timestamp":"2026-03-26T00:00:30.000Z","event":{"type":"run.mystery","run_id":"fixture-batch/run-2","batch_id":"fixture-batch","run_num":2}}
+{"timestamp":"2026-03-26T00:01:00.000Z","event":{"type":"batch.reflect","run_id":"fixture-batch/run-2","batch_id":"fixture-batch","run_num":2,"recommendations_count":3}}
