@@ -9,11 +9,11 @@ import {
   reviewResultToArtifact,
   runAndStoreReviewRound,
   runReviewRound,
-  shellQuote,
   storeDebugArtifact,
   storeReviewArtifact,
   type ReviewRoundArtifact,
 } from './review-round.js';
+import { shellQuote } from '../src/lib/shell-quote.js';
 
 const provider = { provider: 'codex' as const, billing: 'subscription-cli' as const };
 
@@ -81,6 +81,11 @@ describe('parseCliArgs', () => {
 
   it('rejects unknown providers instead of hand-rolling provider objects', () => {
     expect(() => parseCliArgs(['run', '--provider', 'local'])).toThrow('unknown provider');
+  });
+
+  it('rejects non-numeric PR values after URL normalization', () => {
+    expect(() => parseCliArgs(['run', '--pr', 'x/../../../.github/workflows/pwn'])).toThrow('--pr must be a PR number');
+    expect(parseCliArgs(['run', '--pr', 'https://github.com/Garsson-io/kaizen/pull/1739']).pr).toBe('1739');
   });
 
   it('rejects malformed integer flags instead of truncating them', () => {

@@ -31,6 +31,7 @@ import {
 import { writeAttachment } from '../src/section-editor.js';
 import { buildCappedBody } from '../src/capped-attachment.js';
 import { gh } from '../src/lib/gh-exec.js';
+import { shellQuote } from '../src/lib/shell-quote.js';
 import {
   parseSubscriptionAgentProvider,
   subscriptionAgentProvider,
@@ -247,7 +248,11 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
 function normalizePr(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const match = value.match(/\/pull\/(\d+)/);
-  return match ? match[1] : value;
+  const normalized = match ? match[1] : value;
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error('--pr must be a PR number or GitHub pull request URL');
+  }
+  return normalized;
 }
 
 function prUrl(repo: string, pr: string): string {
@@ -657,11 +662,6 @@ export function formatDimensionProgress(artifact: ReviewRoundArtifact): string {
     if (partial > 0) return `${dimension}: PARTIAL (${partial})`;
     return `${dimension}: PASS`;
   }).join('\n');
-}
-
-export function shellQuote(value: string): string {
-  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 export function formatRecoveryCommands(artifact: ReviewRoundArtifact, artifactPath: string): string {
