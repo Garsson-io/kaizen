@@ -28,7 +28,7 @@ import {
   readStateFile,
 } from '../state-utils.js';
 import { readJsonValueFile, writeJsonValueFile } from '../../lib/json-file.js';
-import { postMergeWorkflowVerificationLines } from './post-merge-workflows.js';
+import { postMergeWorkflowVerificationLines, safeMainSyncCommand } from './post-merge-workflows.js';
 
 export interface PendingGate {
   type: 'review' | 'reflection' | 'post_merge';
@@ -103,9 +103,9 @@ export function readAllPendingGates(
       detail: [
         '1. Run /kaizen to reflect on this PR',
         `   2. ${postMergeWorkflowVerificationLines(r.prUrl)}`,
-        '   3. Then: git fetch origin main && git merge origin/main',
+        `   3. Then: ${safeMainSyncCommand()}`,
       ].join('\n'),
-      action: 'git fetch origin main && git merge origin/main',
+      action: safeMainSyncCommand(),
       filepath: r.filepath,
     });
   }

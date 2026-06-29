@@ -96,6 +96,9 @@ describe('readAllPendingGates', () => {
     expect(report.gates[0].type).toBe('post_merge');
     expect(report.gates[0].detail).toContain('gh run list --repo org/repo --branch main --commit <merge-sha>');
     expect(report.gates[0].detail).toContain('git fetch origin main');
+    expect(report.gates[0].detail).toContain('git merge --ff-only origin/main');
+    expect(report.gates[0].action).toBe('git fetch origin main && git merge --ff-only origin/main');
+    expect(report.gates[0].detail).not.toContain('git merge origin/main');
   });
 
   it('post-merge gate detail mentions /kaizen reflection as first step (#936)', () => {
