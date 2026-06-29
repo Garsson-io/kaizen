@@ -82,13 +82,13 @@ describe('auto-dent provider capability inventory', () => {
   });
 
   it('rejects runtime capabilities that the descriptive matrix does not accept (#1580)', () => {
-    const driftedDescriptive = PROVIDER_CAPABILITIES.map((cap) =>
-      cap.provider === 'codex'
-        ? { ...cap, acceptedForUnattended: false, phaseFit: { ...cap.phaseFit, review: 'avoid' as const } }
+    const driftedRuntime = RUNTIME_PROVIDER_CAPABILITIES.map((cap) =>
+      cap.provider === 'codex' && cap.phase === 'review' && cap.billingMode === 'subscription-cli'
+        ? { ...cap, acceptedForUnattended: true as const }
         : cap,
     );
 
-    expect(validateProviderCapabilityRuntimeAlignment(driftedDescriptive, RUNTIME_PROVIDER_CAPABILITIES)).toEqual(
+    expect(validateProviderCapabilityRuntimeAlignment(PROVIDER_CAPABILITIES, driftedRuntime)).toEqual(
       expect.arrayContaining([
         expect.stringContaining('runtime codex/review/subscription-cli'),
       ]),

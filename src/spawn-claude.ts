@@ -43,6 +43,11 @@ export interface SpawnAgentProvider {
   billing: 'subscription-cli';
 }
 
+export function parseSpawnAgentProvider(value: string): SpawnAgentProvider | null {
+  if (value === 'claude' || value === 'codex') return { provider: value, billing: 'subscription-cli' };
+  return null;
+}
+
 export interface SpawnClaudeOptions {
   cwd?: string;
   timeoutMs?: number;

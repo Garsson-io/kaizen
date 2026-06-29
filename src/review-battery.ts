@@ -16,7 +16,7 @@ import { resolve, dirname, basename } from 'node:path';
 import { readYamlFrontmatter, stripYamlFrontmatter } from './lib/frontmatter.js';
 import { firstMarkdownFence, markdownFences } from './lib/markdown-fence.js';
 import { resolveProjectRoot, type GitRunner } from './lib/resolve-project-root.js';
-import { spawnAgent } from './spawn-claude.js';
+import { spawnAgent, type SpawnAgentProvider } from './spawn-claude.js';
 import { retrievePlan, issueTarget } from './structured-data.js';
 import {
   normalizeFindingStatus,
@@ -59,10 +59,7 @@ export type ReviewFailureClass =
   | 'claude_review_failed'
   | 'codex_review_failed';
 
-export interface ReviewProvider {
-  provider: 'claude' | 'codex';
-  billing: 'subscription-cli';
-}
+export type ReviewProvider = SpawnAgentProvider;
 
 export interface ReviewDimensionFailure {
   dimension: string;

@@ -21,7 +21,7 @@ import {
   type JudgeRequest,
 } from './independent-judge.js';
 import { CHARTERS, CHARTER_NAMES, isCharterName, type CharterName } from './judge-charters.js';
-import type { SpawnAgentProvider, SpawnClaudeFn } from './spawn-claude.js';
+import { parseSpawnAgentProvider, type SpawnAgentProvider, type SpawnClaudeFn } from './spawn-claude.js';
 
 function getFlag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
@@ -52,7 +52,8 @@ function parseCharters(raw: string | undefined): CharterName | CharterName[] {
 
 function parseProvider(raw: string | undefined): SpawnAgentProvider | undefined {
   if (!raw) return undefined;
-  if (raw === 'claude' || raw === 'codex') return { provider: raw, billing: 'subscription-cli' };
+  const parsed = parseSpawnAgentProvider(raw);
+  if (parsed) return parsed;
   console.error(`Unknown provider "${raw}". Valid: claude, codex`);
   process.exit(2);
 }

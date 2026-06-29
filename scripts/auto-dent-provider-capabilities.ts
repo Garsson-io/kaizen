@@ -100,22 +100,22 @@ export const PROVIDER_CAPABILITIES: ProviderCapability[] = [
     phaseFit: fit({
       planning: 'partial',
       implementation: 'best',
-      review: 'supported',
+      review: 'avoid',
       fix: 'partial',
       reflection: 'partial',
     }),
-    notes: 'Target subscription-compatible CLI path for JSONL execution and schema-constrained summaries, including structured review output.',
+    notes: 'Target subscription-compatible CLI path for JSONL execution and schema-constrained summaries.',
   },
   {
     id: 'codex-review-command',
     label: 'Codex review command',
     provider: 'codex',
     billingMode: 'subscription-cli',
-    acceptedForUnattended: true,
+    acceptedForUnattended: false,
     phaseFit: fit({
-      review: 'supported',
+      review: 'avoid',
     }),
-    notes: 'Structured Codex review surface through the shared review battery; failure evidence is normalized before findings are accepted.',
+    notes: 'Explicit/manual review surface; not promoted to unattended auto-dent review until operators accept it.',
   },
   {
     id: 'external-lifecycle-evidence',
