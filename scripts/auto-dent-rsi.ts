@@ -101,6 +101,13 @@ export interface BuildRsiImprovementProposalSetOptions {
   maxProposals?: number;
 }
 
+export interface RsiImprovementProposalWriteResult {
+  status: 'written' | 'skipped';
+  proposalCount: number;
+  url?: string;
+  reason?: string;
+}
+
 function stableId(parts: string[]): string {
   return createHash('sha256').update(parts.join('\n')).digest('hex').slice(0, 12);
 }
@@ -350,6 +357,34 @@ export function writeRsiImprovementProposalsAttachment(
     RSI_IMPROVEMENT_PROPOSALS_ATTACHMENT,
     JSON.stringify(proposalSet, null, 2),
   );
+}
+
+export function writeRsiImprovementProposalsForBatch(
+  issueNumber: string,
+  repo: string,
+  state: BatchState,
+  outcome: BatchOutcome,
+  deps: {
+    write?: typeof writeAttachment;
+    generatedAt?: string;
+  } = {},
+): RsiImprovementProposalWriteResult {
+  try {
+    const proposalSet = buildRsiImprovementProposalSet(state, outcome, { generatedAt: deps.generatedAt });
+    const url = writeRsiImprovementProposalsAttachment(
+      issueNumber,
+      repo,
+      proposalSet,
+      deps.write ?? writeAttachment,
+    );
+    return { status: 'written', proposalCount: proposalSet.proposals.length, url };
+  } catch (err) {
+    return {
+      status: 'skipped',
+      proposalCount: 0,
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 export function readRsiImprovementProposals(

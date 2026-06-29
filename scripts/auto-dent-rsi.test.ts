@@ -4,6 +4,7 @@ import {
   buildRsiImprovementProposalSet,
   evaluateRsiProposalOutcome,
   readRsiImprovementProposals,
+  writeRsiImprovementProposalsForBatch,
   writeRsiImprovementProposalsAttachment,
   RsiImprovementProposalSetSchema,
   RSI_IMPROVEMENT_PROPOSALS_ATTACHMENT,
@@ -177,6 +178,66 @@ describe('buildRsiImprovementProposalSet', () => {
     expect(proposalSet.proposals[0].failure_pattern).toContain('failure class "timeout"');
     expect(proposalSet.proposals[0].target.path).toBe('prompts/reflect-batch.md');
   });
+
+  it('keeps proposal ids deterministic across identical inputs', () => {
+    const inputState = state({
+      reflection_insights: ['Explore mode keeps rediscovering manifest candidates'],
+    });
+    const inputOutcome = outcome({ degradation_signal: degradedSignal });
+
+    const first = buildRsiImprovementProposalSet(inputState, inputOutcome, {
+      generatedAt: '2026-06-29T12:00:00.000Z',
+    });
+    const second = buildRsiImprovementProposalSet(inputState, inputOutcome, {
+      generatedAt: '2026-06-29T13:00:00.000Z',
+    });
+
+    expect(second.proposals.map((p) => p.id)).toEqual(first.proposals.map((p) => p.id));
+  });
+
+  it('caps noisy signal sets and deduplicates repeated reflection insights', () => {
+    const proposalSet = buildRsiImprovementProposalSet(
+      state({
+        reflection_insights: [
+          'Explore mode keeps rediscovering manifest candidates',
+          'Explore mode keeps rediscovering manifest candidates',
+          'Review failures are recurring',
+          'Cost per PR is high',
+          'Unclassified bottleneck needs attention',
+        ],
+      }),
+      outcome({ degradation_signal: degradedSignal }),
+      { generatedAt: '2026-06-29T12:00:00.000Z', maxProposals: 3 },
+    );
+
+    expect(proposalSet.source.signals_analyzed).toBe(5);
+    expect(proposalSet.proposals).toHaveLength(3);
+    expect(proposalSet.proposals.filter((p) => p.failure_pattern.includes('Explore mode'))).toHaveLength(1);
+    expect(proposalSet.diagnostics[0]).toBe('3 proposal(s) generated from 5 signal(s).');
+  });
+
+  it('routes review/proof signals and process fallback signals to distinct targets', () => {
+    const proposalSet = buildRsiImprovementProposalSet(
+      state({
+        reflection_insights: [
+          'Review failures are recurring because test plan proof is vague',
+          'Unclassified bottleneck needs attention',
+        ],
+      }),
+      outcome(),
+      { generatedAt: '2026-06-29T12:00:00.000Z' },
+    );
+
+    const reviewTarget = proposalSet.proposals.find((p) => p.target.id === 'review-test-plan');
+    expect(reviewTarget?.target.path).toBe('prompts/review-test-plan.md');
+    expect(reviewTarget?.proof_required.commands).toContain('npx vitest run src/e2e/skill-change.test.ts');
+
+    const processTarget = proposalSet.proposals.find((p) => p.target.id === 'auto-dent-runner');
+    expect(processTarget?.kind).toBe('process_patch');
+    expect(processTarget?.target.path).toBe('scripts/auto-dent-run.ts');
+    expect(processTarget?.proof_required.commands).not.toContain('npx vitest run src/e2e/skill-change.test.ts');
+    expect(processTarget?.proof_required.policy_refs).toEqual(['I22']);
+  });
 });
 
 describe('evaluateRsiProposalOutcome', () => {
@@ -268,6 +329,55 @@ describe('RSI proposal attachment helpers', () => {
     const createArgs = (mockGh.mock.calls[1][1] as string[]).join(' ');
     expect(createArgs).toContain(`<!-- kaizen:${RSI_IMPROVEMENT_PROPOSALS_ATTACHMENT} -->`);
     expect(createArgs).toContain('"proposals"');
+  });
+
+  it('write helper returns schema-valid field-level attachment content with injected writer', () => {
+    let writtenContent = '';
+    const write = vi.fn((_target, _name, content) => {
+      writtenContent = content;
+      return 'https://github.com/Garsson-io/kaizen/issues/1717#issuecomment-1';
+    });
+
+    const result = writeRsiImprovementProposalsForBatch(
+      '1717',
+      'Garsson-io/kaizen',
+      state({ reflection_insights: ['Explore prompt needs manifest follow-through'] }),
+      outcome(),
+      { write: write as any, generatedAt: '2026-06-29T12:00:00.000Z' },
+    );
+
+    expect(result).toMatchObject({ status: 'written', proposalCount: 1 });
+    expect(write).toHaveBeenCalledWith(
+      { kind: 'issue', number: '1717', repo: 'Garsson-io/kaizen' },
+      RSI_IMPROVEMENT_PROPOSALS_ATTACHMENT,
+      expect.any(String),
+    );
+    const parsed = RsiImprovementProposalSetSchema.parse(JSON.parse(writtenContent));
+    expect(parsed.proposals[0]).toMatchObject({
+      target: { path: 'prompts/explore-gaps.md' },
+      acceptance: { baseline: { success_rate: 0.5 } },
+    });
+  });
+
+  it('write helper fails open when the attachment writer throws', () => {
+    const result = writeRsiImprovementProposalsForBatch(
+      '1717',
+      'Garsson-io/kaizen',
+      state({ reflection_insights: ['Explore prompt needs manifest follow-through'] }),
+      outcome(),
+      {
+        write: (() => {
+          throw new Error('comment API unavailable');
+        }) as any,
+        generatedAt: '2026-06-29T12:00:00.000Z',
+      },
+    );
+
+    expect(result).toEqual({
+      status: 'skipped',
+      proposalCount: 0,
+      reason: 'comment API unavailable',
+    });
   });
 
   it('reads proposal sets back through the schema', () => {

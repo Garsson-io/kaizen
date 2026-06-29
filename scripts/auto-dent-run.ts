@@ -52,8 +52,7 @@ import {
   type BanditPrior,
 } from './batch-outcome.js';
 import {
-  buildRsiImprovementProposalSet,
-  writeRsiImprovementProposalsAttachment,
+  writeRsiImprovementProposalsForBatch,
 } from './auto-dent-rsi.js';
 import {
   isAcceptedSubscriptionCompatibleCapability,
@@ -3220,19 +3219,15 @@ export function closeBatchProgressIssue(
   // before/after metrics. Best-effort like batch-outcome; proposal generation
   // must never block finalization.
   if (outcome) {
-    try {
-      const proposals = buildRsiImprovementProposalSet(state, outcome);
-      writeRsiImprovementProposalsAttachment(
-        issueNum,
-        kaizenRepo,
-        proposals,
-        deps.writeAttachment ?? writeAttachment,
-      );
+    const rsiWrite = writeRsiImprovementProposalsForBatch(issueNum, kaizenRepo, state, outcome, {
+      write: deps.writeAttachment ?? writeAttachment,
+    });
+    if (rsiWrite.status === 'written') {
       console.log(
-        `  [intelligence] stored RSI improvement proposals on #${issueNum} (${proposals.proposals.length} proposal(s))`,
+        `  [intelligence] stored RSI improvement proposals on #${issueNum} (${rsiWrite.proposalCount} proposal(s))`,
       );
-    } catch (err) {
-      console.log(`  [intelligence] RSI proposal write skipped: ${(err as Error).message}`);
+    } else {
+      console.log(`  [intelligence] RSI proposal write skipped: ${rsiWrite.reason}`);
     }
   }
 

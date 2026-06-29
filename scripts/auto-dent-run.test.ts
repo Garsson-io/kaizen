@@ -472,8 +472,7 @@ describe('closeBatchProgressIssue maintenance wiring', () => {
       AUTO_DENT_RUN_SOURCE.indexOf('// Execute Claude'),
     );
 
-    expect(closeSection).toContain('buildRsiImprovementProposalSet(state, outcome)');
-    expect(closeSection).toContain('writeRsiImprovementProposalsAttachment');
+    expect(closeSection).toContain('writeRsiImprovementProposalsForBatch(issueNum, kaizenRepo, state, outcome');
     expect(closeSection).toContain('[intelligence] stored RSI improvement proposals');
     expect(closeSection).toContain('[intelligence] RSI proposal write skipped');
   });
