@@ -408,6 +408,7 @@ export function parseArgs(argv = process.argv): CliArgs {
   const defaults = defaultReviewFixProviders();
   let reviewProvider = defaults.reviewProvider;
   let fixProvider = defaults.fixProvider;
+  let cwd: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -420,6 +421,7 @@ export function parseArgs(argv = process.argv): CliArgs {
       case '--resume': resume = true; break;
       case '--max-rounds': maxRounds = parseInt(args[++i] ?? '3', 10); break;
       case '--budget': budgetCap = parseFloat(args[++i] ?? '2'); break;
+      case '--cwd': cwd = args[++i]; break;
     }
   }
 
@@ -438,6 +440,7 @@ Options:
                   Review provider to record/pass to the review battery (default: claude)
   --fix-provider claude|codex
                   Fix provider for spawned repair sessions (default: claude)
+  --cwd DIR       Repository/worktree root for provider subprocesses (default: current directory)
 
 State is saved to .claude/review-fix/pr-<N>.json after each phase.
 Use --resume to pick up where you left off after a crash/timeout.
@@ -455,7 +458,7 @@ Example:
     process.exit(1);
   }
 
-  return { prUrl, issueNum, repo, reviewProvider, fixProvider, dryRun, maxRounds, budgetCap, resume };
+  return { prUrl, issueNum, repo, reviewProvider, fixProvider, dryRun, maxRounds, budgetCap, resume, cwd };
 }
 
 // ── Pre-fetch context ───────────────────────────────────────────────
@@ -870,7 +873,7 @@ export async function runFixLoop(opts: CliArgs, deps: RunFixLoopDeps = {}): Prom
 
     console.log(`\n  Fix session is running in the background.`);
     console.log(`  Run \`tail -f ${fixInfo.logFile}\` to observe.`);
-    console.log(`  Run \`npx tsx scripts/review-fix.ts --pr ${opts.prUrl} --issue ${opts.issueNum} --repo ${opts.repo} --resume\` when done.`);
+    console.log(`  Run \`npx tsx scripts/review-fix.ts --pr ${opts.prUrl} --issue ${opts.issueNum} --repo ${opts.repo}${opts.cwd ? ` --cwd ${opts.cwd}` : ''} --resume\` when done.`);
     return state;
   }
 

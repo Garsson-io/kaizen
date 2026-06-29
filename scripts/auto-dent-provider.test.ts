@@ -156,7 +156,7 @@ describe('defaultPhaseProviders (#1143)', () => {
 
     expect(claude).toEqual(defaultPhaseProviders());
     expect(codex.implementation).toEqual({ provider: 'codex', billing: 'subscription-cli' });
-    expect(codex.review).toEqual({ provider: 'claude', billing: 'subscription-cli' });
+    expect(codex.review).toEqual({ provider: 'codex', billing: 'subscription-cli' });
     expect(codex.validation).toEqual({ provider: 'provider-independent', billing: 'local-only' });
     expect(validateProviderPlan(phaseProviderRecordToProviderPlan(codex)).ok).toBe(true);
   });

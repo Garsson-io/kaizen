@@ -621,6 +621,7 @@ describe('parseArgs', () => {
       '--budget', '3.5',
       '--review-provider', 'claude',
       '--fix-provider', 'codex',
+      '--cwd', '/repo/worktree',
     ]);
     expect(result.prUrl).toBe('https://github.com/org/repo/pull/1');
     expect(result.issueNum).toBe('42');
@@ -631,6 +632,7 @@ describe('parseArgs', () => {
     expect(result.budgetCap).toBeCloseTo(3.5);
     expect(result.reviewProvider).toEqual({ provider: 'claude', billing: 'subscription-cli' });
     expect(result.fixProvider).toEqual({ provider: 'codex', billing: 'subscription-cli' });
+    expect(result.cwd).toBe('/repo/worktree');
   });
 
   it('exits 1 when --pr is missing', () => {

@@ -109,13 +109,13 @@ export function providerComparisonScenarios(): ProviderComparisonScenario[] {
       },
     },
     {
-      id: 'codex-mainline-claude-review',
-      label: 'Codex mainline + Claude review',
-      description: 'Codex handles planning, implementation, fix, and reflection; Claude remains the accepted unattended review provider; validation remains provider-independent.',
+      id: 'codex-mainline-codex-review',
+      label: 'Codex mainline',
+      description: 'Codex handles planning, implementation, review, fix, and reflection; validation remains provider-independent.',
       phaseProviders: {
         planning: CODEX,
         implementation: CODEX,
-        review: CLAUDE,
+        review: CODEX,
         fix: CODEX,
         reflection: CODEX,
         validation: VALIDATOR,
@@ -238,7 +238,7 @@ export function defaultProviderComparisonResults(): ProviderComparisonResult[] {
       ['Mature baseline with strongest review/reflection ergonomics.'],
     ),
     result(
-      'codex-mainline-claude-review',
+      'codex-mainline-codex-review',
       'pass',
       null,
       {
@@ -250,7 +250,7 @@ export function defaultProviderComparisonResults(): ProviderComparisonResult[] {
         hookRejections: 0,
         operatorInspectability: 'medium',
       },
-      ['Codex handles edit-heavy phases while Claude keeps the unattended review trust boundary.'],
+      ['Codex handles the mainline agent phases; provider-independent validation remains the external trust boundary.'],
     ),
     result(
       'claude-plan-review-codex-implement',
