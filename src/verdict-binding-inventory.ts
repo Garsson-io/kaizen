@@ -234,6 +234,11 @@ export const VERDICT_BINDING_INVENTORY: VerdictBindingInventory = {
       rationale: 'Analytics copy of the review verdict; terminal binding is represented by review-battery-verdict.',
     },
     {
+      signature: 'scripts/auto-dent-score.ts:type:BatchDegradationVerdict',
+      label: 'Auto-dent batch degradation verdict',
+      rationale: 'Advisory long-horizon quality signal for operators and steering prompts; it does not authorize an irreversible terminal action.',
+    },
+    {
       signature: 'scripts/auto-dent-replay.ts:field:process_verdict',
       label: 'Auto-dent replay process verdict projection',
       rationale: 'Replay-state reporting copy of the process verdict from events.jsonl; terminal binding is represented by process-evidence-verdict.',
