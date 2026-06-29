@@ -612,6 +612,8 @@ describe('pr-review-loop: gh pr merge', () => {
     expect(output).toContain('Update linked issue');
     expect(output).toContain('Spec update');
     expect(output).toContain('Post-merge action needed');
+    expect(output).toContain('gh run list --repo Garsson-io/kaizen --branch main --commit <merge-sha>');
+    expect(output).toContain('If any run failed');
     expect(output).toContain('Sync main');
   });
 
