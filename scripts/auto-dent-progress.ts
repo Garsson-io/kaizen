@@ -203,6 +203,10 @@ export function upsertProgressStep(
     result.progressSteps.push(step);
     return;
   }
+  if (step.phase === 'DELEGATE' && mode !== 'replace') {
+    result.progressSteps.push(step);
+    return;
+  }
   if (mode === 'replace') {
     existing.state = step.state;
     existing.detail = step.detail;

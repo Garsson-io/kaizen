@@ -16,6 +16,12 @@ import {
   type LifecycleEvidence,
   type ProcessEvidence,
 } from './auto-dent-lifecycle.js';
+import {
+  hasContextDelegationProgressEvidence,
+  upsertProgressStep,
+  type AutoDentProgressResult,
+  type RunProgressStep,
+} from './auto-dent-progress.js';
 
 /**
  * The lifecycle validator turns the agent's AUTO_DENT_PHASE claims into a
@@ -486,6 +492,57 @@ describe('validateProcessEvidence — durable kaizen evidence verdict (#1149)', 
     );
     expect(result.verdict).toBe('process-incomplete');
     expect(result.checks).toContainEqual(expect.objectContaining({
+      id: 'context-delegation',
+      status: 'fail',
+    }));
+  });
+
+  it('derives the context-delegation process gate from ordered progress evidence', () => {
+    const processResult = (steps: RunProgressStep[]) => validateProcessEvidence(
+      validationWith(['PICK', 'EVALUATE', 'DELEGATE', 'IMPLEMENT', 'TEST', 'PR']),
+      fullEvidence({
+        contextDelegationEvidence: hasContextDelegationProgressEvidence(steps),
+      }),
+    );
+
+    expect(processResult([
+      { phase: 'DELEGATE', state: 'done', detail: 'delegated search to explorer subagent' },
+      { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+    ]).checks).toContainEqual(expect.objectContaining({
+      id: 'context-delegation',
+      status: 'pass',
+    }));
+
+    for (const steps of [
+      [
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+        { phase: 'DELEGATE', state: 'done', detail: 'late delegated search' },
+      ],
+      [
+        { phase: 'DELEGATE', state: 'fail', detail: 'did not delegate' },
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+      ],
+      [
+        { phase: 'DELEGATE', state: 'done', detail: '' },
+        { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
+      ],
+    ] satisfies RunProgressStep[][]) {
+      expect(processResult(steps).checks).toContainEqual(expect.objectContaining({
+        id: 'context-delegation',
+        status: 'fail',
+      }));
+    }
+
+    const mergedHistory: AutoDentProgressResult = {
+      prs: [],
+      cases: [],
+      stopRequested: false,
+      progressSteps: [],
+    };
+    upsertProgressStep(mergedHistory, { phase: 'DELEGATE', state: 'fail', detail: 'not delegated yet' });
+    upsertProgressStep(mergedHistory, { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' });
+    upsertProgressStep(mergedHistory, { phase: 'DELEGATE', state: 'done', detail: 'late delegated search' });
+    expect(processResult(mergedHistory.progressSteps).checks).toContainEqual(expect.objectContaining({
       id: 'context-delegation',
       status: 'fail',
     }));

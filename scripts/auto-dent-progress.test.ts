@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildKaizenCycleSteps,
   hasContextDelegationProgressEvidence,
+  upsertProgressStep,
+  type AutoDentProgressResult,
 } from './auto-dent-progress.js';
 
 describe('auto-dent progress context delegation evidence (#1509)', () => {
@@ -54,5 +56,20 @@ describe('auto-dent progress context delegation evidence (#1509)', () => {
       { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' },
       { phase: 'DELEGATE', state: 'done', detail: 'delegated transcript mining to subagent' },
     ])).toBe(false);
+  });
+
+  it('preserves repeated delegation markers as history instead of overwriting order', () => {
+    const result: AutoDentProgressResult = {
+      prs: [],
+      cases: [],
+      stopRequested: false,
+    };
+
+    upsertProgressStep(result, { phase: 'DELEGATE', state: 'fail', detail: 'not delegated yet' });
+    upsertProgressStep(result, { phase: 'IMPLEMENT', state: 'started', detail: 'case:case-1' });
+    upsertProgressStep(result, { phase: 'DELEGATE', state: 'done', detail: 'late delegated search' });
+
+    expect(result.progressSteps?.filter((step) => step.phase === 'DELEGATE')).toHaveLength(2);
+    expect(hasContextDelegationProgressEvidence(result.progressSteps)).toBe(false);
   });
 });
