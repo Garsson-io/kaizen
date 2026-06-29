@@ -77,7 +77,9 @@ import {
   applyContextDelegationAnalysis,
   buildContextDelegationAnalysisLog,
   formatHarnessFailureForDisplay,
+  formatHarnessFailureSummaryLines,
   formatProviderWorkspaceFailureDiagnosis,
+  formatStopReasonForDisplay,
 } from './auto-dent-run.js';
 import { analyzeContextDelegation } from './auto-dent-context-delegation.js';
 import {
@@ -5429,6 +5431,18 @@ describe('provider workspace contract', () => {
     expect(diagnosis.detail).toContain('no non-main case worktree found for assigned issue #1164');
     expect(diagnosis.nextAction).toContain('Create or enter a non-main case worktree bound to #1164');
     expect(formatHarnessFailureForDisplay(diagnosis)).toContain('Root cause: provider workspace resolution failed for #1164');
+    expect(formatHarnessFailureSummaryLines(diagnosis)).toEqual([
+      'Root cause: provider workspace resolution failed for #1164',
+      'Phase:    provider workspace resolution',
+      'Detail:   no non-main case worktree found for assigned issue #1164',
+      'Next:     Create or enter a non-main case worktree bound to #1164, then rerun auto-dent for that issue.',
+    ]);
+  });
+
+  it('formats missing stop reasons without leaking undefined', () => {
+    expect(formatStopReasonForDisplay(undefined)).toBe('requested without reason');
+    expect(formatStopReasonForDisplay('   ')).toBe('requested without reason');
+    expect(formatStopReasonForDisplay('backlog exhausted')).toBe('backlog exhausted');
   });
 
   it('does not select another worktree whose issue token only shares a prefix', () => {
@@ -5514,7 +5528,7 @@ describe('provider workspace contract', () => {
     expect(failureSection).not.toContain('stopRequested = true');
     expect(finalizationSection).not.toContain('Claude requested batch stop');
     expect(finalizationSection).toContain('Agent requested batch stop');
-    expect(finalizationSection).toContain('requested without reason');
+    expect(finalizationSection).toContain('formatStopReasonForDisplay');
   });
 });
 

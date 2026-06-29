@@ -3460,6 +3460,20 @@ export function formatHarnessFailureForDisplay(failure: HarnessFailure): string 
   ].filter(Boolean).join('\n');
 }
 
+export function formatHarnessFailureSummaryLines(failure: HarnessFailure): string[] {
+  return [
+    `Root cause: ${failure.summary}`,
+    `Phase:    ${failure.phase}`,
+    `Detail:   ${failure.detail}`,
+    ...(failure.nextAction ? [`Next:     ${failure.nextAction}`] : []),
+  ];
+}
+
+export function formatStopReasonForDisplay(reason?: string): string {
+  const trimmed = reason?.trim();
+  return trimmed || 'requested without reason';
+}
+
 async function runCodex(
   input: {
     state: BatchState;
@@ -4081,11 +4095,8 @@ function printRunSummary(
   );
   console.log(`  \u2502 Status:   ${status}`);
   if (result.harnessFailure) {
-    console.log(`  \u2502 Root cause: ${result.harnessFailure.summary}`);
-    console.log(`  \u2502 Phase:    ${result.harnessFailure.phase}`);
-    console.log(`  \u2502 Detail:   ${result.harnessFailure.detail}`);
-    if (result.harnessFailure.nextAction) {
-      console.log(`  \u2502 Next:     ${result.harnessFailure.nextAction}`);
+    for (const line of formatHarnessFailureSummaryLines(result.harnessFailure)) {
+      console.log(`  \u2502 ${line}`);
     }
   }
   console.log(`  \u2502 Duration: ${duration}s`);
@@ -4116,7 +4127,7 @@ function printRunSummary(
     console.log(`  \u2502 Closed:   ${result.issuesClosed.join(' ')}`);
   for (const c of result.cases) console.log(`  \u2502 Case:     ${c}`);
   if (result.stopRequested)
-    console.log(`  \u2502 ${color.red('STOP:')}     ${result.stopReason || 'requested without reason'}`);
+    console.log(`  \u2502 ${color.red('STOP:')}     ${formatStopReasonForDisplay(result.stopReason)}`);
   console.log(`  \u2502 Steps:`);
   for (const step of buildKaizenCycleSteps(result, repo)) {
     console.log(`  \u2502   ${step.phase}: ${step.state}${step.detail ? ` — ${step.detail}` : ''}${step.url ? ` (${step.url})` : ''}`);
@@ -5179,7 +5190,7 @@ async function main(): Promise<void> {
   }
 
   if (result.stopRequested) {
-    const stopReason = result.stopReason || 'requested without reason';
+    const stopReason = formatStopReasonForDisplay(result.stopReason);
     freshState.stop_reason = `agent requested stop: ${stopReason}`;
     console.log(`>>> Agent requested batch stop: ${stopReason}`);
   }

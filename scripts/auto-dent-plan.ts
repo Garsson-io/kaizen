@@ -353,6 +353,20 @@ export function formatPlanningProgress(input: {
   ].join('');
 }
 
+export function clearPlanningTimers(
+  timers: {
+    timeout: ReturnType<typeof setTimeout>;
+    progress: ReturnType<typeof setInterval>;
+  },
+  deps: {
+    clearTimeoutFn?: typeof clearTimeout;
+    clearIntervalFn?: typeof clearInterval;
+  } = {},
+): void {
+  (deps.clearTimeoutFn ?? clearTimeout)(timers.timeout);
+  (deps.clearIntervalFn ?? clearInterval)(timers.progress);
+}
+
 /**
  * Extract a JSON block from Claude's response text.
  * Looks for ```json ... ``` fenced blocks first, then bare JSON.
@@ -669,8 +683,7 @@ async function runPlanning(
     });
 
     child.on('close', () => {
-      clearTimeout(timer);
-      clearInterval(progressTimer);
+      clearPlanningTimers({ timeout: timer, progress: progressTimer });
       const fullText = extractPlanningText(providerName, rawOutput);
       const parsed = extractPlanJson(fullText);
       if (parsed) {
@@ -688,8 +701,7 @@ async function runPlanning(
     });
 
     child.on('error', (err) => {
-      clearTimeout(timer);
-      clearInterval(progressTimer);
+      clearPlanningTimers({ timeout: timer, progress: progressTimer });
       console.log(formatPlanningFailure(provider, `error: ${err.message}`));
       resolve(null);
     });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -15,6 +15,7 @@ import {
   buildPlanPrompt,
   buildPlanningCommand,
   buildPlanningSchemaFile,
+  clearPlanningTimers,
   titleTokens,
   deriveThemes,
   ensureThemes,
@@ -305,6 +306,23 @@ describe('provider-aware planning (#1146)', () => {
     expect(fileRead).toBe('inspecting files');
   });
 
+  it('summarizes Claude planning activity and ignores malformed/unknown rows', () => {
+    const claudeTool = summarizePlanningActivity('claude', JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [{
+          type: 'tool_use',
+          name: 'Bash',
+          input: { command: 'git worktree list --porcelain' },
+        }],
+      },
+    }));
+
+    expect(claudeTool).toBe('checking worktrees');
+    expect(summarizePlanningActivity('codex', 'not-json')).toBeNull();
+    expect(summarizePlanningActivity('codex', JSON.stringify({ type: 'unknown' }))).toBeNull();
+  });
+
   it('formats bounded planning progress with elapsed time, activity, counts, and raw log path', () => {
     expect(formatPlanningProgress({
       provider: { provider: 'codex', billing: 'subscription-cli' },
@@ -320,6 +338,18 @@ describe('provider-aware planning (#1146)', () => {
   it('uses a stable raw planning output path per provider', () => {
     expect(planningRawOutputFile('/tmp/batch', 'codex')).toBe('/tmp/batch/plan-codex.jsonl');
     expect(planningRawOutputFile('/tmp/batch', 'claude')).toBe('/tmp/batch/plan-claude-stream.jsonl');
+  });
+
+  it('clears both planning timeout and progress timers', () => {
+    const clearTimeoutFn = vi.fn();
+    const clearIntervalFn = vi.fn();
+    clearPlanningTimers(
+      { timeout: 111 as any, progress: 222 as any },
+      { clearTimeoutFn: clearTimeoutFn as any, clearIntervalFn: clearIntervalFn as any },
+    );
+
+    expect(clearTimeoutFn).toHaveBeenCalledWith(111);
+    expect(clearIntervalFn).toHaveBeenCalledWith(222);
   });
 
   it('captures raw planning output and starts progress inside the provider wait path', () => {
