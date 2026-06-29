@@ -5,8 +5,10 @@ import {
   expandDimensionGroups,
   formatRecoveryCommands,
   parseCliArgs,
+  parseTimeoutMs,
   reviewResultToArtifact,
   runReviewRound,
+  storeDebugArtifact,
   storeReviewArtifact,
   type ReviewRoundArtifact,
 } from './review-round.js';
@@ -82,6 +84,11 @@ describe('parseCliArgs', () => {
   it('rejects malformed integer flags instead of truncating them', () => {
     expect(() => parseCliArgs(['store', '--file', 'artifact.json', '--round', '7abc'])).toThrow('--round must be a positive integer');
     expect(() => parseCliArgs(['store', '--file', 'artifact.json', '--round', '1.5'])).toThrow('--round must be a positive integer');
+  });
+
+  it('rejects zero timeouts', () => {
+    expect(() => parseTimeoutMs('0')).toThrow('--timeout must be positive');
+    expect(() => parseTimeoutMs('0s')).toThrow('--timeout must be positive');
   });
 
   it('accepts explicit full PR review mode', () => {
@@ -345,7 +352,7 @@ describe('storeReviewArtifact', () => {
         },
       ],
     );
-    expect(deps.writeReviewSentinel).toHaveBeenCalledWith('Garsson-io/kaizen', '1735', 4);
+    expect(deps.writeReviewSentinel).toHaveBeenCalledWith('Garsson-io/kaizen', '1735', 4, { strict: true });
     expect(deps.rerunReviewVerdictGate).toHaveBeenCalledWith('Garsson-io/kaizen', '1735');
     expect(result).toEqual({ round: 4, urls: ['u1'], summaryUrl: 'summary-url', gate: 'rerun requested' });
   });
@@ -364,6 +371,26 @@ describe('storeReviewArtifact', () => {
     expect(deps.rerunReviewVerdictGate).not.toHaveBeenCalled();
     expect(deps.writeReviewSentinel).not.toHaveBeenCalled();
     expect(result).toEqual({ round: 7, urls: [], summaryUrl: undefined, gate: undefined });
+  });
+});
+
+describe('storeDebugArtifact', () => {
+  it('stores a non-authoritative debug attachment without calling authoritative storage', () => {
+    const deps = { writeAttachment: vi.fn().mockReturnValue('debug-url') };
+    const artifact = baseArtifact({
+      result: {
+        ...baseArtifact().result,
+        verdict: 'fail',
+        missingCount: 1,
+      },
+    });
+
+    const url = storeDebugArtifact(artifact, 'logs/review/pr-1735-r1.json', deps);
+
+    expect(url).toBe('debug-url');
+    expect(deps.writeAttachment.mock.calls[0][0]).toEqual({ kind: 'pr', number: '1735', repo: 'Garsson-io/kaizen' });
+    expect(deps.writeAttachment.mock.calls[0][1]).toMatch(/^review\/debug\//);
+    expect(deps.writeAttachment.mock.calls[0][2]).toContain('does not satisfy the review verdict gate');
   });
 });
 

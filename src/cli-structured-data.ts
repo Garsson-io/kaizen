@@ -213,8 +213,8 @@ function writeSentinelRecord(
   });
 }
 
-export function writeReviewSentinel(repo: string, pr: string | undefined, round: number): void {
-  if (!pr) return;
+export function writeReviewSentinel(repo: string, pr: string | undefined, round: number, opts: { strict?: boolean } = {}): boolean {
+  if (!pr) return false;
   try {
     const target = prTarget(pr, repo);
     const dimensionsReviewed = listReviewDimensions(target, round);
@@ -232,8 +232,11 @@ export function writeReviewSentinel(repo: string, pr: string | undefined, round:
       { findingCount: 0, totalDone: 0, totalPartial: 0, totalMissing: 0 },
     );
     writeSentinelRecord(repo, pr, round, dimensionsReviewed, totals);
+    return true;
   } catch {
+    if (opts.strict) throw new Error(`write-review-sentinel: failed for PR #${pr} round ${round}`);
     // best effort — sentinel is advisory
+    return false;
   }
 }
 

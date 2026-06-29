@@ -44,6 +44,19 @@ missing requested dimensions. A successful store uses `storeReviewBatch()`,
 writes the review sentinel through the existing structured-data CLI helper, and
 optionally reruns the Review verdict gate.
 
+For failed artifacts that should be preserved for debugging without satisfying
+the merge gate, use `--debug`:
+
+```bash
+npx tsx scripts/review-round.ts store \
+  --file logs/review/pr-1739-r1.json \
+  --debug
+```
+
+This writes a `review/debug/*` attachment on the PR. It does not update
+`review/active-round`, does not write a review sentinel, and does not satisfy
+the Review verdict gate.
+
 ```bash
 npx tsx scripts/review-round.ts run-and-store \
   --pr 1739 --issue 1736 --repo Garsson-io/kaizen \

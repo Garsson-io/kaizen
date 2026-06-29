@@ -28,6 +28,8 @@ import {
   storeReviewBatch,
   type ReviewFindingData,
 } from '../src/structured-data.js';
+import { writeAttachment } from '../src/section-editor.js';
+import { buildCappedBody } from '../src/capped-attachment.js';
 import { gh } from '../src/lib/gh-exec.js';
 import {
   parseSubscriptionAgentProvider,
@@ -54,6 +56,7 @@ export interface ReviewRoundCliArgs {
   file?: string;
   round?: number;
   dryRun: boolean;
+  debug: boolean;
   rerunGate: boolean;
   storeOnlyIfPass: boolean;
 }
@@ -102,6 +105,7 @@ export interface StoreReviewArtifactDeps {
   storeReviewBatch: typeof storeReviewBatch;
   rerunReviewVerdictGate: typeof rerunReviewVerdictGate;
   writeReviewSentinel: typeof writeReviewSentinel;
+  writeAttachment: typeof writeAttachment;
 }
 
 export interface StoreReviewArtifactResult {
@@ -163,6 +167,7 @@ export function parseTimeoutMs(value: string | undefined): number | undefined {
   const match = value.match(/^(\d+)(ms|s|m)?$/);
   if (!match) throw new Error(`invalid --timeout ${JSON.stringify(value)}; use values like 30000ms, 180s, or 3m`);
   const amount = Number.parseInt(match[1], 10);
+  if (amount <= 0) throw new Error('--timeout must be positive');
   const unit = match[2] ?? 'ms';
   if (unit === 'm') return amount * 60_000;
   if (unit === 's') return amount * 1000;
@@ -179,6 +184,7 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
       allPrDimensions: false,
       reviewProvider: DEFAULT_PROVIDER,
       dryRun: false,
+      debug: false,
       rerunGate: false,
       storeOnlyIfPass: false,
     };
@@ -205,6 +211,7 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
       file: { type: 'string' },
       round: { type: 'string' },
       'dry-run': { type: 'boolean' },
+      debug: { type: 'boolean' },
       'rerun-gate': { type: 'boolean' },
       'store-only-if-pass': { type: 'boolean' },
     },
@@ -231,6 +238,7 @@ export function parseCliArgs(argv = process.argv.slice(2)): ReviewRoundCliArgs {
     file: values.file,
     round: parsePositiveInt(values.round, '--round'),
     dryRun: values['dry-run'] === true,
+    debug: values.debug === true,
     rerunGate: values['rerun-gate'] === true,
     storeOnlyIfPass: values['store-only-if-pass'] === true,
   };
@@ -458,7 +466,7 @@ function toReviewFindingData(dimension: DimensionReview): ReviewFindingData {
 export async function storeReviewArtifact(
   artifact: ReviewRoundArtifact,
   options: StoreReviewArtifactOptions = {},
-  deps: StoreReviewArtifactDeps = { nextReviewRound, storeReviewBatch, rerunReviewVerdictGate, writeReviewSentinel },
+  deps: StoreReviewArtifactDeps = { nextReviewRound, storeReviewBatch, rerunReviewVerdictGate, writeReviewSentinel, writeAttachment },
 ): Promise<StoreReviewArtifactResult> {
   assertArtifactStoreable(artifact);
   const target = prTarget(artifact.pr, artifact.repo);
@@ -468,13 +476,43 @@ export async function storeReviewArtifact(
   }
 
   const stored = deps.storeReviewBatch(target, round, artifact.result.dimensions.map(toReviewFindingData));
-  deps.writeReviewSentinel(artifact.repo, artifact.pr, round);
+  deps.writeReviewSentinel(artifact.repo, artifact.pr, round, { strict: true });
   let gate: string | undefined;
   if (options.rerunGate) {
     const rerun: RerunResult = deps.rerunReviewVerdictGate(artifact.repo, artifact.pr);
     gate = rerun.message;
   }
   return { round, urls: stored.urls, summaryUrl: stored.summaryUrl, gate };
+}
+
+export function debugAttachmentName(artifact: ReviewRoundArtifact): string {
+  return `review/debug/${defaultArtifactPath(artifact.pr, artifact.generatedAt)
+    .replace(/^logs\/review\//, '')
+    .replace(/\.json$/, '')}`;
+}
+
+export function buildDebugAttachmentBody(artifact: ReviewRoundArtifact, artifactPath: string): string {
+  const summary = [
+    `- Verdict: ${artifact.result.verdict}`,
+    `- Missing: ${artifact.result.missingCount}`,
+    `- Partial: ${artifact.result.partialCount}`,
+    `- Provider failures: ${artifact.result.failedDimensions.join(', ') || 'none'}`,
+    `- Artifact path: ${artifactPath}`,
+  ].join('\n');
+  return buildCappedBody({
+    header: '## Non-authoritative Review Debug Artifact\n\nThis attachment is for debugging only. It does not update active review round state and does not satisfy the review verdict gate.',
+    summary,
+    blocks: [{ label: 'review-round artifact', fence: 'json', content: JSON.stringify(artifact, null, 2) }],
+    pointer: artifactPath,
+  });
+}
+
+export function storeDebugArtifact(
+  artifact: ReviewRoundArtifact,
+  artifactPath: string,
+  deps: Pick<StoreReviewArtifactDeps, 'writeAttachment'> = { writeAttachment },
+): string {
+  return deps.writeAttachment(prTarget(artifact.pr, artifact.repo), debugAttachmentName(artifact), buildDebugAttachmentBody(artifact, artifactPath));
 }
 
 export async function runReviewRound(
@@ -628,7 +666,7 @@ export function buildHelp(): string {
 
 Usage:
   npx tsx scripts/review-round.ts run --pr N --issue N --repo owner/repo [--dimensions a,b|--group diff,plan|--all-pr] [--provider claude|codex] [--timeout 360s] [--out file.json]
-  npx tsx scripts/review-round.ts store --file file.json [--round N] [--dry-run] [--rerun-gate]
+  npx tsx scripts/review-round.ts store --file file.json [--round N] [--dry-run] [--debug] [--rerun-gate]
   npx tsx scripts/review-round.ts run-and-store --pr N --issue N --repo owner/repo --store-only-if-pass --out file.json [--rerun-gate]
 
 Examples:
@@ -643,6 +681,9 @@ Examples:
 
   # dry-run artifact only
   npx tsx scripts/review-round.ts store --file logs/review/pr-1735-r2.json --dry-run
+
+  # non-authoritative debug attachment (does not satisfy the review gate)
+  npx tsx scripts/review-round.ts store --file logs/review/pr-1735-r2.json --debug
 
   # store after inspection
   npx tsx scripts/review-round.ts store --file logs/review/pr-1735-r2.json --round 2 --rerun-gate
@@ -670,7 +711,13 @@ async function main(): Promise<void> {
   }
 
   if (args.command === 'store') {
-    const artifact = readArtifact(required(args.file, '--file'));
+    const artifactPath = required(args.file, '--file');
+    const artifact = readArtifact(artifactPath);
+    if (args.debug) {
+      const url = storeDebugArtifact(artifact, artifactPath);
+      console.log(`Debug artifact stored (non-authoritative): ${url}`);
+      return;
+    }
     const stored = await storeReviewArtifact(artifact, {
       round: args.round,
       dryRun: args.dryRun,
