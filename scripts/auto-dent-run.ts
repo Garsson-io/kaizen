@@ -81,6 +81,7 @@ import { subscriptionAgentProvider } from '../src/provider-contract.js';
 import { hasHardQualityFailure, type PostMergeVerificationVerdict } from '../src/verdict-binding-policy.js';
 import { extractPlanText } from '../src/structured-data.js';
 import { gh } from '../src/lib/gh-exec.js';
+import { parseGithubIssueUrl, parseGithubPrUrl, parseIssueNumber } from '../src/lib/github-pr.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -2492,6 +2493,230 @@ function formatGuidanceBlockquote(guidance: string): string[] {
   return normalized.split('\n').map((line) => `> ${line.trim() || ' '}`);
 }
 
+export interface DashboardLinkedItemSummary {
+  ref: string;
+  title?: string;
+  state?: string;
+  url?: string;
+}
+
+export interface DashboardEnrichment {
+  prs: Record<string, DashboardLinkedItemSummary>;
+  issues: Record<string, DashboardLinkedItemSummary>;
+}
+
+export type DashboardGhRunner = (args: string[]) => string;
+
+export function extractGuidancePriorities(guidance: string): string[] {
+  const normalized = guidance.replace(/\r\n?/g, '\n').trim();
+  if (!normalized) return [];
+
+  const bulletPriorities = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^[-*]\s+/, '').replace(/^\d+[.)]\s+/, '').trim())
+    .filter(Boolean);
+
+  if (bulletPriorities.length > 1) return bulletPriorities;
+
+  return normalized
+    .split(/[.;\n]+/)
+    .map((part) => part.replace(/^[-*]\s+/, '').replace(/^\d+[.)]\s+/, '').trim())
+    .filter(Boolean);
+}
+
+function guidanceTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 4);
+}
+
+function markdownTableCell(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim();
+}
+
+export function formatGuidanceCompletionMatrix(guidance: string, evidence: string[]): string {
+  const priorities = extractGuidancePriorities(guidance);
+  if (priorities.length === 0) return '';
+
+  const evidenceRows = evidence.map((item) => item.trim()).filter(Boolean);
+  const lines = [
+    '### Guidance Completion',
+    '',
+    '| Priority | Status | Evidence |',
+    '|----------|--------|----------|',
+  ];
+
+  for (const priority of priorities) {
+    const tokens = guidanceTokens(priority);
+    const matched = evidenceRows.find((item) => {
+      const lower = item.toLowerCase();
+      const matchCount = tokens.filter((token) => lower.includes(token)).length;
+      return tokens.length > 0 && matchCount >= Math.min(2, tokens.length);
+    });
+    lines.push(`| ${markdownTableCell(priority)} | ${matched ? 'observed' : 'not observed'} | ${matched ? markdownTableCell(matched) : '-'} |`);
+  }
+
+  return lines.join('\n');
+}
+
+function dashboardEmptyEnrichment(): DashboardEnrichment {
+  return { prs: {}, issues: {} };
+}
+
+function collectUnique(values: Array<string | undefined | null>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of values) {
+    const value = raw?.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
+function parseDashboardPrRef(ref: string, fallbackRepo: string): { repo: string; number: number; url: string } | null {
+  const parsedUrl = parseGithubPrUrl(ref);
+  if (parsedUrl) return { ...parsedUrl, url: ref };
+
+  const match = ref.match(/(?:^|[^\d])(\d+)(?:$|[^\d])/);
+  if (!match || !fallbackRepo) return null;
+  const number = Number(match[1]);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  return { repo: fallbackRepo, number, url: `https://github.com/${fallbackRepo}/pull/${number}` };
+}
+
+function parseDashboardIssueRef(ref: string, fallbackRepo: string): { repo: string; number: number; url: string } | null {
+  const parsedUrl = parseGithubIssueUrl(ref);
+  if (parsedUrl) return { ...parsedUrl, url: ref };
+
+  const number = parseIssueNumber(ref);
+  if (!number || !fallbackRepo) return null;
+  return { repo: fallbackRepo, number, url: `https://github.com/${fallbackRepo}/issues/${number}` };
+}
+
+function parseDashboardSummary(output: string): { title?: string; state?: string; url?: string } | null {
+  const parsed = parseJsonObject(output);
+  if (!parsed) return null;
+  const title = typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : undefined;
+  const state = typeof parsed.state === 'string' && parsed.state.trim() ? parsed.state.trim() : undefined;
+  const url = typeof parsed.url === 'string' && parsed.url.trim() ? parsed.url.trim() : undefined;
+  if (!title && !state && !url) return null;
+  return { title, state, url };
+}
+
+function collectDashboardPrRefs(state: BatchState): string[] {
+  const history = state.run_history ?? [];
+  return collectUnique([
+    ...state.prs,
+    ...(state.rescue_prs ?? []),
+    state.last_pr,
+    ...history.flatMap((run) => run.prs),
+  ]);
+}
+
+function collectDashboardIssueRefs(state: BatchState): string[] {
+  const history = state.run_history ?? [];
+  return collectUnique([
+    ...state.issues_filed,
+    ...state.issues_closed,
+    state.last_issue,
+    ...history.flatMap((run) => [...run.issues_filed, ...run.issues_closed]),
+  ]);
+}
+
+export function fetchDashboardEnrichment(
+  state: BatchState,
+  repo: string,
+  runGh: DashboardGhRunner = ghArgs,
+): DashboardEnrichment {
+  const enrichment = dashboardEmptyEnrichment();
+
+  for (const ref of collectDashboardPrRefs(state)) {
+    const parsed = parseDashboardPrRef(ref, repo);
+    if (!parsed) continue;
+    try {
+      const summary = parseDashboardSummary(runGh([
+        'pr', 'view', String(parsed.number),
+        '--repo', parsed.repo,
+        '--json', 'title,state,url',
+      ]));
+      if (summary) {
+        enrichment.prs[ref] = { ref, url: summary.url ?? parsed.url, title: summary.title, state: summary.state };
+      }
+    } catch {
+      // Best-effort enrichment only. Dashboard rendering must survive gh failures.
+    }
+  }
+
+  for (const ref of collectDashboardIssueRefs(state)) {
+    const parsed = parseDashboardIssueRef(ref, repo);
+    if (!parsed) continue;
+    try {
+      const summary = parseDashboardSummary(runGh([
+        'issue', 'view', String(parsed.number),
+        '--repo', parsed.repo,
+        '--json', 'title,state,url',
+      ]));
+      if (summary) {
+        enrichment.issues[ref] = { ref, url: summary.url ?? parsed.url, title: summary.title, state: summary.state };
+      }
+    } catch {
+      // Best-effort enrichment only. Dashboard rendering must survive gh failures.
+    }
+  }
+
+  return enrichment;
+}
+
+function dashboardPrEvidence(prs: string[], enrichment?: DashboardEnrichment): string[] {
+  return prs.map((pr) => formatPrForDashboard(pr, enrichment));
+}
+
+function dashboardIssueEvidence(issues: string[], repo: string, enrichment?: DashboardEnrichment): string[] {
+  return issues.map((issue) => formatIssueForDashboard(issue, repo, enrichment));
+}
+
+function formatDashboardSummary(ref: string, summary: DashboardLinkedItemSummary | undefined, fallbackUrl?: string): string {
+  if (!summary?.title && !summary?.state) return fallbackUrl ?? ref;
+  const url = summary.url ?? fallbackUrl ?? ref;
+  const state = summary.state ? ` (${summary.state})` : '';
+  return `${url} — ${summary.title ?? ref}${state}`;
+}
+
+function formatPrForDashboard(pr: string, enrichment?: DashboardEnrichment): string {
+  const parsed = parseDashboardPrRef(pr, '');
+  const fallback = parsed?.url ?? pr;
+  return formatDashboardSummary(pr, enrichment?.prs[pr], fallback);
+}
+
+function formatIssueForDashboard(
+  issue: string | undefined,
+  repo: string,
+  enrichment?: DashboardEnrichment,
+  fallbackTitle?: string,
+): string {
+  if (!issue) return 'unknown';
+  const parsed = parseDashboardIssueRef(issue, repo);
+  const fallback = parsed?.url ?? issue;
+  const summary = enrichment?.issues[issue];
+  if (summary) return formatDashboardSummary(issue, summary, fallback);
+  if (fallbackTitle !== undefined) return formatIssueForDisplay(issue, repo, fallbackTitle);
+  if (issue.startsWith('#')) return issue;
+  return formatIssueForDisplay(issue, repo, fallbackTitle);
+}
+
+function formatDashboardList(values: string[], noneLabel = 'none'): string {
+  return values.length > 0 ? values.join(', ') : noneLabel;
+}
+
+function hasDashboardEnrichment(enrichment: DashboardEnrichment | undefined): boolean {
+  return Object.keys(enrichment?.prs ?? {}).length > 0 || Object.keys(enrichment?.issues ?? {}).length > 0;
+}
+
 function formatProgressIssueModeDistribution(history: RunMetrics[]): string {
   if (history.length === 0) return 'none yet';
   const modeDist = computeModeDistribution(history);
@@ -2512,6 +2737,7 @@ function formatDurationHoursMinutes(seconds: number): string {
 export function formatBatchProgressIssueBody(
   state: BatchState,
   nowEpoch = Math.floor(Date.now() / 1000),
+  enrichment?: DashboardEnrichment,
 ): string {
   const history = state.run_history ?? [];
   const totalCost = history.reduce((sum, run) => sum + run.cost_usd, 0);
@@ -2537,6 +2763,12 @@ export function formatBatchProgressIssueBody(
     `| Total cost | $${totalCost.toFixed(2)} |`,
     `| Wall time | ${formatDurationHoursMinutes(nowEpoch - state.batch_start)} |`,
     `| Modes used | ${formatProgressIssueModeDistribution(history)} |`,
+    '',
+    '### Work Artifacts',
+    '',
+    `- **PRs:** ${formatDashboardList(dashboardPrEvidence(state.prs, enrichment))}`,
+    `- **Issues filed:** ${formatDashboardList(dashboardIssueEvidence(state.issues_filed, state.kaizen_repo, enrichment))}`,
+    `- **Issues closed:** ${formatDashboardList(dashboardIssueEvidence(state.issues_closed, state.kaizen_repo, enrichment))}`,
     '',
     '<details>',
     '<summary>Batch config</summary>',
@@ -2643,7 +2875,8 @@ export function ensureBatchProgressIssue(
 
   const cleanGuidance = cleanGuidanceForTitle(state.guidance);
   const title = `[Auto-Dent] ${truncateAtWordBoundary(cleanGuidance, 70)} (${state.batch_id})`;
-  const body = formatBatchProgressIssueBody(state);
+  const enrichment = fetchDashboardEnrichment(state, kaizenRepo, runGh);
+  const body = formatBatchProgressIssueBody(state, undefined, enrichment);
 
   let url = '';
   try {
@@ -2676,6 +2909,7 @@ export interface FormatRunProgressAttachmentInput {
   result: RunResult;
   kaizenRepo: string;
   mode?: string;
+  enrichment?: DashboardEnrichment;
 }
 
 function formatRunDuration(seconds: number): string {
@@ -2711,16 +2945,16 @@ export function formatRunProgressAttachment(input: FormatRunProgressAttachmentIn
     '',
     '### Outcome',
     '',
-    `- **Issue:** ${formatIssueForDisplay(result.pickedIssue, kaizenRepo, result.pickedIssueTitle)}`,
-    `- **PR:** ${result.prs.length > 0 ? result.prs.join(', ') : 'none'}`,
+    `- **Issue:** ${formatIssueForDashboard(result.pickedIssue, kaizenRepo, input.enrichment, result.pickedIssueTitle)}`,
+    `- **PR:** ${formatDashboardList(dashboardPrEvidence(result.prs, input.enrichment))}`,
     `- **Review:** ${formatReviewForDisplay(result)}`,
   ];
 
   if (result.issuesFiled.length > 0) {
-    lines.push(`- **Issues filed:** ${result.issuesFiled.join(', ')}`);
+    lines.push(`- **Issues filed:** ${formatDashboardList(dashboardIssueEvidence(result.issuesFiled, kaizenRepo, input.enrichment))}`);
   }
   if (result.issuesClosed.length > 0) {
-    lines.push(`- **Issues closed:** ${result.issuesClosed.join(' ')}`);
+    lines.push(`- **Issues closed:** ${dashboardIssueEvidence(result.issuesClosed, kaizenRepo, input.enrichment).join(' ')}`);
   }
   if (result.cases.length > 0) {
     lines.push(`- **Cases:** ${result.cases.map((c) => '`' + c + '`').join(', ')}`);
@@ -2802,6 +3036,7 @@ export interface FormatBatchCompletionAttachmentInput {
   progressIssueNumber: string;
   kaizenRepo: string;
   batchDir?: string;
+  enrichment?: DashboardEnrichment;
 }
 
 function formatRunLimit(state: BatchState): string {
@@ -2825,6 +3060,7 @@ export function formatBatchCompletionAttachment(input: FormatBatchCompletionAtta
     reconciledClosed,
     progressIssueNumber,
     batchDir,
+    enrichment,
   } = input;
   const history = state.run_history ?? [];
   const failures = formatFailureDistribution(
@@ -2834,6 +3070,8 @@ export function formatBatchCompletionAttachment(input: FormatBatchCompletionAtta
   );
   const postHoc = batchScore.post_hoc;
   const guidanceTitle = cleanGuidanceForTitle(state.guidance) || state.batch_id;
+  const closedIssueRefs = reconciledClosed ?? state.issues_closed;
+  const enriched = hasDashboardEnrichment(enrichment);
 
   const lines = [
     `### Batch Complete: ${guidanceTitle}`,
@@ -2847,9 +3085,9 @@ export function formatBatchCompletionAttachment(input: FormatBatchCompletionAtta
     `- **Runs:** ${state.run} of ${formatRunLimit(state)}`,
     `- **Wall time:** ${formatDurationHoursMinutes(wallTimeSeconds)}`,
     `- **Stop reason:** ${state.stop_reason || 'completed'}`,
-    `- **PRs:** ${state.prs.length > 0 ? state.prs.join(', ') : 'none'}`,
-    `- **Issues filed:** ${state.issues_filed.length > 0 ? state.issues_filed.join(', ') : 'none'}`,
-    `- **Issues closed:** ${formatIssuesClosedLine(reconciledClosed, state.issues_closed)}`,
+    `- **PRs:** ${formatDashboardList(dashboardPrEvidence(state.prs, enriched ? enrichment : undefined))}`,
+    `- **Issues filed:** ${formatDashboardList(dashboardIssueEvidence(state.issues_filed, input.kaizenRepo, enriched ? enrichment : undefined))}`,
+    `- **Issues closed:** ${enriched ? formatDashboardList(dashboardIssueEvidence(closedIssueRefs, input.kaizenRepo, enrichment)) : formatIssuesClosedLine(reconciledClosed, state.issues_closed)}`,
     '',
     '### Modes And Failures',
     '',
@@ -2869,6 +3107,16 @@ export function formatBatchCompletionAttachment(input: FormatBatchCompletionAtta
     );
   } else {
     lines.push('- **Merged PRs:** not checked');
+  }
+
+  const guidanceEvidence = [
+    ...dashboardPrEvidence(state.prs, enriched ? enrichment : undefined),
+    ...dashboardIssueEvidence(state.issues_filed, input.kaizenRepo, enriched ? enrichment : undefined),
+    ...dashboardIssueEvidence(closedIssueRefs, input.kaizenRepo, enriched ? enrichment : undefined),
+  ];
+  const guidanceCompletion = formatGuidanceCompletionMatrix(state.guidance, guidanceEvidence);
+  if (guidanceCompletion) {
+    lines.push('', guidanceCompletion);
   }
 
   lines.push(
@@ -2922,6 +3170,8 @@ export function closeBatchProgressIssue(
     console.log(`  [post-hoc] ${formatPostHocLine(postHoc)}`);
   }
 
+  const enrichment = fetchDashboardEnrichment(state, kaizenRepo, deps.gh ?? ghArgs);
+
   const summary = formatBatchCompletionAttachment({
     state,
     batchScore,
@@ -2930,6 +3180,7 @@ export function closeBatchProgressIssue(
     progressIssueNumber: issueNum,
     kaizenRepo,
     batchDir,
+    enrichment,
   });
 
   writeProgressAttachment(
