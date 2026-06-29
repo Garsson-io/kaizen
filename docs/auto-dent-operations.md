@@ -334,6 +334,14 @@ After a batch completes:
        --repo Garsson-io/kaizen --name batch-artifacts
      ```
 
+4. **OpenTelemetry GenAI traces** — JSONL remains the durable source of truth.
+   To mirror completed runs to an OTLP/GenAI-compatible HTTP collector, set:
+   ```bash
+   KAIZEN_OTEL_ENDPOINT=https://otel.example/v1/traces
+   ```
+   Export is best-effort and fail-open: a collector outage must not block the
+   auto-dent run or prevent `events.jsonl` from being written.
+
 ## Scoring
 
 The `auto-dent-score.ts` module scores run quality. Per-run scores consider:
