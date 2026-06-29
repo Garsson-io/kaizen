@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync 
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildTypeScriptSubprocess } from './test-typescript-runner.js';
 import {
   checkPluginDoubleInstall,
   checkDanglingHookPaths,
@@ -20,6 +21,11 @@ import {
   restartSensitiveFiles,
   DoctorOpts,
 } from './kaizen-doctor.ts';
+
+const DOCTOR_CLI = join(__dirname, 'kaizen-doctor.ts');
+const DOCTOR_RUNNER = buildTypeScriptSubprocess(DOCTOR_CLI, {
+  startDir: __dirname,
+});
 
 function makeProject(): string {
   return mkdtempSync(join(tmpdir(), 'kaizen-doctor-proj-'));
@@ -48,6 +54,18 @@ function writeHook(projectRoot: string, rel: string, executable = true, content 
   if (executable) chmodSync(p, 0o755);
   else chmodSync(p, 0o644);
   return p;
+}
+
+function runDoctorHookSyntax(projectRoot: string, homeDir: string) {
+  return spawnSync(
+    DOCTOR_RUNNER.command,
+    [...DOCTOR_RUNNER.args, 'hook-syntax', '--quiet'],
+    {
+      cwd: projectRoot,
+      env: { ...process.env, HOME: homeDir },
+      encoding: 'utf8',
+    },
+  );
 }
 
 describe('safe JSON parsing', () => {
@@ -383,25 +401,22 @@ describe('hook-syntax CLI and SessionStart wrapper', () => {
     writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/conflicted.sh' }] }] } });
   }
 
+  it('test runtime invariant: hook-syntax CLI smoke uses the shared TypeScript runner', () => {
+    expect(runDoctorHookSyntax.toString()).toContain('DOCTOR_RUNNER');
+    expect(runDoctorHookSyntax.toString()).not.toContain("spawnSync('npx'");
+  });
+
   it('hook-syntax --quiet is silent on pass and exits non-zero on corrupt hooks', () => {
     writeHook(proj, '.claude/hooks/foo.sh', true);
     writePluginJson(proj, { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/.claude/hooks/foo.sh' }] }] } });
 
-    const ok = spawnSync('npx', ['--prefix', process.cwd(), 'tsx', join(process.cwd(), 'scripts/kaizen-doctor.ts'), 'hook-syntax', '--quiet'], {
-      cwd: proj,
-      env: { ...process.env, HOME: home },
-      encoding: 'utf8',
-    });
+    const ok = runDoctorHookSyntax(proj, home);
     expect(ok.status).toBe(0);
     expect(ok.stdout).toBe('');
 
     rmSync(join(proj, '.claude/hooks/foo.sh'));
     writeConflictedPluginHook();
-    const bad = spawnSync('npx', ['--prefix', process.cwd(), 'tsx', join(process.cwd(), 'scripts/kaizen-doctor.ts'), 'hook-syntax', '--quiet'], {
-      cwd: proj,
-      env: { ...process.env, HOME: home },
-      encoding: 'utf8',
-    });
+    const bad = runDoctorHookSyntax(proj, home);
     expect(bad.status).toBe(1);
     expect(bad.stdout).toContain('[FAIL] hook-syntax-smoke');
     expect(bad.stdout).toContain('conflict markers');
