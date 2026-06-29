@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, readdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { tmpdir } from 'os';
-import { execFileSync, execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import {
   buildLiveProbeCommand,
   normalizeLiveProbeExitCode,
@@ -37,6 +37,7 @@ import { summarizeEvents } from './batch-summary.js';
 import { scoreBatch } from './auto-dent-score.js';
 import { normalizeCodexEventToStreamMessages } from './auto-dent-codex.js';
 import { parseReviewOutput } from '../src/review-battery.js';
+import { resolveProjectRoot } from '../src/lib/resolve-project-root.js';
 
 // Resolve repo root (works from worktrees too)
 function getRepoRoot(): string {
@@ -52,14 +53,7 @@ function getRepoRoot(): string {
 }
 
 function getWorktreeRoot(): string {
-  try {
-    return execSync(
-      'git rev-parse --show-toplevel',
-      { encoding: 'utf8' },
-    ).trim();
-  } catch {
-    return resolve(dirname(new URL(import.meta.url).pathname), '..');
-  }
+  return resolveProjectRoot(dirname(new URL(import.meta.url).pathname));
 }
 
 const REPO_ROOT = getRepoRoot();
