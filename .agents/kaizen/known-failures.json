@@ -1,11 +1,4 @@
 {
   "_doc": "Registry of known-failing tests that are allowed to NOT block merge/CI because each failure has an OWNED, OPEN tracking issue (#1518). A failing test is either fixed before merge, or it is a tracked incident with a single owner — never invisible background noise. Each entry: { test: a substring matched against the failing test id (pytest nodeid, vitest name, or shell test file), issue: the owning OPEN GitHub issue number, reason: why it is tolerated for now }. The `known-failures` CI gate FAILS if any entry's owning issue is closed or missing, forcing a fix or a re-filed owner. An empty list means the tree must be fully green.",
-  "knownFailures": [
-    {
-      "test": "extracts consistent artifacts from batch-260323-0003-072b/run-",
-      "issue": 1682,
-      "reason": "Captured auto-dent harness replay fixtures currently emit shorthand issue refs like #615 where the test expects full GitHub issue URLs.",
-      "addedBy": "codex"
-    }
-  ]
+  "knownFailures": []
 }

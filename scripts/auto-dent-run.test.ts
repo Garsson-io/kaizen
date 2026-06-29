@@ -2541,7 +2541,7 @@ describe('e2e: full workflow through stream pipeline', () => {
 
     expect(capture.result.toolCalls).toBe(2);
     expect(capture.result.prs).toContain('https://github.com/Garsson-io/kaizen/pull/500');
-    expect(capture.result.issuesClosed).toContain('#472');
+    expect(capture.result.issuesClosed).toContain('https://github.com/Garsson-io/kaizen/issues/472');
     expect(capture.result.cost).toBe(2.5);
   });
 
@@ -2665,8 +2665,8 @@ describe('e2e: full workflow through stream pipeline', () => {
 
     expect(result.issuesFiled).toContain('https://github.com/Garsson-io/kaizen/issues/700');
     expect(result.prs).toHaveLength(2);
-    expect(result.issuesClosed).toContain('#450');
-    expect(result.issuesClosed).toContain('#451');
+    expect(result.issuesClosed).toContain('https://github.com/Garsson-io/kaizen/issues/450');
+    expect(result.issuesClosed).toContain('https://github.com/Garsson-io/kaizen/issues/451');
   });
 
   it('handles phase with no fields gracefully', () => {

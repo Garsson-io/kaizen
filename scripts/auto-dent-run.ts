@@ -3426,7 +3426,7 @@ async function runCodex(
     let processExited = false;
     let raw = '';
     const progressCheckpoint = { signature: runProgressCheckpointSignature(input.result) };
-    const ctx: StreamContext = { provider: 'codex' };
+    const ctx: StreamContext = { provider: 'codex', issueRepo: input.state.kaizen_repo };
     const child = spawn('codex', buildCodexExecArgs(input.providerRoot, {
       sandbox: 'workspace-write',
       bypassApprovalsAndSandbox: false,
@@ -3532,7 +3532,7 @@ async function runClaude(
   };
 
   // Claude path: hooks are expected. The init-event check (#843) proves they loaded.
-  const ctx: StreamContext = { provider: 'claude' };
+  const ctx: StreamContext = { provider: 'claude', issueRepo: state.kaizen_repo };
 
   const logDir = dirname(stateFile);
   const modeSelection = selectMode(state, runNum, { logDir });
