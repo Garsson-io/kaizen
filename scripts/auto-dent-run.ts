@@ -67,6 +67,7 @@ import { truncateAtWordBoundary } from './auto-dent-display.js';
 import { parseJsonObject } from '../src/lib/json-value.js';
 import { readDurableJsonValueFile, readJsonValueFile, writeDurableJsonValueFile } from '../src/lib/json-file.js';
 import { hasHardQualityFailure } from '../src/verdict-binding-policy.js';
+import { subscriptionAgentProvider } from '../src/provider-contract.js';
 
 // Re-export from extracted modules for backward compatibility
 export {
@@ -2349,14 +2350,8 @@ export async function runReviewWiring(
           try {
             const phaseProviders = phaseProvidersForAgentProvider((input.provider ?? 'claude') as any);
             const reviewFixProviders = {
-              reviewProvider: {
-                provider: phaseProviders.review?.provider === 'codex' ? 'codex' as const : 'claude' as const,
-                billing: 'subscription-cli' as const,
-              },
-              fixProvider: {
-                provider: phaseProviders.fix?.provider === 'codex' ? 'codex' as const : 'claude' as const,
-                billing: 'subscription-cli' as const,
-              },
+              reviewProvider: subscriptionAgentProvider(phaseProviders.review?.provider === 'codex' ? 'codex' : 'claude'),
+              fixProvider: subscriptionAgentProvider(phaseProviders.fix?.provider === 'codex' ? 'codex' : 'claude'),
             };
             const fixState = await deps.runFixLoop({
               prUrl,

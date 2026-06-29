@@ -41,11 +41,10 @@ import { parseReviewOutput } from '../src/review-battery.js';
 // Resolve repo root (works from worktrees too)
 function getRepoRoot(): string {
   try {
-    const gitCommonDir = execSync(
-      'git rev-parse --path-format=absolute --git-common-dir',
+    return execSync(
+      'git rev-parse --show-toplevel',
       { encoding: 'utf8' },
     ).trim();
-    return gitCommonDir.replace(/\/\.git$/, '');
   } catch {
     return resolve(dirname(new URL(import.meta.url).pathname), '..');
   }
@@ -722,6 +721,7 @@ describe('RunResult: field completeness', () => {
 // Live smoke test — spawns a real bounded claude session
 
 const LIVE = process.env.LIVE_PROBE === '1';
+const LIVE_CODEX = process.env.LIVE_PROBE_CODEX === '1';
 
 describe('live: smoke test', () => {
   // Skip by default — requires claude CLI and API credits
@@ -736,10 +736,10 @@ describe('live: smoke test', () => {
     });
 
     // Claude should have exited cleanly
-    expect(capture.exitCode).toBe(0);
+    expect(capture.exitCode, `raw log: ${capture.logFile}\n${capture.logLines.slice(0, 20).join('\n')}`).toBe(0);
 
     // Should have emitted phase markers
-    expect(capture.phases.length).toBeGreaterThanOrEqual(1);
+    expect(capture.phases.length, `raw log: ${capture.logFile}`).toBeGreaterThanOrEqual(1);
 
     // Should have requested stop
     expect(capture.result.stopRequested).toBe(true);
@@ -748,6 +748,25 @@ describe('live: smoke test', () => {
     // Cost should be minimal
     expect(capture.result.cost).toBeLessThan(0.10);
 
-    console.log(`Live probe completed in ${capture.durationMs}ms, cost $${capture.result.cost.toFixed(3)}, ${capture.phases.length} phases`);
+    console.log(`Live probe completed in ${capture.durationMs}ms, cost $${capture.result.cost.toFixed(3)}, ${capture.phases.length} phases, log ${capture.logFile}`);
   }, 60_000); // 60s timeout for vitest
+});
+
+describe('live: Codex smoke test', () => {
+  const testFn = LIVE_CODEX ? it : it.skip;
+
+  testFn('pipeline smoke test — phase markers round-trip through real codex', async () => {
+    const capture = await runLiveProbe({
+      provider: 'codex',
+      prompt: 'Emit exactly one line: AUTO_DENT_PHASE: STOP | reason=codex smoke test. Do not edit files.',
+      cwd: REPO_ROOT,
+      timeoutMs: 30_000,
+    });
+
+    expect(capture.exitCode, `raw log: ${capture.logFile}\n${capture.logLines.slice(0, 20).join('\n')}`).toBe(0);
+    expect(capture.phases.length, `raw log: ${capture.logFile}`).toBeGreaterThanOrEqual(1);
+    expect(capture.result.stopRequested, `raw log: ${capture.logFile}`).toBe(true);
+    expect(capture.result.stopReason).toContain('codex smoke test');
+    console.log(`Codex live probe completed in ${capture.durationMs}ms, ${capture.phases.length} phases, log ${capture.logFile}`);
+  }, 60_000);
 });

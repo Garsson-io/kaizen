@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 /**
  * phase-marker.ts — the ONE parser/formatter for `AUTO_DENT_PHASE` marker lines.
  *
@@ -5,8 +7,8 @@
  * stream ingestor (`scripts/auto-dent-stream.ts` `parsePhaseMarkers`) reads back
  * into the work-cycle ledger and live console. Historically every emitter
  * hand-wrote the legacy `AUTO_DENT_PHASE: X | k=v` string; the parser lived
- * elsewhere. New markers use a JSON object after the prefix, while the parser
- * keeps legacy support so old logs and comments remain readable.
+ * elsewhere. The emitter keeps that public protocol, while the parser also
+ * accepts JSON payloads for machine-authored diagnostics.
  *
  * #1502: the `store-plan`/`store-testplan` CLI emits a `PLAN` marker through
  * here so the console can confirm a substantive plan/test-plan was stored, via a
@@ -21,19 +23,16 @@ export interface PhaseMarker {
   fields: Record<string, string>;
 }
 
+export const PhaseMarkerSchema = z.object({
+  phase: z.string().min(1),
+  fields: z.record(z.string(), z.string()).default({}),
+}).strict();
+
 function parseJsonMarker(raw: string): PhaseMarker | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object') return null;
-    const obj = parsed as Record<string, unknown>;
-    if (typeof obj.phase !== 'string' || obj.phase.trim() === '') return null;
-    const fields: Record<string, string> = {};
-    if (obj.fields && typeof obj.fields === 'object' && !Array.isArray(obj.fields)) {
-      for (const [key, value] of Object.entries(obj.fields as Record<string, unknown>)) {
-        if (typeof value === 'string') fields[key] = value;
-      }
-    }
-    return { phase: obj.phase, fields };
+    const marker = PhaseMarkerSchema.safeParse(parsed);
+    return marker.success ? marker.data : null;
   } catch {
     return null;
   }
@@ -72,17 +71,17 @@ export function parsePhaseMarkers(text: string): PhaseMarker[] {
 }
 
 /**
- * Format one marker line as `AUTO_DENT_PHASE: {"phase":"...","fields":{...}}`.
- * Undefined/empty fields are dropped.
+ * Format one marker line in the public legacy protocol:
+ * `AUTO_DENT_PHASE: <PHASE> | k=v | k=v`. Undefined/empty fields are dropped.
  */
 export function formatPhaseMarkerLine(
   phase: string,
   fields: Record<string, string | undefined | null> = {},
 ): string {
-  const normalizedFields: Record<string, string> = {};
+  const parts = [`${PHASE_MARKER_PREFIX}: ${phase}`];
   for (const [k, v] of Object.entries(fields)) {
     if (v == null || v === '') continue;
-    normalizedFields[k] = v;
+    parts.push(`${k}=${v}`);
   }
-  return `${PHASE_MARKER_PREFIX}: ${JSON.stringify({ phase, fields: normalizedFields })}`;
+  return parts.join(' | ');
 }

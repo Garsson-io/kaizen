@@ -13,7 +13,7 @@ auto-dent.sh (compatibility wrapper)
         ├── enforces stop conditions (max runs, consecutive failures, halt file)
         └── auto-dent-run.ts (single-run TypeScript runner)
               ├── builds prompt from templates (prompts/*.md)
-              ├── spawns claude with --output-format stream-json
+              ├── spawns the selected provider (Claude stream-json or Codex JSONL)
               ├── parses real-time milestones (PRs, issues, costs)
               ├── posts per-run comments to batch progress issue
               ├── queues or blocks auto-merge based on review/process verdicts
@@ -123,7 +123,7 @@ npx tsx scripts/kaizen-workflow-driver.ts status --mode exploit --issue <N> --re
 |------|---------|-------------|
 | `--max-runs N` | unlimited | Stop after N runs |
 | `--cooldown N` | 30s | Seconds between runs |
-| `--budget N.NN` | none | Per-run budget (passed to `claude --max-budget-usd`) |
+| `--budget N.NN` | none | Per-run budget. Claude receives `--max-budget-usd`; Codex is bounded by run timeout and batch budget accounting. |
 | `--max-budget N.NN` | none | Total batch budget — halts when cumulative cost exceeds |
 | `--max-failures N` | 3 | Stop after N consecutive failures |
 | `--max-run-seconds N` | 1200 (20min) | Wall-time timeout per run |
@@ -132,6 +132,20 @@ npx tsx scripts/kaizen-workflow-driver.ts status --mode exploit --issue <N> --re
 | `--test-task` | off | Use synthetic fast task |
 | `--experiment` | off | Enable extra pipeline diagnostics |
 | `--resume FILE` | off | Resume an existing batch from `state.json`; normally used by the self-update handoff |
+
+### Provider smoke tests
+
+Fast CI uses mocked subprocesses and synthetic Codex JSONL. To check the real
+provider CLI boundary before a provider-runtime release, run the gated live
+smoke for the provider you are changing:
+
+```bash
+LIVE_PROBE=1 npm test -- --run scripts/auto-dent-harness.test.ts
+LIVE_PROBE_CODEX=1 npm test -- --run scripts/auto-dent-harness.test.ts
+```
+
+The live probe returns the raw provider log path in assertion failures so a
+failed smoke can be replayed or attached without rerunning the provider call.
 
 ## Monitoring a Running Batch
 

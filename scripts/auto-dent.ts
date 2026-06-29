@@ -146,7 +146,7 @@ Usage: auto-dent.sh [options] <guidance>
 Options:
   --max-runs N         Stop after N iterations (default: unlimited)
   --cooldown N         Seconds between runs (default: 30)
-  --budget N.NN        Max USD per run (passed to claude --max-budget-usd)
+  --budget N.NN        Max USD per run (Claude CLI budget; Codex bounded by timeout/batch budget)
   --max-budget N.NN    Max USD for entire batch (stops when cumulative cost exceeds)
   --max-failures N     Stop after N consecutive failures (default: 3)
   --max-run-seconds N  Wall-time timeout per run in seconds (default: 1200 = 20min)

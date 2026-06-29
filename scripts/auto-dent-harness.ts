@@ -33,6 +33,7 @@ import {
   normalizeCodexProcessExitCode,
 } from './auto-dent-codex.js';
 import { buildSpawnAgentCommand } from '../src/spawn-claude.js';
+import { subscriptionAgentProvider } from '../src/provider-contract.js';
 import { parsePhaseMarkers as parsePhaseMarkersLocal } from './auto-dent-stream.js';
 import {
   type EventEnvelope,
@@ -212,7 +213,7 @@ export interface LiveProbeCommand {
 
 export function buildLiveProbeCommand(opts: Required<Pick<LiveProbeOpts, 'provider' | 'prompt' | 'cwd' | 'maxBudget' | 'extraArgs'>>): LiveProbeCommand {
   const command = buildSpawnAgentCommand({
-    provider: { provider: opts.provider, billing: 'subscription-cli' },
+    provider: subscriptionAgentProvider(opts.provider),
     cwd: opts.cwd,
     maxBudgetUsd: opts.maxBudget,
     model: null,

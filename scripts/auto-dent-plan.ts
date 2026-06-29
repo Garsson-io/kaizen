@@ -31,6 +31,7 @@ import {
 import { buildCodexExecArgs, parseCodexJsonl } from './auto-dent-codex.js';
 import type { PhaseProvider } from './auto-dent-provider.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
+import { subscriptionAgentProvider } from '../src/provider-contract.js';
 
 export interface PlanItem {
   issue: string;
@@ -175,9 +176,9 @@ Output a JSON plan with ranked work items. Format:
 
 export function selectPlanningProvider(state: BatchState): PhaseProvider {
   if (state.provider === 'codex') {
-    return { provider: 'codex', billing: 'subscription-cli' };
+    return subscriptionAgentProvider('codex');
   }
-  return { provider: 'claude', billing: 'subscription-cli' };
+  return subscriptionAgentProvider('claude');
 }
 
 function planningProviderName(provider: PhaseProvider): PlanningProviderName {

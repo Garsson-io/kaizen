@@ -40,6 +40,7 @@ import { addSection, writeAttachment } from '../src/section-editor.js';
 import { parseJsonLines } from '../src/lib/json-lines.js';
 import { readJsonValueFile, writeJsonObjectFile } from '../src/lib/json-file.js';
 import { buildSpawnAgentCommand, parseSpawnAgentProvider } from '../src/spawn-claude.js';
+import { subscriptionAgentProvider } from '../src/provider-contract.js';
 import { ghExec } from './auto-dent-github.js';
 import { assessCodexRun, parseCodexJsonl } from './auto-dent-codex.js';
 import {
@@ -177,7 +178,7 @@ export interface RunFixLoopDeps {
 
 export type ReviewFixProvider = ReviewProvider;
 
-const DEFAULT_REVIEW_FIX_PROVIDER: ReviewFixProvider = { provider: 'claude', billing: 'subscription-cli' };
+const DEFAULT_REVIEW_FIX_PROVIDER: ReviewFixProvider = subscriptionAgentProvider('claude');
 
 export function defaultReviewFixProviders(): {
   reviewProvider: ReviewFixProvider;

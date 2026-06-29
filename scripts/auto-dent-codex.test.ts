@@ -159,8 +159,8 @@ describe('parseCodexJsonl (#1144)', () => {
     }));
 
     expect(extractCodexPhaseMarkers(parsed)).toEqual([
-      'AUTO_DENT_PHASE: {"phase":"IMPLEMENT","fields":{"case":"synthetic"}}',
-      'AUTO_DENT_PHASE: {"phase":"PR","fields":{"url":"https://example.test/pull/1"}}',
+      'AUTO_DENT_PHASE: IMPLEMENT | case=synthetic',
+      'AUTO_DENT_PHASE: PR | url=https://example.test/pull/1',
     ]);
   });
 });

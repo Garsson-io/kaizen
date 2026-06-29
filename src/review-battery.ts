@@ -17,6 +17,7 @@ import { readYamlFrontmatter, stripYamlFrontmatter } from './lib/frontmatter.js'
 import { firstMarkdownFence, markdownFences } from './lib/markdown-fence.js';
 import { resolveProjectRoot, type GitRunner } from './lib/resolve-project-root.js';
 import { spawnAgent, type SpawnAgentProvider } from './spawn-claude.js';
+import { subscriptionAgentProvider } from './provider-contract.js';
 import { retrievePlan, issueTarget } from './structured-data.js';
 import {
   normalizeFindingStatus,
@@ -110,7 +111,7 @@ export const BUDGET_CAP_USD = 2.0;
 export const PASSING_THRESHOLD = { maxMissing: 0 } as const;
 
 export function selectReviewProvider(provider?: ReviewProvider): ReviewProvider {
-  return provider ?? { provider: 'claude', billing: 'subscription-cli' };
+  return provider ?? subscriptionAgentProvider('claude');
 }
 
 function providerLabel(provider: ReviewProvider): string {

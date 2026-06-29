@@ -92,6 +92,14 @@ function pp(provider: Provider, billing: PhaseProvider['billing']): PhaseProvide
 const CLAUDE = pp('claude', 'subscription-cli');
 const CODEX = pp('codex', 'subscription-cli');
 const VALIDATOR = pp('provider-independent', 'local-only');
+const CODEX_MAINLINE_CLAUDE_REVIEW_PHASES: PhaseProviderRecord = {
+  planning: CODEX,
+  implementation: CODEX,
+  review: CLAUDE,
+  fix: CODEX,
+  reflection: CODEX,
+  validation: VALIDATOR,
+};
 
 export function providerComparisonScenarios(): ProviderComparisonScenario[] {
   return [
@@ -112,14 +120,7 @@ export function providerComparisonScenarios(): ProviderComparisonScenario[] {
       id: 'codex-mainline-claude-review',
       label: 'Codex mainline + Claude review',
       description: 'Codex handles planning, implementation, fix, and reflection; Claude remains the accepted unattended review provider; validation remains provider-independent.',
-      phaseProviders: {
-        planning: CODEX,
-        implementation: CODEX,
-        review: CLAUDE,
-        fix: CODEX,
-        reflection: CODEX,
-        validation: VALIDATOR,
-      },
+      phaseProviders: CODEX_MAINLINE_CLAUDE_REVIEW_PHASES,
     },
     {
       id: 'claude-plan-review-codex-implement',
@@ -138,14 +139,7 @@ export function providerComparisonScenarios(): ProviderComparisonScenario[] {
       id: 'codex-plan-implement-provider-validation',
       label: 'Codex planning/implementation + Claude review',
       description: 'Codex owns planning, implementation, fix, and reflection; Claude review and provider-independent validation are the trust boundaries.',
-      phaseProviders: {
-        planning: CODEX,
-        implementation: CODEX,
-        review: CLAUDE,
-        fix: CODEX,
-        reflection: CODEX,
-        validation: VALIDATOR,
-      },
+      phaseProviders: CODEX_MAINLINE_CLAUDE_REVIEW_PHASES,
     },
   ];
 }
