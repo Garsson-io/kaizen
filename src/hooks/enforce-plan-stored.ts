@@ -450,9 +450,12 @@ This hook enforces I8: implementation must be tied to a planned issue.`,
     // Name the ACTUAL missing artifact so the author doesn't burn a diagnostic
     // round (#1069). "No plan stored" was misleading when the plan existed and
     // only the test plan was missing.
-    const missing = !gate.hasPlan ? 'plan' : 'testplan';
+    const scopeConflict = gate.problems.includes('scope-conflict');
+    const missing = scopeConflict ? 'scope-conflict' : !gate.hasPlan ? 'plan' : 'testplan';
     let headline: string;
-    if (!gate.hasPlan && !gate.hasTestPlan) {
+    if (scopeConflict) {
+      headline = `BLOCKED: Stored plan for issue #${issueNum} conflicts with this issue scope.`;
+    } else if (!gate.hasPlan && !gate.hasTestPlan) {
       headline = `BLOCKED: No plan or test plan stored for issue #${issueNum}.`;
     } else if (!gate.hasPlan) {
       headline = `BLOCKED: No implementation plan stored for issue #${issueNum} (a test plan exists, the plan does not).`;
@@ -464,6 +467,8 @@ This hook enforces I8: implementation must be tied to a planned issue.`,
       allowed: false,
       missing: [missing],
       reason: `${headline} You MUST run /kaizen-write-plan before writing any code.
+
+${scopeConflict && gate.reason ? `${gate.reason}\n` : ''}
 
 DO THIS NOW:
   Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })
@@ -592,10 +597,14 @@ This hook enforces I3 (stored test plan) and I8 (plan before implementation).`,
   // Use Case FE for existence check
   const gate = deps.caseSystem.checkPlanGate(parseInt(issueNum, 10), repo);
   if (!gate.passed) {
+    const scopeConflict = gate.problems.includes('scope-conflict');
+    const headline = scopeConflict
+      ? `BLOCKED: Stored plan for issue #${issueNum} conflicts with this PR scope.`
+      : `BLOCKED: PR requires a stored plan and test plan on issue #${issueNum} (I3, I8).`;
     return {
       allowed: false,
-      missing: [!gate.hasPlan ? 'plan' : 'testplan'],
-      reason: `BLOCKED: PR requires a stored plan and test plan on issue #${issueNum} (I3, I8).
+      missing: [scopeConflict ? 'scope-conflict' : !gate.hasPlan ? 'plan' : 'testplan'],
+      reason: `${headline}
 
 ${gate.reason}
 

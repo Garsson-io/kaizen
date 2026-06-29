@@ -39,6 +39,7 @@ export interface PlanGateResult {
   passed: boolean;
   hasPlan: boolean;
   hasTestPlan: boolean;
+  problems: Array<'plan' | 'testplan' | 'scope-conflict'>;
   issueNumber: number;
   repo: string;
   /** The actual plan text (if present), for substance checks without refetch. */
@@ -47,6 +48,32 @@ export interface PlanGateResult {
   testPlanText?: string | null;
   /** Why the gate failed, if it did. */
   reason?: string;
+}
+
+const CLOSING_KEYWORD_RE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#(\d+)\b/i;
+const ISSUE_REF_RE = /(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#(\d+)\b/g;
+const CLOSE_TARGET_LIST_SEPARATOR_RE = /^[\s,]*(?:and|or)?[\s,]*$/i;
+
+function extractClosingIssueTargets(text: string): number[] {
+  const targets = new Set<number>();
+  for (const line of text.split(/\r?\n/)) {
+    const closingMatch = line.match(CLOSING_KEYWORD_RE);
+    if (!closingMatch || closingMatch.index === undefined) continue;
+    const firstIssue = Number.parseInt(closingMatch[1], 10);
+    if (Number.isInteger(firstIssue)) targets.add(firstIssue);
+
+    let cursor = closingMatch.index + closingMatch[0].length;
+    ISSUE_REF_RE.lastIndex = cursor;
+    let match: RegExpExecArray | null;
+    while ((match = ISSUE_REF_RE.exec(line)) !== null) {
+      const separator = line.slice(cursor, match.index);
+      if (!CLOSE_TARGET_LIST_SEPARATOR_RE.test(separator)) break;
+      const issueNumber = Number.parseInt(match[1], 10);
+      if (Number.isInteger(issueNumber)) targets.add(issueNumber);
+      cursor = match.index + match[0].length;
+    }
+  }
+  return [...targets].sort((a, b) => a - b);
 }
 
 export interface CreateIssueOpts {
@@ -194,23 +221,36 @@ export class CaseSystem {
 
     const hasPlan = !!planText && planText.length > 0;
     const hasTestPlan = !!testPlanText && testPlanText.length > 0;
-    const passed = hasPlan && hasTestPlan;
+    const scopeConflicts = hasPlan
+      ? extractClosingIssueTargets(planText).filter(target => target !== issueNumber)
+      : [];
+    const passed = hasPlan && hasTestPlan && scopeConflicts.length === 0;
 
     const missing: string[] = [];
     if (!hasPlan) missing.push('implementation plan');
     if (!hasTestPlan) missing.push('test plan');
+    if (scopeConflicts.length > 0) missing.push('scope-conflicting close target');
+    const problems: PlanGateResult['problems'] = [];
+    if (!hasPlan) problems.push('plan');
+    if (!hasTestPlan) problems.push('testplan');
+    if (scopeConflicts.length > 0) problems.push('scope-conflict');
+
+    const conflictReason = scopeConflicts.length > 0
+      ? `Issue #${issueNumber} plan has scope-conflicting close target(s): ${scopeConflicts.map(n => `#${n}`).join(', ')}. Store a corrected one-issue plan before implementation.`
+      : undefined;
 
     return {
       passed,
       hasPlan,
       hasTestPlan,
+      problems,
       issueNumber,
       repo,
       planText: planText ?? null,
       testPlanText: testPlanText ?? null,
       reason: passed
         ? undefined
-        : `Issue #${issueNumber} is missing: ${missing.join(', ')}. Run /kaizen-write-plan first.`,
+        : conflictReason ?? `Issue #${issueNumber} is missing: ${missing.join(', ')}. Run /kaizen-write-plan first.`,
     };
   }
 
