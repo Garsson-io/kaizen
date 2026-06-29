@@ -26,8 +26,8 @@ export const KNOWN_FAILURES_PATH = '.agents/kaizen/known-failures.json';
 
 export interface KnownFailure {
   /**
-   * Substring matched against a failing test id — a pytest nodeid
-   * (`test_hooks.py::Class::test_x`), a vitest test name, or a shell test file.
+   * Substring matched against a failing test id — a Vitest test name, a shell
+   * test file, or a legacy pytest nodeid.
    * Coarser strings (a file name) intentionally cover every failure in that
    * file; use the full nodeid to scope to a single case.
    */
@@ -85,7 +85,7 @@ export function parseKnownFailures(content: string): KnownFailuresValidation {
     // A `test` must look like a real test identifier, not a catch-all. Naive
     // `id.includes(test)` matching means an over-broad entry (e.g. "test" or
     // "py") would silently tolerate unrelated failures — so require a recognizable
-    // delimiter (`.`/`/`/`:`/`-`, present in every pytest nodeid, vitest name, or
+    // delimiter (`.`/`/`/`:`/`-`, present in every test file/name/id, or
     // shell test file) and a minimum length. Use the full nodeid to be safe.
     const testStr = typeof test === 'string' ? test.trim() : '';
     const testOk = testStr.length >= 5 && /[.:/\\-]/.test(testStr);

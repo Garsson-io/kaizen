@@ -34,19 +34,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      # The Python hook lifecycle suite (test_hooks.py) MUST gate in CI — a
-      # missing runner used to silently skip it, producing green CI while the
-      # local suite was red (#1481). Install pytest and require it.
-      - name: Install pytest
-        run: python -m pip install --upgrade pytest
       - run: npm ci
       - run: npm run build
       - name: Run shell hook tests
-        env:
-          KAIZEN_REQUIRE_PYTHON_TESTS: '1'
         run: bash .claude/hooks/tests/run-all-tests.sh
       - name: Verify no test side-effects on repo files
         run: |
