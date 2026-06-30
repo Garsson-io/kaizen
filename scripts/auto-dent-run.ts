@@ -244,9 +244,10 @@ import { runBacklogHealthMaintenance } from './backlog-health.js';
 import { gh as ghArgs } from '../src/lib/gh-exec.js';
 import {
   formatProviderWorkspaceResolution,
-  resolveProviderWorkspaceRoot,
+  ensureProviderWorkspaceRoot,
   type ProviderWorkspaceResolution,
 } from './auto-dent-provider-workspace.js';
+export { resolveProviderWorkspaceRoot } from './auto-dent-provider-workspace.js';
 
 // Types
 
@@ -3442,6 +3443,7 @@ export function formatProviderWorkspaceFailureDiagnosis(
     'missing-worktree': `Create or enter a non-main case worktree bound to ${issue}, then rerun auto-dent for that issue.`,
     'missing-binding': `Bind the provider workspace to ${issue} with cli-issue-binding before spawning the provider.`,
     'binding-mismatch': `Use the case worktree bound to ${issue}, or fix the stale kaizen.issue binding before spawning the provider.`,
+    'create-failed': `Fix the git worktree creation or binding error for ${issue}, then rerun auto-dent.`,
   };
   return {
     phase: 'provider workspace resolution',
@@ -3671,10 +3673,12 @@ async function runClaude(
   const candidateManifestPath = modeSelection.mode === 'explore'
     ? candidateTaskManifestPath(logDir, runNum)
     : undefined;
-  const providerWorkspace = resolveProviderWorkspaceRoot({
+  const agentRunTag = `${state.batch_id}/run-${runNum}`;
+  const providerWorkspace = ensureProviderWorkspaceRoot({
     repoRoot,
     invocationRoot,
     assignedIssue: promptMeta.claimedPlanIssue,
+    runTag: agentRunTag,
     knownCases: [
       ...state.cases,
       state.last_case,
@@ -3692,6 +3696,16 @@ async function runClaude(
       promptMeta,
       workspace: providerWorkspace,
     });
+  }
+  if (providerWorkspace.created && providerWorkspace.caseId) {
+    if (!result.cases.includes(providerWorkspace.caseId)) result.cases.push(providerWorkspace.caseId);
+    upsertProgressStep(result, {
+      phase: 'CASE',
+      state: 'created',
+      detail: providerWorkspace.caseId,
+    });
+    checkpointRunState(stateFile, { runNum, result });
+    console.log(`  [case] created ${providerWorkspace.branch ?? `case/${providerWorkspace.caseId}`} at ${providerWorkspace.providerRoot}`);
   }
 
   if (shouldRunCodexProvider(state)) {
@@ -3742,7 +3756,6 @@ async function runClaude(
   // run-scoped attribution signal independent of stream markers.
   // (Local names are agent-prefixed to stay clear of the canonical post-run
   // `runId` declaration guarded by the #1128 regression test.)
-  const agentRunTag = `${state.batch_id}/run-${runNum}`;
   const agentRunId = makeRunId(state.batch_id, runNum);
 
   return new Promise((resolvePromise) => {
