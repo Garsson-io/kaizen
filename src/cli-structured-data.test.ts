@@ -7,6 +7,7 @@ import {
   resolveRound,
   unknownFlagsForCommand,
   validateKnownFlags,
+  writeReviewSentinel,
   type CliArgs,
 } from './cli-structured-data.js';
 import {
@@ -18,6 +19,7 @@ import {
   mineRunTranscriptCandidates,
   storeFrictionCandidateReport,
   readReviewFinding,
+  listReviewDimensions,
 } from './structured-data.js';
 
 vi.mock('node:fs', () => ({
@@ -148,6 +150,18 @@ describe('handler registry', () => {
   it('registers transcript mining handlers (#1516)', () => {
     expect(handlers['mine-transcripts']).toBeTypeOf('function');
     expect(handlers['store-friction-candidates']).toBeTypeOf('function');
+  });
+});
+
+describe('writeReviewSentinel strict mode', () => {
+  it('returns false by default but throws in strict mode when sentinel data cannot be read', () => {
+    vi.mocked(listReviewDimensions).mockImplementation(() => {
+      throw new Error('dimension read failed');
+    });
+
+    expect(writeReviewSentinel('Garsson-io/kaizen', '1735', 2)).toBe(false);
+    expect(() => writeReviewSentinel('Garsson-io/kaizen', '1735', 2, { strict: true })).toThrow('write-review-sentinel: failed for PR #1735 round 2');
+    vi.mocked(listReviewDimensions).mockReturnValue(['correctness', 'security']);
   });
 });
 
@@ -354,6 +368,12 @@ describe('individual command handlers', () => {
 describe('store-review-batch — review sentinel', () => {
   const baseArgs: CliArgs = { command: 'store-review-batch', pr: '903', repo: 'org/repo', round: '1' };
 
+  function spyExit() {
+    return vi.spyOn(process, 'exit').mockImplementation((code?: number | string | null) => {
+      throw new Error(`process.exit(${code})`);
+    });
+  }
+
   it('writes review sentinel after storing batch findings', async () => {
     // INVARIANT: store-review-batch must write the review sentinel so the
     // pr-review-loop gate guard passes. Without the sentinel, the gate stays
@@ -441,9 +461,33 @@ describe('store-review-batch — review sentinel', () => {
     expect(sentinelCall).toBeDefined();
     expect(String(sentinelCall![0])).toContain('456');
   });
+
+  it('fails closed when the review sentinel cannot be written', async () => {
+    vi.mocked(openSync).mockImplementationOnce(() => {
+      throw new Error('sentinel open failed');
+    });
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = spyExit();
+
+    await expect(handlers['store-review-batch']({
+      ...baseArgs,
+      text: JSON.stringify([{ dimension: 'dry', verdict: 'pass', summary: 'ok', findings: [] }]),
+    })).rejects.toThrow('process.exit(1)');
+
+    expect(err).toHaveBeenCalledWith('write-review-sentinel: failed for PR #903 round 1');
+    err.mockRestore();
+    exit.mockRestore();
+    vi.mocked(openSync).mockReturnValue(42);
+  });
 });
 
 describe('store-review-summary — pure storage, then sentinel', () => {
+  function spyExit() {
+    return vi.spyOn(process, 'exit').mockImplementation((code?: number | string | null) => {
+      throw new Error(`process.exit(${code})`);
+    });
+  }
+
   // Post-#1225 revert: the CLI no longer threads a `--head-sha` / CI-proof option into storage.
   // storeReviewSummary is invoked with (target, round, note) only, then the sentinel is written.
   it('calls storeReviewSummary with no CI option and writes the sentinel', async () => {
@@ -478,6 +522,26 @@ describe('store-review-summary — pure storage, then sentinel', () => {
     expect(payload.findingCount).toBeGreaterThanOrEqual(0);
     expect(payload.integrity).toMatch(/^sha256:/);
     log.mockRestore();
+  });
+
+  it('fails closed when the review sentinel cannot be written', async () => {
+    vi.mocked(openSync).mockImplementationOnce(() => {
+      throw new Error('sentinel open failed');
+    });
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = spyExit();
+
+    await expect(handlers['store-review-summary']({
+      command: 'store-review-summary',
+      pr: '903',
+      repo: 'Garsson-io/kaizen',
+      round: '5',
+    } as CliArgs)).rejects.toThrow('process.exit(1)');
+
+    expect(err).toHaveBeenCalledWith('write-review-sentinel: failed for PR #903 round 5');
+    err.mockRestore();
+    exit.mockRestore();
+    vi.mocked(openSync).mockReturnValue(42);
   });
 });
 

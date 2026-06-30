@@ -213,8 +213,8 @@ function writeSentinelRecord(
   });
 }
 
-function writeReviewSentinel(repo: string, pr: string | undefined, round: number): void {
-  if (!pr) return;
+export function writeReviewSentinel(repo: string, pr: string | undefined, round: number, opts: { strict?: boolean } = {}): boolean {
+  if (!pr) return false;
   try {
     const target = prTarget(pr, repo);
     const dimensionsReviewed = listReviewDimensions(target, round);
@@ -232,8 +232,11 @@ function writeReviewSentinel(repo: string, pr: string | undefined, round: number
       { findingCount: 0, totalDone: 0, totalPartial: 0, totalMissing: 0 },
     );
     writeSentinelRecord(repo, pr, round, dimensionsReviewed, totals);
+    return true;
   } catch {
+    if (opts.strict) throw new Error(`write-review-sentinel: failed for PR #${pr} round ${round}`);
     // best effort — sentinel is advisory
+    return false;
   }
 }
 
@@ -309,9 +312,14 @@ async function handleStoreReviewBatch(a: CliArgs): Promise<void> {
   }
   const findings = parsedBatch as ReviewFindingData[];
   const result = storeReviewBatch(pr, r, findings);
-  // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
-  // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
-  writeReviewSentinel(a.repo, a.pr, r);
+  try {
+    // #966: Write review sentinel so pr-review-loop.ts gate guard passes.
+    // Mirrors handleStoreReviewSummary — batch includes summary, so sentinel must be written here too.
+    writeReviewSentinel(a.repo, a.pr, r, { strict: true });
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
   console.log(`Batch stored: ${result.urls.length} findings + summary (round ${r})`);
   console.log(`Summary: ${result.summaryUrl}`);
 }
@@ -336,8 +344,13 @@ async function handleStoreReviewSummary(a: CliArgs): Promise<void> {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
-  // #920: Write review sentinel so pr-review-loop.ts can verify outcome
-  writeReviewSentinel(a.repo, a.pr, r);
+  try {
+    // #920: Write review sentinel so pr-review-loop.ts can verify outcome
+    writeReviewSentinel(a.repo, a.pr, r, { strict: true });
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
   console.log(`Review summary stored (round ${r}): ${url}`);
 }
 
