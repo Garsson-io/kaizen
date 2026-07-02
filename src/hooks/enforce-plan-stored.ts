@@ -41,6 +41,7 @@ import { queryIssueState, type IssueState } from '../lib/github-pr.js';
 import { parseSections } from '../section-editor.js';
 import {
   parseChangeTier,
+  parseNumstat,
   isEnforcementSurface,
   verifyTrivialTier,
   checkMiniPlanSubstance,
@@ -83,6 +84,13 @@ export interface PlanCheckDeps {
   getDeclaredTier: () => ChangeTier;
   /** Branch diff totals (main...HEAD) used to VERIFY a trivial declaration at PR time. */
   getDiffTotals: () => DiffTotals;
+  /**
+   * Dereference symlinks in an (already lexically-normalized) absolute path.
+   * Returns null when the path cannot be dereferenced — callers fail CLOSED.
+   * A new file dereferences through its parent directory. Injectable so gate
+   * tests stay hermetic; the default hits the real filesystem.
+   */
+  realPath: (p: string) => string | null;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -121,16 +129,18 @@ const DEFAULT_DEPS: PlanCheckDeps = {
   },
   getIssueState: (issue: number, repo: string) => queryIssueState({ repo, issue }),
   getDeclaredTier: () => parseChangeTier(gitStdout(['config', '--get', 'kaizen.tier'])),
-  getDiffTotals: () => {
-    const numstat = gitStdout(['diff', '--numstat', 'main...HEAD']);
-    const rows = numstat ? numstat.split('\n').filter(Boolean) : [];
-    let lines = 0;
-    for (const row of rows) {
-      const [adds, dels] = row.split('\t');
-      // Binary files report "-"; count them as 0 lines but 1 file.
-      lines += (parseInt(adds, 10) || 0) + (parseInt(dels, 10) || 0);
+  getDiffTotals: () => parseNumstat(gitStdout(['diff', '--numstat', 'main...HEAD'])),
+  realPath: (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      // New files don't exist yet — dereference the parent, keep the basename.
+      try {
+        return resolve(realpathSync(resolve(p, '..')), p.replace(/^.*\//, ''));
+      } catch {
+        return null;
+      }
     }
-    return { files: rows.length, lines };
   },
 };
 
@@ -582,13 +592,16 @@ This hook enforces I8: implementation must be tied to a planned issue.`,
     // bypass of the surface guard.
     const worktreeRoot = deps.getWorktreeRoot();
     const mainCheckout = deps.getMainCheckout();
-    const normalized = isAbsolute(filePath) ? resolve(filePath) : null;
+    // resolve() collapses '..' lexically; realPath() then dereferences
+    // symlinks — `ln -s .claude/hooks/x.sh notes.ts` must land on the REAL
+    // target, not the symlink's own name. Either failing → null → fail closed.
+    const normalized = isAbsolute(filePath) ? deps.realPath(resolve(filePath)) : null;
     const base = normalized === null
       ? undefined
       : [worktreeRoot, mainCheckout].find(b => !!b && isWithinDirectory(normalized, b));
     const repoRelative = base && normalized
       ? relative(base, normalized)
-      : normalized === null && !filePath.split(/[\\/]/).includes('..')
+      : !isAbsolute(filePath) && !filePath.split(/[\\/]/).includes('..')
         ? filePath.replace(/^\.\//, '')
         : null;
     if (repoRelative === null || isEnforcementSurface(repoRelative)) {

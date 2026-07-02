@@ -49,8 +49,11 @@ const ENFORCEMENT_SURFACE_PREFIXES = [
 
 const ENFORCEMENT_SURFACE_FILES = new Set([
   'src/change-tier.ts',
+  'src/change-tier.test.ts',
   'src/case-system.ts',
+  'src/case-system.test.ts',
   'src/review-sentinel.ts',
+  'src/review-sentinel.test.ts',
   // Hook registrations hot-reload from here — editing it IS editing the gates.
   '.claude/settings.json',
 ]);
@@ -66,6 +69,21 @@ export interface DiffTotals {
   files: number;
   /** Total changed lines: additions + deletions across the diff. */
   lines: number;
+}
+
+/**
+ * Parse `git diff --numstat` output into totals. Binary files report "-" for
+ * adds/dels — they count as 0 lines but 1 file. Pure so the sentinel handling
+ * is testable outside the git-calling lambda.
+ */
+export function parseNumstat(numstat: string): DiffTotals {
+  const rows = numstat ? numstat.split('\n').filter(Boolean) : [];
+  let lines = 0;
+  for (const row of rows) {
+    const [adds, dels] = row.split('\t');
+    lines += (parseInt(adds, 10) || 0) + (parseInt(dels, 10) || 0);
+  }
+  return { files: rows.length, lines };
 }
 
 export interface TierVerification {

@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseChangeTier,
+  parseNumstat,
   isEnforcementSurface,
   verifyTrivialTier,
   checkMiniPlanSubstance,
@@ -47,6 +48,9 @@ describe('isEnforcementSurface', () => {
     'src/case-system.ts',
     'src/review-sentinel.ts',
     '.claude/settings.json',
+    'src/change-tier.test.ts',
+    'src/case-system.test.ts',
+    'src/review-sentinel.test.ts',
     './src/hooks/pre-push.ts',
   ])('flags %s', (path) => {
     expect(isEnforcementSurface(path)).toBe(true);
@@ -96,6 +100,20 @@ describe('verifyTrivialTier', () => {
   it('reports ALL violations, not just the first', () => {
     const r = verifyTrivialTier(['prompts/review-x.md', ...files(9)], { files: 10, lines: 500 });
     expect(r.violations.length).toBe(3);
+  });
+});
+
+describe('parseNumstat', () => {
+  it('sums adds+dels across rows and counts files', () => {
+    expect(parseNumstat('10\t5\tsrc/a.ts\n3\t0\tsrc/b.ts')).toEqual({ files: 2, lines: 18 });
+  });
+
+  it("counts binary '-' sentinel rows as 0 lines but 1 file", () => {
+    expect(parseNumstat('-\t-\tassets/logo.png\n2\t1\tsrc/a.ts')).toEqual({ files: 2, lines: 3 });
+  });
+
+  it('empty output → zero totals', () => {
+    expect(parseNumstat('')).toEqual({ files: 0, lines: 0 });
   });
 });
 

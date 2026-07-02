@@ -49,6 +49,7 @@ function makeDeps(backendOverrides: Partial<CaseBackend> = {}, depsOverrides: Pa
     getIssueState: () => 'OPEN',
     getDeclaredTier: () => 'standard',
     getDiffTotals: () => ({ files: 1, lines: 10 }),
+    realPath: (p: string) => p,
     ...depsOverrides,
   };
 }
@@ -829,6 +830,29 @@ describe('trivial tier — edit gate (#1748)', () => {
 
   it("fails CLOSED on a relative path containing '..'", () => {
     const result = checkPlanBeforeEdit('../src/utils.ts', trivialDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it('dereferences symlinks: an innocent-looking name pointing at a hook is blocked', () => {
+    // notes.ts is a symlink to .claude/hooks/kaizen-worktree-setup.sh
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/notes.ts',
+      trivialDeps({}, {
+        realPath: (p: string) => p === '/repo/.claude/worktrees/wt/notes.ts'
+          ? '/repo/.claude/worktrees/wt/.claude/hooks/kaizen-worktree-setup.sh'
+          : p,
+      }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it('fails CLOSED when the path cannot be dereferenced', () => {
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/src/wip-summary.ts',
+      trivialDeps({}, { realPath: () => null }),
+    );
     expect(result.allowed).toBe(false);
     expect(result.missing).toEqual(['tier-surface']);
   });
