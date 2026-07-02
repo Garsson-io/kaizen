@@ -78,9 +78,28 @@ export interface DiffTotals {
 }
 
 /**
+ * Expand a numstat path that may use git's rename syntax into every concrete
+ * path it names. Renames appear as `common/{old => new}/rest` or, with no
+ * common prefix, `old => new`. BOTH sides count for surface matching: a
+ * rename INTO src/hooks/ creates a hook, a rename OUT OF it removes one —
+ * either is an enforcement-surface change and must not slip past a prefix
+ * match against the raw `{… => …}` string.
+ */
+export function expandRenamePaths(raw: string): string[] {
+  if (!raw.includes(' => ')) return [raw];
+  const braced = raw.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
+  const [oldPath, newPath] = braced
+    ? [braced[1] + braced[2] + braced[4], braced[1] + braced[3] + braced[4]]
+    : raw.split(' => ', 2) as [string, string];
+  const clean = (p: string) => p.replace(/\/{2,}/g, '/');
+  return oldPath === newPath ? [clean(newPath)] : [clean(oldPath), clean(newPath)];
+}
+
+/**
  * Parse `git diff --numstat` output into totals + paths. Binary files report
- * "-" for adds/dels — they count as 0 lines but 1 file. Pure so the sentinel
- * handling is testable outside the git-calling lambda.
+ * "-" for adds/dels — they count as 0 lines but 1 file. Rename rows expand to
+ * both their old and new concrete paths (see {@link expandRenamePaths}).
+ * Pure so the sentinel handling is testable outside the git-calling lambda.
  */
 export function parseNumstat(numstat: string): DiffTotals {
   const rows = numstat ? numstat.split('\n').filter(Boolean) : [];
@@ -89,7 +108,7 @@ export function parseNumstat(numstat: string): DiffTotals {
   for (const row of rows) {
     const [adds, dels, ...rest] = row.split('\t');
     lines += (parseInt(adds, 10) || 0) + (parseInt(dels, 10) || 0);
-    if (rest.length > 0) paths.push(rest.join('\t'));
+    if (rest.length > 0) paths.push(...expandRenamePaths(rest.join('\t')));
   }
   return { files: rows.length, lines, paths };
 }

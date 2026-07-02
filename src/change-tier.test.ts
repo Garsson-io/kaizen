@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  expandRenamePaths,
   parseChangeTier,
   parseNumstat,
   isEnforcementSurface,
@@ -103,7 +104,32 @@ describe('verifyTrivialTier', () => {
   });
 });
 
+describe('expandRenamePaths', () => {
+  it('plain paths pass through', () => {
+    expect(expandRenamePaths('src/a.ts')).toEqual(['src/a.ts']);
+  });
+
+  it('braced renames expand to old AND new concrete paths', () => {
+    expect(expandRenamePaths('src/{other/moved.ts => hooks/newhook.ts}'))
+      .toEqual(['src/other/moved.ts', 'src/hooks/newhook.ts']);
+  });
+
+  it('empty-side braces collapse double slashes', () => {
+    expect(expandRenamePaths('src/{ => hooks}/x.ts')).toEqual(['src/x.ts', 'src/hooks/x.ts']);
+  });
+
+  it('unbraced renames split on the arrow', () => {
+    expect(expandRenamePaths('old.ts => src/hooks/new.ts')).toEqual(['old.ts', 'src/hooks/new.ts']);
+  });
+});
+
 describe('parseNumstat', () => {
+  it('rename rows expand so a rename INTO the surface is visible to the prefix match', () => {
+    const totals = parseNumstat('4\t1\tsrc/{other/moved.ts => hooks/newhook.ts}');
+    expect(totals.files).toBe(1);
+    expect(totals.paths).toEqual(['src/other/moved.ts', 'src/hooks/newhook.ts']);
+  });
+
   it('sums adds+dels across rows, counts files, and carries the snapshot paths', () => {
     expect(parseNumstat('10\t5\tsrc/a.ts\n3\t0\tsrc/b.ts'))
       .toEqual({ files: 2, lines: 18, paths: ['src/a.ts', 'src/b.ts'] });
