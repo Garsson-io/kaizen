@@ -793,9 +793,38 @@ describe('trivial tier — edit gate (#1748)', () => {
   });
 
   it('resolves the repo-relative path against the worktree root for the surface check', () => {
-    // Same basename outside the surface dir must NOT be blocked.
-    const result = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/src/pre-push.ts', trivialDeps());
-    expect(result.allowed).toBe(true);
+    // Proof of resolution: the RAW absolute path matches no surface prefix
+    // ('/repo/...' does not start with 'prompts/'), so a block here can only
+    // come from worktree-root-relative resolution.
+    const blocked = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/prompts/review-new.ts', trivialDeps());
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.missing).toEqual(['tier-surface']);
+    // And the same basename outside any surface dir must NOT be blocked.
+    const allowed = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/src/pre-push.ts', trivialDeps());
+    expect(allowed.allowed).toBe(true);
+  });
+
+  it('resolves against the main checkout when the path is not under the worktree root', () => {
+    const result = checkPlanBeforeEdit('/repo/src/hooks/pre-push.ts', trivialDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it('fails CLOSED on an absolute path resolvable against neither root', () => {
+    const result = checkPlanBeforeEdit('/elsewhere/src/utils.ts', trivialDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+    expect(result.reason).toContain('unresolvable');
+  });
+
+  it('scope-conflict is NOT relaxed by the trivial tier (#1161)', () => {
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/src/wip-summary.ts',
+      trivialDeps({ retrievePlan: () => `${GOOD_MINI_PLAN}\n\nCloses #1056` }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['scope-conflict']);
+    expect(result.reason).toContain('#1056');
   });
 
   it('still requires a plan to EXIST', () => {
@@ -851,6 +880,15 @@ describe('trivial tier — PR gate verification (#1748)', () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.missing).toEqual(['plan']);
+  });
+
+  it('fails CLOSED when the diff is empty/unreadable (broken git state is not a bypass)', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, { getChangedFiles: () => [], getDiffTotals: () => ({ files: 0, lines: 0 }) }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-unverifiable']);
   });
 
   it('superseded guard still fires before the trivial fast path', () => {

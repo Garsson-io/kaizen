@@ -429,6 +429,20 @@ function checkTrivialPlanBar(
   deps: PlanCheckDeps,
 ): PlanCheckResult {
   const gate = deps.caseSystem.checkPlanGate(parseInt(issueNum, 10), repo);
+  // The scope-conflict guard is NOT relaxed by the trivial tier: a mini plan
+  // closing a DIFFERENT issue is the same wrong-issue hazard as #1161.
+  if (gate.problems.includes('scope-conflict')) {
+    return {
+      allowed: false,
+      missing: ['scope-conflict'],
+      reason: `BLOCKED: Stored plan for issue #${issueNum} conflicts with this issue scope.
+
+${gate.reason ?? ''}
+
+The trivial tier relaxes plan SIZE, never plan TARGET. Store a corrected
+one-issue mini plan for #${issueNum}, then retry.`,
+    };
+  }
   if (!gate.hasPlan) {
     return {
       allowed: false,
@@ -468,7 +482,22 @@ function checkTrivialTierBeforePr(
   changedFiles: string[],
   deps: PlanCheckDeps,
 ): PlanCheckResult {
-  const verification = verifyTrivialTier(changedFiles, deps.getDiffTotals());
+  const totals = deps.getDiffTotals();
+  // Fail CLOSED when the diff is unreadable/empty: gitStdout returns '' on any
+  // git failure, which would otherwise verify as 0 files / 0 lines — a broken
+  // git state must not be a bypass of the very limits being verified.
+  if (changedFiles.length === 0 || totals.files === 0) {
+    return {
+      allowed: false,
+      missing: ['tier-unverifiable'],
+      reason: `BLOCKED: Cannot verify the trivial declaration — the branch diff (main...HEAD) is empty or unreadable (#1748).
+
+Verification needs ground truth. Either fix the git state (commit your changes,
+ensure 'main' resolves), or take the standard flow:
+  git config --worktree --unset kaizen.tier`,
+    };
+  }
+  const verification = verifyTrivialTier(changedFiles, totals);
   if (!verification.ok) {
     return {
       allowed: false,
@@ -544,15 +573,21 @@ This hook enforces I8: implementation must be tied to a planned issue.`,
   // declaration is re-verified against the real diff at `gh pr create`.
   const tier = deps.getDeclaredTier();
   if (tier === 'trivial') {
+    // Resolve the edit target to a repo-relative path so the surface check
+    // matches its prefixes. An absolute path under neither the worktree nor
+    // the main checkout cannot be resolved — fail CLOSED (treat as surface):
+    // an unresolvable path must not be a bypass of the surface guard.
     const worktreeRoot = deps.getWorktreeRoot();
-    const repoRelative = worktreeRoot && filePath.startsWith(worktreeRoot + '/')
-      ? relative(worktreeRoot, filePath)
-      : filePath;
-    if (isEnforcementSurface(repoRelative)) {
+    const mainCheckout = deps.getMainCheckout();
+    const base = [worktreeRoot, mainCheckout].find(b => !!b && filePath.startsWith(b + '/'));
+    const repoRelative = base
+      ? relative(base, filePath)
+      : isAbsolute(filePath) ? null : filePath;
+    if (repoRelative === null || isEnforcementSurface(repoRelative)) {
       return {
         allowed: false,
         missing: ['tier-surface'],
-        reason: `BLOCKED: ${repoRelative} is enforcement surface — a change here is never trivial (#1748).
+        reason: `BLOCKED: ${repoRelative ?? `${filePath} (unresolvable against worktree or main checkout — fail closed)`} is enforcement surface — a change here is never trivial (#1748).
 
 Hooks, gates, skills, and prompts always take the standard flow. Unset the tier
 and store a full plan:
