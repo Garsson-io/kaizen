@@ -51,6 +51,8 @@ const ENFORCEMENT_SURFACE_FILES = new Set([
   'src/change-tier.ts',
   'src/case-system.ts',
   'src/review-sentinel.ts',
+  // Hook registrations hot-reload from here — editing it IS editing the gates.
+  '.claude/settings.json',
 ]);
 
 /** True if this repo-relative path is part of the enforcement machinery. */

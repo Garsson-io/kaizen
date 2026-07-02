@@ -817,6 +817,22 @@ describe('trivial tier — edit gate (#1748)', () => {
     expect(result.reason).toContain('unresolvable');
   });
 
+  it("normalizes '..' traversal so a smuggled surface path is still blocked", () => {
+    // startsWith(worktreeRoot) is true, but the REAL target is src/hooks/.
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/../../../src/hooks/pre-push.ts',
+      trivialDeps(),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it("fails CLOSED on a relative path containing '..'", () => {
+    const result = checkPlanBeforeEdit('../src/utils.ts', trivialDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
   it('scope-conflict is NOT relaxed by the trivial tier (#1161)', () => {
     const result = checkPlanBeforeEdit(
       '/repo/.claude/worktrees/wt/src/wip-summary.ts',

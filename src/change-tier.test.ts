@@ -46,6 +46,7 @@ describe('isEnforcementSurface', () => {
     'src/change-tier.ts',
     'src/case-system.ts',
     'src/review-sentinel.ts',
+    '.claude/settings.json',
     './src/hooks/pre-push.ts',
   ])('flags %s', (path) => {
     expect(isEnforcementSurface(path)).toBe(true);
@@ -121,5 +122,13 @@ describe('checkMiniPlanSubstance', () => {
 
   it('reports both failures independently', () => {
     expect(checkMiniPlanSubstance('do stuff')).toHaveLength(2);
+  });
+
+  it('boundary: exactly 120 trimmed chars with a verification mention passes', () => {
+    const base = 'Verify: unit test covers it. ';
+    const plan = base + 'x'.repeat(120 - base.length);
+    expect(plan.trim().length).toBe(120);
+    expect(checkMiniPlanSubstance(plan)).toEqual([]);
+    expect(checkMiniPlanSubstance(plan.slice(0, 119)).join()).toContain('too short');
   });
 });

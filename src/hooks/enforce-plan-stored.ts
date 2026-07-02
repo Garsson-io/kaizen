@@ -573,16 +573,24 @@ This hook enforces I8: implementation must be tied to a planned issue.`,
   // declaration is re-verified against the real diff at `gh pr create`.
   const tier = deps.getDeclaredTier();
   if (tier === 'trivial') {
-    // Resolve the edit target to a repo-relative path so the surface check
-    // matches its prefixes. An absolute path under neither the worktree nor
-    // the main checkout cannot be resolved — fail CLOSED (treat as surface):
-    // an unresolvable path must not be a bypass of the surface guard.
+    // Resolve the edit target to a NORMALIZED repo-relative path so the
+    // surface check matches its prefixes. resolve() collapses '..' segments
+    // first — a traversal like <wt>/../../src/hooks/x.ts must land on its
+    // real target, not slip past the prefix match. A path under neither the
+    // worktree nor the main checkout (or a relative path smuggling '..')
+    // cannot be resolved — fail CLOSED: an unresolvable path must not be a
+    // bypass of the surface guard.
     const worktreeRoot = deps.getWorktreeRoot();
     const mainCheckout = deps.getMainCheckout();
-    const base = [worktreeRoot, mainCheckout].find(b => !!b && filePath.startsWith(b + '/'));
-    const repoRelative = base
-      ? relative(base, filePath)
-      : isAbsolute(filePath) ? null : filePath;
+    const normalized = isAbsolute(filePath) ? resolve(filePath) : null;
+    const base = normalized === null
+      ? undefined
+      : [worktreeRoot, mainCheckout].find(b => !!b && isWithinDirectory(normalized, b));
+    const repoRelative = base && normalized
+      ? relative(base, normalized)
+      : normalized === null && !filePath.split(/[\\/]/).includes('..')
+        ? filePath.replace(/^\.\//, '')
+        : null;
     if (repoRelative === null || isEnforcementSurface(repoRelative)) {
       return {
         allowed: false,
