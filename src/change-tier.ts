@@ -60,7 +60,9 @@ const ENFORCEMENT_SURFACE_FILES = new Set([
 
 /** True if this repo-relative path is part of the enforcement machinery. */
 export function isEnforcementSurface(filePath: string): boolean {
-  const normalized = filePath.replace(/^\.\//, '');
+  // Normalize Windows separators so platform-dependent path.relative()
+  // output still matches the forward-slash prefixes.
+  const normalized = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
   if (ENFORCEMENT_SURFACE_FILES.has(normalized)) return true;
   return ENFORCEMENT_SURFACE_PREFIXES.some(p => normalized.startsWith(p));
 }
