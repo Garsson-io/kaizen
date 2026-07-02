@@ -5,7 +5,7 @@
  * No GitHub or git calls are made.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
@@ -19,6 +19,7 @@ import {
   isSourceFile,
   checkPlanSubstance,
   checkTestPlanSubstance,
+  defaultRealPath,
   type PlanCheckDeps,
 } from './enforce-plan-stored.js';
 import { CaseSystem, type CaseBackend } from '../case-system.js';
@@ -47,6 +48,9 @@ function makeDeps(backendOverrides: Partial<CaseBackend> = {}, depsOverrides: Pa
     getMainCheckout: () => '/repo',
     getDeclaredIssue: () => '1055',
     getIssueState: () => 'OPEN',
+    getDeclaredTier: () => 'standard',
+    getDiffTotals: () => ({ files: 1, lines: 10 }),
+    realPath: (p: string) => p,
     ...depsOverrides,
   };
 }
@@ -754,5 +758,284 @@ describe('REGRESSION: #1054 — agent skips plan', () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('kaizen-write-plan');
+  });
+});
+
+// ── Trivial tier: proportional ceremony (#1748) ─────────────────────
+
+const GOOD_MINI_PLAN = 'Rename the stale /kaizen reference in the wip skill doc to /kaizen-reflect '
+  + 'so the trigger list matches the shipped skill name. Verify: existing skill-doc lint test passes.';
+
+function trivialDeps(
+  backendOverrides: Partial<CaseBackend> = {},
+  depsOverrides: Partial<PlanCheckDeps> = {},
+): PlanCheckDeps {
+  return makeDeps(
+    { retrievePlan: () => GOOD_MINI_PLAN, retrieveTestPlan: () => null, ...backendOverrides },
+    {
+      getDeclaredTier: () => 'trivial',
+      getChangedFiles: () => ['src/wip-summary.ts', 'src/wip-summary.test.ts'],
+      getDiffTotals: () => ({ files: 2, lines: 30 }),
+      ...depsOverrides,
+    },
+  );
+}
+
+describe('trivial tier — edit gate (#1748)', () => {
+  it('allows a non-surface edit with a mini plan and NO test plan', () => {
+    const result = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/src/wip-summary.ts', trivialDeps());
+    expect(result.allowed).toBe(true);
+  });
+
+  it('blocks enforcement-surface edits with an unset hint', () => {
+    const result = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/src/hooks/pre-push.ts', trivialDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+    expect(result.reason).toContain('--unset kaizen.tier');
+  });
+
+  it('resolves the repo-relative path against the worktree root for the surface check', () => {
+    // Proof of resolution: the RAW absolute path matches no surface prefix
+    // ('/repo/...' does not start with 'prompts/'), so a block here can only
+    // come from worktree-root-relative resolution.
+    const blocked = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/prompts/review-new.ts', trivialDeps());
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.missing).toEqual(['tier-surface']);
+    // And the same basename outside any surface dir must NOT be blocked.
+    const allowed = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/src/pre-push.ts', trivialDeps());
+    expect(allowed.allowed).toBe(true);
+  });
+
+  it('resolves against the main checkout when the path is not under the worktree root', () => {
+    const result = checkPlanBeforeEdit('/repo/src/hooks/pre-push.ts', trivialDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it('fails CLOSED on an absolute path resolvable against neither root', () => {
+    const result = checkPlanBeforeEdit('/elsewhere/src/utils.ts', trivialDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+    expect(result.reason).toContain('unresolvable');
+  });
+
+  it("normalizes '..' traversal so a smuggled surface path is still blocked", () => {
+    // startsWith(worktreeRoot) is true, but the REAL target is src/hooks/.
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/../../../src/hooks/pre-push.ts',
+      trivialDeps(),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it("fails CLOSED on a relative path containing '..'", () => {
+    const result = checkPlanBeforeEdit('../src/utils.ts', trivialDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it('dereferences symlinks: an innocent-looking name pointing at a hook is blocked', () => {
+    // notes.ts is a symlink to .claude/hooks/kaizen-worktree-setup.sh
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/notes.ts',
+      trivialDeps({}, {
+        realPath: (p: string) => p === '/repo/.claude/worktrees/wt/notes.ts'
+          ? '/repo/.claude/worktrees/wt/.claude/hooks/kaizen-worktree-setup.sh'
+          : p,
+      }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it('fails CLOSED when the path cannot be dereferenced', () => {
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/src/wip-summary.ts',
+      trivialDeps({}, { realPath: () => null }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it('fails CLOSED on a path into a SIBLING worktree (even a non-surface one)', () => {
+    for (const p of [
+      '/repo/.claude/worktrees/other-case/src/hooks/x.ts',
+      '/repo/.claude/worktrees/other-case/src/innocent.ts',
+    ]) {
+      const result = checkPlanBeforeEdit(p, trivialDeps());
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toEqual(['tier-surface']);
+    }
+  });
+
+  it('relative paths without traversal use the repo-relative fallback', () => {
+    expect(checkPlanBeforeEdit('src/wip-summary.ts', trivialDeps()).allowed).toBe(true);
+    expect(checkPlanBeforeEdit('./src/wip-summary.ts', trivialDeps()).allowed).toBe(true);
+    const surface = checkPlanBeforeEdit('src/hooks/pre-push.ts', trivialDeps());
+    expect(surface.allowed).toBe(false);
+    expect(surface.missing).toEqual(['tier-surface']);
+  });
+
+  it('defaultRealPath dereferences real symlinks and survives new subdirectories (real fs)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kaizen-realpath-'));
+    try {
+      const target = join(dir, 'real-target.sh');
+      writeFileSync(target, '#!/bin/sh\n');
+      const link = join(dir, 'innocent.ts');
+      symlinkSync(target, link);
+      // Symlink dereferences to its target.
+      expect(defaultRealPath(link)).toBe(realpathSync(target));
+      // New file in an existing dir keeps its basename.
+      expect(defaultRealPath(join(dir, 'new-file.ts'))).toBe(join(realpathSync(dir), 'new-file.ts'));
+      // New file in a NEW subdirectory is not a false positive.
+      expect(defaultRealPath(join(dir, 'newmod', 'deep', 'thing.ts')))
+        .toBe(join(realpathSync(dir), 'newmod', 'deep', 'thing.ts'));
+      // DANGLING symlink still dereferences — a link to a not-yet-existing
+      // hook must land on the hook path, not keep the innocent name.
+      const dangling = join(dir, 'innocent2.ts');
+      symlinkSync(join(dir, '.claude', 'hooks', 'new-hook.sh'), dangling);
+      expect(defaultRealPath(dangling))
+        .toBe(join(realpathSync(dir), '.claude', 'hooks', 'new-hook.sh'));
+      // Symlink loop → null (fail closed), not an infinite walk.
+      const loopA = join(dir, 'loop-a');
+      const loopB = join(dir, 'loop-b');
+      symlinkSync(loopB, loopA);
+      symlinkSync(loopA, loopB);
+      expect(defaultRealPath(loopA)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the numstat snapshot is authoritative for the count check', () => {
+    // numstat sees 5 files even though name-only saw 2 → over the limit → block.
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, { getDiffTotals: () => ({ files: 5, lines: 30 }) }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-mismatch']);
+  });
+
+  it('surface matching uses paths from the SAME numstat snapshot when present (no TOCTOU)', () => {
+    // name-only snapshot looks clean, but the numstat snapshot carries a
+    // surface file — the numstat snapshot wins.
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, {
+        getChangedFiles: () => ['src/innocent.ts'],
+        getDiffTotals: () => ({ files: 2, lines: 20, paths: ['src/innocent.ts', 'src/hooks/pre-push.ts'] }),
+      }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('src/hooks/pre-push.ts');
+  });
+
+  it('relative symlinks are dereferenced too (no literal-relative fallback)', () => {
+    // k.ts (relative) is a symlink to a hook — resolution goes through
+    // worktreeRoot + realPath, landing on the real target.
+    const result = checkPlanBeforeEdit(
+      'k.ts',
+      trivialDeps({}, {
+        realPath: (p: string) => p === '/repo/.claude/worktrees/wt/k.ts'
+          ? '/repo/.claude/worktrees/wt/.claude/hooks/kaizen-worktree-setup.sh'
+          : p,
+      }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it('scope-conflict is NOT relaxed by the trivial tier (#1161)', () => {
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/src/wip-summary.ts',
+      trivialDeps({ retrievePlan: () => `${GOOD_MINI_PLAN}\n\nCloses #1056` }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['scope-conflict']);
+    expect(result.reason).toContain('#1056');
+  });
+
+  it('still requires a plan to EXIST', () => {
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/src/wip-summary.ts',
+      trivialDeps({ retrievePlan: () => null }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['plan']);
+  });
+
+  it('holds the plan to the mini bar (verification mention required)', () => {
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/src/wip-summary.ts',
+      trivialDeps({ retrievePlan: () => 'Rename the stale reference in the wip skill doc so the trigger list matches the shipped skill name everywhere it appears.' }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['substance']);
+  });
+});
+
+describe('trivial tier — PR gate verification (#1748)', () => {
+  it('allows a verified-trivial PR with mini plan only (no test plan, no Impact section)', () => {
+    const result = checkPlanBeforePr(ghPrCreate('Small fix.\n\nCloses #1055'), trivialDeps());
+    expect(result.allowed).toBe(true);
+  });
+
+  it('blocks when the diff outgrew the declaration and names the numbers', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, { getDiffTotals: () => ({ files: 9, lines: 412 }) }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-mismatch']);
+    expect(result.reason).toContain('9 changed files');
+    expect(result.reason).toContain('412 changed lines');
+    expect(result.reason).toContain('--unset kaizen.tier');
+  });
+
+  it('blocks when the diff touches the enforcement surface', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, { getChangedFiles: () => ['src/hooks/pre-push.ts'] }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('src/hooks/pre-push.ts');
+  });
+
+  it('verified-trivial still requires the stored plan to exist', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({ retrievePlan: () => null }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['plan']);
+  });
+
+  it('fails CLOSED when the diff is empty/unreadable (broken git state is not a bypass)', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, { getChangedFiles: () => [], getDiffTotals: () => ({ files: 0, lines: 0 }) }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-unverifiable']);
+  });
+
+  it('superseded guard still fires before the trivial fast path', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, { getIssueState: () => 'CLOSED' }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['superseded']);
+  });
+
+  it('standard tier is untouched: full substance + impact proof still required', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      makeDeps({}, { getDeclaredTier: () => 'standard' }),
+    );
+    expect(result.allowed).toBe(false); // missing Impact section, as before
+    expect(result.missing).toEqual(['impact-proof']);
   });
 });

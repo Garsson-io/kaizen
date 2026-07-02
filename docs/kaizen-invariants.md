@@ -209,6 +209,8 @@ Status meanings:
 - L3 (partial): `retrieveTestPlan` with 3-step fallback — dedicated attachment, plan attachment section, issue body section
 - L2: **MISSING** — hook should call `npx tsx src/cli-structured-data.ts retrieve-testplan --issue <N> --repo <R>` and deny if empty
 
+**Tier carve-out (#1748)**: a worktree declared `kaizen.tier trivial` — verified against the real diff at `gh pr create` (≤ 4 files, ≤ 80 lines, no enforcement-surface files, fail closed) — satisfies I3/I8 with a mini plan (what + how verified) and no separate behaviors-table test plan or Impact section. See `docs/change-tiers.md`. I8's spirit (plan + declared verification before code, durable audit trail) is retained; only the substance bar scales.
+
 ### I4 — PR body includes behaviors × levels table
 
 **Why**: The reviewer retrieves it from the issue. The PR author must surface it in the body so reviewers can scan coverage at a glance.
