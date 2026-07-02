@@ -87,12 +87,25 @@ export interface DiffTotals {
  */
 export function expandRenamePaths(raw: string): string[] {
   if (!raw.includes(' => ')) return [raw];
-  const braced = raw.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
-  const [oldPath, newPath] = braced
-    ? [braced[1] + braced[2] + braced[4], braced[1] + braced[3] + braced[4]]
-    : raw.split(' => ', 2) as [string, string];
   const clean = (p: string) => p.replace(/\/{2,}/g, '/');
-  return oldPath === newPath ? [clean(newPath)] : [clean(oldPath), clean(newPath)];
+  const candidates = new Set<string>();
+  // A filename may itself contain ' => ', making the true split point
+  // ambiguous. Emit BOTH sides of EVERY possible split — over-inclusion can
+  // only make the surface/limit checks stricter, never looser (fail closed).
+  const addAllSplits = (s: string, wrap: (side: string) => string) => {
+    const segs = s.split(' => ');
+    for (let i = 1; i < segs.length; i++) {
+      candidates.add(clean(wrap(segs.slice(0, i).join(' => '))));
+      candidates.add(clean(wrap(segs.slice(i).join(' => '))));
+    }
+  };
+  const braced = raw.match(/^(.*)\{(.*)\}(.*)$/);
+  if (braced && braced[2].includes(' => ')) {
+    addAllSplits(braced[2], side => braced[1] + side + braced[3]);
+  } else {
+    addAllSplits(raw, side => side);
+  }
+  return candidates.size > 0 ? [...candidates] : [clean(raw)];
 }
 
 /**

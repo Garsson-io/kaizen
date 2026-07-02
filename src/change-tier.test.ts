@@ -121,6 +121,20 @@ describe('expandRenamePaths', () => {
   it('unbraced renames split on the arrow', () => {
     expect(expandRenamePaths('old.ts => src/hooks/new.ts')).toEqual(['old.ts', 'src/hooks/new.ts']);
   });
+
+  it("a filename containing ' => ' cannot hide the real rename target", () => {
+    // git emits this unquoted for a file literally named 'weird => name.ts'
+    // renamed into src/hooks/ — every split candidate is emitted, so the
+    // hook path is always among them.
+    const paths = expandRenamePaths('weird => name.ts => src/hooks/newhook.ts');
+    expect(paths).toContain('src/hooks/newhook.ts');
+    expect(paths.some(isEnforcementSurface)).toBe(true);
+  });
+
+  it("braced renames with ' => ' inside the filename still surface the hook side", () => {
+    const paths = expandRenamePaths('src/{weird => name.ts => hooks/new.ts}');
+    expect(paths).toContain('src/hooks/new.ts');
+  });
 });
 
 describe('parseNumstat', () => {
