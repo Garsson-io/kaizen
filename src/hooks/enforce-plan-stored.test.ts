@@ -47,6 +47,8 @@ function makeDeps(backendOverrides: Partial<CaseBackend> = {}, depsOverrides: Pa
     getMainCheckout: () => '/repo',
     getDeclaredIssue: () => '1055',
     getIssueState: () => 'OPEN',
+    getDeclaredTier: () => 'standard',
+    getDiffTotals: () => ({ files: 1, lines: 10 }),
     ...depsOverrides,
   };
 }
@@ -754,5 +756,118 @@ describe('REGRESSION: #1054 — agent skips plan', () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('kaizen-write-plan');
+  });
+});
+
+// ── Trivial tier: proportional ceremony (#1748) ─────────────────────
+
+const GOOD_MINI_PLAN = 'Rename the stale /kaizen reference in the wip skill doc to /kaizen-reflect '
+  + 'so the trigger list matches the shipped skill name. Verify: existing skill-doc lint test passes.';
+
+function trivialDeps(
+  backendOverrides: Partial<CaseBackend> = {},
+  depsOverrides: Partial<PlanCheckDeps> = {},
+): PlanCheckDeps {
+  return makeDeps(
+    { retrievePlan: () => GOOD_MINI_PLAN, retrieveTestPlan: () => null, ...backendOverrides },
+    {
+      getDeclaredTier: () => 'trivial',
+      getChangedFiles: () => ['src/wip-summary.ts', 'src/wip-summary.test.ts'],
+      getDiffTotals: () => ({ files: 2, lines: 30 }),
+      ...depsOverrides,
+    },
+  );
+}
+
+describe('trivial tier — edit gate (#1748)', () => {
+  it('allows a non-surface edit with a mini plan and NO test plan', () => {
+    const result = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/src/wip-summary.ts', trivialDeps());
+    expect(result.allowed).toBe(true);
+  });
+
+  it('blocks enforcement-surface edits with an unset hint', () => {
+    const result = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/src/hooks/pre-push.ts', trivialDeps());
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
+    expect(result.reason).toContain('--unset kaizen.tier');
+  });
+
+  it('resolves the repo-relative path against the worktree root for the surface check', () => {
+    // Same basename outside the surface dir must NOT be blocked.
+    const result = checkPlanBeforeEdit('/repo/.claude/worktrees/wt/src/pre-push.ts', trivialDeps());
+    expect(result.allowed).toBe(true);
+  });
+
+  it('still requires a plan to EXIST', () => {
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/src/wip-summary.ts',
+      trivialDeps({ retrievePlan: () => null }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['plan']);
+  });
+
+  it('holds the plan to the mini bar (verification mention required)', () => {
+    const result = checkPlanBeforeEdit(
+      '/repo/.claude/worktrees/wt/src/wip-summary.ts',
+      trivialDeps({ retrievePlan: () => 'Rename the stale reference in the wip skill doc so the trigger list matches the shipped skill name everywhere it appears.' }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['substance']);
+  });
+});
+
+describe('trivial tier — PR gate verification (#1748)', () => {
+  it('allows a verified-trivial PR with mini plan only (no test plan, no Impact section)', () => {
+    const result = checkPlanBeforePr(ghPrCreate('Small fix.\n\nCloses #1055'), trivialDeps());
+    expect(result.allowed).toBe(true);
+  });
+
+  it('blocks when the diff outgrew the declaration and names the numbers', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, { getDiffTotals: () => ({ files: 9, lines: 412 }) }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-mismatch']);
+    expect(result.reason).toContain('9 changed files');
+    expect(result.reason).toContain('412 changed lines');
+    expect(result.reason).toContain('--unset kaizen.tier');
+  });
+
+  it('blocks when the diff touches the enforcement surface', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, { getChangedFiles: () => ['src/hooks/pre-push.ts'] }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('src/hooks/pre-push.ts');
+  });
+
+  it('verified-trivial still requires the stored plan to exist', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({ retrievePlan: () => null }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['plan']);
+  });
+
+  it('superseded guard still fires before the trivial fast path', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, { getIssueState: () => 'CLOSED' }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['superseded']);
+  });
+
+  it('standard tier is untouched: full substance + impact proof still required', () => {
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      makeDeps({}, { getDeclaredTier: () => 'standard' }),
+    );
+    expect(result.allowed).toBe(false); // missing Impact section, as before
+    expect(result.missing).toEqual(['impact-proof']);
   });
 });

@@ -12,6 +12,11 @@
  *   1. Edit/Write of source files in worktrees — blocks FIRST code edit
  *   2. Bash `gh pr create` — backstop with substance checks
  *
+ * Proportional ceremony (#1748): a worktree declared trivial via
+ * `git config --worktree kaizen.tier trivial` is held to the mini-plan bar
+ * instead of the full substance bar; the declaration is verified against the
+ * real diff at PR time (src/change-tier.ts, docs/change-tiers.md).
+ *
  * Part of kaizen #1055.
  */
 
@@ -34,6 +39,15 @@ import { CaseSystem } from '../case-system.js';
 import { extractCaseIssueFromBranch } from './lib/case-branch.js';
 import { queryIssueState, type IssueState } from '../lib/github-pr.js';
 import { parseSections } from '../section-editor.js';
+import {
+  parseChangeTier,
+  isEnforcementSurface,
+  verifyTrivialTier,
+  checkMiniPlanSubstance,
+  TRIVIAL_LIMITS,
+  type ChangeTier,
+  type DiffTotals,
+} from '../change-tier.js';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -61,6 +75,14 @@ export interface PlanCheckDeps {
    * Injectable for tests; defaults to {@link queryIssueState}.
    */
   getIssueState: (issue: number, repo: string) => IssueState | null;
+  /**
+   * Declared change tier for this worktree via `git config kaizen.tier`
+   * (#1748). Unknown/unset values parse to 'standard' — fail to the
+   * stricter bar.
+   */
+  getDeclaredTier: () => ChangeTier;
+  /** Branch diff totals (main...HEAD) used to VERIFY a trivial declaration at PR time. */
+  getDiffTotals: () => DiffTotals;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -98,6 +120,18 @@ const DEFAULT_DEPS: PlanCheckDeps = {
     return v && /^\d+$/.test(v) ? v : null;
   },
   getIssueState: (issue: number, repo: string) => queryIssueState({ repo, issue }),
+  getDeclaredTier: () => parseChangeTier(gitStdout(['config', '--get', 'kaizen.tier'])),
+  getDiffTotals: () => {
+    const numstat = gitStdout(['diff', '--numstat', 'main...HEAD']);
+    const rows = numstat ? numstat.split('\n').filter(Boolean) : [];
+    let lines = 0;
+    for (const row of rows) {
+      const [adds, dels] = row.split('\t');
+      // Binary files report "-"; count them as 0 lines but 1 file.
+      lines += (parseInt(adds, 10) || 0) + (parseInt(dels, 10) || 0);
+    }
+    return { files: rows.length, lines };
+  },
 };
 
 // ── Issue extraction ────────────────────────────────────────────────
@@ -380,6 +414,80 @@ Design Alternatives, and a Seam Map & Test Plan with test levels.
   };
 }
 
+// ── Trivial tier: the mini-plan bar (#1748) ─────────────────────────
+
+/**
+ * The trivial-tier plan bar, shared by BOTH choke points (first source edit
+ * AND `gh pr create`) — one bar, no drift, same principle as checkSubstance
+ * (#1035). A plan must still EXIST on the issue (I8's audit trail survives),
+ * but the substance bar is the mini bar: what changes + how it's verified.
+ * No separate behaviors-table test plan is required.
+ */
+function checkTrivialPlanBar(
+  issueNum: string,
+  repo: string,
+  deps: PlanCheckDeps,
+): PlanCheckResult {
+  const gate = deps.caseSystem.checkPlanGate(parseInt(issueNum, 10), repo);
+  if (!gate.hasPlan) {
+    return {
+      allowed: false,
+      missing: ['plan'],
+      reason: `BLOCKED: No plan stored for issue #${issueNum} — even a trivial change needs one (#1748).
+
+The trivial tier only relaxes HOW MUCH plan, not WHETHER: store a few sentences
+saying what changes and how you will verify it, then retry.
+  npx tsx src/cli-structured-data.ts store-plan --issue ${issueNum} --repo ${repo} --file plan.md`,
+    };
+  }
+  const miniFailures = checkMiniPlanSubstance(gate.planText ?? '');
+  if (miniFailures.length > 0) {
+    return {
+      allowed: false,
+      missing: ['substance'],
+      reason: `BLOCKED: The stored plan does not meet even the trivial-tier mini bar (#1748).
+
+${miniFailures.map(f => `  - ${f}`).join('\n')}
+
+Update the stored plan to say what changes and how it will be verified:
+  npx tsx src/cli-structured-data.ts store-plan --issue ${issueNum} --repo ${repo} --file plan.md`,
+    };
+  }
+  return { allowed: true };
+}
+
+/**
+ * VERIFY a trivial declaration against the real diff at `gh pr create`.
+ * Declaration was cheap at edit time; here the ground truth exists, so a
+ * change that outgrew its tier is blocked — fail closed, with every
+ * violation named (#943/#1106: verify the outcome, don't trust the command).
+ */
+function checkTrivialTierBeforePr(
+  issueNum: string,
+  repo: string,
+  changedFiles: string[],
+  deps: PlanCheckDeps,
+): PlanCheckResult {
+  const verification = verifyTrivialTier(changedFiles, deps.getDiffTotals());
+  if (!verification.ok) {
+    return {
+      allowed: false,
+      missing: ['tier-mismatch'],
+      reason: `BLOCKED: This change was declared trivial, but the diff says otherwise (#1748).
+
+${verification.violations.map(v => `  - ${v}`).join('\n')}
+
+A trivial change is ≤ ${TRIVIAL_LIMITS.maxFiles} files, ≤ ${TRIVIAL_LIMITS.maxLines} changed lines, and never touches
+the enforcement surface. Two exits:
+  - Split the PR until the diff fits the declared tier, or
+  - Upgrade to the standard flow:
+      git config --worktree --unset kaizen.tier
+      Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })`,
+    };
+  }
+  return checkTrivialPlanBar(issueNum, repo, deps);
+}
+
 // ── Gate 1: Edit/Write — block source edits without a plan ──────────
 
 export function checkPlanBeforeEdit(
@@ -430,6 +538,30 @@ This hook enforces I8: implementation must be tied to a planned issue.`,
 
   const repo = deps.detectRepo();
   if (!repo) return { allowed: true };
+
+  // Proportional ceremony (#1748): a declared-trivial worktree gets the
+  // mini-plan bar — but never for the enforcement machinery itself, and the
+  // declaration is re-verified against the real diff at `gh pr create`.
+  const tier = deps.getDeclaredTier();
+  if (tier === 'trivial') {
+    const worktreeRoot = deps.getWorktreeRoot();
+    const repoRelative = worktreeRoot && filePath.startsWith(worktreeRoot + '/')
+      ? relative(worktreeRoot, filePath)
+      : filePath;
+    if (isEnforcementSurface(repoRelative)) {
+      return {
+        allowed: false,
+        missing: ['tier-surface'],
+        reason: `BLOCKED: ${repoRelative} is enforcement surface — a change here is never trivial (#1748).
+
+Hooks, gates, skills, and prompts always take the standard flow. Unset the tier
+and store a full plan:
+  git config --worktree --unset kaizen.tier
+  Skill({ skill: "kaizen-write-plan", args: "#${issueNum}" })`,
+      };
+    }
+    return checkTrivialPlanBar(issueNum, repo, deps);
+  }
 
   const gate = deps.caseSystem.checkPlanGate(parseInt(issueNum, 10), repo);
   if (!gate.passed) {
@@ -593,6 +725,14 @@ This hook enforces I3 (stored test plan) and I8 (plan before implementation).`,
   // no plan exists. Fails open on unknown state.
   const supersededResult = checkIssueNotSuperseded(issueNum, repo, deps);
   if (!supersededResult.allowed) return supersededResult;
+
+  // Proportional ceremony (#1748): a declared-trivial change is verified
+  // against the REAL diff here, then held to the mini-plan bar. Verified
+  // trivial PRs skip the full substance bar, the test-plan requirement, and
+  // the Impact-proof section. A failed verification falls through as a block.
+  if (deps.getDeclaredTier() === 'trivial') {
+    return checkTrivialTierBeforePr(issueNum, repo, changedFiles, deps);
+  }
 
   // Use Case FE for existence check
   const gate = deps.caseSystem.checkPlanGate(parseInt(issueNum, 10), repo);
