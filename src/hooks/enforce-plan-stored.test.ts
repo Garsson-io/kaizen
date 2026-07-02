@@ -5,7 +5,7 @@
  * No GitHub or git calls are made.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
@@ -19,6 +19,7 @@ import {
   isSourceFile,
   checkPlanSubstance,
   checkTestPlanSubstance,
+  defaultRealPath,
   type PlanCheckDeps,
 } from './enforce-plan-stored.js';
 import { CaseSystem, type CaseBackend } from '../case-system.js';
@@ -855,6 +856,54 @@ describe('trivial tier — edit gate (#1748)', () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.missing).toEqual(['tier-surface']);
+  });
+
+  it('fails CLOSED on a path into a SIBLING worktree (even a non-surface one)', () => {
+    for (const p of [
+      '/repo/.claude/worktrees/other-case/src/hooks/x.ts',
+      '/repo/.claude/worktrees/other-case/src/innocent.ts',
+    ]) {
+      const result = checkPlanBeforeEdit(p, trivialDeps());
+      expect(result.allowed).toBe(false);
+      expect(result.missing).toEqual(['tier-surface']);
+    }
+  });
+
+  it('relative paths without traversal use the repo-relative fallback', () => {
+    expect(checkPlanBeforeEdit('src/wip-summary.ts', trivialDeps()).allowed).toBe(true);
+    expect(checkPlanBeforeEdit('./src/wip-summary.ts', trivialDeps()).allowed).toBe(true);
+    const surface = checkPlanBeforeEdit('src/hooks/pre-push.ts', trivialDeps());
+    expect(surface.allowed).toBe(false);
+    expect(surface.missing).toEqual(['tier-surface']);
+  });
+
+  it('defaultRealPath dereferences real symlinks and survives new subdirectories (real fs)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kaizen-realpath-'));
+    try {
+      const target = join(dir, 'real-target.sh');
+      writeFileSync(target, '#!/bin/sh\n');
+      const link = join(dir, 'innocent.ts');
+      symlinkSync(target, link);
+      // Symlink dereferences to its target.
+      expect(defaultRealPath(link)).toBe(realpathSync(target));
+      // New file in an existing dir keeps its basename.
+      expect(defaultRealPath(join(dir, 'new-file.ts'))).toBe(join(realpathSync(dir), 'new-file.ts'));
+      // New file in a NEW subdirectory is not a false positive.
+      expect(defaultRealPath(join(dir, 'newmod', 'deep', 'thing.ts')))
+        .toBe(join(realpathSync(dir), 'newmod', 'deep', 'thing.ts'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('changedFiles/totals disagreement resolves to the stricter source', () => {
+    // numstat sees 5 files even though name-only saw 2 → over the limit → block.
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, { getDiffTotals: () => ({ files: 5, lines: 30 }) }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-mismatch']);
   });
 
   it('scope-conflict is NOT relaxed by the trivial tier (#1161)', () => {

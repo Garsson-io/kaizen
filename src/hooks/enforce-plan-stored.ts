@@ -30,7 +30,7 @@ import {
   readFileSync,
   readSync,
 } from 'node:fs';
-import { isAbsolute, resolve, relative } from 'node:path';
+import { basename, dirname, isAbsolute, resolve, relative } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { currentHookBranch } from './lib/current-branch.js';
 import { gitStdout } from './lib/git-state.js';
@@ -130,19 +130,32 @@ const DEFAULT_DEPS: PlanCheckDeps = {
   getIssueState: (issue: number, repo: string) => queryIssueState({ repo, issue }),
   getDeclaredTier: () => parseChangeTier(gitStdout(['config', '--get', 'kaizen.tier'])),
   getDiffTotals: () => parseNumstat(gitStdout(['diff', '--numstat', 'main...HEAD'])),
-  realPath: (p: string) => {
-    try {
-      return realpathSync(p);
-    } catch {
-      // New files don't exist yet — dereference the parent, keep the basename.
-      try {
-        return resolve(realpathSync(resolve(p, '..')), p.replace(/^.*\//, ''));
-      } catch {
-        return null;
-      }
-    }
-  },
+  realPath: defaultRealPath,
 };
+
+/**
+ * Default {@link PlanCheckDeps.realPath}: dereference symlinks via
+ * realpathSync. A path that doesn't exist yet (new file — possibly in a new
+ * subdirectory) dereferences its NEAREST EXISTING ancestor and reattaches the
+ * remaining segments, so creating `<wt>/newdir/thing.ts` is not a false
+ * positive. Returns null only when no ancestor resolves — callers fail closed.
+ */
+export function defaultRealPath(p: string): string | null {
+  try {
+    return realpathSync(p);
+  } catch { /* walk up to the nearest existing ancestor */ }
+  const tail: string[] = [];
+  let cur = p;
+  for (;;) {
+    const parent = dirname(cur);
+    if (parent === cur) return null;
+    tail.unshift(basename(cur));
+    cur = parent;
+    try {
+      return resolve(realpathSync(cur), ...tail);
+    } catch { /* ancestor missing too — keep walking */ }
+  }
+}
 
 // ── Issue extraction ────────────────────────────────────────────────
 
@@ -599,11 +612,18 @@ This hook enforces I8: implementation must be tied to a planned issue.`,
     const base = normalized === null
       ? undefined
       : [worktreeRoot, mainCheckout].find(b => !!b && isWithinDirectory(normalized, b));
-    const repoRelative = base && normalized
+    let repoRelative = base && normalized
       ? relative(base, normalized)
       : !isAbsolute(filePath) && !filePath.split(/[\\/]/).includes('..')
         ? filePath.replace(/^\.\//, '')
         : null;
+    // Worktrees nest under the main checkout, so a path into a SIBLING
+    // worktree resolves via mainCheckout to '.claude/worktrees/<other>/…' —
+    // which matches no surface prefix. Editing another worktree under a
+    // trivial declaration is never legitimate: fail closed.
+    if (repoRelative !== null && base === mainCheckout && repoRelative.startsWith('.claude/worktrees/')) {
+      repoRelative = null;
+    }
     if (repoRelative === null || isEnforcementSurface(repoRelative)) {
       return {
         allowed: false,
