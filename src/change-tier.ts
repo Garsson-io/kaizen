@@ -38,7 +38,12 @@ const ENFORCEMENT_SURFACE_PREFIXES = [
   '.claude-plugin/',
   '.agents/skills/',
   '.agents/kaizen/',
+  // Symlinked views of .agents/skills (agentsync layout) — an edit addressed
+  // through any of them is a skills edit and must hit the same wall.
   '.claude/skills/',
+  '.codex/skills/',
+  '.gemini/skills/',
+  '.opencode/skills/',
   'prompts/',
 ];
 
