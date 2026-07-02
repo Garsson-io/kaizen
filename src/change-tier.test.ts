@@ -5,7 +5,6 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  expandRenamePaths,
   parseChangeTier,
   parseNumstat,
   isEnforcementSurface,
@@ -104,54 +103,31 @@ describe('verifyTrivialTier', () => {
   });
 });
 
-describe('expandRenamePaths', () => {
-  it('plain paths pass through', () => {
-    expect(expandRenamePaths('src/a.ts')).toEqual(['src/a.ts']);
-  });
-
-  it('braced renames expand to old AND new concrete paths', () => {
-    expect(expandRenamePaths('src/{other/moved.ts => hooks/newhook.ts}'))
-      .toEqual(['src/other/moved.ts', 'src/hooks/newhook.ts']);
-  });
-
-  it('empty-side braces collapse double slashes', () => {
-    expect(expandRenamePaths('src/{ => hooks}/x.ts')).toEqual(['src/x.ts', 'src/hooks/x.ts']);
-  });
-
-  it('unbraced renames split on the arrow', () => {
-    expect(expandRenamePaths('old.ts => src/hooks/new.ts')).toEqual(['old.ts', 'src/hooks/new.ts']);
-  });
-
-  it("a filename containing ' => ' cannot hide the real rename target", () => {
-    // git emits this unquoted for a file literally named 'weird => name.ts'
-    // renamed into src/hooks/ — every split candidate is emitted, so the
-    // hook path is always among them.
-    const paths = expandRenamePaths('weird => name.ts => src/hooks/newhook.ts');
-    expect(paths).toContain('src/hooks/newhook.ts');
-    expect(paths.some(isEnforcementSurface)).toBe(true);
-  });
-
-  it("braced renames with ' => ' inside the filename still surface the hook side", () => {
-    const paths = expandRenamePaths('src/{weird => name.ts => hooks/new.ts}');
-    expect(paths).toContain('src/hooks/new.ts');
-  });
-});
-
-describe('parseNumstat', () => {
-  it('rename rows expand so a rename INTO the surface is visible to the prefix match', () => {
-    const totals = parseNumstat('4\t1\tsrc/{other/moved.ts => hooks/newhook.ts}');
-    expect(totals.files).toBe(1);
-    expect(totals.paths).toEqual(['src/other/moved.ts', 'src/hooks/newhook.ts']);
-  });
-
-  it('sums adds+dels across rows, counts files, and carries the snapshot paths', () => {
-    expect(parseNumstat('10\t5\tsrc/a.ts\n3\t0\tsrc/b.ts'))
+describe('parseNumstat (-z format)', () => {
+  it('sums adds+dels across entries, counts files, and carries the snapshot paths', () => {
+    expect(parseNumstat('10\t5\tsrc/a.ts\0' + '3\t0\tsrc/b.ts\0'))
       .toEqual({ files: 2, lines: 18, paths: ['src/a.ts', 'src/b.ts'] });
   });
 
-  it("counts binary '-' sentinel rows as 0 lines but 1 file", () => {
-    expect(parseNumstat('-\t-\tassets/logo.png\n2\t1\tsrc/a.ts'))
+  it("counts binary '-' sentinel entries as 0 lines but 1 file", () => {
+    expect(parseNumstat('-\t-\tassets/logo.png\0' + '2\t1\tsrc/a.ts\0'))
       .toEqual({ files: 2, lines: 3, paths: ['assets/logo.png', 'src/a.ts'] });
+  });
+
+  it('rename entries carry BOTH verbatim sides (empirically verified -z encoding)', () => {
+    // adds\tdels\t\0old\0new\0 — exactly what git 2.43 emits.
+    const totals = parseNumstat('0\t0\t\0src/other/moved.ts\0src/hooks/newhook.ts\0');
+    expect(totals.files).toBe(1);
+    expect(totals.paths).toEqual(['src/other/moved.ts', 'src/hooks/newhook.ts']);
+    expect(totals.paths!.some(isEnforcementSurface)).toBe(true);
+  });
+
+  it("hostile filenames (' => ', braces, newlines) are verbatim — no parse ambiguity", () => {
+    const totals = parseNumstat('1\t0\t\0weird => {a}.ts\0src/hooks/newhook.ts\0');
+    expect(totals.paths).toEqual(['weird => {a}.ts', 'src/hooks/newhook.ts']);
+    expect(totals.paths!.some(isEnforcementSurface)).toBe(true);
+    const withNewline = parseNumstat('1\t0\tsrc/odd\nname.ts\0');
+    expect(withNewline.paths).toEqual(['src/odd\nname.ts']);
   });
 
   it('empty output → zero totals', () => {

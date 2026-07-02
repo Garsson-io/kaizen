@@ -80,52 +80,36 @@ export interface DiffTotals {
 }
 
 /**
- * Expand a numstat path that may use git's rename syntax into every concrete
- * path it names. Renames appear as `common/{old => new}/rest` or, with no
- * common prefix, `old => new`. BOTH sides count for surface matching: a
- * rename INTO src/hooks/ creates a hook, a rename OUT OF it removes one —
- * either is an enforcement-surface change and must not slip past a prefix
- * match against the raw `{… => …}` string.
- */
-export function expandRenamePaths(raw: string): string[] {
-  if (!raw.includes(' => ')) return [raw];
-  const clean = (p: string) => p.replace(/\/{2,}/g, '/');
-  const candidates = new Set<string>();
-  // A filename may itself contain ' => ', making the true split point
-  // ambiguous. Emit BOTH sides of EVERY possible split — over-inclusion can
-  // only make the surface/limit checks stricter, never looser (fail closed).
-  const addAllSplits = (s: string, wrap: (side: string) => string) => {
-    const segs = s.split(' => ');
-    for (let i = 1; i < segs.length; i++) {
-      candidates.add(clean(wrap(segs.slice(0, i).join(' => '))));
-      candidates.add(clean(wrap(segs.slice(i).join(' => '))));
-    }
-  };
-  const braced = raw.match(/^(.*)\{(.*)\}(.*)$/);
-  if (braced && braced[2].includes(' => ')) {
-    addAllSplits(braced[2], side => braced[1] + side + braced[3]);
-  } else {
-    addAllSplits(raw, side => side);
-  }
-  return candidates.size > 0 ? [...candidates] : [clean(raw)];
-}
-
-/**
- * Parse `git diff --numstat` output into totals + paths. Binary files report
- * "-" for adds/dels — they count as 0 lines but 1 file. Rename rows expand to
- * both their old and new concrete paths (see {@link expandRenamePaths}).
- * Pure so the sentinel handling is testable outside the git-calling lambda.
+ * Parse `git diff --numstat -z` (NUL-separated) output into totals + paths.
+ * The -z format carries VERBATIM paths — no `{old => new}` munging, no
+ * quoting — which categorically eliminates the filename-encoding ambiguity
+ * class (filenames containing ' => ', braces, tabs, newlines cannot confuse
+ * the parser). Entries are either `adds\tdels\tpath\0` or, for renames,
+ * `adds\tdels\t\0old\0new\0`; BOTH rename sides count for surface matching
+ * (a rename into src/hooks/ creates a hook, out of it removes one). Binary
+ * files report "-" for adds/dels — 0 lines but 1 file. Pure so all of this
+ * is testable outside the git-calling lambda.
  */
 export function parseNumstat(numstat: string): DiffTotals {
-  const rows = numstat ? numstat.split('\n').filter(Boolean) : [];
+  const fields = numstat.split('\0');
+  let files = 0;
   let lines = 0;
   const paths: string[] = [];
-  for (const row of rows) {
-    const [adds, dels, ...rest] = row.split('\t');
-    lines += (parseInt(adds, 10) || 0) + (parseInt(dels, 10) || 0);
-    if (rest.length > 0) paths.push(...expandRenamePaths(rest.join('\t')));
+  for (let i = 0; i < fields.length; i++) {
+    const m = fields[i].match(/^(\d+|-)\t(\d+|-)\t(.*)$/s);
+    if (!m) continue;
+    files++;
+    lines += (parseInt(m[1], 10) || 0) + (parseInt(m[2], 10) || 0);
+    if (m[3] !== '') {
+      paths.push(m[3]);
+    } else {
+      // Rename entry: the next two NUL-separated fields are old, new.
+      if (fields[i + 1]) paths.push(fields[i + 1]);
+      if (fields[i + 2]) paths.push(fields[i + 2]);
+      i += 2;
+    }
   }
-  return { files: rows.length, lines, paths };
+  return { files, lines, paths };
 }
 
 export interface TierVerification {

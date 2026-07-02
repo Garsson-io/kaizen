@@ -131,7 +131,7 @@ const DEFAULT_DEPS: PlanCheckDeps = {
   },
   getIssueState: (issue: number, repo: string) => queryIssueState({ repo, issue }),
   getDeclaredTier: () => parseChangeTier(gitStdout(['config', '--get', 'kaizen.tier'])),
-  getDiffTotals: () => parseNumstat(gitStdout(['diff', '--numstat', 'main...HEAD'])),
+  getDiffTotals: () => parseNumstat(gitStdout(['diff', '--numstat', '-z', 'main...HEAD'])),
   realPath: defaultRealPath,
 };
 
