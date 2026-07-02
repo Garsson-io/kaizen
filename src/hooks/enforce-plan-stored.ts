@@ -25,12 +25,14 @@ import {
   closeSync,
   constants as fsConstants,
   fstatSync,
+  lstatSync,
   openSync,
+  readlinkSync,
   realpathSync,
   readFileSync,
   readSync,
 } from 'node:fs';
-import { basename, dirname, isAbsolute, resolve, relative } from 'node:path';
+import { isAbsolute, resolve, relative } from 'node:path';
 import { readHookInput, traceNullInput } from './hook-io.js';
 import { currentHookBranch } from './lib/current-branch.js';
 import { gitStdout } from './lib/git-state.js';
@@ -134,27 +136,48 @@ const DEFAULT_DEPS: PlanCheckDeps = {
 };
 
 /**
- * Default {@link PlanCheckDeps.realPath}: dereference symlinks via
- * realpathSync. A path that doesn't exist yet (new file — possibly in a new
- * subdirectory) dereferences its NEAREST EXISTING ancestor and reattaches the
- * remaining segments, so creating `<wt>/newdir/thing.ts` is not a false
- * positive. Returns null only when no ancestor resolves — callers fail closed.
+ * Default {@link PlanCheckDeps.realPath}: dereference symlinks component by
+ * component. Unlike bare realpathSync, this also dereferences DANGLING
+ * symlinks (readlink works even when the target doesn't exist yet — the
+ * `notes.ts -> .claude/hooks/new-hook.sh` pre-creation attack), while a path
+ * whose remaining components genuinely don't exist resolves lexically (a new
+ * file in a new subdirectory is not a false positive — nothing nonexistent
+ * can be a symlink). Returns null on symlink loops or read errors — callers
+ * fail closed.
  */
 export function defaultRealPath(p: string): string | null {
-  try {
-    return realpathSync(p);
-  } catch { /* walk up to the nearest existing ancestor */ }
-  const tail: string[] = [];
-  let cur = p;
-  for (;;) {
-    const parent = dirname(cur);
-    if (parent === cur) return null;
-    tail.unshift(basename(cur));
-    cur = parent;
+  const MAX_LINKS = 40;
+  let links = 0;
+  let parts = resolve(p).split('/').filter(Boolean);
+  let resolved = '/';
+  let i = 0;
+  while (i < parts.length) {
+    const candidate = resolve(resolved, parts[i]);
+    let isLink: boolean;
     try {
-      return resolve(realpathSync(cur), ...tail);
-    } catch { /* ancestor missing too — keep walking */ }
+      isLink = lstatSync(candidate).isSymbolicLink();
+    } catch {
+      // Component doesn't exist: the rest of the path is new — append as-is.
+      return resolve(resolved, ...parts.slice(i));
+    }
+    if (isLink) {
+      if (++links > MAX_LINKS) return null;
+      let target: string;
+      try {
+        target = readlinkSync(candidate);
+      } catch {
+        return null;
+      }
+      // Substitute the link target and restart with the remaining components.
+      parts = resolve(resolved, target).split('/').filter(Boolean).concat(parts.slice(i + 1));
+      resolved = '/';
+      i = 0;
+      continue;
+    }
+    resolved = candidate;
+    i++;
   }
+  return resolved;
 }
 
 // ── Issue extraction ────────────────────────────────────────────────

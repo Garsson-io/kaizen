@@ -891,6 +891,18 @@ describe('trivial tier — edit gate (#1748)', () => {
       // New file in a NEW subdirectory is not a false positive.
       expect(defaultRealPath(join(dir, 'newmod', 'deep', 'thing.ts')))
         .toBe(join(realpathSync(dir), 'newmod', 'deep', 'thing.ts'));
+      // DANGLING symlink still dereferences — a link to a not-yet-existing
+      // hook must land on the hook path, not keep the innocent name.
+      const dangling = join(dir, 'innocent2.ts');
+      symlinkSync(join(dir, '.claude', 'hooks', 'new-hook.sh'), dangling);
+      expect(defaultRealPath(dangling))
+        .toBe(join(realpathSync(dir), '.claude', 'hooks', 'new-hook.sh'));
+      // Symlink loop → null (fail closed), not an infinite walk.
+      const loopA = join(dir, 'loop-a');
+      const loopB = join(dir, 'loop-b');
+      symlinkSync(loopB, loopA);
+      symlinkSync(loopA, loopB);
+      expect(defaultRealPath(loopA)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
