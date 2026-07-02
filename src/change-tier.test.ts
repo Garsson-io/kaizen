@@ -104,16 +104,18 @@ describe('verifyTrivialTier', () => {
 });
 
 describe('parseNumstat', () => {
-  it('sums adds+dels across rows and counts files', () => {
-    expect(parseNumstat('10\t5\tsrc/a.ts\n3\t0\tsrc/b.ts')).toEqual({ files: 2, lines: 18 });
+  it('sums adds+dels across rows, counts files, and carries the snapshot paths', () => {
+    expect(parseNumstat('10\t5\tsrc/a.ts\n3\t0\tsrc/b.ts'))
+      .toEqual({ files: 2, lines: 18, paths: ['src/a.ts', 'src/b.ts'] });
   });
 
   it("counts binary '-' sentinel rows as 0 lines but 1 file", () => {
-    expect(parseNumstat('-\t-\tassets/logo.png\n2\t1\tsrc/a.ts')).toEqual({ files: 2, lines: 3 });
+    expect(parseNumstat('-\t-\tassets/logo.png\n2\t1\tsrc/a.ts'))
+      .toEqual({ files: 2, lines: 3, paths: ['assets/logo.png', 'src/a.ts'] });
   });
 
   it('empty output → zero totals', () => {
-    expect(parseNumstat('')).toEqual({ files: 0, lines: 0 });
+    expect(parseNumstat('')).toEqual({ files: 0, lines: 0, paths: [] });
   });
 });
 
@@ -134,6 +136,14 @@ describe('checkMiniPlanSubstance', () => {
     const failures = checkMiniPlanSubstance(
       'Rename the stale reference in the wip skill doc so the trigger list matches the shipped '
       + 'skill name and update the surrounding sentence for grammar.',
+    );
+    expect(failures.join()).toContain('verified');
+  });
+
+  it("does not accept incidental words like 'testament' as a verification mention", () => {
+    const failures = checkMiniPlanSubstance(
+      'Rename the stale reference in the wip skill doc — a testament to tidy docs — so the '
+      + 'trigger list matches the shipped skill name everywhere it appears in the document.',
     );
     expect(failures.join()).toContain('verified');
   });

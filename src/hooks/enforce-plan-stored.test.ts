@@ -896,7 +896,7 @@ describe('trivial tier — edit gate (#1748)', () => {
     }
   });
 
-  it('changedFiles/totals disagreement resolves to the stricter source', () => {
+  it('the numstat snapshot is authoritative for the count check', () => {
     // numstat sees 5 files even though name-only saw 2 → over the limit → block.
     const result = checkPlanBeforePr(
       ghPrCreate('Small fix.\n\nCloses #1055'),
@@ -904,6 +904,35 @@ describe('trivial tier — edit gate (#1748)', () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.missing).toEqual(['tier-mismatch']);
+  });
+
+  it('surface matching uses paths from the SAME numstat snapshot when present (no TOCTOU)', () => {
+    // name-only snapshot looks clean, but the numstat snapshot carries a
+    // surface file — the numstat snapshot wins.
+    const result = checkPlanBeforePr(
+      ghPrCreate('Small fix.\n\nCloses #1055'),
+      trivialDeps({}, {
+        getChangedFiles: () => ['src/innocent.ts'],
+        getDiffTotals: () => ({ files: 2, lines: 20, paths: ['src/innocent.ts', 'src/hooks/pre-push.ts'] }),
+      }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('src/hooks/pre-push.ts');
+  });
+
+  it('relative symlinks are dereferenced too (no literal-relative fallback)', () => {
+    // k.ts (relative) is a symlink to a hook — resolution goes through
+    // worktreeRoot + realPath, landing on the real target.
+    const result = checkPlanBeforeEdit(
+      'k.ts',
+      trivialDeps({}, {
+        realPath: (p: string) => p === '/repo/.claude/worktrees/wt/k.ts'
+          ? '/repo/.claude/worktrees/wt/.claude/hooks/kaizen-worktree-setup.sh'
+          : p,
+      }),
+    );
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(['tier-surface']);
   });
 
   it('scope-conflict is NOT relaxed by the trivial tier (#1161)', () => {

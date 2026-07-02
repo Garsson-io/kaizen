@@ -69,21 +69,29 @@ export interface DiffTotals {
   files: number;
   /** Total changed lines: additions + deletions across the diff. */
   lines: number;
+  /**
+   * File paths from the SAME snapshot the totals came from. When present,
+   * verifiers use these for the surface check so counts and surface matching
+   * can never disagree across two git invocations (TOCTOU).
+   */
+  paths?: string[];
 }
 
 /**
- * Parse `git diff --numstat` output into totals. Binary files report "-" for
- * adds/dels — they count as 0 lines but 1 file. Pure so the sentinel handling
- * is testable outside the git-calling lambda.
+ * Parse `git diff --numstat` output into totals + paths. Binary files report
+ * "-" for adds/dels — they count as 0 lines but 1 file. Pure so the sentinel
+ * handling is testable outside the git-calling lambda.
  */
 export function parseNumstat(numstat: string): DiffTotals {
   const rows = numstat ? numstat.split('\n').filter(Boolean) : [];
   let lines = 0;
+  const paths: string[] = [];
   for (const row of rows) {
-    const [adds, dels] = row.split('\t');
+    const [adds, dels, ...rest] = row.split('\t');
     lines += (parseInt(adds, 10) || 0) + (parseInt(dels, 10) || 0);
+    if (rest.length > 0) paths.push(rest.join('\t'));
   }
-  return { files: rows.length, lines };
+  return { files: rows.length, lines, paths };
 }
 
 export interface TierVerification {
@@ -122,7 +130,7 @@ export function checkMiniPlanSubstance(planText: string): string[] {
   if (planText.trim().length < 120) {
     failures.push(`Mini plan is too short (${planText.trim().length} chars, need 120+): say what changes and why`);
   }
-  if (!/\b(test|verif\w*|check|assert)/i.test(planText)) {
+  if (!/\b(test(s|ed|ing)?|verif\w+|check(s|ed|ing)?|assert(s|ed|ing|ions?)?)\b/i.test(planText)) {
     failures.push('Mini plan must say how the change will be verified (mention a test/verification step)');
   }
   return failures;

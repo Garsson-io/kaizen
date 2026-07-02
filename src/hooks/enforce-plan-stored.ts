@@ -506,10 +506,13 @@ function checkTrivialTierBeforePr(
   deps: PlanCheckDeps,
 ): PlanCheckResult {
   const totals = deps.getDiffTotals();
+  // Prefer paths from the SAME numstat snapshot as the totals — the surface
+  // check and the count check must not disagree across two git invocations.
+  const filesForSurface = totals.paths ?? changedFiles;
   // Fail CLOSED when the diff is unreadable/empty: gitStdout returns '' on any
   // git failure, which would otherwise verify as 0 files / 0 lines — a broken
   // git state must not be a bypass of the very limits being verified.
-  if (changedFiles.length === 0 || totals.files === 0) {
+  if (filesForSurface.length === 0 || totals.files === 0) {
     return {
       allowed: false,
       missing: ['tier-unverifiable'],
@@ -520,7 +523,7 @@ ensure 'main' resolves), or take the standard flow:
   git config --worktree --unset kaizen.tier`,
     };
   }
-  const verification = verifyTrivialTier(changedFiles, totals);
+  const verification = verifyTrivialTier(filesForSurface, totals);
   if (!verification.ok) {
     return {
       allowed: false,
@@ -605,18 +608,21 @@ This hook enforces I8: implementation must be tied to a planned issue.`,
     // bypass of the surface guard.
     const worktreeRoot = deps.getWorktreeRoot();
     const mainCheckout = deps.getMainCheckout();
-    // resolve() collapses '..' lexically; realPath() then dereferences
-    // symlinks — `ln -s .claude/hooks/x.sh notes.ts` must land on the REAL
-    // target, not the symlink's own name. Either failing → null → fail closed.
-    const normalized = isAbsolute(filePath) ? deps.realPath(resolve(filePath)) : null;
+    // EVERY path takes the same pipeline: make absolute (relative paths
+    // resolve against the worktree root, never trusted literally), collapse
+    // '..' lexically, then realPath() dereferences symlinks — a relative
+    // `k.ts -> .claude/hooks/x.sh` must land on the REAL target too. Any
+    // step failing → null → fail closed.
+    const absolute = isAbsolute(filePath)
+      ? resolve(filePath)
+      : filePath.split(/[\\/]/).includes('..')
+        ? null
+        : resolve(worktreeRoot || mainCheckout || process.cwd(), filePath);
+    const normalized = absolute === null ? null : deps.realPath(absolute);
     const base = normalized === null
       ? undefined
       : [worktreeRoot, mainCheckout].find(b => !!b && isWithinDirectory(normalized, b));
-    let repoRelative = base && normalized
-      ? relative(base, normalized)
-      : !isAbsolute(filePath) && !filePath.split(/[\\/]/).includes('..')
-        ? filePath.replace(/^\.\//, '')
-        : null;
+    let repoRelative = base && normalized ? relative(base, normalized) : null;
     // Worktrees nest under the main checkout, so a path into a SIBLING
     // worktree resolves via mainCheckout to '.claude/worktrees/<other>/…' —
     // which matches no surface prefix. Editing another worktree under a
