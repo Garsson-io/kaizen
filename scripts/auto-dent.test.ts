@@ -22,6 +22,8 @@ import {
   checkHaltFile,
   checkBudget,
   stopDecision,
+  afterRunStopDecision,
+  handleShutdownSignal,
   writeBatchSummary,
   formatBatchSummary,
   postStructuredSummary,
@@ -484,6 +486,17 @@ describe('stopDecision and budget', () => {
     });
   });
 
+  it('stops immediately after a run reaches the consecutive failure threshold', () => {
+    expect(afterRunStopDecision(makeState({
+      run: 3,
+      consecutive_failures: 3,
+      max_failures: 3,
+    }))).toEqual({
+      stop: true,
+      reason: '3 consecutive failures',
+    });
+  });
+
   it('reports budget status and stops on exhaustion', () => {
     const state = makeState({
       max_budget: '10.00',
@@ -498,6 +511,39 @@ describe('stopDecision and budget', () => {
       stop: true,
       reason: 'budget exhausted ($10.00 >= $10.00)',
     });
+  });
+});
+
+describe('shutdown signal handling', () => {
+  it('records a graceful stop request on the first signal', () => {
+    const flag = { value: false };
+    const logs: string[] = [];
+    const updates: Array<[string, string, unknown]> = [];
+
+    handleShutdownSignal(flag, '/tmp/state.json', {
+      log: (message) => logs.push(message),
+      updateStateKey: (stateFile, key, value) => updates.push([stateFile, key, value]),
+      exit: () => { throw new Error('exit should not be called'); },
+    });
+
+    expect(flag.value).toBe(true);
+    expect(logs).toContain('>>> Received shutdown signal. Finishing current run, then stopping...');
+    expect(updates).toEqual([['/tmp/state.json', 'stop_reason', 'signal (SIGTERM/SIGINT)']]);
+  });
+
+  it('exits immediately on a second signal during finalization', () => {
+    const flag = { value: true };
+    const logs: string[] = [];
+    const exits: number[] = [];
+
+    handleShutdownSignal(flag, '/tmp/state.json', {
+      log: (message) => logs.push(message),
+      updateStateKey: () => { throw new Error('state should not be updated on second signal'); },
+      exit: (code) => { exits.push(code); },
+    });
+
+    expect(logs).toContain('>>> Second shutdown signal received. Exiting now; finalization may be incomplete.');
+    expect(exits).toEqual([130]);
   });
 });
 

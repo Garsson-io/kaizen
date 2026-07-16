@@ -1,4 +1,4 @@
-import artifactClient, { type ArtifactClient, type FindOptions } from '@actions/artifact';
+import type { ArtifactClient, FindOptions } from '@actions/artifact';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -109,6 +109,17 @@ function downloadFailureReason(err: unknown): 'unauthorized' | 'download_failed'
     : 'download_failed';
 }
 
+async function loadActionsArtifactClient(): Promise<typeof import('@actions/artifact').default> {
+  try {
+    const actionsArtifact = await import('@actions/artifact');
+    return actionsArtifact.default;
+  } catch (err) {
+    throw new Error(
+      `@actions/artifact is required to download transcript bundles: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 export async function defaultTranscriptArtifactDownloader(
   manifest: TranscriptBundleManifest,
   options: {
@@ -126,7 +137,7 @@ export async function defaultTranscriptArtifactDownloader(
     repositoryOwner: owner,
     repositoryName: name,
   };
-  const client = options.client ?? artifactClient;
+  const client = options.client ?? await loadActionsArtifactClient();
   const artifact = await client.getArtifact(manifest.artifact_name, { findBy });
   const artifactDir = mkdtempSync(join(tmpdir(), 'kaizen-transcript-artifact-'));
   try {

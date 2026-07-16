@@ -84,6 +84,7 @@ import {
 } from './auto-dent-run.js';
 import { analyzeContextDelegation } from './auto-dent-context-delegation.js';
 import {
+  ensureProviderWorkspaceRoot,
   resolveProviderWorkspaceRoot,
 } from './auto-dent-provider-workspace.js';
 import { deriveRunTestHealth } from './auto-dent-test-health.js';
@@ -5414,6 +5415,79 @@ describe('provider workspace contract', () => {
     });
   });
 
+  it('creates and binds a missing assigned provider worktree before provider spawn', () => {
+    const localRepoRoot = mkdtempSync(join(tmpdir(), 'provider-workspace-main-'));
+    const created: Array<{ repoRoot: string; args: string[] }> = [];
+    const bound: Array<{ root: string; issue: number }> = [];
+    const resolved = ensureProviderWorkspaceRoot({
+      repoRoot: localRepoRoot,
+      invocationRoot: localRepoRoot,
+      assignedIssue: '#1164',
+      runTag: 'batch/run-1',
+    }, {
+      listWorktrees: () => [{ path: localRepoRoot, branch: 'main' }],
+      readBoundIssue: () => null,
+      now: () => new Date(2026, 5, 30, 14, 15, 0),
+      runGit: (root, args) => {
+        created.push({ repoRoot: root, args });
+        return { code: 0, stdout: '', stderr: '' };
+      },
+      bindIssue: (root, issue) => bound.push({ root, issue }),
+      setupArtifacts: () => {},
+    });
+
+    expect(resolved).toMatchObject({
+      ok: true,
+      issue: 1164,
+      source: 'created-worktree',
+      caseId: '2606301415-k1164-auto-dent',
+      branch: 'case/2606301415-k1164-auto-dent',
+      created: true,
+    });
+    const providerRoot = join(localRepoRoot, '.claude', 'worktrees', '2606301415-k1164-auto-dent');
+    expect(resolved.providerRoot).toBe(providerRoot);
+    expect(created[0]).toEqual({
+      repoRoot: localRepoRoot,
+      args: [
+        'worktree',
+        'add',
+        '-q',
+        '-b',
+        'case/2606301415-k1164-auto-dent',
+        providerRoot,
+        'origin/main',
+      ],
+    });
+    expect(created).toContainEqual({
+      repoRoot: providerRoot,
+      args: ['config', '--worktree', 'kaizen.runtag', 'batch/run-1'],
+    });
+    expect(bound).toEqual([{ root: providerRoot, issue: 1164 }]);
+    rmSync(localRepoRoot, { recursive: true, force: true });
+  });
+
+  it('reports worktree creation failures as provider workspace failures', () => {
+    const localRepoRoot = mkdtempSync(join(tmpdir(), 'provider-workspace-main-'));
+    const resolved = ensureProviderWorkspaceRoot({
+      repoRoot: localRepoRoot,
+      invocationRoot: localRepoRoot,
+      assignedIssue: '#1164',
+    }, {
+      listWorktrees: () => [{ path: localRepoRoot, branch: 'main' }],
+      readBoundIssue: () => null,
+      runGit: () => ({ code: 128, stdout: '', stderr: 'fatal: branch exists' }),
+    });
+
+    expect(resolved).toMatchObject({
+      ok: false,
+      reason: 'create-failed',
+      issue: 1164,
+    });
+    expect(resolved.detail).toContain('failed to create non-main case worktree for assigned issue #1164');
+    expect(formatProviderWorkspaceFailureDiagnosis(resolved as any).nextAction).toContain('Fix the git worktree creation or binding error');
+    rmSync(localRepoRoot, { recursive: true, force: true });
+  });
+
   it('formats provider workspace failures as diagnosis-first harness failures', () => {
     const resolved = resolveProviderWorkspaceRoot({
       repoRoot,
@@ -5522,7 +5596,7 @@ describe('provider workspace contract', () => {
     const runClaudeStart = source.indexOf('async function runClaude');
     const runClaudeEnd = source.indexOf('// Execute one run', runClaudeStart);
     const runClaudeSection = source.slice(runClaudeStart, runClaudeEnd);
-    const resolverIndex = runClaudeSection.indexOf('resolveProviderWorkspaceRoot');
+    const resolverIndex = runClaudeSection.indexOf('ensureProviderWorkspaceRoot');
     const codexIndex = runClaudeSection.indexOf('runCodex({');
     const claudeSpawnIndex = runClaudeSection.indexOf("spawn('claude'");
 

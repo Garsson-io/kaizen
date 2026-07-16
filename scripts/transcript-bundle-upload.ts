@@ -1,5 +1,5 @@
 import { dirname } from 'node:path';
-import artifactClient, { type UploadArtifactOptions, type UploadArtifactResponse } from '@actions/artifact';
+import type { UploadArtifactOptions, UploadArtifactResponse } from '@actions/artifact';
 import { writeAttachment, type AttachmentTarget } from '../src/section-editor.js';
 import {
   TranscriptBundleManifestSchema,
@@ -86,12 +86,24 @@ export function formatTranscriptBundleAttachment(manifest: TranscriptBundleManif
   ].join('\n');
 }
 
+async function loadActionsArtifactClient(): Promise<typeof import('@actions/artifact').default> {
+  try {
+    const actionsArtifact = await import('@actions/artifact');
+    return actionsArtifact.default;
+  } catch (err) {
+    throw new Error(
+      `@actions/artifact is required to upload transcript bundles: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 export async function defaultActionsArtifactUpload(
   name: string,
   files: string[],
   rootDirectory: string,
   options?: UploadArtifactOptions,
 ): Promise<UploadArtifactResponse> {
+  const artifactClient = await loadActionsArtifactClient();
   return artifactClient.uploadArtifact(name, files, rootDirectory, options);
 }
 

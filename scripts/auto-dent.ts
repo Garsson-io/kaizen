@@ -422,6 +422,10 @@ export function stopDecision(state: BatchState, nextRun: number): StopDecision {
   return { stop: false, reason: '' };
 }
 
+export function afterRunStopDecision(state: BatchState): StopDecision {
+  return stopDecision(state, state.run + 1);
+}
+
 export function writeBatchSummary(stateFile: string, nowEpoch = Math.floor(Date.now() / 1000)): string {
   const state = readState(stateFile);
   const duration = nowEpoch - state.batch_start;
@@ -757,6 +761,37 @@ export function postStructuredSummary(
   }
 }
 
+export interface ShutdownSignalState {
+  value: boolean;
+}
+
+export interface ShutdownSignalDeps {
+  log?: (message: string) => void;
+  updateStateKey?: (stateFile: string, key: string, value: unknown) => void;
+  exit?: (code: number) => void;
+}
+
+export function handleShutdownSignal(
+  state: ShutdownSignalState,
+  stateFile: string,
+  deps: ShutdownSignalDeps = {},
+): void {
+  const log = deps.log ?? console.log;
+  const update = deps.updateStateKey ?? updateStateKey;
+  const exit = deps.exit ?? process.exit;
+
+  log('');
+  if (state.value) {
+    log('>>> Second shutdown signal received. Exiting now; finalization may be incomplete.');
+    exit(130);
+    return;
+  }
+
+  state.value = true;
+  log('>>> Received shutdown signal. Finishing current run, then stopping...');
+  update(stateFile, 'stop_reason', 'signal (SIGTERM/SIGINT)');
+}
+
 async function sleep(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -838,13 +873,9 @@ async function main(): Promise<void> {
     writeState(stateFile, state);
   }
 
-  let shuttingDown = false;
+  const shutdownState = { value: false };
   const handleShutdown = () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    console.log('');
-    console.log('>>> Received shutdown signal. Finishing current run, then stopping...');
-    updateStateKey(stateFile, 'stop_reason', 'signal (SIGTERM/SIGINT)');
+    handleShutdownSignal(shutdownState, stateFile);
   };
   process.on('SIGTERM', handleShutdown);
   process.on('SIGINT', handleShutdown);
@@ -871,7 +902,7 @@ async function main(): Promise<void> {
   }
 
   while (true) {
-    if (shuttingDown) break;
+    if (shutdownState.value) break;
     if (checkHaltFile(haltFile, stateFile)) break;
 
     const current = readState(stateFile);
@@ -923,7 +954,7 @@ async function main(): Promise<void> {
       console.log(`>>> Stopping: ${afterRun.stop_reason}`);
       break;
     }
-    if (shuttingDown) break;
+    if (shutdownState.value) break;
 
     const elapsed = Math.floor(Date.now() / 1000) - batchStart;
     const hours = Math.floor(elapsed / 3600);
@@ -935,13 +966,15 @@ async function main(): Promise<void> {
     console.log(`  Time: ${hours}h ${mins}m elapsed`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-    if (afterRun.max_runs > 0 && afterRun.run >= afterRun.max_runs) {
-      updateStateKey(stateFile, 'stop_reason', `max runs reached (${afterRun.max_runs})`);
+    const afterRunDecision = afterRunStopDecision(afterRun);
+    if (afterRunDecision.stop) {
+      console.log(`>>> Stopping: ${afterRunDecision.reason}`);
+      if (!afterRun.stop_reason) updateStateKey(stateFile, 'stop_reason', afterRunDecision.reason);
       break;
     }
-    if (shuttingDown) break;
+    if (shutdownState.value) break;
     if (checkHaltFile(haltFile, stateFile)) break;
-    if (await cooldown(afterRun.current_cooldown || afterRun.cooldown, haltFile, stateFile, () => shuttingDown)) break;
+    if (await cooldown(afterRun.current_cooldown || afterRun.cooldown, haltFile, stateFile, () => shutdownState.value)) break;
   }
 
   const summaryPath = writeBatchSummary(stateFile);
