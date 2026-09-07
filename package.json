@@ -30,9 +30,9 @@
   },
   "dependencies": {
     "@actions/artifact": "^6.2.1",
-    "tsx": "^4.22.4",
+    "tsx": "^4.23.13",
     "unique-names-generator": "^4.7.1",
     "yaml": "^2.9.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   }
 }
